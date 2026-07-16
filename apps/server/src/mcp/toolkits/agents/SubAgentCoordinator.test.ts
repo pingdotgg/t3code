@@ -279,13 +279,10 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
   }),
 );
 
-it.effect("does not let a sub-agent escape an advisor parent's read-only clamp", () =>
+it.effect("advisor parent without executor still inherits the stored runtime mode", () =>
   Effect.gen(function* () {
-    // An advisor thread stores the runtime mode the user picked (here
-    // full-access) and is clamped only at session start. Without an executor
-    // model, spawning a child must inherit the clamped mode, or unsolicited
-    // delegation becomes a way to write from a thread the user believes is
-    // read-only.
+    // Interaction mode no longer clamps permissions. Sub-agents always inherit
+    // the parent thread's stored runtimeMode, with or without an executor model.
     const [coordinator, harness] = yield* makeCoordinator({
       parentShell: (threadId) =>
         makeThreadShell(threadId, {
@@ -303,49 +300,7 @@ it.effect("does not let a sub-agent escape an advisor parent's read-only clamp",
     const create = harness.dispatched.find((command) => command.type === "thread.create");
     expect(create?.type).toBe("thread.create");
     if (create?.type === "thread.create") {
-      expect(create.runtimeMode).toBe("approval-required");
-    }
-
-    const turnStart = harness.dispatched.find((command) => command.type === "thread.turn.start");
-    expect(turnStart?.type).toBe("thread.turn.start");
-    if (turnStart?.type === "thread.turn.start") {
-      expect(turnStart.runtimeMode).toBe("approval-required");
-    }
-  }),
-);
-
-it.effect("advisor parent with executor model spawns unclamped on executor selection", () =>
-  Effect.gen(function* () {
-    const [coordinator, harness] = yield* makeCoordinator({
-      parentShell: (threadId) =>
-        makeThreadShell(threadId, {
-          runtimeMode: "full-access",
-          interactionMode: "advisor",
-          executorModelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "default-model",
-          },
-        }),
-    });
-
-    const result = yield* coordinator.spawn(makeScope(), {
-      // Intentionally different from executor — must be overridden.
-      providerInstanceId: ProviderInstanceId.make("claude"),
-      model: "should-not-be-used",
-      prompt: "Implement the plan.",
-    });
-
-    expect(result.providerInstanceId).toBe("codex");
-    expect(result.model).toBe("default-model");
-    expect(result.title).toContain("[executor: codex/default-model]");
-
-    const create = harness.dispatched.find((command) => command.type === "thread.create");
-    expect(create?.type).toBe("thread.create");
-    if (create?.type === "thread.create") {
       expect(create.runtimeMode).toBe("full-access");
-      expect(create.modelSelection.instanceId).toBe("codex");
-      expect(create.modelSelection.model).toBe("default-model");
-      expect(create.interactionMode).toBe("default");
     }
 
     const turnStart = harness.dispatched.find((command) => command.type === "thread.turn.start");
@@ -354,6 +309,50 @@ it.effect("advisor parent with executor model spawns unclamped on executor selec
       expect(turnStart.runtimeMode).toBe("full-access");
     }
   }),
+);
+
+it.effect(
+  "advisor parent with executor model spawns on executor selection with stored runtime mode",
+  () =>
+    Effect.gen(function* () {
+      const [coordinator, harness] = yield* makeCoordinator({
+        parentShell: (threadId) =>
+          makeThreadShell(threadId, {
+            runtimeMode: "full-access",
+            interactionMode: "advisor",
+            executorModelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "default-model",
+            },
+          }),
+      });
+
+      const result = yield* coordinator.spawn(makeScope(), {
+        // Intentionally different from executor — must be overridden.
+        providerInstanceId: ProviderInstanceId.make("claude"),
+        model: "should-not-be-used",
+        prompt: "Implement the plan.",
+      });
+
+      expect(result.providerInstanceId).toBe("codex");
+      expect(result.model).toBe("default-model");
+      expect(result.title).toContain("[executor: codex/default-model]");
+
+      const create = harness.dispatched.find((command) => command.type === "thread.create");
+      expect(create?.type).toBe("thread.create");
+      if (create?.type === "thread.create") {
+        expect(create.runtimeMode).toBe("full-access");
+        expect(create.modelSelection.instanceId).toBe("codex");
+        expect(create.modelSelection.model).toBe("default-model");
+        expect(create.interactionMode).toBe("default");
+      }
+
+      const turnStart = harness.dispatched.find((command) => command.type === "thread.turn.start");
+      expect(turnStart?.type).toBe("thread.turn.start");
+      if (turnStart?.type === "thread.turn.start") {
+        expect(turnStart.runtimeMode).toBe("full-access");
+      }
+    }),
 );
 
 it.effect("advisor parent with non-spawnable executor fails without creating a thread", () =>
@@ -1139,7 +1138,7 @@ it.effect("lists a completed agent with its terminal status", () =>
   }),
 );
 
-it.effect("refuses send while running and wait on an already-terminal handle", () =>
+it.effect("refuses send while running and re-returns settled wait on a terminal handle", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator();
 
@@ -1165,7 +1164,8 @@ it.effect("refuses send while running and wait on an already-terminal handle", (
     expect(sendWhileRunning.description).toMatch(/still running/i);
     expect(sendWhileRunning.description).toMatch(/status: running/);
 
-    // Complete the turn, wait once (records terminal), then refuse a second wait.
+    // Complete the turn, wait once (records terminal). A second wait re-returns
+    // the settled result so list/lifecycle observers can still collect finalText.
     harness.setThreadDetail((threadId) =>
       threadId === spawned.threadId
         ? Option.some(completedTurnDetail(spawned.threadId))
@@ -1176,13 +1176,14 @@ it.effect("refuses send while running and wait on an already-terminal handle", (
       timeoutSeconds: 5,
     });
     expect(firstWait.status).toBe("completed");
+    expect(firstWait.finalText).toBe("Done.");
 
-    const waitWhenTerminal = yield* expectSubAgentError(
-      coordinator.wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 5 }),
-    );
-    expect(waitWhenTerminal.reason).toBe("invalid-status");
-    expect(waitWhenTerminal.description).toMatch(/not running/i);
-    expect(waitWhenTerminal.description).toMatch(/status: completed/);
+    const waitWhenTerminal = yield* coordinator.wait(makeScope(), {
+      threadId: spawned.threadId,
+      timeoutSeconds: 5,
+    });
+    expect(waitWhenTerminal.status).toBe("completed");
+    expect(waitWhenTerminal.finalText).toBe("Done.");
 
     // Follow-up send after terminal is allowed (starts a new turn).
     const sent = yield* coordinator.send(makeScope(), {

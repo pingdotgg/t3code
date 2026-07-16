@@ -54,7 +54,6 @@ import { enforceSubAgentStandardMode } from "../../../orchestration/subAgentMode
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
-import { resolveEffectiveRuntimeMode } from "../../../orchestration/InteractionModePermissions.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
@@ -617,9 +616,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       }
       const parent = callerThread.value;
       // Advisor/Planner with a configured executor model: run the child on that
-      // model with the parent's *stored* (unclamped) runtime mode so it can
-      // implement. Without an executor, keep the historical clamp: sub-agents
-      // inherit resolveEffectiveRuntimeMode so delegation is not an escape hatch.
+      // model. Sub-agents always inherit the parent thread's stored runtimeMode.
       const executor =
         parent.interactionMode === "advisor" ? (parent.executorModelSelection ?? null) : null;
       const requestedInstanceId = executor?.instanceId ?? input.providerInstanceId;
@@ -675,10 +672,6 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const modelSelection = resolveSpawnModelSelection(target, model);
       const effort = resolveSpawnEffort(target, modelSelection);
       const parentTurnId = yield* readParentTurnId(scope.threadId);
-      const inheritedRuntimeMode =
-        executor !== null
-          ? parent.runtimeMode
-          : resolveEffectiveRuntimeMode(parent.runtimeMode, parent.interactionMode);
 
       yield* engine
         .dispatch({
@@ -688,7 +681,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           projectId: parent.projectId,
           title,
           modelSelection,
-          runtimeMode: inheritedRuntimeMode,
+          runtimeMode: parent.runtimeMode,
           interactionMode: "default",
           branch: parent.branch,
           worktreePath: parent.worktreePath,
@@ -696,11 +689,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(dispatchFailed("create sub-agent thread")));
 
-      const lastTurnRequestedAt = yield* startTurn(
-        childThreadId,
-        input.prompt,
-        inheritedRuntimeMode,
-      );
+      const lastTurnRequestedAt = yield* startTurn(childThreadId, input.prompt, parent.runtimeMode);
 
       yield* emitSpawnStartedActivity({
         scope,

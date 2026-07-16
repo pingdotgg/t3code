@@ -46,7 +46,6 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import { resolveEffectiveRuntimeMode } from "../InteractionModePermissions.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -610,14 +609,9 @@ const make = Effect.gen(function* () {
     // The turn's interaction mode wins over the projected thread state: a turn
     // carries the mode the user pressed send with.
     const desiredInteractionMode = options?.interactionMode ?? thread.interactionMode;
-    // Advisor clamps the permission axis, so the session runtime mode is not
-    // necessarily the thread's. Everything downstream (including the
-    // restart-on-change check) must compare against the effective mode, or an
-    // advisor thread would look permanently out of date and restart each turn.
-    const desiredRuntimeMode = resolveEffectiveRuntimeMode(
-      thread.runtimeMode,
-      desiredInteractionMode,
-    );
+    // Interaction mode is independent of permissions — use the thread's stored
+    // runtime mode for the provider session.
+    const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService

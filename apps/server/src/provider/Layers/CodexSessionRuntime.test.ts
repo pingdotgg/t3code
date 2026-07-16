@@ -133,8 +133,8 @@ describe("buildTurnStartParams", () => {
       Effect.gen(function* () {
         const params = yield* buildTurnStartParams({
           threadId: "provider-thread-1",
-          // The reactor clamps advisor threads to approval-required before the
-          // session starts, so this is the mode advisor turns actually run under.
+          // When the user chooses approval-required, advisor turns use a
+          // read-only sandbox like any other interaction mode.
           runtimeMode: "approval-required",
           prompt: "Why does the reactor restart sessions?",
           model: "gpt-5.3-codex",
