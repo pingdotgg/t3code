@@ -23,7 +23,7 @@ a supervised child process.
                │ ws://127.0.0.1:<port>/ws + local HTTP
 ┌──────────────▼────────────────────────────────┐
 │ t3 server (Node, unchanged)                   │
-│ providers: codex / claude / grok / opencode   │
+│ providers: codex / claude / grok / fugu       │
 └───────────────────────────────────────────────┘
 ```
 
