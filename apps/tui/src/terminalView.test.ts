@@ -47,6 +47,31 @@ describe("readTerminalFrame colours", () => {
   });
 });
 
+describe("readTerminalFrame links", () => {
+  it("Given terminal output contains a URL, then only the URL cells carry its hyperlink", async () => {
+    const href = "https://example.com/docs";
+    const segments = await firstRow(`open ${href}.`);
+    const linked = segments.filter((segment) => segment.href === href);
+
+    expect(linked.map((segment) => segment.text).join("")).toBe(href);
+    expect(segments.find((segment) => segment.text.includes("open"))?.href).toBeUndefined();
+    expect(
+      segments.some((segment) => segment.href === undefined && segment.text.includes(".")),
+    ).toBe(true);
+  });
+
+  it("Given a URL wraps across terminal rows, then every visible piece opens the complete URL", async () => {
+    const href = "https://example.com/long/path";
+    const term = new Terminal({ cols: 16, rows: 3, allowProposedApi: true });
+    const frame = await new Promise<ReturnType<typeof readTerminalFrame>>((resolve) => {
+      term.write(`go ${href}`, () => resolve(readTerminalFrame(term)));
+    });
+    const linked = frame.rows.flat().filter((segment) => segment.href === href);
+
+    expect(linked.map((segment) => segment.text).join("")).toBe(href);
+  });
+});
+
 describe("readTerminalViewport", () => {
   it("Given written rows, then it returns the on-screen text without trailing blanks", async () => {
     const term = new Terminal({ cols: 40, rows: 4, allowProposedApi: true });

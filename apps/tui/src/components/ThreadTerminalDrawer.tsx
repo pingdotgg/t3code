@@ -57,7 +57,8 @@ function renderSegment(segment: TermSegment, key: number): React.ReactNode {
     : (segment.color ?? THEME.text);
   const bg = segment.inverse ? (segment.color ?? THEME.text) : segment.backgroundColor;
   let node: React.ReactNode = segment.text;
-  if (segment.underline) node = <u>{node}</u>;
+  if (segment.href) node = <a href={segment.href}>{node}</a>;
+  if (segment.underline || segment.href) node = <u>{node}</u>;
   if (segment.italic) node = <em>{node}</em>;
   if (segment.bold) node = <strong>{node}</strong>;
   const style: { fg?: string | RGBA; bg?: string | RGBA } = {};

@@ -1,4 +1,9 @@
 import { RGBA } from "@opentui/core";
+import {
+  collectWrappedTerminalLinkLine,
+  extractTerminalLinks,
+  resolveWrappedTerminalLinkRange,
+} from "@t3tools/shared/terminalLinks";
 import type { IBufferCell, Terminal } from "@xterm/headless";
 
 import { indexedColor } from "./theme.ts";
@@ -16,6 +21,8 @@ export interface TermSegment {
   readonly italic?: boolean;
   readonly underline?: boolean;
   readonly inverse?: boolean;
+  /** Terminal-native OSC 8 hyperlink emitted for detected HTTP(S) output. */
+  readonly href?: string;
 }
 
 export interface TermFrame {
@@ -26,6 +33,11 @@ export interface TermFrame {
   /** The offset actually rendered (the requested offset clamped to `[0, maxScroll]`). */
   readonly scrollOffset: number;
 }
+
+/** Avoid rescanning pathological multi-megabyte logical lines on every repaint. */
+const TERMINAL_LINK_SCAN_MAX_CHARS = 64 * 1024;
+/** Keep OSC 8 payloads bounded even when terminal output contains a hostile URL. */
+const TERMINAL_LINK_MAX_CHARS = 4 * 1024;
 
 function cellColor(cell: IBufferCell, foreground: boolean): TermColor | undefined {
   if (foreground ? cell.isFgDefault() : cell.isBgDefault()) return undefined;
@@ -54,7 +66,58 @@ function styleKey(segment: TermSegment): string {
     segment.italic ? "i" : "",
     segment.underline ? "u" : "",
     segment.inverse ? "v" : "",
+    segment.href ?? "",
   ].join("|");
+}
+
+interface TermRowLink {
+  readonly start: number;
+  readonly end: number;
+  readonly href: string;
+}
+
+/** Resolve wrapped HTTP(S) matches to zero-based cell ranges in the visible frame. */
+function terminalUrlRanges(
+  term: Terminal,
+  top: number,
+): ReadonlyMap<number, ReadonlyArray<TermRowLink>> {
+  const buffer = term.buffer.active;
+  const byRow = new Map<number, TermRowLink[]>();
+  const processedBufferRows = new Set<number>();
+  const firstVisibleBufferLine = top + 1;
+  const lastVisibleBufferLine = top + term.rows;
+
+  for (let row = 0; row < term.rows; row++) {
+    const bufferLineNumber = firstVisibleBufferLine + row;
+    if (processedBufferRows.has(bufferLineNumber)) continue;
+    const wrappedLine = collectWrappedTerminalLinkLine(bufferLineNumber, (index) =>
+      buffer.getLine(index),
+    );
+    if (!wrappedLine) continue;
+    for (const segment of wrappedLine.segments) {
+      processedBufferRows.add(segment.bufferLineNumber);
+    }
+    if (wrappedLine.text.length > TERMINAL_LINK_SCAN_MAX_CHARS) continue;
+
+    for (const match of extractTerminalLinks(wrappedLine.text)) {
+      if (match.kind !== "url" || match.text.length > TERMINAL_LINK_MAX_CHARS) continue;
+      const range = resolveWrappedTerminalLinkRange(wrappedLine, match);
+      const startRow = Math.max(range.start.y, firstVisibleBufferLine);
+      const endRow = Math.min(range.end.y, lastVisibleBufferLine);
+      for (let line = startRow; line <= endRow; line++) {
+        const visibleRow = line - firstVisibleBufferLine;
+        const links = byRow.get(visibleRow) ?? [];
+        links.push({
+          start: line === range.start.y ? range.start.x - 1 : 0,
+          end: line === range.end.y ? range.end.x : term.cols,
+          href: match.text,
+        });
+        byRow.set(visibleRow, links);
+      }
+    }
+  }
+
+  return byRow;
 }
 
 function cellStyle(cell: IBufferCell): Omit<TermSegment, "text"> {
@@ -89,6 +152,7 @@ export function readTerminalFrame(term: Terminal, scrollOffset = 0): TermFrame {
   // stray inverted cell doesn't appear over old output.
   const cursor = offset === 0 ? { x: buffer.cursorX, y: buffer.cursorY } : { x: -1, y: -1 };
   const rows: TermSegment[][] = [];
+  const urlRanges = terminalUrlRanges(term, top);
 
   for (let y = 0; y < term.rows; y++) {
     const line = buffer.getLine(top + y);
@@ -110,9 +174,11 @@ export function readTerminalFrame(term: Terminal, scrollOffset = 0): TermFrame {
       const chars = cell.getChars() || " ";
       const isCursor = y === cursor.y && x === cursor.x;
       const baseStyle = cellStyle(cell);
+      const href = urlRanges.get(y)?.find((link) => link.start <= x && x < link.end)?.href;
+      const linkedStyle = href ? { ...baseStyle, href } : baseStyle;
       const style: Omit<TermSegment, "text"> = isCursor
-        ? { ...baseStyle, inverse: !baseStyle.inverse }
-        : baseStyle;
+        ? { ...linkedStyle, inverse: !linkedStyle.inverse }
+        : linkedStyle;
       // The cursor cell gets a unique key ("@") so it never merges with neighbours.
       const key = `${styleKey({ text: "", ...style })}${isCursor ? "@" : ""}`;
       if (key === runKey) {

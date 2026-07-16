@@ -345,7 +345,6 @@ const CLIENT_UI_GAPS = [
     ],
     scenarios: [
       "Given terminal output is selected, when the user adds it to the composer, then the TUI stages a bounded terminal-context chip with its session identity.",
-      "Given terminal output contains a supported URL, when the user activates it, then the TUI offers the terminal-appropriate preview or external-open action.",
     ],
   },
   {
