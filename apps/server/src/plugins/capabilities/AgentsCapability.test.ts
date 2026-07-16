@@ -373,6 +373,75 @@ agentsIt("AgentsCapability", (it) => {
   );
 
   it.effect(
+    "two overlapping startTurns with the same commandId on an absent thread create it once and both succeed",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const realSnapshots = yield* ProjectionSnapshotQuery;
+        const turns = yield* ProjectionTurnRepository;
+        const messages = yield* ProjectionThreadMessageRepository;
+        yield* createProject(engine);
+
+        const threadId = ThreadId.make("thread-bootstrap-race");
+        const commandId = CommandId.make("cmd-bootstrap-race-turn-start");
+
+        // Both concurrent calls read ownership BEFORE either bootstrap create
+        // commits, so both take the create-thread branch. Pinning the mock to
+        // "absent" holds that race window open deterministically, so the
+        // colliding second create is exercised on every run rather than only
+        // under an unlucky interleaving. Dispatch itself hits the real engine.
+        const agents = makeAgentsCapability({
+          pluginId,
+          engine,
+          snapshots: {
+            getThreadOwnerById: () => Effect.succeed(Option.none()),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+          } as any,
+          turns,
+          messages,
+          providerInstances: makeProviderRegistry(),
+        });
+
+        const bootstrap = {
+          createThread: {
+            projectId: ProjectId.make("project-agents"),
+            title: "Raced",
+            modelSelection,
+            runtimeMode: "approval-required" as const,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            branch: null,
+            worktreePath: null,
+          },
+        };
+
+        // With a per-call RANDOM bootstrap create commandId the losing create
+        // hits requireThreadAbsent (the thread now exists) and the second
+        // startTurn fails — violating the commandId idempotency contract. A
+        // deterministic bootstrap commandId dedups the create instead.
+        const [first, second] = yield* Effect.all(
+          [
+            agents.startTurn({ threadId, text: "first", commandId, bootstrap }),
+            agents.startTurn({ threadId, text: "second", commandId, bootstrap }),
+          ],
+          { concurrency: 2 },
+        );
+
+        expect(second.turnId).toBe(first.turnId);
+        expect(second.messageId).toBe(first.messageId);
+
+        // The thread was created exactly once and is plugin-owned (verified via
+        // the REAL projection, not the pinned mock).
+        const owner = yield* realSnapshots.getThreadOwnerById(threadId);
+        expect(Option.getOrUndefined(owner)).toBe("plugin:agent-plugin");
+
+        // Exactly one turn.start persisted — the shared caller commandId deduped it.
+        const projectedTurns = yield* turns.listByThreadId({ threadId });
+        expect(projectedTurns).toHaveLength(1);
+      }),
+  );
+
+  it.effect(
     "startTurn derives stable turnId/messageId from a repeated commandId and random ids without one",
     () =>
       Effect.gen(function* () {

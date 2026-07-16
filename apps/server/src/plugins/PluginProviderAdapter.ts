@@ -173,10 +173,14 @@ export const makePluginProviderAdapter = (input: {
         return session;
       });
 
-    const endTurn = (threadId: ThreadId) =>
+    const endTurn = (threadId: ThreadId, turnId: TurnId) =>
       Ref.update(sessions, (current) => {
         const state = current.get(threadId);
         if (state === undefined) return current;
+        // Only clear if this turn is still the active one. A stale fiber's
+        // `ensuring(endTurn)` — a turn that was interrupted or superseded — must
+        // not null out a successor turn's fiber/id after the successor took over.
+        if (state.activeTurnId !== turnId) return current;
         return new Map(current).set(threadId, { ...state, turnFiber: null, activeTurnId: null });
       });
 
@@ -188,6 +192,18 @@ export const makePluginProviderAdapter = (input: {
         const state = (yield* Ref.get(sessions)).get(threadId);
         if (state === undefined) {
           return yield* Effect.fail(new PluginProviderError("no session for thread"));
+        }
+        // One active turn per thread. Overwriting activeTurnId/turnFiber here would
+        // orphan the in-progress turn's fiber (losing the handle interrupt/stop rely
+        // on) and its `ensuring(endTurn)` would later null the successor's state,
+        // dropping the second turn's deltas. Upstream does not serialize per thread
+        // (its reactor forks), so the host enforces the invariant by rejecting: the
+        // engine treats a failed dispatch as a rejection, which preserves the
+        // running turn rather than silently interrupting it.
+        if (state.activeTurnId !== null || state.turnFiber !== null) {
+          return yield* Effect.fail(
+            new PluginProviderError("a turn is already active for this thread"),
+          );
         }
         // Host-stamped: the plugin correlates against this, it never invents one.
         const turnId = input.nextEventId() as TurnId;
@@ -225,7 +241,7 @@ export const makePluginProviderAdapter = (input: {
                 publish(stampTurnCompleted(threadId, turnId, Cause.pretty(cause))),
             }),
             Effect.asVoid,
-            Effect.ensuring(endTurn(threadId)),
+            Effect.ensuring(endTurn(threadId, turnId)),
           ),
           { startImmediately: true },
         );
@@ -262,7 +278,10 @@ export const makePluginProviderAdapter = (input: {
           }
         }
         if (state?.turnFiber) yield* Fiber.interrupt(state.turnFiber).pipe(Effect.orDie);
-        yield* endTurn(threadId);
+        // Clear keyed on the turn we just interrupted. The interrupted fiber's own
+        // `ensuring(endTurn)` already ran with the same turnId, so this is a
+        // no-op-safe backstop for the fiber-less case rather than a blind clear.
+        if (state?.activeTurnId != null) yield* endTurn(threadId, state.activeTurnId);
       });
 
     const stopSession: ProviderAdapterShape<PluginProviderError>["stopSession"] = (

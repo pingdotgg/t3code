@@ -197,6 +197,59 @@ describe("makePluginProviderAdapter", () => {
     }),
   );
 
+  it.effect(
+    "rejects a second turn while one is already active, keeping the first turn's deltas",
+    () =>
+      Effect.gen(function* () {
+        const released = yield* Deferred.make<void>();
+        let emitter: ((event: PluginProviderEvent) => void) | null = null;
+        const adapter = yield* adapterFor({
+          startSession: (input) =>
+            Effect.sync(() => {
+              emitter = input.emit;
+            }),
+          // The first turn emits a delta, then blocks until released — so it is
+          // still the single active turn when the second turn is attempted.
+          sendTurn: () =>
+            Effect.sync(() => emitter?.({ type: "assistant-delta", text: "first" })).pipe(
+              Effect.flatMap(() => Deferred.await(released)),
+            ),
+          stopSession: () => Effect.void,
+        });
+
+        const { result, events } = yield* collecting(
+          adapter,
+          Effect.gen(function* () {
+            yield* start(adapter);
+            yield* adapter.sendTurn({ threadId, input: "first" } as never);
+            // Let the forked first turn emit its delta and park on the deferred.
+            yield* Effect.yieldNow;
+            // A second turn on the SAME thread while one is active must be rejected,
+            // not clobber the active turn's state (which would orphan the first
+            // fiber and silently drop its remaining deltas).
+            const secondExit = yield* Effect.exit(
+              adapter.sendTurn({ threadId, input: "second" } as never),
+            );
+            yield* Deferred.succeed(released, undefined);
+            yield* Effect.yieldNow;
+            return secondExit;
+          }),
+        );
+
+        assert.strictEqual(result._tag, "Failure", "the second turn must fail while one is active");
+        assert.isTrue(
+          String(result._tag === "Failure" ? result.cause : "").includes("already active"),
+          "the rejection must name the single-active-turn invariant",
+        );
+        // The first turn's state survived the rejected second turn: its delta still
+        // reached the thread.
+        assert.isDefined(
+          events.find((event) => event.type === "content.delta"),
+          "the first turn's deltas must still flow after the second is rejected",
+        );
+      }),
+  );
+
   it.effect("keeps session bookkeeping in the host", () =>
     Effect.gen(function* () {
       const adapter = yield* adapterFor({

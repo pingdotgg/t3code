@@ -538,7 +538,20 @@ export function makeAgentsCapability(
           }
           yield* input.engine.dispatch({
             type: "thread.create",
-            commandId: nextCommandId("bootstrap-thread-create"),
+            // Derive the bootstrap create's commandId from the caller's when
+            // present, so two overlapping starts with the SAME caller commandId
+            // (both seeing the thread absent) dispatch the SAME create commandId.
+            // The engine returns the stored receipt for a repeated commandId
+            // without re-running requireThreadAbsent, so the losing create dedups
+            // instead of colliding — the losing start would otherwise fail,
+            // violating the commandId idempotency contract. Without a caller
+            // commandId, mint a fresh random id as before.
+            commandId:
+              request.commandId !== undefined
+                ? CommandId.make(
+                    `plugin:bootstrap-thread-create:${stableIdSuffix(request.commandId)}`,
+                  )
+                : nextCommandId("bootstrap-thread-create"),
             threadId: request.threadId,
             projectId: bootstrap.createThread.projectId,
             title: bootstrap.createThread.title,
