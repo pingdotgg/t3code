@@ -184,14 +184,6 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
       return;
     }
 
-    // A warm reconnect legitimately has no detail while the runtime catches
-    // up. The watchdog should start only after synchronization settles.
-    if (selectedThreadDetailState.status === "synchronizing") {
-      detailRefreshAttemptsRef.current.delete(routeThreadKey);
-      setStalledDetailKey((current) => (current === routeThreadKey ? null : current));
-      return;
-    }
-
     if (routeConnectionState !== "connected") {
       detailRefreshAttemptsRef.current.delete(routeThreadKey);
       setStalledDetailKey((current) => (current === routeThreadKey ? null : current));
