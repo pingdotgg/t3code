@@ -38,7 +38,14 @@ export function makeSourceControlCapability(input: {
 
   const contains = (realRoot: string, realTarget: string): boolean => {
     const relative = path.relative(realRoot, realTarget);
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    // NOT `relative.startsWith("..")`: that also matches legitimate in-root names
+    // that merely BEGIN with two dots — `..cache`, `..config` — which realPath had
+    // already confirmed are inside the granted root. Only an exact ".." or a leading
+    // "../" segment means the target escaped.
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
   };
 
   const assertWithinGrants = (value: string, purpose: string): Effect.Effect<void, Error> =>

@@ -112,7 +112,16 @@ const ioError = (
 
 const containsRealPath = (realRoot: string, realTarget: string): boolean => {
   const relative = NodePath.relative(realRoot, realTarget);
-  return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
+  // NOT `relative.startsWith("..")`: that also matches legitimate in-root names
+  // that merely BEGIN with two dots — `..cache`, `..config` — which realPath had
+  // already confirmed are inside the granted root. Only an exact ".." or a leading
+  // "../" segment means the target escaped.
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${NodePath.sep}`) &&
+      !NodePath.isAbsolute(relative))
+  );
 };
 
 const isAbsoluteRelativePath = (relativePath: string): boolean =>
