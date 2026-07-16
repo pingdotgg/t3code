@@ -272,6 +272,40 @@ it.effect("guardedOutboundHttpGet gives up after too many redirects", () =>
   }),
 );
 
+it.live(
+  "guardedOutboundHttpGet bounds the drain of a redirect body that never ends",
+  () =>
+    Effect.gen(function* () {
+      const requests: Array<PluginPinnedHttpRequest> = [];
+      // The redirect's body is a stream that never closes. Draining it inline would
+      // hang ingestion forever; the bounded drain must give up and still follow the
+      // redirect to completion.
+      const response = yield* guardedOutboundHttpGet({
+        url: "https://public.test/file",
+        lookup: lookupFor({ "public.test": "93.184.216.34", "cdn.test": "203.0.114.9" }),
+        transport: transportFor({
+          requests,
+          responses: {
+            "https://public.test/file": () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  // Never enqueue, never close: runDrain would block here without the bound.
+                  start() {},
+                }),
+                { status: 302, headers: { location: "https://cdn.test/file" } },
+              ),
+            "https://cdn.test/file": () => new Response("real bytes"),
+          },
+        }),
+        timeoutMs: 1000,
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(requests.length, 2);
+    }),
+  10_000,
+);
+
 it.effect("guardedOutboundHttpGet returns redirect responses without a Location as-is", () =>
   Effect.gen(function* () {
     const response = yield* guardedOutboundHttpGet({
