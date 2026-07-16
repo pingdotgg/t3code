@@ -317,6 +317,7 @@ export const make = Effect.gen(function* () {
       const adopted = yield* resolveAdoptableAdvertisedEndpoint({
         advertisedEndpoints: prepared.value.advertisedEndpoints,
         currentHttpBaseUrl: storedProfile.httpBaseUrl,
+        expectedEnvironmentId: prepared.value.environmentId,
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
       if (Option.isNone(adopted)) {
         return false;

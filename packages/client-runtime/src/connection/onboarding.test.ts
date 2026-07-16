@@ -60,7 +60,18 @@ function pairingHttpLayer(
     if (url.endsWith("/.well-known/t3/environment")) {
       if (!url.startsWith("https://remote.example.test/")) {
         // Reachability probe against an advertised endpoint.
-        return Promise.resolve(Response.json({}, { status: options?.probeStatus ?? 200 }));
+        return Promise.resolve(
+          Response.json(
+            {
+              environmentId: "environment-paired",
+              label: "Paired environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            },
+            { status: options?.probeStatus ?? 200 },
+          ),
+        );
       }
       if (options?.failDescriptor === true) {
         return Promise.resolve(

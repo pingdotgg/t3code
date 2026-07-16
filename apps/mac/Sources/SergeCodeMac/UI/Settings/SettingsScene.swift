@@ -1146,7 +1146,8 @@ private struct ConnectionSettingsTab: View {
                         ? "0.0.0.0 (local network)" : "127.0.0.1 (loopback)")
                 LabeledContent(
                     "Mode",
-                    value: access.lanReachable ? "remote-reachable" : "desktop-managed-local")
+                    value: access.lanReachable || access.tailnetHostname != nil
+                        ? "remote-reachable" : "desktop-managed-local")
                 LabeledContent("Tailscale") {
                     Text(access.tailnetHostname ?? "Off")
                         .textSelection(.enabled)
@@ -1159,8 +1160,23 @@ private struct ConnectionSettingsTab: View {
         .formStyle(.grouped)
         .padding()
         // Keyed to the connection phase so the rows update if the server
-        // comes up (or restarts) after the Settings window opened.
-        .task(id: model.connection) { access = await model.remoteAccessStatus() }
+        // comes up (or restarts) after the Settings window opened. The serve
+        // record can arrive shortly after the sidecar becomes reachable.
+        .task(id: model.connection) { await refreshRemoteAccess() }
+    }
+
+    private func refreshRemoteAccess() async {
+        access = await model.remoteAccessStatus()
+        var attempts = 0
+        while TailscaleAccessPreference.isEnabled,
+            access.tailnetHostname == nil,
+            attempts < 5,
+            !Task.isCancelled
+        {
+            try? await Task.sleep(for: .seconds(2))
+            access = await model.remoteAccessStatus()
+            attempts += 1
+        }
     }
 
     private var serverCaption: String {

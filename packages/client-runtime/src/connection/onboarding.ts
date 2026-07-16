@@ -94,6 +94,7 @@ export const preparePairingRegistration = Effect.fn(
     yield* resolveAdoptableAdvertisedEndpoint({
       advertisedEndpoints: descriptor.advertisedEndpoints,
       currentHttpBaseUrl: target.httpBaseUrl,
+      expectedEnvironmentId: descriptor.environmentId,
     }),
     () => ({ httpBaseUrl: target.httpBaseUrl, wsBaseUrl: target.wsBaseUrl }),
   );

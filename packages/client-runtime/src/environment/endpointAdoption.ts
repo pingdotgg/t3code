@@ -1,16 +1,29 @@
-import type { AdvertisedEndpoint } from "@t3tools/contracts";
+import {
+  ExecutionEnvironmentDescriptor,
+  type AdvertisedEndpoint,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-import { deriveWsBaseUrl, environmentEndpointUrl, normalizeHttpBaseUrl } from "./endpoint.ts";
+import { environmentEndpointUrl, normalizeHttpBaseUrl } from "./endpoint.ts";
 
 export const ADVERTISED_ENDPOINT_PROBE_TIMEOUT_MS = 2_500;
 
 export interface AdoptableEndpoint {
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
+}
+
+function validateWsBaseUrl(rawValue: string): string {
+  const url = new URL(rawValue);
+  if (url.protocol !== "ws:" && url.protocol !== "wss:") {
+    throw new Error(`Endpoint must use WebSocket or secure WebSocket. Received ${url.protocol}`);
+  }
+  return rawValue;
 }
 
 /**
@@ -32,10 +45,11 @@ export function advertisedDefaultEndpoint(input: {
   }
   try {
     const httpBaseUrl = normalizeHttpBaseUrl(candidate.httpBaseUrl);
+    const wsBaseUrl = validateWsBaseUrl(candidate.wsBaseUrl);
     if (httpBaseUrl === normalizeHttpBaseUrl(input.currentHttpBaseUrl)) {
       return Option.none();
     }
-    return Option.some({ httpBaseUrl, wsBaseUrl: deriveWsBaseUrl(httpBaseUrl) });
+    return Option.some({ httpBaseUrl, wsBaseUrl });
   } catch {
     return Option.none();
   }
@@ -43,6 +57,7 @@ export function advertisedDefaultEndpoint(input: {
 
 export const probeEnvironmentEndpoint = (input: {
   readonly httpBaseUrl: string;
+  readonly expectedEnvironmentId: EnvironmentId;
   readonly timeoutMs?: number;
 }): Effect.Effect<boolean, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
@@ -57,10 +72,18 @@ export const probeEnvironmentEndpoint = (input: {
           Duration.millis(input.timeoutMs ?? ADVERTISED_ENDPOINT_PROBE_TIMEOUT_MS),
         ),
       );
-    return Option.match(response, {
-      onNone: () => false,
-      onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
-    });
+    if (Option.isNone(response)) {
+      return false;
+    }
+    const httpResponse = response.value;
+    if (httpResponse.status < 200 || httpResponse.status >= 300) {
+      return false;
+    }
+    const descriptor = yield* httpResponse.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(ExecutionEnvironmentDescriptor)),
+      Effect.orElseSucceed(() => null),
+    );
+    return descriptor !== null && descriptor.environmentId === input.expectedEnvironmentId;
   }).pipe(
     Effect.orElseSucceed(() => false),
     Effect.withSpan("clientRuntime.environment.probeEnvironmentEndpoint"),
@@ -78,6 +101,7 @@ export const resolveAdoptableAdvertisedEndpoint = Effect.fn(
 )(function* (input: {
   readonly advertisedEndpoints: ReadonlyArray<AdvertisedEndpoint> | undefined;
   readonly currentHttpBaseUrl: string;
+  readonly expectedEnvironmentId: EnvironmentId;
   readonly probeTimeoutMs?: number;
 }) {
   const candidate = advertisedDefaultEndpoint(input);
@@ -86,6 +110,7 @@ export const resolveAdoptableAdvertisedEndpoint = Effect.fn(
   }
   const reachable = yield* probeEnvironmentEndpoint({
     httpBaseUrl: candidate.value.httpBaseUrl,
+    expectedEnvironmentId: input.expectedEnvironmentId,
     ...(input.probeTimeoutMs === undefined ? {} : { timeoutMs: input.probeTimeoutMs }),
   });
   return reachable ? candidate : Option.none<AdoptableEndpoint>();

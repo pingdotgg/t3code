@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -56,16 +57,17 @@ describe("advertisedDefaultEndpoint", () => {
     ).toEqual(Option.none());
   });
 
-  it("returns the normalized default with a derived websocket URL", () => {
+  it("preserves the advertised websocket URL", () => {
+    const endpoint = { ...TAILNET_ENDPOINT, wsBaseUrl: "wss://socket.tailnet.example:4443/ws" };
     expect(
       advertisedDefaultEndpoint({
-        advertisedEndpoints: [TAILNET_ENDPOINT, DIRECT_ENDPOINT],
+        advertisedEndpoints: [endpoint, DIRECT_ENDPOINT],
         currentHttpBaseUrl: "http://192.168.1.10:3773/",
       }),
     ).toEqual(
       Option.some({
         httpBaseUrl: "https://magic.tailnet.example/",
-        wsBaseUrl: "wss://magic.tailnet.example/",
+        wsBaseUrl: "wss://socket.tailnet.example:4443/ws",
       }),
     );
   });
@@ -102,10 +104,51 @@ describe("probeEnvironmentEndpoint", () => {
       const calls: Array<string> = [];
       const reachable = yield* probeEnvironmentEndpoint({
         httpBaseUrl: "https://magic.tailnet.example/",
-      }).pipe(Effect.provide(probeLayer(calls, () => Promise.resolve(Response.json({})))));
+        expectedEnvironmentId: EnvironmentId.make("environment-paired"),
+      }).pipe(
+        Effect.provide(
+          probeLayer(calls, () =>
+            Promise.resolve(
+              Response.json({
+                environmentId: "environment-paired",
+                label: "Paired environment",
+                platform: { os: "linux", arch: "x64" },
+                serverVersion: "0.0.0-test",
+                capabilities: { repositoryIdentity: true },
+              }),
+            ),
+          ),
+        ),
+      );
 
       expect(reachable).toBe(true);
       expect(calls).toEqual(["https://magic.tailnet.example/.well-known/t3/environment"]);
+    }),
+  );
+
+  it.effect("returns false when the descriptor belongs to another environment", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const reachable = yield* probeEnvironmentEndpoint({
+        httpBaseUrl: "https://magic.tailnet.example/",
+        expectedEnvironmentId: EnvironmentId.make("environment-paired"),
+      }).pipe(
+        Effect.provide(
+          probeLayer(calls, () =>
+            Promise.resolve(
+              Response.json({
+                environmentId: "different-environment",
+                label: "Other environment",
+                platform: { os: "linux", arch: "x64" },
+                serverVersion: "0.0.0-test",
+                capabilities: { repositoryIdentity: true },
+              }),
+            ),
+          ),
+        ),
+      );
+
+      expect(reachable).toBe(false);
     }),
   );
 
@@ -114,6 +157,7 @@ describe("probeEnvironmentEndpoint", () => {
       const calls: Array<string> = [];
       const reachable = yield* probeEnvironmentEndpoint({
         httpBaseUrl: "https://magic.tailnet.example/",
+        expectedEnvironmentId: EnvironmentId.make("environment-paired"),
       }).pipe(
         Effect.provide(
           probeLayer(calls, () => Promise.resolve(Response.json({}, { status: 503 }))),
@@ -129,6 +173,7 @@ describe("probeEnvironmentEndpoint", () => {
       const calls: Array<string> = [];
       const reachable = yield* probeEnvironmentEndpoint({
         httpBaseUrl: "https://magic.tailnet.example/",
+        expectedEnvironmentId: EnvironmentId.make("environment-paired"),
       }).pipe(
         Effect.provide(probeLayer(calls, () => Promise.reject(new Error("network unreachable")))),
       );
@@ -145,6 +190,7 @@ describe("resolveAdoptableAdvertisedEndpoint", () => {
       const adopted = yield* resolveAdoptableAdvertisedEndpoint({
         advertisedEndpoints: [DIRECT_ENDPOINT],
         currentHttpBaseUrl: "http://192.168.1.10:3773/",
+        expectedEnvironmentId: EnvironmentId.make("environment-paired"),
       }).pipe(
         Effect.provide(
           remoteHttpClientLayer(((input) => {

@@ -342,7 +342,18 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
 
   const probeFetch = ((input) => {
     probeCalls.push(String(input));
-    return Promise.resolve(Response.json({}, { status: options?.probeStatus ?? 200 }));
+    return Promise.resolve(
+      Response.json(
+        {
+          environmentId: BEARER_TARGET.environmentId,
+          label: BEARER_TARGET.label,
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        },
+        { status: options?.probeStatus ?? 200 },
+      ),
+    );
   }) satisfies typeof fetch;
 
   const cacheLayer = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
