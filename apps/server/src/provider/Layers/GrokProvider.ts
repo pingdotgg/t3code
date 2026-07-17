@@ -161,6 +161,11 @@ const waitForGrokSlashCommands = (
 const discoverGrokModelsViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  /**
+   * Workspace root for `session/new`. Must match live Grok threads so project-local
+   * skills (`.agents/skills`, `.grok/skills`, etc.) match the composer menu.
+   */
+  cwd: string = process.cwd(),
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -168,7 +173,7 @@ const discoverGrokModelsViaAcp = (
       grokSettings,
       environment,
       childProcessSpawner,
-      cwd: process.cwd(),
+      cwd,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
 
@@ -217,6 +222,11 @@ const runGrokVersionCommand = (
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  /**
+   * Server workspace cwd from `ServerConfig` (not `process.cwd()`). Used for ACP
+   * skill/command discovery so the slash menu matches live Grok threads.
+   */
+  cwd: string = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -307,7 +317,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
+  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment, cwd).pipe(
     Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
   );
