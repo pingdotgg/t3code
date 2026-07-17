@@ -6,6 +6,8 @@ import { usePalette } from "../theme.ts";
 export interface ComposerDockContext {
   readonly workspace: string;
   readonly branch: string;
+  readonly onOpenWorkspace?: () => void;
+  readonly onOpenBranch?: () => void;
 }
 
 /**
@@ -46,8 +48,22 @@ export function ComposerDock({
             paddingRight={1}
             flexShrink={0}
           >
-            <text fg={palette.dim}>{clip(context.workspace, contextRoom)}</text>
-            <text fg={palette.dim}>{clip(`branch ${context.branch}`, contextRoom)}</text>
+            <box
+              flexShrink={0}
+              {...(context.onOpenWorkspace ? { onMouseDown: context.onOpenWorkspace } : {})}
+            >
+              <text fg={palette.dim}>
+                {clip(`${context.workspace}${context.onOpenWorkspace ? " ▾" : ""}`, contextRoom)}
+              </text>
+            </box>
+            <box
+              flexShrink={0}
+              {...(context.onOpenBranch ? { onMouseDown: context.onOpenBranch } : {})}
+            >
+              <text fg={palette.dim}>
+                {clip(`branch ${context.branch}${context.onOpenBranch ? " ▾" : ""}`, contextRoom)}
+              </text>
+            </box>
           </box>
         ) : null}
       </box>

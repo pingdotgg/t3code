@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import {
   resolveInitialBranch,
+  resolveNewThreadBranchSelection,
   resolveNewThreadContext,
   validateNewThread,
 } from "./newThread.logic.ts";
@@ -49,6 +50,69 @@ describe("new-thread parity with the web UI", () => {
 
   it("Given refs are loaded, then the current branch is selected for a new-worktree draft", () => {
     expect(resolveInitialBranch(refs, null)).toBe("feature/tui");
+  });
+
+  it("Given a new-worktree draft, when another ref is selected, then it becomes the base without switching a checkout", () => {
+    expect(
+      resolveNewThreadBranchSelection({
+        workspaceMode: "new-worktree",
+        projectCwd: "/repo",
+        currentWorktreePath: "/repo/.t3/worktrees/current",
+        ref: {
+          name: "origin/feature/base",
+          current: false,
+          isDefault: false,
+          isRemote: true,
+          worktreePath: null,
+        } as never,
+      }),
+    ).toEqual({
+      kind: "select-base",
+      branch: "origin/feature/base",
+      worktreePath: null,
+    });
+  });
+
+  it("Given a branch already has a worktree, when it is selected for the current workspace, then that worktree is reused", () => {
+    expect(
+      resolveNewThreadBranchSelection({
+        workspaceMode: "current",
+        projectCwd: "/repo",
+        currentWorktreePath: null,
+        ref: {
+          name: "feature/existing",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/.t3/worktrees/existing",
+        } as never,
+      }),
+    ).toEqual({
+      kind: "reuse-worktree",
+      branch: "feature/existing",
+      worktreePath: "/repo/.t3/worktrees/existing",
+    });
+  });
+
+  it("Given an unchecked-out branch, when it is selected for the current workspace, then the active checkout is switched", () => {
+    expect(
+      resolveNewThreadBranchSelection({
+        workspaceMode: "current",
+        projectCwd: "/repo",
+        currentWorktreePath: "/repo/.t3/worktrees/current",
+        ref: {
+          name: "origin/feature/next",
+          current: false,
+          isDefault: false,
+          isRemote: true,
+          worktreePath: null,
+        } as never,
+      }),
+    ).toEqual({
+      kind: "switch-checkout",
+      branch: "feature/next",
+      checkoutCwd: "/repo/.t3/worktrees/current",
+      worktreePath: "/repo/.t3/worktrees/current",
+    });
   });
 
   it("Given New worktree has no base branch, when validating, then creation is blocked", () => {

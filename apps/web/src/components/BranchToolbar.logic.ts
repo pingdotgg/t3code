@@ -1,9 +1,10 @@
-import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchSelectionTarget,
 } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
@@ -204,35 +205,6 @@ export function resolveLocalCheckoutBranchMismatch(input: {
     return null;
   }
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
-}
-
-export function resolveBranchSelectionTarget(input: {
-  activeProjectCwd: string;
-  activeWorktreePath: string | null;
-  refName: Pick<VcsRef, "isDefault" | "worktreePath">;
-}): {
-  checkoutCwd: string;
-  nextWorktreePath: string | null;
-  reuseExistingWorktree: boolean;
-} {
-  const { activeProjectCwd, activeWorktreePath, refName } = input;
-
-  if (refName.worktreePath) {
-    return {
-      checkoutCwd: refName.worktreePath,
-      nextWorktreePath: refName.worktreePath === activeProjectCwd ? null : refName.worktreePath,
-      reuseExistingWorktree: true,
-    };
-  }
-
-  const nextWorktreePath =
-    activeWorktreePath !== null && refName.isDefault ? null : activeWorktreePath;
-
-  return {
-    checkoutCwd: nextWorktreePath ?? activeProjectCwd,
-    nextWorktreePath,
-    reuseExistingWorktree: false,
-  };
 }
 
 export function shouldIncludeBranchPickerItem(input: {

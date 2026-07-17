@@ -100,6 +100,22 @@ function fakeClient({
   runGitPull = async () => {},
   getAttachmentUrl = async () => null,
   getAttachmentImage = async () => null,
+  listRefs = async () =>
+    ({
+      refs: [
+        {
+          name: "main",
+          current: true,
+          isDefault: true,
+          worktreePath: null,
+        },
+      ],
+      isRepo: true,
+      hasPrimaryRemote: true,
+      nextCursor: null,
+      totalCount: 1,
+    }) as never,
+  switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   listModels = async () =>
     [
       {
@@ -123,6 +139,8 @@ function fakeClient({
   readonly runGitPull?: TuiClient["runGitPull"];
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
   readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
+  readonly listRefs?: TuiClient["listRefs"];
+  readonly switchRef?: TuiClient["switchRef"];
   readonly listModels?: TuiClient["listModels"];
 }): {
   readonly client: TuiClient;
@@ -160,21 +178,8 @@ function fakeClient({
     terminalClose: async () => {},
     listModels,
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
-    listRefs: async () =>
-      ({
-        refs: [
-          {
-            name: "main",
-            current: true,
-            isDefault: true,
-            worktreePath: null,
-          },
-        ],
-        isRepo: true,
-        hasPrimaryRemote: true,
-        nextCursor: null,
-        totalCount: 1,
-      }) as never,
+    listRefs,
+    switchRef,
     getThreadActivities: async () => ({ activities: [], hasMore: false }),
     getAttachmentUrl,
     getAttachmentImage,
@@ -1083,6 +1088,215 @@ describe("ChatView new-thread parity", () => {
     expect(fake.subscribedThreadIds.at(-1)).toBe("t-created");
     expect(frame).not.toContain("new thread");
     expect(frame).not.toContain("create in isolation");
+    setup.renderer.destroy();
+  });
+
+  it("Given a new-thread draft, when the user chooses a new worktree and another base branch, then first send creates it from that branch", async () => {
+    const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      listRefs: async () =>
+        ({
+          refs: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: "/workspace/project-one",
+            },
+            {
+              name: "feature/worktree-base",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+          isRepo: true,
+          hasPrimaryRemote: true,
+          nextCursor: null,
+          totalCount: 2,
+        }) as never,
+      createThread: async (input) => {
+        calls.push(input);
+        return "t-worktree" as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 32,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("n", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("Project workspace ▾") && frame.includes("branch main ▾"),
+    );
+
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("workspace");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Change workspace"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("workspace ▸"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("New worktree ▾"));
+
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("base branch");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Change base branch"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("base branch ▸"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("branch feature/worktree-base ▾"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("create isolated work");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("create isolated work"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => calls.length === 1);
+
+    expect(calls[0]).toMatchObject({
+      branch: "feature/worktree-base",
+      worktreePath: null,
+      createWorktree: true,
+      firstMessage: "create isolated work",
+    });
+    setup.renderer.destroy();
+  });
+
+  it("Given a new-thread draft uses the current checkout, when another branch is selected, then the checkout switches before first send", async () => {
+    const switched: Array<{ cwd: string; refName: string }> = [];
+    const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      listRefs: async () =>
+        ({
+          refs: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: "/workspace/project-one",
+            },
+            {
+              name: "feature/current-checkout",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+          isRepo: true,
+          hasPrimaryRemote: true,
+          nextCursor: null,
+          totalCount: 2,
+        }) as never,
+      switchRef: async (cwd, refName) => {
+        switched.push({ cwd, refName });
+        return { refName } as never;
+      },
+      createThread: async (input) => {
+        calls.push(input);
+        return "t-branch" as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 32,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("n", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("branch main ▾"));
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("change branch");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Change branch"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("branch ▸"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => switched.length === 1);
+    await setup.waitForFrame((frame) => frame.includes("branch feature/current-checkout ▾"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("use selected checkout");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("use selected checkout"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => calls.length === 1);
+
+    expect(switched).toEqual([
+      { cwd: "/workspace/project-one", refName: "feature/current-checkout" },
+    ]);
+    expect(calls[0]).toMatchObject({
+      branch: "feature/current-checkout",
+      worktreePath: null,
+      createWorktree: false,
+    });
     setup.renderer.destroy();
   });
 });

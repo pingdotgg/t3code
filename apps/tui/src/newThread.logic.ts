@@ -1,4 +1,8 @@
 import type { OrchestrationProjectShell, OrchestrationThread, VcsRef } from "@t3tools/contracts";
+import {
+  deriveLocalBranchNameFromRemoteRef,
+  resolveBranchSelectionTarget,
+} from "@t3tools/shared/git";
 
 export type NewThreadWorkspaceMode = "current" | "new-worktree";
 
@@ -55,6 +59,68 @@ export function resolveInitialBranch(
     refs[0]?.name ??
     preferredBranch
   );
+}
+
+export type NewThreadBranchSelection =
+  | {
+      readonly kind: "select-base";
+      readonly branch: string;
+      readonly worktreePath: null;
+    }
+  | {
+      readonly kind: "reuse-worktree";
+      readonly branch: string;
+      readonly worktreePath: string | null;
+    }
+  | {
+      readonly kind: "switch-checkout";
+      readonly branch: string;
+      readonly checkoutCwd: string;
+      readonly worktreePath: string | null;
+    };
+
+/**
+ * Resolve a ref choice using the same rules as the web branch toolbar.
+ * New-worktree drafts only select a base; current-checkout drafts either reuse
+ * an existing worktree or switch the selected checkout before first send.
+ */
+export function resolveNewThreadBranchSelection(input: {
+  readonly workspaceMode: NewThreadWorkspaceMode;
+  readonly projectCwd: string;
+  readonly currentWorktreePath: string | null;
+  readonly ref: VcsRef;
+}): NewThreadBranchSelection {
+  if (input.workspaceMode === "new-worktree") {
+    return {
+      kind: "select-base",
+      branch: input.ref.name,
+      worktreePath: null,
+    };
+  }
+
+  const target = resolveBranchSelectionTarget({
+    activeProjectCwd: input.projectCwd,
+    activeWorktreePath: input.currentWorktreePath,
+    refName: input.ref,
+  });
+  const branch = input.ref.isRemote
+    ? deriveLocalBranchNameFromRemoteRef(input.ref.name)
+    : input.ref.name;
+
+  if (target.reuseExistingWorktree) {
+    return {
+      kind: "reuse-worktree",
+      branch,
+      worktreePath: target.nextWorktreePath,
+    };
+  }
+
+  return {
+    kind: "switch-checkout",
+    branch,
+    checkoutCwd: target.checkoutCwd,
+    worktreePath: target.nextWorktreePath,
+  };
 }
 
 export type NewThreadValidationError =
