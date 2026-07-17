@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -49,8 +50,14 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
-/** Grok emits `available_commands_update` shortly after `session/new` returns. */
+/** Max wait for first/non-empty available_commands_update after session/new. */
 const GROK_ACP_SLASH_COMMAND_WAIT_MS = 2_000;
+/**
+ * After an empty update, briefly watch for a follow-up non-empty "changed"
+ * update without burning the full wait budget (avoids pushing the 15s discovery
+ * timeout when model setup already took most of the window).
+ */
+const GROK_ACP_SLASH_EMPTY_SETTLE_MS = 250;
 const GROK_ACP_SLASH_COMMAND_POLL_MS = 50;
 
 interface GrokAcpDiscoveryResult {
@@ -145,34 +152,40 @@ function buildGrokDiscoveredModelsFromSessionModelState(
 /**
  * Wait for ACP `available_commands_update` during the probe window.
  *
- * - Option.none = no notification yet
- * - Option.some([]) = empty update seen (may be intermediate; ACP can send "changed" later)
- * - Option.some(nonEmpty) = ready to use
- *
- * Returns immediately on a non-empty list. On timeout, returns the latest seen
- * list (including empty) or [] if nothing arrived.
+ * - Option.none = no notification yet → wait up to GROK_ACP_SLASH_COMMAND_WAIT_MS
+ * - Option.some([]) = empty update → wait only GROK_ACP_SLASH_EMPTY_SETTLE_MS more
+ *   for a possible non-empty "changed" update, then accept empty
+ * - Option.some(nonEmpty) = return immediately
  */
 const waitForGrokSlashCommands = (
   slashCommandsRef: Ref.Ref<Option.Option<ReadonlyArray<ServerProviderSlashCommand>>>,
 ) =>
   Effect.gen(function* () {
+    const startedAt = yield* Clock.currentTimeMillis;
+    let emptySeenAt: number | undefined;
+
     while (true) {
+      const now = yield* Clock.currentTimeMillis;
       const commandsOpt = yield* Ref.get(slashCommandsRef);
+
       if (Option.isSome(commandsOpt) && commandsOpt.value.length > 0) {
         return commandsOpt.value;
       }
+
+      if (Option.isSome(commandsOpt) && commandsOpt.value.length === 0) {
+        emptySeenAt ??= now;
+        if (now - emptySeenAt >= GROK_ACP_SLASH_EMPTY_SETTLE_MS) {
+          return commandsOpt.value;
+        }
+      }
+
+      if (now - startedAt >= GROK_ACP_SLASH_COMMAND_WAIT_MS) {
+        return Option.isSome(commandsOpt) ? commandsOpt.value : [];
+      }
+
       yield* Effect.sleep(Duration.millis(GROK_ACP_SLASH_COMMAND_POLL_MS));
     }
-  }).pipe(
-    Effect.timeoutOption(GROK_ACP_SLASH_COMMAND_WAIT_MS),
-    Effect.flatMap((result) =>
-      Option.isSome(result)
-        ? Effect.succeed(result.value)
-        : Ref.get(slashCommandsRef).pipe(
-            Effect.map((commandsOpt) => (Option.isSome(commandsOpt) ? commandsOpt.value : [])),
-          ),
-    ),
-  );
+  });
 
 const discoverGrokModelsViaAcp = (
   grokSettings: GrokSettings,
@@ -214,8 +227,7 @@ const discoverGrokModelsViaAcp = (
     const models = buildGrokDiscoveredModelsFromSessionModelState(
       started.sessionSetupResult.models,
     );
-    // Prefer an already-populated list; otherwise wait the probe window (empty
-    // updates keep waiting so a later non-empty "changed" update can land).
+    // Prefer an already-populated list; otherwise wait (short settle if empty).
     const slashCommandsOpt = yield* Ref.get(slashCommandsRef);
     const slashCommands =
       Option.isSome(slashCommandsOpt) && slashCommandsOpt.value.length > 0
