@@ -591,6 +591,7 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -610,6 +611,7 @@ const probeClaudeCapabilities = (
           settingSources: ["user", "project", "local"],
           allowedTools: [],
           env: claudeEnvironment,
+          ...(cwd ? { cwd } : {}),
           stderr: () => {},
         },
       });
