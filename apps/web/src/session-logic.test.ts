@@ -307,6 +307,33 @@ describe("derivePendingUserInputs", () => {
 
     expect(derivePendingUserInputs(activities)).toEqual([]);
   });
+
+  it("clears a persisted prompt when its provider session has stopped", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-before-provider-stop",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-provider-stop",
+          questions: [
+            {
+              id: "continue",
+              header: "Continue",
+              question: "Continue?",
+              options: [{ label: "yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities, "running")).toHaveLength(1);
+    expect(derivePendingUserInputs(activities, "stopped")).toEqual([]);
+  });
 });
 
 describe("deriveActivePlanState", () => {

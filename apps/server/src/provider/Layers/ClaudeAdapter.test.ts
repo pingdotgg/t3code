@@ -25,6 +25,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Random from "effect/Random";
@@ -220,6 +221,55 @@ function makeDeterministicRandomService(seed = 0x1234_5678): {
     nextDoubleUnsafe: () => nextIntUnsafe() / 0x1_0000_0000,
   };
 }
+
+const beginPendingAskUserQuestion = Effect.fn("beginPendingAskUserQuestion")(function* (
+  adapter: ClaudeAdapterShape,
+  harness: ReturnType<typeof makeHarness>,
+  options: {
+    readonly signal: AbortSignal;
+    readonly toolUseID: string;
+  },
+) {
+  const session = yield* adapter.startSession({
+    threadId: THREAD_ID,
+    provider: ProviderDriverKind.make("claudeAgent"),
+    runtimeMode: "approval-required",
+  });
+  yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+  const canUseTool = harness.getLastCreateQueryInput()?.options.canUseTool;
+  assert.equal(typeof canUseTool, "function");
+  if (!canUseTool) {
+    assert.fail("Expected Claude canUseTool callback");
+  }
+
+  const permissionPromise = canUseTool(
+    "AskUserQuestion",
+    {
+      questions: [
+        {
+          question: "Which path should we take?",
+          header: "Path",
+          options: [{ label: "A", description: "First path" }],
+          multiSelect: false,
+        },
+      ],
+    },
+    options,
+  );
+
+  const requested = yield* Stream.runHead(adapter.streamEvents);
+  assert.equal(requested._tag, "Some");
+  if (requested._tag !== "Some" || requested.value.type !== "user-input.requested") {
+    assert.fail("Expected user-input.requested event");
+  }
+
+  return {
+    session,
+    permissionPromise,
+    requested: requested.value,
+  };
+});
 
 async function readFirstPromptText(
   input:
@@ -3679,6 +3729,216 @@ describe("ClaudeAdapterLive", () => {
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
       assert.deepEqual(permissionResult, {
+        behavior: "deny",
+        message: "User cancelled tool execution.",
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("resolves pending AskUserQuestion prompts when the session stops", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionPromise = canUseTool(
+        "AskUserQuestion",
+        {
+          questions: [
+            {
+              question: "Which path should we take?",
+              header: "Path",
+              options: [{ label: "A", description: "First path" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-ask-stop",
+        },
+      );
+
+      const requestedEvent = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(requestedEvent._tag, "Some");
+      if (requestedEvent._tag !== "Some" || requestedEvent.value.type !== "user-input.requested") {
+        assert.fail("Expected user-input.requested event");
+        return;
+      }
+
+      yield* adapter.stopSession(session.threadId);
+
+      const resolvedEvent = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(resolvedEvent._tag, "Some");
+      if (resolvedEvent._tag !== "Some" || resolvedEvent.value.type !== "user-input.resolved") {
+        assert.fail("Expected user-input.resolved event");
+        return;
+      }
+      assert.equal(resolvedEvent.value.requestId, requestedEvent.value.requestId);
+      assert.deepEqual(resolvedEvent.value.payload.answers, {});
+
+      const permissionResult = yield* Effect.promise(() => permissionPromise);
+      assert.deepEqual(permissionResult, {
+        behavior: "deny",
+        message: "User cancelled tool execution.",
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("resolves an AskUserQuestion exactly once when abort races session stop", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const controller = new AbortController();
+      const pending = yield* beginPendingAskUserQuestion(adapter, harness, {
+        signal: controller.signal,
+        toolUseID: "tool-ask-abort-stop",
+      });
+
+      controller.abort();
+      yield* adapter.stopSession(pending.session.threadId);
+
+      const events = yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runCollect);
+      assert.deepEqual(
+        Array.from(events, (event) => event.type),
+        ["user-input.resolved", "session.exited"],
+      );
+      const resolved = events[0];
+      assert.equal(resolved?.type, "user-input.resolved");
+      if (resolved?.type === "user-input.resolved") {
+        assert.equal(resolved.requestId, pending.requested.requestId);
+        assert.deepEqual(resolved.payload.answers, {});
+        assert.deepEqual(resolved.providerRefs, {
+          providerItemId: ProviderItemId.make("tool-ask-abort-stop"),
+        });
+      }
+
+      assert.deepEqual(yield* Effect.promise(() => pending.permissionPromise), {
+        behavior: "deny",
+        message: "User cancelled tool execution.",
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect.each([
+    { exitKind: "normal" as const, expectedTypes: ["user-input.resolved", "session.exited"] },
+    {
+      exitKind: "crash" as const,
+      expectedTypes: ["runtime.error", "turn.completed", "user-input.resolved", "session.exited"],
+    },
+  ])("settles a pending AskUserQuestion on provider $exitKind", ({ exitKind, expectedTypes }) => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const pending = yield* beginPendingAskUserQuestion(adapter, harness, {
+        signal: new AbortController().signal,
+        toolUseID: `tool-ask-provider-${exitKind}`,
+      });
+
+      if (exitKind === "crash") {
+        harness.query.fail(new Error("provider crashed"));
+      } else {
+        harness.query.finish();
+      }
+
+      const events = yield* Stream.take(adapter.streamEvents, expectedTypes.length).pipe(
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        Array.from(events, (event) => event.type),
+        expectedTypes,
+      );
+      assert.equal(
+        Array.from(events).filter((event) => event.type === "user-input.resolved").length,
+        1,
+      );
+      assert.equal(yield* adapter.hasSession(pending.session.threadId), false);
+      assert.deepEqual(yield* Effect.promise(() => pending.permissionPromise), {
+        behavior: "deny",
+        message: "User cancelled tool execution.",
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects duplicate user-input responses without publishing twice", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const pending = yield* beginPendingAskUserQuestion(adapter, harness, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-ask-duplicate",
+      });
+      const requestId = ApprovalRequestId.make(pending.requested.requestId!);
+      const answers = { "Which path should we take?": "A" };
+
+      yield* adapter.respondToUserInput(pending.session.threadId, requestId, answers);
+      const duplicateExit = yield* Effect.exit(
+        adapter.respondToUserInput(pending.session.threadId, requestId, answers),
+      );
+      assert.equal(Exit.isFailure(duplicateExit), true);
+
+      const resolved = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(resolved._tag, "Some");
+      if (resolved._tag === "Some") {
+        assert.equal(resolved.value.type, "user-input.resolved");
+      }
+      const permissionResult = yield* Effect.promise(() => pending.permissionPromise);
+      assert.equal(permissionResult.behavior, "allow");
+
+      yield* adapter.stopSession(pending.session.threadId);
+      const exited = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(exited._tag, "Some");
+      if (exited._tag === "Some") {
+        assert.equal(exited.value.type, "session.exited");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("settles pending user input during adapter-wide cleanup", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const pending = yield* beginPendingAskUserQuestion(adapter, harness, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-ask-stop-all",
+      });
+      yield* adapter.stopAll();
+
+      const events = yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runCollect);
+      assert.deepEqual(
+        Array.from(events, (event) => event.type),
+        ["user-input.resolved", "session.exited"],
+      );
+      assert.deepEqual(yield* Effect.promise(() => pending.permissionPromise), {
         behavior: "deny",
         message: "User cancelled tool execution.",
       } satisfies PermissionResult);
