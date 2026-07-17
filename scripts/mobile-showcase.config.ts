@@ -3,9 +3,11 @@ import { SHOWCASE_SCENES, type ShowcaseScene } from "./mobile-showcase-environme
 export { SHOWCASE_SCENES };
 export type { ShowcaseScene };
 
+export type ShowcaseAppearance = "light" | "dark";
+
 export interface ShowcaseStoreAssetSpec {
   readonly store: "apple" | "google-play";
-  /** Upload-ready directory relative to ShowcaseConfig.outputDirectory. */
+  /** Device directory relative to ShowcaseConfig.outputDirectory. */
   readonly directory: string;
   readonly width: number;
   readonly height: number;
@@ -21,7 +23,8 @@ export interface ShowcaseIosDevice {
   readonly simulator: string;
   /** Device type used to create a disposable simulator when the named one is absent. */
   readonly simulatorDeviceType?: string;
-  readonly appearance: "light" | "dark";
+  /** Appearance used when the CLI does not pass --appearance. */
+  readonly appearance: ShowcaseAppearance;
   readonly scenes: ReadonlyArray<ShowcaseScene>;
   readonly storeAsset: ShowcaseStoreAssetSpec;
 }
@@ -31,7 +34,8 @@ export interface ShowcaseAndroidDevice {
   readonly platform: "android";
   /** Exact name from `emulator -list-avds`. */
   readonly avd: string;
-  readonly appearance: "light" | "dark";
+  /** Appearance used when the CLI does not pass --appearance. */
+  readonly appearance: ShowcaseAppearance;
   /** Native ABI used by the AVD, from its config.ini `abi.type`. */
   readonly abi?: "arm64-v8a" | "x86_64" | "x86" | "armeabi-v7a";
   readonly scenes: ReadonlyArray<ShowcaseScene>;

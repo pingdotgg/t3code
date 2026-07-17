@@ -12,6 +12,7 @@ import * as NodeURL from "node:url";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
+  type ShowcaseAppearance,
   type ShowcaseAndroidDevice,
   type ShowcaseConfig,
   type ShowcaseDevice,
@@ -71,6 +72,7 @@ interface CliOptions {
   readonly platforms: ReadonlySet<ShowcaseDevice["platform"]>;
   readonly deviceIds: ReadonlySet<string>;
   readonly scenes: ReadonlySet<ShowcaseScene>;
+  readonly appearances: ReadonlySet<ShowcaseAppearance>;
   readonly skipBuild: boolean;
   readonly skipMetro: boolean;
   readonly keepRunning: boolean;
@@ -81,6 +83,7 @@ interface CliOptions {
 export interface ShowcaseCapture {
   readonly device: ShowcaseDevice;
   readonly scenes: ReadonlyArray<ShowcaseScene>;
+  readonly appearance: ShowcaseAppearance;
 }
 
 interface IosCaptureCleanup {
@@ -215,8 +218,11 @@ export function validateStoreAssetCount(
   }
 }
 
-function storeAssetDirectory(outputDirectory: string, device: ShowcaseDevice): string {
-  return NodePath.join(outputDirectory, device.storeAsset.directory);
+export function showcaseCaptureDirectory(
+  outputDirectory: string,
+  capture: Pick<ShowcaseCapture, "device" | "appearance">,
+): string {
+  return NodePath.join(outputDirectory, capture.device.storeAsset.directory, capture.appearance);
 }
 
 async function finalizeCapture(destination: string, device: ShowcaseDevice): Promise<void> {
@@ -237,7 +243,7 @@ async function validateCaptureSet(
   outputDirectory: string,
   requireMinimum: boolean,
 ): Promise<void> {
-  const directory = storeAssetDirectory(outputDirectory, capture.device);
+  const directory = showcaseCaptureDirectory(outputDirectory, capture);
   const files = (await NodeFSP.readdir(directory)).filter((file) => file.endsWith(".png")).sort();
   const expectedFiles = capture.scenes.map((scene) => `${scene}.png`).sort();
   const missingFiles = expectedFiles.filter((file) => !files.includes(file));
@@ -266,6 +272,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
   const platforms = new Set<ShowcaseDevice["platform"]>();
   const deviceIds = new Set<string>();
   const scenes = new Set<ShowcaseScene>();
+  const appearances = new Set<ShowcaseAppearance>();
   let skipBuild = false;
   let skipMetro = false;
   let keepRunning = false;
@@ -296,6 +303,18 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
       }
       scenes.add(value as ShowcaseScene);
       index += 1;
+    } else if (argument === "--appearance") {
+      const value = argumentValue(args, index, argument);
+      if (value !== "light" && value !== "dark" && value !== "both") {
+        throw new Error(`Unsupported appearance '${value}'. Use light, dark, or both.`);
+      }
+      if (value === "both") {
+        appearances.add("light");
+        appearances.add("dark");
+      } else {
+        appearances.add(value);
+      }
+      index += 1;
     } else if (argument === "--skip-build") {
       skipBuild = true;
     } else if (argument === "--skip-metro") {
@@ -317,6 +336,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
     platforms,
     deviceIds,
     scenes,
+    appearances,
     skipBuild,
     skipMetro,
     keepRunning,
@@ -327,18 +347,23 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
 
 export function planShowcaseCaptures(
   config: ShowcaseConfig,
-  options: Pick<CliOptions, "platforms" | "deviceIds" | "scenes">,
+  options: Pick<CliOptions, "platforms" | "deviceIds" | "scenes" | "appearances">,
 ): ReadonlyArray<ShowcaseCapture> {
   const captures = config.devices
     .filter((device) => options.platforms.size === 0 || options.platforms.has(device.platform))
     .filter((device) => options.deviceIds.size === 0 || options.deviceIds.has(device.id))
-    .map((device) => ({
-      device,
-      scenes:
-        options.scenes.size === 0
-          ? device.scenes
-          : device.scenes.filter((scene) => options.scenes.has(scene)),
-    }))
+    .flatMap((device) => {
+      const appearances =
+        options.appearances.size === 0 ? [device.appearance] : options.appearances;
+      return [...appearances].map((appearance) => ({
+        device,
+        appearance,
+        scenes:
+          options.scenes.size === 0
+            ? device.scenes
+            : device.scenes.filter((scene) => options.scenes.has(scene)),
+      }));
+    })
     .filter((capture) => capture.scenes.length > 0);
 
   const knownDeviceIds = new Set(config.devices.map((device) => device.id));
@@ -363,6 +388,8 @@ Options:
   --platform ios|android|all  Capture one platform (repeatable)
   --device <id>              Capture one configured device (repeatable)
   --scene <name>             Capture one scene (repeatable)
+  --appearance light|dark|both
+                             Override the configured appearance
   --skip-build               Reuse the existing simulator app / debug APK
   --skip-metro               Reuse an already running showcase Metro server
   --keep-running             Leave devices and Metro running after capture
@@ -375,7 +402,7 @@ Configured devices:
 ${config.devices
   .map((device) => {
     const target = device.platform === "ios" ? device.simulator : device.avd;
-    return `  ${device.id.padEnd(18)} ${device.platform.padEnd(8)} ${target} -> ${device.storeAsset.directory} (${device.storeAsset.width}×${device.storeAsset.height}) [${device.scenes.join(", ")}]`;
+    return `  ${device.id.padEnd(18)} ${device.platform.padEnd(8)} ${target} -> ${device.storeAsset.directory}/{light|dark} (${device.storeAsset.width}×${device.storeAsset.height}, default ${device.appearance}) [${device.scenes.join(", ")}]`;
   })
   .join("\n")}
 `);
@@ -728,8 +755,8 @@ async function ensureIosSimulator(device: ShowcaseIosDevice): Promise<{
   };
 }
 
-async function normalizeIosSimulator(device: ShowcaseIosDevice, udid: string): Promise<void> {
-  await runCommand("xcrun", ["simctl", "ui", udid, "appearance", device.appearance]);
+async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: string): Promise<void> {
+  await runCommand("xcrun", ["simctl", "ui", udid, "appearance", appearance]);
   await runCommand("xcrun", [
     "simctl",
     "status_bar",
@@ -792,7 +819,7 @@ async function captureIos(
   }
   await runCommand("xcrun", ["simctl", "boot", simulator.udid]);
   await runCommand("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"]);
-  await normalizeIosSimulator(capture.device, simulator.udid);
+  await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
     await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
       () => undefined,
@@ -869,7 +896,7 @@ async function captureIos(
     }
     await delay(scene === "review" ? Math.max(config.settleDelayMs, 8_000) : config.settleDelayMs);
     const destination = NodePath.join(
-      storeAssetDirectory(outputDirectory, capture.device),
+      showcaseCaptureDirectory(outputDirectory, capture),
       `${scene}.png`,
     );
     await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
@@ -922,18 +949,13 @@ async function waitForAndroidSerial(avd: string, timeoutMs = 120_000): Promise<s
 
 async function normalizeAndroidEmulator(
   device: ShowcaseAndroidDevice,
+  appearance: ShowcaseAppearance,
   serial: string,
 ): Promise<void> {
   await runAdb(serial, ["shell", "settings", "put", "global", "window_animation_scale", "0"]);
   await runAdb(serial, ["shell", "settings", "put", "global", "transition_animation_scale", "0"]);
   await runAdb(serial, ["shell", "settings", "put", "global", "animator_duration_scale", "0"]);
-  await runAdb(serial, [
-    "shell",
-    "cmd",
-    "uimode",
-    "night",
-    device.appearance === "dark" ? "yes" : "no",
-  ]);
+  await runAdb(serial, ["shell", "cmd", "uimode", "night", appearance === "dark" ? "yes" : "no"]);
   await runAdb(serial, ["shell", "settings", "put", "system", "time_12_24", "12"]);
   await runAdb(serial, ["emu", "power", "capacity", "100"]);
   await runAdb(serial, ["shell", "settings", "put", "global", "sysui_demo_allowed", "1"]);
@@ -1068,7 +1090,7 @@ async function captureAndroid(
       throw error;
     }));
   registerCleanup({ device: capture.device, serial, startedByRunner });
-  await normalizeAndroidEmulator(capture.device, serial);
+  await normalizeAndroidEmulator(capture.device, capture.appearance, serial);
   if (apkPath) {
     await runAdb(serial, ["install", "-r", apkPath]);
   }
@@ -1099,7 +1121,7 @@ async function captureAndroid(
     await waitForAndroidShowcaseScene(serial, scene);
     await delay(Math.max(config.settleDelayMs, scene === "review" ? 8_000 : 5_000));
     const destination = NodePath.join(
-      storeAssetDirectory(outputDirectory, capture.device),
+      showcaseCaptureDirectory(outputDirectory, capture),
       `${scene}.png`,
     );
     const png = await new Promise<Buffer>((resolve, reject) => {
@@ -1162,7 +1184,7 @@ async function main(): Promise<void> {
   const metroHost = hasIos ? lanIpv4Address() : "127.0.0.1";
   await NodeFSP.mkdir(outputDirectory, { recursive: true });
   for (const capture of captures) {
-    const directory = storeAssetDirectory(outputDirectory, capture.device);
+    const directory = showcaseCaptureDirectory(outputDirectory, capture);
     await NodeFSP.rm(directory, { recursive: true, force: true });
     await NodeFSP.mkdir(directory, { recursive: true });
   }

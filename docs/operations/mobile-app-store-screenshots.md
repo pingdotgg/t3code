@@ -28,7 +28,7 @@ The command:
 4. Starts an isolated Metro server, builds the selected native apps, and boots each device.
 5. Pairs each clean app installation with Moonbase Terminal, Suspense Station, and Kernel Cabin.
 6. Navigates to the real application route for every requested scene.
-7. Normalizes appearance and status bars, converts captures to 24-bit RGB PNGs without alpha, and
+7. Sets the requested system appearance and normalizes status bars, converts captures to 24-bit RGB PNGs without alpha, and
    validates dimensions, aspect ratio, file size, and screenshot count before succeeding.
 8. Writes store-ready folders beneath `artifacts/app-store/screenshots/` that can be uploaded
    directly to App Store Connect or Google Play Console.
@@ -49,38 +49,39 @@ worktree cannot accidentally provide the bundle being photographed.
 
 The default matrix is:
 
-| Output folder            | Capture target            | Upload dimensions | Store slot                                |
-| ------------------------ | ------------------------- | ----------------- | ----------------------------------------- |
-| `apple/iphone-6.9/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
-| `apple/iphone-6.5/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
-| `apple/ipad-13/`         | iPad Pro 13-inch (M5)     | 2064×2752         | App Store Connect iPad 13-inch            |
-| `google-play/phone/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
-| `google-play/tablet-7/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
-| `google-play/tablet-10/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
+| Output folder                         | Capture target            | Upload dimensions | Store slot                                |
+| ------------------------------------- | ------------------------- | ----------------- | ----------------------------------------- |
+| `apple/iphone-6.9/{light,dark}/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
+| `apple/iphone-6.5/{light,dark}/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
+| `apple/ipad-13/{light,dark}/`         | iPad Pro 13-inch (M5)     | 2064×2752         | App Store Connect iPad 13-inch            |
+| `google-play/phone/{light,dark}/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
+| `google-play/tablet-7/{light,dark}/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
+| `google-play/tablet-10/{light,dark}/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
 
 Each target captures thread, terminal, review, thread list, and environments, producing 30 PNG
-files in a complete matrix. Five screenshots satisfy the configured Apple limit of 1–10, Google
+files for one appearance or 60 for both. Each appearance folder's five screenshots satisfy the configured Apple limit of 1–10, Google
 phone requirement of 2–8, and Google tablet recommendation/slot minimum of 4 with a maximum of 8.
 
 The generated tree is deliberately aligned with the store upload fields:
 
     artifacts/app-store/screenshots/
     ├── apple/
-    │   ├── iphone-6.9/{thread,terminal,review,threads,environments}.png
-    │   ├── iphone-6.5/{thread,terminal,review,threads,environments}.png
-    │   └── ipad-13/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.9/{light,dark}/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.5/{light,dark}/{thread,terminal,review,threads,environments}.png
+    │   └── ipad-13/{light,dark}/{thread,terminal,review,threads,environments}.png
     └── google-play/
-        ├── phone/{thread,terminal,review,threads,environments}.png
-        ├── tablet-7/{thread,terminal,review,threads,environments}.png
-        └── tablet-10/{thread,terminal,review,threads,environments}.png
+        ├── phone/{light,dark}/{thread,terminal,review,threads,environments}.png
+        ├── tablet-7/{light,dark}/{thread,terminal,review,threads,environments}.png
+        └── tablet-10/{light,dark}/{thread,terminal,review,threads,environments}.png
 
 Edit [mobile-showcase.config.ts](../../scripts/mobile-showcase.config.ts) to change simulator or AVD
 names, light/dark appearance, scenes, output directory, capture delay, Android ABI, or viewport.
 
 ## Capture in GitHub Actions
 
-Run the `Mobile Showcase Screenshots` workflow from GitHub's Actions tab and choose `all`, `ios`, or
-`android`. The default `all` dispatch runs iOS and Android concurrently: iPhone and iPad capture on a
+Run the `Mobile Showcase Screenshots` workflow from GitHub's Actions tab, choose `all`, `ios`, or
+`android`, and select `light`, `dark`, or `both`. The default dispatch captures both appearances and
+runs iOS and Android concurrently: iPhone and iPad capture on a
 12-vCPU Blacksmith macOS runner, while Android phone, 7-inch tablet, and 10-inch tablet capture on a
 16-vCPU Blacksmith Linux runner with a KVM-accelerated x86_64 emulator.
 
@@ -99,6 +100,12 @@ Capture one scene or device:
 
     pnpm screenshots:mobile --device iphone-6.9 --scene thread
     pnpm screenshots:mobile --platform android --scene review
+
+Override the configured appearance or capture both variants:
+
+    pnpm screenshots:mobile --appearance light
+    pnpm screenshots:mobile --appearance dark
+    pnpm screenshots:mobile --appearance both
 
 Reuse the native build and retain the disposable environment:
 

@@ -12,6 +12,15 @@ on:
           - all
           - ios
           - android
+      appearance:
+        description: System appearances to capture
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - dark
+          - light
 
 permissions:
   contents: read
@@ -44,10 +53,10 @@ jobs:
           "$vp_pnpm_bin/pnpm" --version
 
       - name: Capture iOS showcase
-        run: pnpm screenshots:mobile --platform ios
+        run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}"
 
       - name: Validate App Store Connect assets
-        run: pnpm screenshots:mobile --platform ios --validate-only
+        run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}" --validate-only
 
       - name: Upload iOS screenshots
         if: always()
@@ -110,10 +119,10 @@ jobs:
           cores: 8
           ram-size: 4096M
           disable-animations: false
-          script: pnpm screenshots:mobile --platform android
+          script: pnpm screenshots:mobile --platform android --appearance "${{ inputs.appearance }}"
 
       - name: Validate Google Play assets
-        run: pnpm screenshots:mobile --platform android --validate-only
+        run: pnpm screenshots:mobile --platform android --appearance "${{ inputs.appearance }}" --validate-only
 
       - name: Upload Android screenshots
         if: always()

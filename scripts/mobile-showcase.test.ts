@@ -21,6 +21,7 @@ import {
   readPngMetadata,
   resolveAndroidSdkRoot,
   selectLanIpv4Address,
+  showcaseCaptureDirectory,
   showcaseSceneUrl,
   validateStoreAsset,
   validateStoreAssetCount,
@@ -77,12 +78,22 @@ it("parses repeatable capture filters", () => {
     "phone",
     "--scene",
     "review",
+    "--appearance",
+    "both",
     "--skip-build",
   ]);
   assert.deepStrictEqual([...options.platforms], ["ios"]);
   assert.deepStrictEqual([...options.deviceIds], ["phone"]);
   assert.deepStrictEqual([...options.scenes], ["review"]);
+  assert.deepStrictEqual([...options.appearances], ["light", "dark"]);
   assert.equal(options.skipBuild, true);
+});
+
+it("rejects unsupported system appearances", () => {
+  assert.throws(
+    () => parseShowcaseCliArgs(["--appearance", "sepia"]),
+    /Unsupported appearance 'sepia'/u,
+  );
 });
 
 it("parses validation-only mode", () => {
@@ -117,8 +128,28 @@ it("plans only scenes supported by each selected device", () => {
   const options = parseShowcaseCliArgs(["--platform", "all", "--scene", "terminal"]);
   const captures = planShowcaseCaptures(config, options);
   assert.deepStrictEqual(
-    captures.map((capture) => ({ id: capture.device.id, scenes: capture.scenes })),
-    [{ id: "pixel", scenes: ["terminal"] }],
+    captures.map((capture) => ({
+      id: capture.device.id,
+      appearance: capture.appearance,
+      scenes: capture.scenes,
+    })),
+    [{ id: "pixel", appearance: "light", scenes: ["terminal"] }],
+  );
+});
+
+it("expands both appearances into independent upload-ready directories", () => {
+  const options = parseShowcaseCliArgs(["--device", "phone", "--appearance", "both"]);
+  const captures = planShowcaseCaptures(config, options);
+
+  assert.deepStrictEqual(
+    captures.map((capture) => ({
+      appearance: capture.appearance,
+      directory: showcaseCaptureDirectory("/captures", capture),
+    })),
+    [
+      { appearance: "light", directory: "/captures/apple/iphone-test/light" },
+      { appearance: "dark", directory: "/captures/apple/iphone-test/dark" },
+    ],
   );
 });
 
