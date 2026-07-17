@@ -68,8 +68,14 @@ authenticated.
   to the host, so this produces an arm64 DMG on Apple Silicon. Use `dist:desktop:dmg:arm64` or
   `dist:desktop:dmg:x64`, or pass `--arch <arm64|x64|universal>`, to force one.
 - `vp run dist:desktop:linux`: Builds a Linux AppImage into `./release`.
+- `vp run dist:desktop:deb`: Builds a Debian/Ubuntu `.deb` into `./release`.
+- `vp run dist:desktop:rpm`: Builds a Fedora/RHEL `.rpm` into `./release`. Needs `rpmbuild` on the
+  host; the release workflow therefore ships the `.deb` only.
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.
+
+`--target` accepts a comma-separated list for Linux, so `--target AppImage,deb` emits both packages
+from one electron-builder run. That is what the release workflow uses.
 
 ### Desktop `.dmg` packaging notes
 
