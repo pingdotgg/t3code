@@ -401,6 +401,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
+      ...(settings.enableBuiltInBrowser !== DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser
+        ? ["Built-in browser"]
+        : []),
       ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
@@ -434,6 +437,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.enableBuiltInBrowser,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
@@ -459,6 +463,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableBuiltInBrowser: DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
@@ -691,6 +696,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Built-in browser"
+          description="Allow agents to use T3 Code's browser tools. Applies to new agent sessions."
+          resetAction={
+            settings.enableBuiltInBrowser !== DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser ? (
+              <SettingResetButton
+                label="built-in browser"
+                onClick={() =>
+                  updateSettings({
+                    enableBuiltInBrowser: DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableBuiltInBrowser}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableBuiltInBrowser: Boolean(checked) })
+              }
+              aria-label="Allow agents to use the built-in browser"
             />
           }
         />
