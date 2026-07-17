@@ -292,7 +292,7 @@ function convertToolbarChild(child: ReactNode): NativeStackHeaderItem | null {
   if (typeName === "NativeHeaderToolbarButton") {
     return {
       type: "button",
-      label: "",
+      label: typeof child.props.label === "string" ? child.props.label : "",
       accessibilityLabel:
         typeof child.props.accessibilityLabel === "string"
           ? child.props.accessibilityLabel
@@ -390,6 +390,7 @@ function NativeHeaderToolbarButton(_props: {
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
   readonly icon?: string;
+  readonly label?: string;
   readonly onPress?: () => void;
   readonly separateBackground?: boolean;
   readonly tintColor?: ColorValue;
