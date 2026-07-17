@@ -15,7 +15,47 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+function SidebarUpdateReleaseNotesTooltip({
+  state,
+  tooltip,
+}: {
+  readonly state: NonNullable<ReturnType<typeof useDesktopUpdateState>>;
+  readonly tooltip: string;
+}) {
+  if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
+    return <>{tooltip}</>;
+  }
+
+  return (
+    <div className="w-120 max-w-[calc(100vw-2rem)] text-left">
+      <div className="px-1">
+        <div className="text-sm leading-5 font-medium">{tooltip}</div>
+      </div>
+      <div className="pointer-events-auto max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+        {state.releaseNotes.map((releaseNote, index) => (
+          <div key={releaseNote.version}>
+            {index > 0 && <Separator className="my-3 bg-border/60" />}
+            <section>
+              <h3 className="text-muted-foreground text-xs leading-4 font-semibold">
+                {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+              </h3>
+              <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                {releaseNote.items.map((item, itemIndex) => (
+                  <li className="list-disc break-words" key={`${releaseNote.version}-${itemIndex}`}>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function SidebarUpdatePill() {
   const state = useDesktopUpdateState();
@@ -151,7 +191,21 @@ export function SidebarUpdatePill() {
                 </button>
               }
             />
-            <TooltipPopup side="top">{tooltip}</TooltipPopup>
+            <TooltipPopup
+              align="start"
+              className={
+                state?.channel === "nightly" && state.releaseNotes.length > 0
+                  ? "max-w-none text-balance"
+                  : undefined
+              }
+              side="top"
+            >
+              {state ? (
+                <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
+              ) : (
+                tooltip
+              )}
+            </TooltipPopup>
           </Tooltip>
           {action === "download" && (
             <Tooltip>

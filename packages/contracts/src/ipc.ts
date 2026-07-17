@@ -213,12 +213,23 @@ export interface DesktopUpdateState {
   runningUnderArm64Translation: boolean;
   availableVersion: string | null;
   downloadedVersion: string | null;
+  releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   downloadPercent: number | null;
   checkedAt: string | null;
   message: string | null;
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
 }
+
+export interface DesktopUpdateReleaseNote {
+  version: string;
+  items: ReadonlyArray<string>;
+}
+
+export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
+  version: Schema.String,
+  items: Schema.Array(Schema.String),
+});
 
 export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
@@ -230,6 +241,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   runningUnderArm64Translation: Schema.Boolean,
   availableVersion: Schema.NullOr(Schema.String),
   downloadedVersion: Schema.NullOr(Schema.String),
+  releaseNotes: Schema.Array(DesktopUpdateReleaseNoteSchema),
   downloadPercent: Schema.NullOr(Schema.Number),
   checkedAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),

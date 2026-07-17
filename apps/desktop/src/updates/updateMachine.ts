@@ -1,6 +1,7 @@
 import type {
   DesktopRuntimeInfo,
   DesktopUpdateChannel,
+  DesktopUpdateReleaseNote,
   DesktopUpdateState,
 } from "@t3tools/contracts";
 
@@ -29,6 +30,7 @@ export function createInitialDesktopUpdateState(
     runningUnderArm64Translation: runtimeInfo.runningUnderArm64Translation,
     availableVersion: null,
     downloadedVersion: null,
+    releaseNotes: [],
     downloadPercent: null,
     checkedAt: null,
     message: null,
@@ -45,6 +47,7 @@ export function reduceDesktopUpdateStateOnCheckStart(
     ...state,
     status: "checking",
     checkedAt,
+    releaseNotes: [],
     message: null,
     downloadPercent: null,
     errorContext: null,
@@ -72,12 +75,14 @@ export function reduceDesktopUpdateStateOnUpdateAvailable(
   state: DesktopUpdateState,
   version: string,
   checkedAt: string,
+  releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote> = [],
 ): DesktopUpdateState {
   return {
     ...state,
     status: "available",
     availableVersion: version,
     downloadedVersion: null,
+    releaseNotes,
     downloadPercent: null,
     checkedAt,
     message: null,
@@ -95,6 +100,7 @@ export function reduceDesktopUpdateStateOnNoUpdate(
     status: "up-to-date",
     availableVersion: null,
     downloadedVersion: null,
+    releaseNotes: [],
     downloadPercent: null,
     checkedAt,
     message: null,
