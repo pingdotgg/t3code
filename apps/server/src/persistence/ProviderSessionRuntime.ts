@@ -288,11 +288,12 @@ export const make = Effect.gen(function* () {
             Effect.map(Option.some),
             Effect.catch((cause) =>
               Effect.logWarning("provider.session.runtime.row-skipped", {
+                threadId: row.threadId,
                 error: PersistenceDecodeError.fromSchemaError(
                   "ProviderSessionRuntimeRepository.list:decodeRows",
                   cause,
                   { threadId: row.threadId },
-                ),
+                ).message,
               }).pipe(Effect.as(Option.none<ProviderSessionRuntime>())),
             ),
           ),
