@@ -5,11 +5,12 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 
-import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./DesktopLocalEnvironmentAuth.ts";
 
-const config: DesktopBackendManager.DesktopBackendStartConfig = {
+const config = {
   executablePath: "/electron",
   entryPath: "/server/bin.mjs",
   cwd: "/server",
@@ -54,20 +55,17 @@ describe("DesktopLocalEnvironmentAuth", () => {
           ),
         ),
       );
-      const managerLayer = Layer.succeed(DesktopBackendManager.DesktopBackendManager, {
-        start: Effect.void,
-        stop: () => Effect.void,
-        currentConfig: Effect.succeed(Option.some(config)),
-        snapshot: Effect.succeed({
-          desiredRunning: true,
-          ready: true,
-          activePid: Option.none(),
-          restartAttempt: 0,
-          restartScheduled: false,
-        }),
-      });
+      const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Windows"),
+            currentConfig: Effect.succeed(Option.some(config)),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
       const testLayer = DesktopLocalEnvironmentAuth.layer.pipe(
-        Layer.provide(Layer.mergeAll(managerLayer, httpClientLayer)),
+        Layer.provide(Layer.mergeAll(poolLayer, httpClientLayer)),
       );
 
       const [first, second] = yield* Effect.gen(function* () {

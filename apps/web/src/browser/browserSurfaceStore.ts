@@ -12,6 +12,7 @@ export interface BrowserSurfacePresentation {
   readonly visible: boolean;
   readonly content: BrowserSurfaceContentPresentation | null;
   readonly updatedAt: number;
+  readonly owner: symbol | null;
 }
 
 export interface BrowserSurfaceContentPresentation {
@@ -26,9 +27,20 @@ export interface BrowserSurfaceContentPresentation {
 
 interface BrowserSurfaceStoreState {
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
-  readonly present: (tabId: string, rect: BrowserSurfaceRect, visible: boolean) => void;
+  readonly claim: (tabId: string, owner: symbol) => void;
+  readonly present: (
+    tabId: string,
+    owner: symbol,
+    rect: BrowserSurfaceRect,
+    visible: boolean,
+  ) => void;
   readonly presentContent: (tabId: string, content: BrowserSurfaceContentPresentation) => void;
-  readonly hide: (tabId: string) => void;
+  readonly release: (tabId: string, owner: symbol) => void;
+}
+
+export interface BrowserSurfaceLease {
+  readonly present: (rect: BrowserSurfaceRect, visible: boolean) => void;
+  readonly release: () => void;
 }
 
 export function resolveBrowserSurfacePanelRect(
@@ -60,14 +72,32 @@ const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect):
 
 export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) => ({
   byTabId: {},
-  present: (tabId, rect, visible) =>
+  claim: (tabId, owner) =>
     set((state) => {
       const current = state.byTabId[tabId];
+      if (current?.owner === owner) return state;
+      return {
+        byTabId: {
+          ...state.byTabId,
+          [tabId]: {
+            rect: current?.rect ?? null,
+            visible: false,
+            content: current?.content ?? null,
+            updatedAt: Date.now(),
+            owner,
+          },
+        },
+      };
+    }),
+  present: (tabId, owner, rect, visible) =>
+    set((state) => {
+      const current = state.byTabId[tabId];
+      if (current?.owner !== owner) return state;
       if (current && current.visible === visible && rectEquals(current.rect, rect)) return state;
       return {
         byTabId: {
           ...state.byTabId,
-          [tabId]: { rect, visible, content: current?.content ?? null, updatedAt: Date.now() },
+          [tabId]: { ...current, rect, visible, updatedAt: Date.now() },
         },
       };
     }),
@@ -83,6 +113,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
               visible: false,
               content,
               updatedAt: Date.now(),
+              owner: null,
             },
           },
         };
@@ -107,15 +138,33 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
         },
       };
     }),
-  hide: (tabId) =>
+  release: (tabId, owner) =>
     set((state) => {
       const current = state.byTabId[tabId];
-      if (!current || !current.visible) return state;
+      if (current?.owner !== owner) return state;
       return {
         byTabId: {
           ...state.byTabId,
-          [tabId]: { ...current, visible: false, updatedAt: Date.now() },
+          [tabId]: { ...current, visible: false, updatedAt: Date.now(), owner: null },
         },
       };
     }),
 }));
+
+export function acquireBrowserSurface(tabId: string): BrowserSurfaceLease {
+  const owner = Symbol(`browser-surface:${tabId}`);
+  let released = false;
+  useBrowserSurfaceStore.getState().claim(tabId, owner);
+
+  return {
+    present: (rect, visible) => {
+      if (released) return;
+      useBrowserSurfaceStore.getState().present(tabId, owner, rect, visible);
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      useBrowserSurfaceStore.getState().release(tabId, owner);
+    },
+  };
+}
