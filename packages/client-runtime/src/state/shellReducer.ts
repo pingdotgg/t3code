@@ -13,6 +13,8 @@ export function applyShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: OrchestrationShellStreamEvent,
 ): OrchestrationShellSnapshot {
+  if (event.sequence <= snapshot.snapshotSequence) return snapshot;
+
   switch (event.kind) {
     case "project-upserted": {
       const projects = snapshot.projects.some((p) => p.id === event.project.id)

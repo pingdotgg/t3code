@@ -20,13 +20,15 @@ import {
   type PreviewOpenInput,
   type PreviewRefreshInput,
   type PreviewReportStatusInput,
+  type PreviewResizeInput,
+  FILL_PREVIEW_VIEWPORT,
   PreviewSessionLookupError,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import {
+  isPreviewUrlNormalizationError,
   newPreviewTabId,
   normalizePreviewUrl,
-  PreviewUrlNormalizationError,
 } from "@t3tools/shared/preview";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -45,6 +47,9 @@ export class PreviewManager extends Context.Service<
       input: PreviewNavigateInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly reportStatus: (input: PreviewReportStatusInput) => Effect.Effect<void, PreviewError>;
+    readonly resize: (
+      input: PreviewResizeInput,
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
@@ -82,16 +87,22 @@ const sessionsForThread = (
 const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlError> =>
   Effect.try({
     try: () => normalizePreviewUrl(rawUrl),
-    catch: (cause) =>
-      new PreviewInvalidUrlError({
-        rawUrl,
-        detail:
-          cause instanceof PreviewUrlNormalizationError
-            ? cause.detail
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
-      }),
+    catch: (cause) => {
+      if (isPreviewUrlNormalizationError(cause)) {
+        return new PreviewInvalidUrlError({
+          inputLength: cause.inputLength,
+          reason: cause.reason,
+          protocol: cause.protocol,
+          cause,
+        });
+      }
+
+      return new PreviewInvalidUrlError({
+        inputLength: rawUrl.length,
+        reason: "unexpected",
+        cause,
+      });
+    },
   });
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -108,6 +119,7 @@ const buildLoadingSnapshot = (input: {
   navStatus: { _tag: "Loading", url: input.url, title: input.title },
   canGoBack: false,
   canGoForward: false,
+  viewport: FILL_PREVIEW_VIEWPORT,
   updatedAt: input.updatedAt,
 });
 
@@ -121,6 +133,7 @@ const buildIdleSnapshot = (input: {
   navStatus: { _tag: "Idle" },
   canGoBack: false,
   canGoForward: false,
+  viewport: FILL_PREVIEW_VIEWPORT,
   updatedAt: input.updatedAt,
 });
 
@@ -231,6 +244,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             navStatus: { _tag: "Success", url, title: resolvedTitle },
             canGoBack: session.snapshot.canGoBack,
             canGoForward: session.snapshot.canGoForward,
+            viewport: session.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
             updatedAt,
           };
           return {
@@ -263,6 +277,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           navStatus: input.navStatus,
           canGoBack: input.canGoBack,
           canGoForward: input.canGoForward,
+          viewport: session.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
           updatedAt,
         };
         const emit: PreviewEvent =
@@ -292,6 +307,34 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       }),
     );
   });
+
+  const resize: PreviewManager["Service"]["resize"] = Effect.fn("PreviewManager.resize")(
+    function* (input) {
+      return yield* mutateExistingSession(
+        input.threadId,
+        input.tabId,
+        Effect.fn("PreviewManager.resizeSession")(function* (session) {
+          const updatedAt = yield* currentIsoTimestamp;
+          const snapshot: PreviewSessionSnapshot = {
+            ...session.snapshot,
+            viewport: input.viewport,
+            updatedAt,
+          };
+          return {
+            next: { ...session, snapshot },
+            emit: {
+              type: "resized",
+              threadId: session.threadId,
+              tabId: session.tabId,
+              createdAt: snapshot.updatedAt,
+              snapshot,
+            },
+            result: snapshot,
+          };
+        }),
+      );
+    },
+  );
 
   const refresh: PreviewManager["Service"]["refresh"] = Effect.fn("PreviewManager.refresh")(
     function* (input) {
@@ -354,6 +397,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     open,
     navigate,
     reportStatus,
+    resize,
     refresh,
     close,
     list,

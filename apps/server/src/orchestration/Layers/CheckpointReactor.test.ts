@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFileSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import {
   ProviderDriverKind,
@@ -198,7 +198,7 @@ async function waitForEvent(
 }
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
-  return execFileSync("git", args, {
+  return NodeChildProcess.execFileSync("git", args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
@@ -206,11 +206,11 @@ function runGit(cwd: string, args: ReadonlyArray<string>) {
 }
 
 function createGitRepository() {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "t3-checkpoint-handler-"));
+  const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-checkpoint-handler-"));
   runGit(cwd, ["init", "--initial-branch=main"]);
   runGit(cwd, ["config", "user.email", "test@example.com"]);
   runGit(cwd, ["config", "user.name", "Test User"]);
-  fs.writeFileSync(path.join(cwd, "README.md"), "v1\n", "utf8");
+  NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "v1\n", "utf8");
   runGit(cwd, ["add", "."]);
   runGit(cwd, ["commit", "-m", "Initial"]);
   return cwd;
@@ -267,7 +267,7 @@ describe("CheckpointReactor", () => {
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir) {
-        fs.rmSync(dir, { recursive: true, force: true });
+        NodeFS.rmSync(dir, { recursive: true, force: true });
       }
     }
   });
@@ -395,14 +395,14 @@ describe("CheckpointReactor", () => {
           checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
         }),
       );
-      fs.writeFileSync(path.join(cwd, "README.md"), "v2\n", "utf8");
+      NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "v2\n", "utf8");
       await runtime.runPromise(
         checkpointStore.captureCheckpoint({
           cwd,
           checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
         }),
       );
-      fs.writeFileSync(path.join(cwd, "README.md"), "v3\n", "utf8");
+      NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "v3\n", "utf8");
       await runtime.runPromise(
         checkpointStore.captureCheckpoint({
           cwd,
@@ -456,7 +456,7 @@ describe("CheckpointReactor", () => {
       checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
     );
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
     harness.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-1"),
@@ -554,7 +554,7 @@ describe("CheckpointReactor", () => {
       checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
     );
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
 
     harness.provider.emit({
       type: "turn.completed",
@@ -628,7 +628,7 @@ describe("CheckpointReactor", () => {
       checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
     );
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
     harness.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-claude-1"),
@@ -761,7 +761,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
     harness.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-missing-provider-cwd"),
@@ -829,8 +829,8 @@ describe("CheckpointReactor", () => {
   });
 
   it("continues processing runtime events after a single checkpoint runtime failure", async () => {
-    const nonRepositorySessionCwd = fs.mkdtempSync(
-      path.join(os.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
+    const nonRepositorySessionCwd = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
     );
     tempDirs.push(nonRepositorySessionCwd);
 
@@ -963,7 +963,7 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.make("thread-1"),
       numTurns: 1,
     });
-    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(false);

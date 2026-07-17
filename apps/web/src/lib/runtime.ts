@@ -54,10 +54,7 @@ export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner)
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
 
-export const runtimeLayer: Layer.Layer<
-  Layer.Success<RuntimeLayerSource>,
-  Layer.Error<RuntimeLayerSource>
-> = Layer.mergeAll(
+const runtimeLayer = Layer.mergeAll(
   httpClientLayer,
   browserCryptoLayer,
   Socket.layerWebSocketConstructorGlobal,
@@ -68,11 +65,11 @@ export const runtimeLayer: Layer.Layer<
 );
 
 export const runtime: ManagedRuntime.ManagedRuntime<
-  Layer.Success<typeof runtimeLayer>,
-  Layer.Error<typeof runtimeLayer>
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
 > = ManagedRuntime.make(runtimeLayer);
 
 export const runtimeContextLayer: Layer.Layer<
-  Layer.Success<typeof runtimeLayer>,
-  Layer.Error<typeof runtimeLayer>
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
 > = Layer.effectContext(runtime.contextEffect);

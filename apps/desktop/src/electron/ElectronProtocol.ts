@@ -1,8 +1,9 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
@@ -23,14 +24,27 @@ export function getDesktopUrl(isDevelopment: boolean): string {
   return `${getDesktopOrigin(isDevelopment)}/`;
 }
 
-export class ElectronProtocolRegistrationError extends Data.TaggedError(
+export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
   "ElectronProtocolRegistrationError",
-)<{
-  readonly scheme: string;
-  readonly cause: unknown;
-}> {
-  override get message() {
-    return `Failed to register ${this.scheme}: protocol.`;
+  {
+    scheme: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to register Electron protocol scheme "${this.scheme}".`;
+  }
+}
+
+export class ElectronProtocolUnregistrationError extends Schema.TaggedErrorClass<ElectronProtocolUnregistrationError>()(
+  "ElectronProtocolUnregistrationError",
+  {
+    scheme: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to unregister Electron protocol scheme "${this.scheme}".`;
   }
 }
 
@@ -41,15 +55,14 @@ export interface DesktopProtocolRegistrationInput {
   readonly clerkFrontendApiHostname: string | undefined;
 }
 
-export interface ElectronProtocolShape {
-  readonly registerDesktopProtocol: (
-    input: DesktopProtocolRegistrationInput,
-  ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
-}
-
-export class ElectronProtocol extends Context.Service<ElectronProtocol, ElectronProtocolShape>()(
-  "@t3tools/desktop/electron/ElectronProtocol",
-) {}
+export class ElectronProtocol extends Context.Service<
+  ElectronProtocol,
+  {
+    readonly registerDesktopProtocol: (
+      input: DesktopProtocolRegistrationInput,
+    ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
+  }
+>()("@t3tools/desktop/electron/ElectronProtocol") {}
 
 export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
   const clerkOrigin = input.clerkFrontendApiHostname
@@ -102,19 +115,61 @@ async function proxyRequest(
   }
 
   const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  const headers = new Headers(request.headers);
+  const headersToRemove: string[] = [];
+  for (const name of headers.keys()) {
+    if (
+      name === "host" ||
+      name === "origin" ||
+      name === "referer" ||
+      name === "connection" ||
+      name === "content-length" ||
+      name === "accept-encoding" ||
+      name === "upgrade-insecure-requests" ||
+      name.startsWith("sec-fetch-")
+    ) {
+      headersToRemove.push(name);
+    }
+  }
+  for (const name of headersToRemove) {
+    headers.delete(name);
+  }
   const init: RequestInit = {
     method: request.method,
-    headers: request.headers,
+    headers,
   };
   if (request.method !== "GET" && request.method !== "HEAD") {
     init.body = request.body;
     (init as RequestInit & { duplex: "half" }).duplex = "half";
   }
-  const response = await Electron.net.fetch(targetUrl.toString(), init);
+  const response =
+    request.method === "GET" || request.method === "HEAD"
+      ? await fetchWithTransientRetry(targetUrl.toString(), init)
+      : await Electron.net.fetch(targetUrl.toString(), init);
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
-const make = Effect.gen(function* () {
+const TRANSIENT_FETCH_RETRY_DELAYS_MS = [0, 50, 150] as const;
+
+async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
+  let lastError: unknown;
+
+  for (const delayMs of TRANSIENT_FETCH_RETRY_DELAYS_MS) {
+    if (delayMs > 0) {
+      await NodeTimersPromises.setTimeout(delayMs);
+    }
+
+    try {
+      return await Electron.net.fetch(url, init);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
+export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
@@ -133,9 +188,14 @@ const make = Effect.gen(function* () {
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
         }).pipe(Effect.andThen(Ref.set(registered, true))),
         () =>
-          Effect.sync(() => {
-            Electron.protocol.unhandle(input.scheme);
-          }).pipe(Effect.andThen(Ref.set(registered, false))),
+          Effect.try({
+            try: () => Electron.protocol.unhandle(input.scheme),
+            catch: (cause) =>
+              new ElectronProtocolUnregistrationError({
+                scheme: input.scheme,
+                cause,
+              }),
+          }).pipe(Effect.andThen(Ref.set(registered, false)), Effect.orDie),
       );
     },
   );

@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -13,6 +14,32 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
+
+export class DesktopClerkBridgeInitializationError extends Schema.TaggedErrorClass<DesktopClerkBridgeInitializationError>()(
+  "DesktopClerkBridgeInitializationError",
+  {
+    stateDir: Schema.String,
+    isDevelopment: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to initialize the desktop Clerk bridge for state directory "${this.stateDir}" (development: ${this.isDevelopment}).`;
+  }
+}
+
+export class DesktopClerkBridgeCleanupError extends Schema.TaggedErrorClass<DesktopClerkBridgeCleanupError>()(
+  "DesktopClerkBridgeCleanupError",
+  {
+    stateDir: Schema.String,
+    isDevelopment: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to clean up the desktop Clerk bridge for state directory "${this.stateDir}" (development: ${this.isDevelopment}).`;
+  }
+}
 
 export class DesktopClerk extends Context.Service<
   DesktopClerk,
@@ -55,11 +82,28 @@ export function createDesktopClerkBridge(stateDir: string, isDevelopment: boolea
   });
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   yield* Effect.acquireRelease(
-    Effect.sync(() => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment)),
-    (bridge) => Effect.sync(() => bridge.cleanup()),
+    Effect.try({
+      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      catch: (cause) =>
+        new DesktopClerkBridgeInitializationError({
+          stateDir: environment.stateDir,
+          isDevelopment: environment.isDevelopment,
+          cause,
+        }),
+    }),
+    (bridge) =>
+      Effect.try({
+        try: () => bridge.cleanup(),
+        catch: (cause) =>
+          new DesktopClerkBridgeCleanupError({
+            stateDir: environment.stateDir,
+            isDevelopment: environment.isDevelopment,
+            cause,
+          }),
+      }).pipe(Effect.orDie),
   );
 
   return DesktopClerk.of({

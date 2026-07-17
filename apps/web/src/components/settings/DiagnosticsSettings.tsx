@@ -32,6 +32,7 @@ import {
 } from "../../state/server";
 import { shellEnvironment } from "../../state/shell";
 import { usePrimaryEnvironment } from "../../state/environments";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -246,16 +247,10 @@ function DiagnosticsTable({
 }
 
 function TraceIdCell({ traceId }: { traceId: string }) {
-  const [copied, setCopied] = useState(false);
-  const copyTraceId = useCallback(() => {
-    void navigator.clipboard
-      ?.writeText(traceId)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1_200);
-      })
-      .catch(() => undefined);
-  }, [traceId]);
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
+    target: "trace ID",
+    timeout: 1_200,
+  });
 
   return (
     <div className="flex w-full min-w-0 max-w-full items-center gap-2">
@@ -281,7 +276,7 @@ function TraceIdCell({ traceId }: { traceId: string }) {
               type="button"
               className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
-              onClick={copyTraceId}
+              onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
             </button>

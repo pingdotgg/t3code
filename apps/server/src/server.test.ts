@@ -1,7 +1,8 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { generateKeyPairSync, type KeyObject, sign } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   AuthAccessTokenType,
@@ -652,6 +653,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+            resize: () => Effect.die("PreviewManager not stubbed in this test"),
             reportStatus: () => Effect.void,
             refresh: () => Effect.void,
             close: () => Effect.void,
@@ -700,6 +702,7 @@ const buildAppUnderTest = (options?: {
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -950,14 +953,14 @@ const makeDpopProof = (input: {
   readonly iat: number;
   readonly accessToken?: string;
   readonly jti?: string;
-  readonly privateKey?: KeyObject;
+  readonly privateKey?: NodeCrypto.KeyObject;
   readonly publicJwk?: DpopPublicJwk;
 }) => {
   const keyPair =
     input.privateKey && input.publicJwk
       ? { privateKey: input.privateKey, publicJwk: input.publicJwk }
       : (() => {
-          const { privateKey, publicKey } = generateKeyPairSync("ec", {
+          const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
             namedCurve: "P-256",
           });
           return { privateKey, publicJwk: publicKey.export({ format: "jwk" }) as DpopPublicJwk };
@@ -978,7 +981,7 @@ const makeDpopProof = (input: {
       ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
     }),
   ).toString("base64url");
-  const signature = sign("sha256", Buffer.from(`${header}.${payload}`), {
+  const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
     key: keyPair.privateKey,
     dsaEncoding: "ieee-p1363",
   }).toString("base64url");
@@ -1024,7 +1027,7 @@ const makeCloudMintCredentialRequest = (input: {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signingInput = `${header}.${encodedPayload}`;
   return {
-    proof: `${signingInput}.${sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
+    proof: `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
   };
 };
 
@@ -1057,7 +1060,7 @@ const makeCloudEnvironmentHealthRequest = (input: {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signingInput = `${header}.${encodedPayload}`;
   return {
-    proof: `${signingInput}.${sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
+    proof: `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
   };
 };
 
@@ -1697,7 +1700,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects managed cloud link proofs for manual endpoint providers", () =>
+  it.effect("rejects cloud link proofs for unsupported endpoint providers", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -1718,7 +1721,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             wsBaseUrl: linkProofUrl
               .replace("http://", "ws://")
               .replace("/api/connect/link-proof", "/ws"),
-            providerKind: "manual",
+            // "manual" and "cloudflare_tunnel" are supported; "t3_relay" is not.
+            providerKind: "t3_relay",
           },
           origin: {
             localHttpHost: "127.0.0.1",
@@ -2054,7 +2058,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2131,7 +2135,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2174,7 +2178,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2268,7 +2272,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2345,7 +2349,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2404,7 +2408,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2463,7 +2467,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2523,7 +2527,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2584,7 +2588,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         yield* buildAppUnderTest();
 
-        const cloudKeyPair = generateKeyPairSync("ed25519", {
+        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
           privateKeyEncoding: { format: "pem", type: "pkcs8" },
           publicKeyEncoding: { format: "pem", type: "spki" },
         });
@@ -2664,7 +2668,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2733,7 +2737,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2800,7 +2804,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2851,7 +2855,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2902,7 +2906,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2967,7 +2971,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -3017,7 +3021,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -3231,6 +3235,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+    it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          config: { devUrl: new URL(crossOriginClientOrigin) },
+        });
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const response = yield* fetchEffect(sessionUrl, {
+          method: "OPTIONS",
+          headers: {
+            origin: desktopOrigin,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "content-type",
+          },
+        });
+
+        assert.equal(response.status, 204);
+        assertBrowserApiCorsPreflightHeaders(response.headers, {
+          origin: desktopOrigin,
+          credentials: true,
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
@@ -3652,18 +3682,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+  it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
+      // The desktop-bootstrap grant is delivered over trusted IPC at
+      // backend launch and needs to stay claimable after a renderer
+      // refresh, so it's intentionally reusable (unlike user-facing
+      // one-time pairing credentials).
       yield* buildAppUnderTest();
 
       const first = yield* bootstrapBrowserSession();
       const second = yield* bootstrapBrowserSession();
 
       assert.equal(first.response.status, 200);
-      assert.equal(second.response.status, 401);
-      assert.equal((second.body as { readonly _tag?: string })._tag, "EnvironmentAuthInvalidError");
-      assert.equal((second.body as { readonly code?: string }).code, "auth_invalid");
-      assert.equal((second.body as { readonly reason?: string }).reason, "invalid_credential");
+      assert.equal(second.response.status, 200);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4098,6 +4129,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("shares one preview automation broker across websocket sessions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const firstConnected = yield* Deferred.make<string>();
+        const firstClosed = yield* Deferred.make<void>();
+        const host = {
+          clientId: "shared-preview-host",
+          environmentId: testEnvironmentDescriptor.environmentId,
+        } as const;
+
+        yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(
+            Stream.tap((event) =>
+              event.type === "connected"
+                ? Deferred.succeed(firstConnected, event.connectionId)
+                : Effect.void,
+            ),
+            Stream.runDrain,
+            Effect.ensuring(Deferred.succeed(firstClosed, undefined)),
+          ),
+        ).pipe(Effect.forkScoped);
+
+        const firstConnectionId = yield* Deferred.await(firstConnected);
+        const replacementEvent = yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(Stream.runHead),
+        ).pipe(Effect.map(Option.getOrThrow));
+        const firstStreamClosed = yield* Deferred.await(firstClosed).pipe(
+          Effect.timeoutOption("2 seconds"),
+        );
+
+        assert.equal(replacementEvent.type, "connected");
+        assert.notEqual(replacementEvent.connectionId, firstConnectionId);
+        assert.isTrue(Option.isSome(firstStreamClosed));
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects websocket rpc handshake when session authentication is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4430,24 +4501,147 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("routes websocket rpc projects.searchEntries errors", () =>
+  it.effect("preserves structured workspace rpc failures", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-errors-",
+      });
+      const outsideDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-errors-outside-",
+      });
+      const outsideFile = path.join(outsideDir, "outside.txt");
+      yield* fs.writeFileString(outsideFile, "outside\n");
+      yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+      const resolvedOutsideFile = yield* fs.realPath(outsideFile);
+
       yield* buildAppUnderTest();
 
+      const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
+      const missingBrowseParent = path.join(workspaceDir, "missing-browse");
+      const sensitiveQuery = "authorization: Bearer secret-token";
       const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
+      const results = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsSearchEntries]({
-            cwd: "/definitely/not/a/real/workspace/path",
-            query: "needle",
-            limit: 10,
+          Effect.all({
+            search: client[WS_METHODS.projectsSearchEntries]({
+              cwd: invalidWorkspace,
+              query: sensitiveQuery,
+              limit: 10,
+            }).pipe(Effect.result),
+            list: client[WS_METHODS.projectsListEntries]({ cwd: invalidWorkspace }).pipe(
+              Effect.result,
+            ),
+            read: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "linked-outside.txt",
+            }).pipe(Effect.result),
+            browse: client[WS_METHODS.filesystemBrowse]({
+              cwd: workspaceDir,
+              partialPath: "./missing-browse/child",
+            }).pipe(Effect.result),
           }),
-        ).pipe(Effect.result),
+        ),
       );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "ProjectSearchEntriesError");
-      assert.equal(result.failure.message, "Failed to search workspace entries.");
+      if (
+        results.search._tag !== "Failure" ||
+        results.search.failure._tag !== "ProjectSearchEntriesError"
+      ) {
+        assert.fail("Expected a ProjectSearchEntriesError");
+      }
+      const searchError = results.search.failure;
+      assert.equal(
+        searchError.message,
+        `Failed to search workspace entries in '${invalidWorkspace}'.`,
+      );
+      assert.equal(searchError.cwd, invalidWorkspace);
+      assert.equal(searchError.queryLength, sensitiveQuery.length);
+      assert.notProperty(searchError, "query");
+      assert.notInclude(searchError.message, "Bearer");
+      assert.notInclude(searchError.message, "secret-token");
+      assert.equal(searchError.limit, 10);
+      assert.equal(searchError.failure, "workspace_root_not_found");
+      assert.equal(searchError.normalizedCwd, invalidWorkspace);
+      assert.isDefined(searchError.cause);
+
+      if (
+        results.list._tag !== "Failure" ||
+        results.list.failure._tag !== "ProjectListEntriesError"
+      ) {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      const listError = results.list.failure;
+      assert.equal(listError.message, `Failed to list workspace entries in '${invalidWorkspace}'.`);
+      assert.equal(listError.cwd, invalidWorkspace);
+      assert.equal(listError.failure, "workspace_root_not_found");
+      assert.equal(listError.normalizedCwd, invalidWorkspace);
+      assert.isDefined(listError.cause);
+
+      if (results.read._tag !== "Failure" || results.read.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      const readError = results.read.failure;
+      assert.equal(
+        readError.message,
+        `Failed to read workspace file 'linked-outside.txt' in '${workspaceDir}'.`,
+      );
+      assert.equal(readError.cwd, workspaceDir);
+      assert.equal(readError.relativePath, "linked-outside.txt");
+      assert.equal(readError.failure, "resolved_path_outside_root");
+      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.isDefined(readError.cause);
+
+      if (
+        results.browse._tag !== "Failure" ||
+        results.browse.failure._tag !== "FilesystemBrowseError"
+      ) {
+        assert.fail("Expected a FilesystemBrowseError");
+      }
+      const browseError = results.browse.failure;
+      assert.equal(
+        browseError.message,
+        `Failed to browse filesystem path './missing-browse/child' from '${workspaceDir}'.`,
+      );
+      assert.equal(browseError.cwd, workspaceDir);
+      assert.equal(browseError.partialPath, "./missing-browse/child");
+      assert.equal(browseError.failure, "read_directory_failed");
+      assert.equal(browseError.parentPath, missingBrowseParent);
+      assert.isDefined(browseError.cause);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports workspace root stat failures without relabeling them as missing", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const blockedRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-stat-error-",
+      });
+      const workspaceRoot = path.join(blockedRoot, "workspace");
+      yield* fs.makeDirectory(workspaceRoot);
+      yield* fs.chmod(blockedRoot, 0o000);
+
+      const result = yield* Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const wsUrl = yield* getWsServerUrl("/ws");
+        return yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsListEntries]({ cwd: workspaceRoot }).pipe(Effect.result),
+          ),
+        );
+      }).pipe(Effect.ensuring(fs.chmod(blockedRoot, 0o700).pipe(Effect.ignore)));
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectListEntriesError") {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      const error = result.failure;
+      assert.equal(error.failure, "workspace_root_stat_failed");
+      assert.equal(error.normalizedCwd, workspaceRoot);
+      assert.equal(error.detail, "validate-existing");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4528,12 +4722,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ).pipe(Effect.result),
       );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "ProjectWriteFileError");
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectWriteFileError") {
+        assert.fail("Expected a ProjectWriteFileError");
+      }
+      const writeError = result.failure;
       assert.equal(
-        result.failure.message,
-        "Workspace file path must stay within the project root.",
+        writeError.message,
+        `Failed to write workspace file '../escape.txt' in '${workspaceDir}'.`,
       );
+      assert.equal(writeError.cwd, workspaceDir);
+      assert.equal(writeError.relativePath, "../escape.txt");
+      assert.equal(writeError.failure, "workspace_path_outside_root");
+      assert.isDefined(writeError.cause);
+      assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5406,6 +5607,64 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("buffers thread events published while the initial snapshot loads", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const messageEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-message"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: defaultThreadId,
+          messageId: MessageId.make("message-1"),
+          role: "user",
+          text: "First message",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("25 millis");
+                yield* PubSub.publish(liveEvents, messageEvent);
+                return Option.some({ snapshotSequence: 1, thread });
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "event");
+      assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("enriches replayed project events with repository identity metadata", () =>
     Effect.gen(function* () {
       const repositoryIdentity = {
@@ -6102,7 +6361,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               threadId: input.threadId,
               worktreePath: input.worktreePath,
               operation: "openTerminal",
-              cause: new Error("pty unavailable"),
+              cause: { message: "pty unavailable" },
             }),
           ),
       );
@@ -6177,8 +6436,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(setupFailureActivity?.activity.kind, "setup-script.failed");
       assert.deepEqual(setupFailureActivity?.activity.payload, {
-        detail:
-          "Project setup script operation 'openTerminal' failed for thread 'thread-bootstrap-setup-failure' in '/tmp/bootstrap-worktree'.",
+        detail: "pty unavailable",
         worktreePath: "/tmp/bootstrap-worktree",
       });
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));

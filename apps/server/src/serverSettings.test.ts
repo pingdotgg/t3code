@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
@@ -32,7 +33,63 @@ const makeServerSettingsLayer = () =>
     ),
   );
 
+const makeFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreError) =>
+  Layer.succeed(
+    ServerSecretStore.ServerSecretStore,
+    ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.fail(cause),
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+      remove: () => Effect.void,
+    }),
+  );
+
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("preserves context when reading a provider environment secret fails", () => {
+    const platformCause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFile",
+      pathOrDescriptor: "provider environment secret",
+      description: "Secret backend unavailable.",
+    });
+    const cause = new ServerSecretStore.SecretStoreReadError({
+      resource: "provider environment secret",
+      cause: platformCause,
+    });
+    const configLayer = Layer.fresh(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-server-settings-secret-failure-test-",
+      }),
+    );
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(makeFailingSecretStoreLayer(cause)),
+      Layer.provideMerge(configLayer),
+    );
+
+    return Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"OPENROUTER_API_KEY","value":"","sensitive":true,"valueRedacted":true}],"config":{}}}}',
+      );
+
+      const error = yield* Effect.flip(serverSettings.getSettings);
+
+      assert.deepInclude(error, {
+        _tag: "ServerSettingsError",
+        operation: "read-secret",
+        providerInstanceId: "codex_personal",
+        environmentVariable: "OPENROUTER_API_KEY",
+      });
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(settingsLayer));
+  });
+
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
       assert.deepEqual(
