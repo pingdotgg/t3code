@@ -23,7 +23,7 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
-import { formatRelativeTime } from "../../timestampFormat";
+import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   primaryServerAvailableEditorsAtom,
@@ -65,8 +65,7 @@ function formatBytes(value: number): string {
 
 function formatRelative(value: DateTime.Utc | null): string {
   if (!value) return "No trace records";
-  const relative = formatRelativeTime(DateTime.formatIso(value));
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+  return formatRelativeTimeLabel(DateTime.formatIso(value));
 }
 
 function formatRelativeNoWrap(value: DateTime.Utc | null): string {
@@ -755,10 +754,14 @@ function ProcessResourceHistoryTable({
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
   useRelativeTimeTick();
-  const relative = checkedAt ? formatRelativeTime(DateTime.formatIso(checkedAt)) : null;
+  const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
-  if (!relative) {
+  if (relative.status === "missing") {
     return <span className="text-[11px] text-muted-foreground/50">Checking</span>;
+  }
+
+  if (relative.status === "invalid") {
+    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
   }
 
   return (
