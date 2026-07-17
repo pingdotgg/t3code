@@ -171,13 +171,20 @@ export const make = Effect.fn("PluginContextComposer.make")(function* () {
           Effect.succeed({ text: null, skipped: "timed-out" as "failed" | "timed-out" | null }),
       }),
       Effect.catchCause((cause) =>
-        // A plugin's failure must never fail the USER's turn. Theirs is the work
-        // that matters; the contribution is an extra.
-        Effect.logWarning("plugin context contributor failed", {
-          pluginId,
-          name: descriptor.name,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as({ text: null, skipped: "failed" as "failed" | "timed-out" | null })),
+        // Re-raise INTERRUPTS (the whole-gather CONTEXT_GATHER_TIMEOUT firing, or a
+        // caller/scope cancellation) instead of swallowing them: converting an
+        // interrupt to skipped:"failed" would let the outer compose loop keep
+        // iterating through later contributors, blowing past the promised 10s gather
+        // ceiling (N contributors x their own 5s timeout). Only genuine plugin
+        // failures/defects are contained — a plugin's failure must never fail the
+        // USER's turn; the contribution is an extra.
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause as Cause.Cause<never>)
+          : Effect.logWarning("plugin context contributor failed", {
+              pluginId,
+              name: descriptor.name,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as({ text: null, skipped: "failed" as "failed" | "timed-out" | null })),
       ),
     );
   };
