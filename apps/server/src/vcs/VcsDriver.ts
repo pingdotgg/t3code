@@ -23,6 +23,7 @@ export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  readonly filePaths?: ReadonlyArray<string>;
 }
 
 export interface VcsDiffCheckpointsInput {

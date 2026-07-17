@@ -747,23 +747,65 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-      });
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
-      });
-
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
+      if (input.filePaths === undefined) {
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
+          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+        });
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["clean", "-fd", "--", "."],
+        });
+
+        const headExists = yield* hasHeadCommit(input.cwd);
+        if (headExists) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["reset", "--quiet", "--", "."],
+          });
+        }
+        return true;
+      }
+
+      // Path-scoped: restore each path individually so a missing source path
+      // cannot abort restore of the others (git restore fails the whole batch).
+      for (const filePath of input.filePaths) {
+        const pathspec = `:(literal)${filePath}`;
+        const inSource = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["cat-file", "-e", `${commitOid}:${filePath}`],
+          allowNonZeroExit: true,
+        }).pipe(Effect.map((result) => result.exitCode === 0));
+
+        if (inSource) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", pathspec],
+          });
+        } else {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["rm", "-f", "--ignore-unmatch", "--", pathspec],
+          });
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["clean", "-fd", "--", pathspec],
+          });
+        }
+      }
+
+      if (yield* hasHeadCommit(input.cwd)) {
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["reset", "--quiet", "--", ...input.filePaths.map((path) => `:(literal)${path}`)],
         });
       }
 

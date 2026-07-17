@@ -132,6 +132,17 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   return raw;
 }
 
+export function resolveFileDiffRewindPaths(fileDiff: FileDiffMetadata): string[] {
+  // ponytail: Pierre already strips git a/b prefixes; keep paths as-is so dirs named a/b survive
+  return [
+    ...new Set(
+      [fileDiff.prevName, fileDiff.name].filter(
+        (path): path is string => Boolean(path) && path !== "/dev/null",
+      ),
+    ),
+  ];
+}
+
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }

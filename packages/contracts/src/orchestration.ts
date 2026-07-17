@@ -14,6 +14,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -26,6 +27,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  restoreWorkspaceCheckpoint: "orchestration.restoreWorkspaceCheckpoint",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
@@ -1232,6 +1234,20 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationRestoreWorkspaceCheckpointInput = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: PositiveInt,
+  filePaths: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type OrchestrationRestoreWorkspaceCheckpointInput =
+  typeof OrchestrationRestoreWorkspaceCheckpointInput.Type;
+
+export const OrchestrationRestoreWorkspaceCheckpointResult = Schema.Struct({
+  restored: Schema.Boolean,
+});
+export type OrchestrationRestoreWorkspaceCheckpointResult =
+  typeof OrchestrationRestoreWorkspaceCheckpointResult.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1252,6 +1268,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  restoreWorkspaceCheckpoint: {
+    input: OrchestrationRestoreWorkspaceCheckpointInput,
+    output: OrchestrationRestoreWorkspaceCheckpointResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
@@ -1297,6 +1317,14 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationRestoreWorkspaceCheckpointError extends Schema.TaggedErrorClass<OrchestrationRestoreWorkspaceCheckpointError>()(
+  "OrchestrationRestoreWorkspaceCheckpointError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

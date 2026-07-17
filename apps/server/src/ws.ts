@@ -35,6 +35,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
+  OrchestrationRestoreWorkspaceCheckpointError,
   ORCHESTRATION_WS_METHODS,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -64,6 +65,7 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as CheckpointWorkspaceRestore from "./checkpointing/CheckpointWorkspaceRestore.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -280,6 +282,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.restoreWorkspaceCheckpoint, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
@@ -1032,6 +1035,23 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new OrchestrationGetFullThreadDiffError({
                     message: "Failed to load full thread diff",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.restoreWorkspaceCheckpoint]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.restoreWorkspaceCheckpoint,
+            CheckpointWorkspaceRestore.restoreWorkspaceCheckpoint(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationRestoreWorkspaceCheckpointError({
+                    message:
+                      "message" in cause && typeof cause.message === "string"
+                        ? cause.message
+                        : "Failed to restore workspace checkpoint",
                     cause,
                   }),
               ),

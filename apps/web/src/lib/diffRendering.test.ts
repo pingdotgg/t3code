@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildPatchCacheKey, getRenderablePatch } from "./diffRendering";
+import {
+  buildPatchCacheKey,
+  getRenderablePatch,
+  resolveFileDiffRewindPaths,
+} from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
@@ -80,5 +84,54 @@ describe("getRenderablePatch", () => {
     expect(parsed?.kind).toBe("files");
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
+  });
+});
+
+describe("resolveFileDiffRewindPaths", () => {
+  it("returns both sides of a rename", () => {
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/old.ts b/new.ts",
+        "similarity index 100%",
+        "rename from old.ts",
+        "rename to new.ts",
+      ].join("\n"),
+    );
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files" || !parsed.files[0]) return;
+
+    expect(resolveFileDiffRewindPaths(parsed.files[0])).toEqual(["old.ts", "new.ts"]);
+  });
+
+  it("returns one normalized path for a modified file", () => {
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/src/file.ts b/src/file.ts",
+        "--- a/src/file.ts",
+        "+++ b/src/file.ts",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+      ].join("\n"),
+    );
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files" || !parsed.files[0]) return;
+
+    expect(resolveFileDiffRewindPaths(parsed.files[0])).toEqual(["src/file.ts"]);
+  });
+
+  it("preserves repository paths that start with a/ or b/", () => {
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/a/old.ts b/b/new.ts",
+        "similarity index 100%",
+        "rename from a/old.ts",
+        "rename to b/new.ts",
+      ].join("\n"),
+    );
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files" || !parsed.files[0]) return;
+
+    expect(resolveFileDiffRewindPaths(parsed.files[0])).toEqual(["a/old.ts", "b/new.ts"]);
   });
 });

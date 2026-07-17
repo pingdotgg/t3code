@@ -16,6 +16,7 @@ import {
   Rows3Icon,
   SearchIcon,
   TextWrapIcon,
+  Undo2Icon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -31,6 +32,7 @@ import {
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
+  resolveFileDiffRewindPaths,
 } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
@@ -39,6 +41,7 @@ import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
@@ -178,11 +181,24 @@ const DIFF_PANEL_UNSAFE_CSS = `
 interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
+  canRewindLatestTurn?: boolean;
+  isRewinding?: boolean;
+  onRewindLatestTurn?: () => void;
+  onRewindFile?: (filePaths: ReadonlyArray<string>) => void;
+  checkpointDiffRefreshEpoch?: number;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline", composerDraftTarget }: DiffPanelProps) {
+export default function DiffPanel({
+  mode = "inline",
+  composerDraftTarget,
+  canRewindLatestTurn = false,
+  isRewinding = false,
+  onRewindLatestTurn,
+  onRewindFile,
+  checkpointDiffRefreshEpoch = 0,
+}: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
@@ -270,6 +286,11 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
   const latestTurn = orderedTurnDiffSummaries[0];
+  const canRewindSelectedFile =
+    canRewindLatestTurn &&
+    selectedTurn !== undefined &&
+    selectedTurn.turnId === latestTurn?.turnId &&
+    onRewindFile !== undefined;
   const selectedScopeLabel =
     selectedTurnId === null
       ? selectedGitScope === "unstaged"
@@ -404,7 +425,6 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
     : branchDiffPreview.isPending;
   const selectedPatchError = selectedTurn ? activeCheckpointDiff.error : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
-  const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
     () =>
       getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
@@ -436,6 +456,18 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
       }),
     [collapsedDiffFileKeys, renderableFiles],
   );
+  const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+
+  useEffect(() => {
+    if (checkpointDiffRefreshEpoch <= 0) return;
+    if (selectedTurnId === null) {
+      branchDiffPreview.refresh();
+    } else {
+      activeCheckpointDiff.refresh();
+    }
+    // ponytail: refresh only after a restore, not when the query view object changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkpointDiffRefreshEpoch]);
 
   useEffect(() => {
     if (!selectedFilePath) return;
@@ -673,6 +705,23 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="outline"
+                disabled={!canRewindLatestTurn || isRewinding || !onRewindLatestTurn}
+                onClick={() => onRewindLatestTurn?.()}
+                aria-label="Rewind latest turn"
+              />
+            }
+          >
+            <Undo2Icon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Rewind latest turn</TooltipPopup>
+        </Tooltip>
         <ToggleGroup
           className="shrink-0"
           variant="outline"
@@ -837,6 +886,38 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
                         <TooltipPopup side="top">
                           {collapsed ? "Expand diff" : "Collapse diff"}
                         </TooltipPopup>
+                      </Tooltip>
+                    );
+                  }}
+                  renderHeaderMetadata={(fileDiff) => {
+                    if (!canRewindSelectedFile) {
+                      return null;
+                    }
+                    const filePath = resolveFileDiffPath(fileDiff);
+                    const rewindPaths = resolveFileDiffRewindPaths(fileDiff);
+                    if (rewindPaths.length === 0) {
+                      return null;
+                    }
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              disabled={isRewinding}
+                              aria-label={`Rewind ${filePath}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRewindFile?.(rewindPaths);
+                              }}
+                            />
+                          }
+                        >
+                          <Undo2Icon className="size-3" />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Rewind this file</TooltipPopup>
                       </Tooltip>
                     );
                   }}

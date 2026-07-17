@@ -114,6 +114,41 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  describe("restoreCheckpoint", () => {
+    it.effect("restores only requested files", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("thread-scoped-restore"), 0);
+        const siblingPath = NodePath.join(tmp, "sibling.txt");
+        const addedPath = NodePath.join(tmp, "added.txt");
+
+        yield* writeTextFile(siblingPath, "before\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add sibling"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "changed\n");
+        yield* writeTextFile(siblingPath, "keep this change\n");
+        yield* writeTextFile(addedPath, "remove me\n");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef,
+            filePaths: ["README.md", "added.txt"],
+          }),
+        ).toBe(true);
+
+        expect(yield* fileSystem.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+        expect(yield* fileSystem.readFileString(siblingPath)).toBe("keep this change\n");
+        expect(yield* fileSystem.exists(addedPath)).toBe(false);
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

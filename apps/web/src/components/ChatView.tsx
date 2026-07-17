@@ -240,6 +240,7 @@ import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
 import {
@@ -1024,6 +1025,10 @@ function ChatViewContent(props: ChatViewProps) {
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  const restoreWorkspaceCheckpoint = useAtomCommand(
+    orchestrationEnvironment.restoreWorkspaceCheckpoint,
+    { reportFailure: false },
+  );
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
@@ -1110,6 +1115,7 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [checkpointDiffRefreshEpoch, setCheckpointDiffRefreshEpoch] = useState(0);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
   );
@@ -2065,6 +2071,21 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
+  const latestCheckpoint = [...turnDiffSummaries].toSorted((left, right) => {
+    const leftCount =
+      left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
+    const rightCount =
+      right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
+    if (leftCount !== rightCount) return rightCount - leftCount;
+    return right.completedAt.localeCompare(left.completedAt);
+  })[0];
+  const latestCheckpointTurnCount = (() => {
+    if (latestCheckpoint?.status !== "ready") return null;
+    const count =
+      latestCheckpoint.checkpointTurnCount ??
+      inferredCheckpointTurnCountByTurnId[latestCheckpoint.turnId];
+    return typeof count === "number" && count >= 1 ? count : null;
+  })();
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {
@@ -4908,6 +4929,85 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const onRewindLatestTurn = useCallback(
+    async (filePaths?: ReadonlyArray<string>) => {
+      const localApi = readLocalApi();
+      if (
+        !localApi ||
+        !activeThread ||
+        !activeThreadRef ||
+        typeof latestCheckpointTurnCount !== "number" ||
+        isRevertingCheckpoint
+      ) {
+        return;
+      }
+      if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+        setThreadError(
+          activeThread.id,
+          `Reconnect ${activeEnvironmentUnavailableLabel} before rewinding workspace changes.`,
+        );
+        return;
+      }
+      if (phase === "running" || isSendBusy || isConnecting) {
+        setThreadError(
+          activeThread.id,
+          "Interrupt the current turn before rewinding workspace changes.",
+        );
+        return;
+      }
+
+      const isFileRewind = filePaths !== undefined;
+      const confirmed = await localApi.dialogs.confirm(
+        [
+          isFileRewind
+            ? `Rewind ${filePaths.length === 1 ? filePaths[0] : "this file change"}?`
+            : "Rewind all workspace changes from the latest turn?",
+          "This restores files to the previous checkpoint without removing conversation history.",
+          isFileRewind
+            ? "Changes to other files will be kept."
+            : "Uncommitted changes made after that checkpoint will be discarded.",
+        ].join("\n"),
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setIsRevertingCheckpoint(true);
+      setThreadError(activeThread.id, null);
+      const result = await restoreWorkspaceCheckpoint({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          turnCount: latestCheckpointTurnCount,
+          ...(filePaths ? { filePaths } : {}),
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to rewind workspace changes.",
+        );
+      } else if (result._tag === "Success") {
+        setCheckpointDiffRefreshEpoch((epoch) => epoch + 1);
+      }
+      setIsRevertingCheckpoint(false);
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeEnvironmentUnavailableLabel,
+      activeThread,
+      activeThreadRef,
+      environmentId,
+      isConnecting,
+      isRevertingCheckpoint,
+      isSendBusy,
+      latestCheckpointTurnCount,
+      phase,
+      restoreWorkspaceCheckpoint,
+      setThreadError,
+    ],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -4968,7 +5068,15 @@ function ChatViewContent(props: ChatViewProps) {
       />
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
-        <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={composerDraftTarget}
+          canRewindLatestTurn={latestCheckpointTurnCount !== null}
+          isRewinding={isWorking}
+          onRewindLatestTurn={onRewindLatestTurn}
+          onRewindFile={onRewindLatestTurn}
+          checkpointDiffRefreshEpoch={checkpointDiffRefreshEpoch}
+        />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar

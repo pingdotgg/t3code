@@ -54,6 +54,8 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
+  OrchestrationRestoreWorkspaceCheckpointError,
+  OrchestrationRestoreWorkspaceCheckpointInput,
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
@@ -614,6 +616,18 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationRestoreWorkspaceCheckpointRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.restoreWorkspaceCheckpoint,
+  {
+    payload: OrchestrationRestoreWorkspaceCheckpointInput,
+    success: OrchestrationRpcSchemas.restoreWorkspaceCheckpoint.output,
+    error: Schema.Union([
+      OrchestrationRestoreWorkspaceCheckpointError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
 export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.replayEvents, {
   payload: OrchestrationReplayEventsInput,
   success: OrchestrationRpcSchemas.replayEvents.output,
@@ -746,6 +760,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationRestoreWorkspaceCheckpointRpc,
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
