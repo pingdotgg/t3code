@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
 import type { PluginProviderDriver, PluginProviderEvent } from "@t3tools/plugin-sdk";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -578,6 +579,27 @@ describe("makePluginProviderAdapter", () => {
       assert.strictEqual(rollback._tag, "Failure");
       const read = yield* Effect.exit(adapter.readThread(threadId));
       assert.strictEqual(read._tag, "Failure");
+    }),
+  );
+
+  it.effect("converts a synchronous startSession throw into PluginProviderError", () =>
+    Effect.gen(function* () {
+      const adapter = yield* adapterFor({
+        startSession: () => {
+          throw new Error("driver blew up");
+        },
+        sendTurn: () => Effect.void,
+        stopSession: () => Effect.void,
+      });
+
+      // Defects from Effect.suspend must not escape the adapter as untyped
+      // failures — only PluginProviderError (matching stopSession/interruptTurn).
+      const exit = yield* Effect.exit(start(adapter));
+      assert.strictEqual(exit._tag, "Failure");
+      if (exit._tag === "Failure") {
+        assert.match(Cause.pretty(exit.cause), /driver blew up|PluginProviderError/);
+      }
+      assert.isFalse(yield* adapter.hasSession(threadId));
     }),
   );
 });

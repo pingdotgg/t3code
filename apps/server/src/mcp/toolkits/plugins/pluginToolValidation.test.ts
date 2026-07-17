@@ -112,6 +112,22 @@ describe("validatePluginToolDescriptors", () => {
     expect(exit._tag).toBe("Success");
   });
 
+  it("accepts a Class input schema whose JSON Schema root is a local $ref", () => {
+    // Effect's JSON-schema generator emits `{ "$ref": "#/$defs/..." }` for Class
+    // roots; resolving that local ref must still count as an object-root schema.
+    class NoteInput extends Schema.Class<NoteInput>("NoteInput")({
+      value: Schema.String,
+    }) {}
+    const exit = Effect.runSyncExit(
+      validatePluginToolDescriptors(
+        pluginId,
+        [baseTool({ name: "echo", inputSchema: NoteInput })],
+        { hasToolsCapability: true },
+      ),
+    );
+    expect(exit._tag).toBe("Success");
+  });
+
   it("rejects invalid local names", () => {
     const exit = Effect.runSyncExit(
       validatePluginToolDescriptors(pluginId, [baseTool({ name: "Bad-Name" as "bad" })], {
@@ -202,6 +218,20 @@ describe("validatePluginToolResult", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.content).toEqual([{ type: "text", text: "hi" }]);
+      expect(result.value.structuredContent).toEqual({ ok: true });
+    }
+  });
+
+  it("accepts an empty content array (side-effect-only / structuredContent-only)", () => {
+    // MCP CallToolResult has no minItems on content; tools may return only
+    // structuredContent or pure side effects.
+    const result = validatePluginToolResult({
+      content: [],
+      structuredContent: { ok: true },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.content).toEqual([]);
       expect(result.value.structuredContent).toEqual({ ok: true });
     }
   });

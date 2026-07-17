@@ -42,7 +42,28 @@ function bodyLimit(value: number | undefined): number {
   return Math.min(MAX_BODY_BYTES, Math.max(0, Math.floor(value)));
 }
 
-function parsePluginPath(pathname: string): {
+/**
+ * Percent-decode each path segment independently so a registered path like
+ * `/café` matches a request to `/caf%C3%A9`. Segment-wise decoding preserves
+ * encoded slashes (`%2F`) as data inside a segment rather than introducing
+ * extra path components. Malformed escapes return null (404, not a defect).
+ */
+function decodeRoutePath(rest: string): string | null {
+  if (rest.length === 0) return "/";
+  const segments = rest.split("/");
+  const decoded: Array<string> = [];
+  for (const segment of segments) {
+    try {
+      decoded.push(decodeURIComponent(segment));
+    } catch {
+      return null;
+    }
+  }
+  return `/${decoded.join("/")}`;
+}
+
+/** Exported for unit tests covering percent-decoding of route paths. */
+export function parsePluginPath(pathname: string): {
   readonly pluginId: PluginId;
   readonly routePath: string;
 } | null {
@@ -52,9 +73,11 @@ function parsePluginPath(pathname: string): {
   const rawPluginId = separatorIndex === -1 ? suffix : suffix.slice(0, separatorIndex);
   if (!PLUGIN_ID_PATTERN.test(rawPluginId)) return null;
   const rest = separatorIndex === -1 ? "" : suffix.slice(separatorIndex + 1);
+  const routePath = decodeRoutePath(rest);
+  if (routePath === null) return null;
   return {
     pluginId: rawPluginId as PluginId,
-    routePath: rest.length === 0 ? "/" : `/${rest}`,
+    routePath,
   };
 }
 

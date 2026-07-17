@@ -70,7 +70,10 @@ export function makeTerminalsCapability(input: {
         terminalId: handle.terminalId,
         ...(deleteHistory === undefined ? {} : { deleteHistory }),
       })
-      .pipe(Effect.ensuring(Effect.sync(() => live.delete(handle.terminalId))));
+      // Only drop from `live` after close succeeds. Effect.ensuring used to remove
+      // on failure too, which leaked the PTY/process: shutdown snapshots `live` and
+      // would never retry a terminal that was untracked while still running.
+      .pipe(Effect.tap(Effect.sync(() => live.delete(handle.terminalId))));
 
   const capability: TerminalsCapability = {
     spawn: (request) =>

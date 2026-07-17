@@ -436,6 +436,25 @@ layer("FilesystemCapability", (it) => {
     ),
   );
 
+  it.effect("treats a path through a file intermediate as non-existent (ENOTDIR)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDir("plugin-fs-root-");
+        const grants = yield* makePluginWorkspaceGrants;
+        const filesystem = makeCapability({ projectRoots: [root], grants });
+
+        yield* filesystem.writeFileString({
+          root,
+          relativePath: "file.txt",
+          contents: "not a directory",
+        });
+        // POSIX lstat("file.txt/child") fails with ENOTDIR; exists must return
+        // false rather than FilesystemIoError.
+        assert.isFalse(yield* filesystem.exists({ root, relativePath: "file.txt/child" }));
+      }),
+    ),
+  );
+
   it.effect("treats dangling and out-of-root symlinks as non-existent in exists", () =>
     Effect.scoped(
       Effect.gen(function* () {

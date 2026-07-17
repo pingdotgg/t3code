@@ -197,6 +197,64 @@ layer("PluginMigrator", (it) => {
     }),
   );
 
+  it.effect("rejects a core table reference inside a bracket identifier with an apostrophe", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("bracket-id-plugin");
+      const prefix = pluginPrefix(pluginId);
+      // Table name with an apostrophe forces the trigger body to use a quoted
+      // identifier; the strip lexer must not treat that apostrophe as a string
+      // delimiter and truncate the body before the core-object scan.
+      yield* sql.unsafe(`CREATE TABLE "owner's data" (id TEXT PRIMARY KEY)`).unprepared;
+
+      const result = yield* Effect.result(
+        migrator.run(pluginId, [
+          migration(1, "BracketId", [
+            `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`,
+            `
+              CREATE TRIGGER ${prefix}items_ai
+              AFTER INSERT ON ${prefix}items
+              BEGIN
+                INSERT INTO [owner's data] (id) VALUES (NEW.id);
+              END
+            `,
+          ]),
+        ]),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, PluginMigrationViolation);
+      }
+    }),
+  );
+
+  it.effect("does not DETACH pre-existing attachments when a migration attaches none", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("preattach-plugin");
+      const prefix = pluginPrefix(pluginId);
+
+      // Pre-attach a database on the shared connection — a later migration that
+      // never calls ATTACH must not treat it as a violation or DETACH it.
+      yield* sql.unsafe("ATTACH DATABASE ':memory:' AS pre_existing_attach").unprepared;
+
+      yield* migrator.run(pluginId, [
+        migration(1, "Init", `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`),
+      ]);
+
+      const databases = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
+      assert.isTrue(
+        databases.some((database) => database.name === "pre_existing_attach"),
+        "pre-existing attachment must remain on the shared connection",
+      );
+
+      yield* sql.unsafe('DETACH DATABASE "pre_existing_attach"').unprepared.pipe(Effect.ignore);
+    }),
+  );
+
   it.effect("accepts a trigger that names a core table only inside a line comment", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

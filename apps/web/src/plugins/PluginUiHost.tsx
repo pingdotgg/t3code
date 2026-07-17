@@ -81,6 +81,8 @@ export interface PluginUiRegistrySnapshot {
 interface LoadedPlugin {
   readonly pluginId: PluginId;
   readonly version: string;
+  /** Catalog lifecycle state at the time of load (`active` / `failed` / …). */
+  readonly lifecycleState: PluginInfo["state"];
   readonly routes: ReadonlyArray<RegisteredPluginRoute>;
   readonly sidebarSections: ReadonlyArray<RegisteredPluginSidebarSection>;
   readonly settingsPages: ReadonlyArray<RegisteredPluginSettingsPage>;
@@ -362,14 +364,16 @@ export async function syncPluginUiHostRegistrations({
     }
   }
 
-  // Reload plugins whose previous load FAILED as well as never-loaded ones: an
-  // import failure can be transient (server restart 404ing the bundle, network
-  // blip), and lifecycle-driven resyncs are the self-healing signal. A retry is
-  // cheap — the browser caches the module once it succeeds — and a
-  // deterministic failure just re-records itself.
+  // Reload when never-loaded, previous import FAILED, or the catalog lifecycle
+  // state changed (e.g. failed→active after settings repair, or active→failed).
+  // Entries are keyed by id@version alone, so without tracking lifecycleState a
+  // repaired plugin would keep its failed-state declarative-only load (no
+  // register()) and a newly-failed plugin would keep imperative surfaces live.
   const pluginsToLoad = loadableWebPlugins.filter((plugin) => {
     const loaded = state.loaded.get(plugin.id);
-    return loaded === undefined || loaded.failure !== null;
+    return (
+      loaded === undefined || loaded.failure !== null || loaded.lifecycleState !== plugin.state
+    );
   });
   if (pluginsToLoad.length > 0) {
     await waitForHost();
@@ -477,6 +481,7 @@ export async function syncPluginUiHostRegistrations({
       state.loaded.set(plugin.id, {
         pluginId: plugin.id,
         version: plugin.version,
+        lifecycleState: plugin.state,
         routes,
         sidebarSections,
         settingsPages,
@@ -491,6 +496,7 @@ export async function syncPluginUiHostRegistrations({
       state.loaded.set(plugin.id, {
         pluginId: plugin.id,
         version: plugin.version,
+        lifecycleState: plugin.state,
         routes: [],
         sidebarSections: [],
         settingsPages: [],

@@ -182,9 +182,10 @@ export const makePluginProviderAdapter = (input: {
           );
         }
         // Effect.suspend so a driver that THROWS synchronously (or returns a
-        // non-Effect) from startSession becomes a typed PluginProviderError instead
-        // of a defect escaping the adapter. Driver code is dynamically loaded plugin
-        // JS, so its return contract is not runtime-enforced.
+        // non-Effect) from startSession becomes a defect inside the effect.
+        // Effect.mapError only transforms typed errors — defects pass through —
+        // so catchCause (matching stopSession/interruptTurn) converts BOTH into a
+        // typed PluginProviderError. Driver code is dynamically loaded plugin JS.
         yield* Effect.suspend(() =>
           input.driver.startSession({ threadId, config: input.config }),
         ).pipe(
@@ -192,7 +193,7 @@ export const makePluginProviderAdapter = (input: {
             duration: PLUGIN_LIFECYCLE_TIMEOUT,
             orElse: () => Effect.fail(new PluginProviderError("startSession timed out")),
           }),
-          Effect.mapError((cause) => new PluginProviderError(String(cause))),
+          Effect.catchCause((cause) => Effect.fail(new PluginProviderError(Cause.pretty(cause)))),
         );
 
         const session: ProviderSession = {

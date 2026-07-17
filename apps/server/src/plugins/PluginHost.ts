@@ -252,6 +252,14 @@ function validateRegistration(
   // read requirement in the dispatcher.
   const rpcMethods = new Set<string>();
   for (const rpc of registration.rpc ?? []) {
+    // Modules are dynamically loaded JS: method may be undefined/"" and would
+    // otherwise activate as a silently unreachable endpoint (dispatcher matches
+    // by string equality). Mirror the http descriptor non-empty check.
+    if (typeof rpc.method !== "string" || rpc.method.length === 0) {
+      return Effect.fail(
+        new PluginRegistrationError({ pluginId, detail: "RPC descriptor has an empty method" }),
+      );
+    }
     if (rpc.scope !== "read" && rpc.scope !== "operate") {
       return Effect.fail(
         new PluginRegistrationError({ pluginId, detail: `invalid RPC scope ${rpc.scope}` }),
@@ -278,6 +286,14 @@ function validateRegistration(
   }
   const streamMethods = new Set<string>();
   for (const stream of registration.streams ?? []) {
+    if (typeof stream.method !== "string" || stream.method.length === 0) {
+      return Effect.fail(
+        new PluginRegistrationError({
+          pluginId,
+          detail: "stream descriptor has an empty method",
+        }),
+      );
+    }
     if (stream.scope !== "read" && stream.scope !== "operate") {
       return Effect.fail(
         new PluginRegistrationError({ pluginId, detail: `invalid stream scope ${stream.scope}` }),
@@ -777,10 +793,14 @@ const startService = (input: {
 }) =>
   input.service.run({ pluginId: input.pluginId, logger: input.logger }).pipe(
     Effect.catchCause((cause) =>
-      input.logger.error("plugin service failed; restarting", {
-        service: input.service.name,
-        cause: Cause.pretty(cause),
-      }),
+      // Shutdown/disable interrupts must not be swallowed into a "retry" success —
+      // Effect.repeat would otherwise restart the service and hang scope teardown.
+      causeContainsInterrupt(cause)
+        ? Effect.failCause(cause)
+        : input.logger.error("plugin service failed; restarting", {
+            service: input.service.name,
+            cause: Cause.pretty(cause),
+          }),
     ),
     // Exponential backoff capped at 30s so a flapping service keeps
     // retrying at a bounded cadence instead of backing off forever.

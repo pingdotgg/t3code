@@ -89,21 +89,25 @@ export function makeSourceControlCapability(input: {
     getRepositoryCloneUrls: (request) =>
       withCwd(request.cwd, input.github.getRepositoryCloneUrls(request)),
     createPullRequest: (request) =>
-      Effect.all(
-        [assertWithinGrants(request.cwd, "cwd"), assertWithinGrants(request.bodyFile, "bodyFile")],
-        { discard: true },
-      ).pipe(
-        Effect.andThen(
-          input.github.createPullRequest({
-            cwd: request.cwd,
-            baseBranch: request.baseBranch,
-            headSelector: request.headSelector,
-            title: request.title,
-            bodyFile: request.bodyFile,
-            ...(request.draft === undefined ? {} : { draft: request.draft }),
-          }),
-        ),
-      ),
+      Effect.gen(function* () {
+        yield* assertWithinGrants(request.cwd, "cwd");
+        // `gh` runs with `request.cwd` as its working directory, so a relative
+        // bodyFile must be validated (and passed) as resolved against that cwd —
+        // not the server process cwd — or containment checks the wrong file and
+        // `gh` may read a different path than the one we just authorized.
+        const bodyFile = path.isAbsolute(request.bodyFile)
+          ? request.bodyFile
+          : path.resolve(request.cwd, request.bodyFile);
+        yield* assertWithinGrants(bodyFile, "bodyFile");
+        return yield* input.github.createPullRequest({
+          cwd: request.cwd,
+          baseBranch: request.baseBranch,
+          headSelector: request.headSelector,
+          title: request.title,
+          bodyFile,
+          ...(request.draft === undefined ? {} : { draft: request.draft }),
+        });
+      }),
     mergePullRequest: (request) => withCwd(request.cwd, input.github.mergePullRequest(request)),
     getPullRequestDetail: (request) =>
       withCwd(request.cwd, input.github.getPullRequestDetail(request)),
