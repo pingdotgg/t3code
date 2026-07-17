@@ -67,6 +67,8 @@ interface BranchToolbarBranchSelectorProps {
   effectiveEnvModeOverride?: "local" | "worktree";
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
+  activeWorktreePathOverride?: string | null;
+  onActiveWorktreePathOverrideChange?: (worktreePath: string | null) => void;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -101,6 +103,8 @@ export function BranchToolbarBranchSelector({
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
+  activeWorktreePathOverride,
+  onActiveWorktreePathOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
   onCheckoutPullRequestRequest,
@@ -144,7 +148,13 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  // An optimistic "existing worktree" pick must steer branch git ops to the
+  // chosen worktree immediately; otherwise `branchCwd` falls back to the main
+  // checkout until the metadata round-trip lands.
+  const activeWorktreePath =
+    activeWorktreePathOverride !== undefined
+      ? activeWorktreePathOverride
+      : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
@@ -180,6 +190,11 @@ export function BranchToolbarBranchSelector({
       }
       if (hasServerThread) {
         onActiveThreadBranchOverrideChange?.(branch);
+        // Keep the parent's optimistic worktree-path override in step with the
+        // branch action; otherwise picking a branch that retargets the main
+        // checkout (worktreePath === null) leaves a stale override pinning
+        // branchCwd and the next send to the previously-picked worktree.
+        onActiveWorktreePathOverrideChange?.(worktreePath);
         return;
       }
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
@@ -201,6 +216,7 @@ export function BranchToolbarBranchSelector({
       activeWorktreePath,
       hasServerThread,
       onActiveThreadBranchOverrideChange,
+      onActiveWorktreePathOverrideChange,
       setDraftThreadContext,
       draftId,
       threadRef,

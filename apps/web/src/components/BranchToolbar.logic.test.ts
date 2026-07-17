@@ -2,6 +2,7 @@ import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
+  deriveExistingWorktreeOptions,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
@@ -16,6 +17,72 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("deriveExistingWorktreeOptions", () => {
+  const ref = (
+    name: string,
+    worktreePath: string | null,
+  ): Pick<VcsRef, "name" | "worktreePath"> => ({
+    name,
+    worktreePath,
+  });
+
+  it("lists worktrees from refs, excluding main checkout and the current worktree", () => {
+    const options = deriveExistingWorktreeOptions({
+      refs: [
+        ref("main", "/repo"), // main checkout — excluded
+        ref("feature/current", "/home/.t3/worktrees/repo/t3code-current"), // active — excluded
+        ref("t3code/aaa", "/home/.t3/worktrees/repo/t3code-aaa"),
+        ref("fix/bbb", "/home/.t3/worktrees/repo/t3code-bbb"),
+        ref("origin/remote-only", null), // no worktree — excluded
+      ],
+      activeProjectCwd: "/repo",
+      activeWorktreePath: "/home/.t3/worktrees/repo/t3code-current",
+    });
+    expect(options).toEqual([
+      {
+        branch: "t3code/aaa",
+        worktreePath: "/home/.t3/worktrees/repo/t3code-aaa",
+        folderName: "t3code-aaa",
+      },
+      {
+        branch: "fix/bbb",
+        worktreePath: "/home/.t3/worktrees/repo/t3code-bbb",
+        folderName: "t3code-bbb",
+      },
+    ]);
+  });
+
+  it("dedupes by worktree path and returns empty when none qualify", () => {
+    expect(
+      deriveExistingWorktreeOptions({
+        refs: [ref("main", "/repo"), ref("HEAD", "/repo")],
+        activeProjectCwd: "/repo",
+        activeWorktreePath: null,
+      }),
+    ).toEqual([]);
+  });
+
+  it("excludes and dedupes on a canonical path spelling (separators / trailing slash)", () => {
+    const options = deriveExistingWorktreeOptions({
+      refs: [
+        ref("main", "/repo/"), // main checkout, trailing slash — still excluded
+        ref("feature/current", "C:\\wt\\current"), // active, backslashes — still excluded
+        ref("t3code/aaa", "/home/wt/t3code-aaa"),
+        ref("t3code/aaa-dupe", "/home/wt/t3code-aaa/"), // same dir, trailing slash — deduped
+      ],
+      activeProjectCwd: "/repo",
+      activeWorktreePath: "C:/wt/current",
+    });
+    expect(options).toEqual([
+      {
+        branch: "t3code/aaa",
+        worktreePath: "/home/wt/t3code-aaa",
+        folderName: "t3code-aaa",
+      },
+    ]);
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {
@@ -153,8 +220,10 @@ describe("resolveCurrentWorkspaceLabel", () => {
     expect(resolveCurrentWorkspaceLabel(null)).toBe("Current checkout");
   });
 
-  it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
+  it("names the active worktree by its folder when one is attached", () => {
+    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe(
+      "Current worktree · feature-a",
+    );
   });
 });
 
@@ -163,8 +232,10 @@ describe("resolveLockedWorkspaceLabel", () => {
     expect(resolveLockedWorkspaceLabel(null)).toBe("Local checkout");
   });
 
-  it("uses a shorter label for an attached worktree", () => {
-    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
+  it("names the attached worktree by its folder", () => {
+    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe(
+      "Worktree · feature-a",
+    );
   });
 });
 

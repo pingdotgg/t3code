@@ -32,6 +32,20 @@ export function getOrphanedWorktreePathForThread(
   return isShared ? null : targetWorktreePath;
 }
 
+/**
+ * Canonicalize an absolute worktree path for equality comparison: trim, unify
+ * separators to `/`, and strip trailing slashes. `git worktree list` and client
+ * state can spell the same directory differently (backslashes, trailing slash);
+ * comparing raw strings would then wrongly treat them as distinct.
+ */
+export function canonicalizeWorktreePath(path: string | null | undefined): string | null {
+  const trimmed = path?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
 export function formatWorktreePathForDisplay(worktreePath: string): string {
   const trimmed = worktreePath.trim();
   if (!trimmed) {
