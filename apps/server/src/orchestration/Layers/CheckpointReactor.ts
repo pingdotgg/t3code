@@ -25,6 +25,7 @@ import {
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import { withWorkspaceCheckpointLock } from "../../checkpointing/CheckpointWorkspaceLock.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -231,121 +232,128 @@ const make = Effect.gen(function* () {
     readonly assistantMessageId: MessageId | undefined;
     readonly createdAt: string;
   }) {
-    const fromTurnCount = Math.max(0, input.turnCount - 1);
-    const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
-    const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
+    // Share the per-cwd lock with workspace restore so a restore cannot validate
+    // and apply against a stale latest turn while this capture is in flight.
+    return yield* withWorkspaceCheckpointLock(
+      input.cwd,
+      Effect.gen(function* () {
+        const fromTurnCount = Math.max(0, input.turnCount - 1);
+        const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
+        const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
 
-    const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: input.cwd,
-      checkpointRef: fromCheckpointRef,
-    });
-    if (!fromCheckpointExists) {
-      yield* Effect.logWarning("checkpoint capture missing pre-turn baseline", {
-        threadId: input.threadId,
-        turnId: input.turnId,
-        fromTurnCount,
-      });
-    }
-
-    yield* checkpointStore.captureCheckpoint({
-      cwd: input.cwd,
-      checkpointRef: targetCheckpointRef,
-    });
-
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects files created or deleted during this turn.
-    yield* workspaceEntries.refresh(input.cwd);
-
-    const files = yield* checkpointStore
-      .diffCheckpoints({
-        cwd: input.cwd,
-        fromCheckpointRef,
-        toCheckpointRef: targetCheckpointRef,
-        fallbackFromToHead: false,
-        ignoreWhitespace: false,
-      })
-      .pipe(
-        Effect.map((diff) =>
-          parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-            path: file.path,
-            kind: "modified" as const,
-            additions: file.additions,
-            deletions: file.deletions,
-          })),
-        ),
-        Effect.tapError((error) =>
-          appendCaptureFailureActivity({
+        const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
+          cwd: input.cwd,
+          checkpointRef: fromCheckpointRef,
+        });
+        if (!fromCheckpointExists) {
+          yield* Effect.logWarning("checkpoint capture missing pre-turn baseline", {
             threadId: input.threadId,
             turnId: input.turnId,
-            detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
-            createdAt: input.createdAt,
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("failed to derive checkpoint file summary", {
-            threadId: input.threadId,
-            turnId: input.turnId,
-            turnCount: input.turnCount,
-            detail: error.message,
-          }).pipe(Effect.as([])),
-        ),
-      );
+            fromTurnCount,
+          });
+        }
 
-    const assistantMessageId =
-      input.assistantMessageId ??
-      input.thread.messages
-        .toReversed()
-        .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
-      MessageId.make(`assistant:${input.turnId}`);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: input.cwd,
+          checkpointRef: targetCheckpointRef,
+        });
 
-    yield* orchestrationEngine.dispatch({
-      type: "thread.turn.diff.complete",
-      commandId: yield* serverCommandId("checkpoint-turn-diff-complete"),
-      threadId: input.threadId,
-      turnId: input.turnId,
-      completedAt: input.createdAt,
-      checkpointRef: targetCheckpointRef,
-      status: input.status,
-      files,
-      assistantMessageId,
-      checkpointTurnCount: input.turnCount,
-      createdAt: input.createdAt,
-    });
-    yield* receiptBus.publish({
-      type: "checkpoint.diff.finalized",
-      threadId: input.threadId,
-      turnId: input.turnId,
-      checkpointTurnCount: input.turnCount,
-      checkpointRef: targetCheckpointRef,
-      status: input.status,
-      createdAt: input.createdAt,
-    });
-    yield* receiptBus.publish({
-      type: "turn.processing.quiesced",
-      threadId: input.threadId,
-      turnId: input.turnId,
-      checkpointTurnCount: input.turnCount,
-      createdAt: input.createdAt,
-    });
+        // Refresh the workspace entry index so the @-mention file picker
+        // reflects files created or deleted during this turn.
+        yield* workspaceEntries.refresh(input.cwd);
 
-    yield* orchestrationEngine.dispatch({
-      type: "thread.activity.append",
-      commandId: yield* serverCommandId("checkpoint-captured-activity"),
-      threadId: input.threadId,
-      activity: {
-        id: EventId.make(yield* randomUUID),
-        tone: "info",
-        kind: "checkpoint.captured",
-        summary: "Checkpoint captured",
-        payload: {
-          turnCount: input.turnCount,
+        const files = yield* checkpointStore
+          .diffCheckpoints({
+            cwd: input.cwd,
+            fromCheckpointRef,
+            toCheckpointRef: targetCheckpointRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace: false,
+          })
+          .pipe(
+            Effect.map((diff) =>
+              parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
+                path: file.path,
+                kind: "modified" as const,
+                additions: file.additions,
+                deletions: file.deletions,
+              })),
+            ),
+            Effect.tapError((error) =>
+              appendCaptureFailureActivity({
+                threadId: input.threadId,
+                turnId: input.turnId,
+                detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
+                createdAt: input.createdAt,
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("failed to derive checkpoint file summary", {
+                threadId: input.threadId,
+                turnId: input.turnId,
+                turnCount: input.turnCount,
+                detail: error.message,
+              }).pipe(Effect.as([])),
+            ),
+          );
+
+        const assistantMessageId =
+          input.assistantMessageId ??
+          input.thread.messages
+            .toReversed()
+            .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
+          MessageId.make(`assistant:${input.turnId}`);
+
+        yield* orchestrationEngine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: yield* serverCommandId("checkpoint-turn-diff-complete"),
+          threadId: input.threadId,
+          turnId: input.turnId,
+          completedAt: input.createdAt,
+          checkpointRef: targetCheckpointRef,
           status: input.status,
-        },
-        turnId: input.turnId,
-        createdAt: input.createdAt,
-      },
-      createdAt: input.createdAt,
-    });
+          files,
+          assistantMessageId,
+          checkpointTurnCount: input.turnCount,
+          createdAt: input.createdAt,
+        });
+        yield* receiptBus.publish({
+          type: "checkpoint.diff.finalized",
+          threadId: input.threadId,
+          turnId: input.turnId,
+          checkpointTurnCount: input.turnCount,
+          checkpointRef: targetCheckpointRef,
+          status: input.status,
+          createdAt: input.createdAt,
+        });
+        yield* receiptBus.publish({
+          type: "turn.processing.quiesced",
+          threadId: input.threadId,
+          turnId: input.turnId,
+          checkpointTurnCount: input.turnCount,
+          createdAt: input.createdAt,
+        });
+
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* serverCommandId("checkpoint-captured-activity"),
+          threadId: input.threadId,
+          activity: {
+            id: EventId.make(yield* randomUUID),
+            tone: "info",
+            kind: "checkpoint.captured",
+            summary: "Checkpoint captured",
+            payload: {
+              turnCount: input.turnCount,
+              status: input.status,
+            },
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        });
+      }),
+    );
   });
 
   // Captures a real git checkpoint when a turn completes via a runtime event.

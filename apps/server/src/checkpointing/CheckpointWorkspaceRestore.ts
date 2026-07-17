@@ -6,13 +6,13 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { withWorkspaceCheckpointLock } from "./CheckpointWorkspaceLock.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
 
 export class CheckpointWorkspaceRestoreFailedError extends Schema.TaggedErrorClass<CheckpointWorkspaceRestoreFailedError>()(
@@ -28,21 +28,6 @@ export class CheckpointWorkspaceRestoreFailedError extends Schema.TaggedErrorCla
   }
 }
 
-// ponytail: per-cwd mutex; SynchronizedRef service if lock lifecycle needs cleanup
-const restoreLocks = new Map<string, Semaphore.Semaphore>();
-
-const withWorkspaceRestoreLock = <A, E, R>(
-  cwd: string,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> => {
-  let lock = restoreLocks.get(cwd);
-  if (!lock) {
-    lock = Semaphore.makeUnsafe(1);
-    restoreLocks.set(cwd, lock);
-  }
-  return lock.withPermit(effect);
-};
-
 export const restoreWorkspaceCheckpoint = Effect.fn("CheckpointWorkspaceRestore.restore")(
   function* (input: OrchestrationRestoreWorkspaceCheckpointInput) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -51,8 +36,10 @@ export const restoreWorkspaceCheckpoint = Effect.fn("CheckpointWorkspaceRestore.
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
-    const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(input.threadId);
-    if (Option.isNone(context)) {
+    const initialContext = yield* projectionSnapshotQuery.getThreadCheckpointContext(
+      input.threadId,
+    );
+    if (Option.isNone(initialContext)) {
       return yield* new CheckpointWorkspaceRestoreFailedError({
         threadId: input.threadId,
         turnCount: input.turnCount,
@@ -60,42 +47,12 @@ export const restoreWorkspaceCheckpoint = Effect.fn("CheckpointWorkspaceRestore.
       });
     }
 
-    const cwd = context.value.worktreePath ?? context.value.workspaceRoot;
+    const cwd = initialContext.value.worktreePath ?? initialContext.value.workspaceRoot;
     if (!cwd) {
       return yield* new CheckpointWorkspaceRestoreFailedError({
         threadId: input.threadId,
         turnCount: input.turnCount,
         detail: `Thread '${input.threadId}' has no workspace path.`,
-      });
-    }
-
-    const latestTurnCount = Math.max(
-      0,
-      ...context.value.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
-    );
-    if (input.turnCount !== latestTurnCount) {
-      return yield* new CheckpointWorkspaceRestoreFailedError({
-        threadId: input.threadId,
-        turnCount: input.turnCount,
-        detail: "Only the latest workspace checkpoint can be rewound.",
-      });
-    }
-
-    const restoreTurnCount = input.turnCount - 1;
-    const checkpointRef =
-      restoreTurnCount === 0
-        ? checkpointRefForThreadTurn(input.threadId, 0)
-        : context.value.checkpoints.find(
-            (checkpoint) => checkpoint.checkpointTurnCount === restoreTurnCount,
-          )?.checkpointRef;
-    const updatedCheckpointRef = context.value.checkpoints.find(
-      (checkpoint) => checkpoint.checkpointTurnCount === input.turnCount,
-    )?.checkpointRef;
-    if (!checkpointRef || !updatedCheckpointRef) {
-      return yield* new CheckpointWorkspaceRestoreFailedError({
-        threadId: input.threadId,
-        turnCount: input.turnCount,
-        detail: `Checkpoint for thread '${input.threadId}' turn ${input.turnCount} cannot be rewound.`,
       });
     }
 
@@ -129,9 +86,60 @@ export const restoreWorkspaceCheckpoint = Effect.fn("CheckpointWorkspaceRestore.
       filePaths = [...new Set(resolvedPaths)];
     }
 
-    return yield* withWorkspaceRestoreLock(
+    return yield* withWorkspaceCheckpointLock(
       cwd,
       Effect.gen(function* () {
+        // Re-read under the lock so latest-turn checks and checkpoint refs cannot
+        // race a concurrent capture that lands after the pre-lock cwd lookup.
+        const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(input.threadId);
+        if (Option.isNone(context)) {
+          return yield* new CheckpointWorkspaceRestoreFailedError({
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            detail: `Thread '${input.threadId}' was not found.`,
+          });
+        }
+
+        const threadShell = yield* projectionSnapshotQuery.getThreadShellById(input.threadId);
+        const session = Option.isSome(threadShell) ? threadShell.value.session : null;
+        if (session?.activeTurnId != null || session?.status === "running") {
+          return yield* new CheckpointWorkspaceRestoreFailedError({
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            detail: "Interrupt the current turn before rewinding workspace changes.",
+          });
+        }
+
+        const latestTurnCount = Math.max(
+          0,
+          ...context.value.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
+        );
+        if (input.turnCount !== latestTurnCount) {
+          return yield* new CheckpointWorkspaceRestoreFailedError({
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            detail: "Only the latest workspace checkpoint can be rewound.",
+          });
+        }
+
+        const restoreTurnCount = input.turnCount - 1;
+        const checkpointRef =
+          restoreTurnCount === 0
+            ? checkpointRefForThreadTurn(input.threadId, 0)
+            : context.value.checkpoints.find(
+                (checkpoint) => checkpoint.checkpointTurnCount === restoreTurnCount,
+              )?.checkpointRef;
+        const updatedCheckpointRef = context.value.checkpoints.find(
+          (checkpoint) => checkpoint.checkpointTurnCount === input.turnCount,
+        )?.checkpointRef;
+        if (!checkpointRef || !updatedCheckpointRef) {
+          return yield* new CheckpointWorkspaceRestoreFailedError({
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            detail: `Checkpoint for thread '${input.threadId}' turn ${input.turnCount} cannot be rewound.`,
+          });
+        }
+
         const restored = yield* checkpointStore.restoreCheckpoint({
           cwd,
           checkpointRef,
@@ -147,9 +155,12 @@ export const restoreWorkspaceCheckpoint = Effect.fn("CheckpointWorkspaceRestore.
         }
 
         // Keep the latest-turn diff aligned with the restored workspace.
-        yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: updatedCheckpointRef });
-        yield* workspaceEntries.refresh(cwd);
-        // ponytail: status refresh is best-effort; restore already succeeded
+        // Capture/refresh are best-effort: restore already mutated the tree, so
+        // failing the RPC here would leave clients with a stale Diff tab.
+        yield* checkpointStore
+          .captureCheckpoint({ cwd, checkpointRef: updatedCheckpointRef })
+          .pipe(Effect.ignoreCause({ log: true }));
+        yield* workspaceEntries.refresh(cwd).pipe(Effect.ignoreCause({ log: true }));
         yield* vcsStatusBroadcaster.refreshLocalStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
         return { restored: true as const };
       }),

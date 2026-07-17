@@ -28,7 +28,9 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       scheduler: workspaceRestoreScheduler,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+        // Include full input so file-scoped restores are not coalesced with each
+        // other (or with a full-thread restore) for the same environment/thread.
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {

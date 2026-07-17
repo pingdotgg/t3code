@@ -22,7 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
-import { useCheckpointDiff } from "~/lib/checkpointDiffState";
+import { refreshCheckpointDiff, useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import { useTheme } from "../hooks/useTheme";
@@ -286,6 +286,9 @@ export default function DiffPanel({
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
   const latestTurn = orderedTurnDiffSummaries[0];
+  const latestCheckpointTurnCount =
+    latestTurn &&
+    (latestTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[latestTurn.turnId]);
   const canRewindSelectedFile =
     canRewindLatestTurn &&
     selectedTurn !== undefined &&
@@ -462,8 +465,17 @@ export default function DiffPanel({
     if (checkpointDiffRefreshEpoch <= 0) return;
     if (selectedTurnId === null) {
       branchDiffPreview.refresh();
-    } else {
-      activeCheckpointDiff.refresh();
+    }
+    // Rewind re-captures the latest turn's checkpoint. Refresh that cache even
+    // when an older turn (or git scope) is selected, so switching back is fresh.
+    if (typeof latestCheckpointTurnCount === "number") {
+      refreshCheckpointDiff({
+        environmentId: activeThread?.environmentId ?? null,
+        threadId: activeThreadId,
+        fromTurnCount: Math.max(0, latestCheckpointTurnCount - 1),
+        toTurnCount: latestCheckpointTurnCount,
+        ignoreWhitespace: diffIgnoreWhitespace,
+      });
     }
     // ponytail: refresh only after a restore, not when the query view object changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps

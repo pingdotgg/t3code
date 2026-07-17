@@ -1,5 +1,12 @@
 import { assert, it } from "@effect/vitest";
-import { CheckpointRef, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  type OrchestrationThreadShell,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +19,38 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as CheckpointWorkspaceRestore from "./CheckpointWorkspaceRestore.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
+
+const idleThreadShell = (threadId: ThreadId): OrchestrationThreadShell =>
+  ({
+    id: threadId,
+    projectId: ProjectId.make("project-1"),
+    title: "Thread",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: "/workspace/worktree",
+    latestTurn: null,
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+    archivedAt: null,
+    session: {
+      threadId,
+      status: "ready",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-07-17T00:00:00.000Z",
+    },
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+  }) as OrchestrationThreadShell;
 
 it.effect("restores workspace files without mutating thread history", () =>
   Effect.gen(function* () {
@@ -57,6 +96,7 @@ it.effect("restores workspace files without mutating thread history", () =>
               ],
             }),
           ),
+        getThreadShellById: () => Effect.succeed(Option.some(idleThreadShell(threadId))),
       }),
       Layer.mock(CheckpointStore.CheckpointStore)({ restoreCheckpoint, captureCheckpoint }),
       Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: refreshEntries }),
@@ -131,6 +171,7 @@ it.effect("rejects restores for non-latest turns", () =>
               ],
             }),
           ),
+        getThreadShellById: () => Effect.succeed(Option.some(idleThreadShell(threadId))),
       }),
       Layer.mock(CheckpointStore.CheckpointStore)({ restoreCheckpoint }),
       Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
@@ -164,5 +205,327 @@ it.effect("rejects restores for non-latest turns", () =>
       assert.strictEqual(error.detail, "Only the latest workspace checkpoint can be rewound.");
     }
     assert.strictEqual(restoreCheckpoint.mock.calls.length, 0);
+  }),
+);
+
+it.effect("rejects empty filePaths for scoped restores", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-1");
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1");
+    const restoreCheckpoint = vi.fn((_input: CheckpointStore.RestoreCheckpointInput) =>
+      Effect.succeed(true),
+    );
+
+    const dependencies = Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getThreadCheckpointContext: () =>
+          Effect.succeed(
+            Option.some({
+              threadId,
+              projectId: ProjectId.make("project-1"),
+              workspaceRoot: "/workspace",
+              worktreePath: "/workspace/worktree",
+              checkpoints: [
+                {
+                  turnId: TurnId.make("turn-1"),
+                  checkpointTurnCount: 1,
+                  checkpointRef,
+                  status: "ready",
+                  files: [],
+                  assistantMessageId: null,
+                  completedAt: "2026-07-17T00:00:00.000Z",
+                },
+              ],
+            }),
+          ),
+        getThreadShellById: () => Effect.succeed(Option.some(idleThreadShell(threadId))),
+      }),
+      Layer.mock(CheckpointStore.CheckpointStore)({ restoreCheckpoint }),
+      Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
+        resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+          Effect.succeed({
+            absolutePath: `${workspaceRoot}/${relativePath}`,
+            relativePath,
+          }),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshLocalStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: true,
+            refName: "main",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+      }),
+    );
+
+    const error = yield* CheckpointWorkspaceRestore.restoreWorkspaceCheckpoint({
+      threadId,
+      turnCount: 1,
+      filePaths: [],
+    }).pipe(Effect.provide(dependencies), Effect.flip);
+
+    assert.strictEqual(error._tag, "CheckpointWorkspaceRestoreFailedError");
+    if (error._tag === "CheckpointWorkspaceRestoreFailedError") {
+      assert.strictEqual(error.detail, "At least one file path is required for a scoped restore.");
+    }
+    assert.strictEqual(restoreCheckpoint.mock.calls.length, 0);
+  }),
+);
+
+it.effect("rejects restores while a turn is in progress", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-1");
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1");
+    const restoreCheckpoint = vi.fn((_input: CheckpointStore.RestoreCheckpointInput) =>
+      Effect.succeed(true),
+    );
+    const runningShell: OrchestrationThreadShell = {
+      ...idleThreadShell(threadId),
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: TurnId.make("turn-in-progress"),
+        lastError: null,
+        updatedAt: "2026-07-17T00:02:00.000Z",
+      },
+    };
+
+    const dependencies = Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getThreadCheckpointContext: () =>
+          Effect.succeed(
+            Option.some({
+              threadId,
+              projectId: ProjectId.make("project-1"),
+              workspaceRoot: "/workspace",
+              worktreePath: "/workspace/worktree",
+              checkpoints: [
+                {
+                  turnId: TurnId.make("turn-1"),
+                  checkpointTurnCount: 1,
+                  checkpointRef,
+                  status: "ready",
+                  files: [],
+                  assistantMessageId: null,
+                  completedAt: "2026-07-17T00:00:00.000Z",
+                },
+              ],
+            }),
+          ),
+        getThreadShellById: () => Effect.succeed(Option.some(runningShell)),
+      }),
+      Layer.mock(CheckpointStore.CheckpointStore)({ restoreCheckpoint }),
+      Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
+        resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+          Effect.succeed({
+            absolutePath: `${workspaceRoot}/${relativePath}`,
+            relativePath,
+          }),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshLocalStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: true,
+            refName: "main",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+      }),
+    );
+
+    const error = yield* CheckpointWorkspaceRestore.restoreWorkspaceCheckpoint({
+      threadId,
+      turnCount: 1,
+    }).pipe(Effect.provide(dependencies), Effect.flip);
+
+    assert.strictEqual(error._tag, "CheckpointWorkspaceRestoreFailedError");
+    if (error._tag === "CheckpointWorkspaceRestoreFailedError") {
+      assert.strictEqual(
+        error.detail,
+        "Interrupt the current turn before rewinding workspace changes.",
+      );
+    }
+    assert.strictEqual(restoreCheckpoint.mock.calls.length, 0);
+  }),
+);
+
+it.effect("rejects when a newer checkpoint lands before the restore lock is held", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-1");
+    const firstRef = CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1");
+    const secondRef = CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/2");
+    const restoreCheckpoint = vi.fn((_input: CheckpointStore.RestoreCheckpointInput) =>
+      Effect.succeed(true),
+    );
+    let contextReads = 0;
+
+    const dependencies = Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getThreadCheckpointContext: () => {
+          contextReads += 1;
+          if (contextReads === 1) {
+            return Effect.succeed(
+              Option.some({
+                threadId,
+                projectId: ProjectId.make("project-1"),
+                workspaceRoot: "/workspace",
+                worktreePath: "/workspace/worktree",
+                checkpoints: [
+                  {
+                    turnId: TurnId.make("turn-1"),
+                    checkpointTurnCount: 1,
+                    checkpointRef: firstRef,
+                    status: "ready",
+                    files: [],
+                    assistantMessageId: null,
+                    completedAt: "2026-07-17T00:00:00.000Z",
+                  },
+                ],
+              }),
+            );
+          }
+          return Effect.succeed(
+            Option.some({
+              threadId,
+              projectId: ProjectId.make("project-1"),
+              workspaceRoot: "/workspace",
+              worktreePath: "/workspace/worktree",
+              checkpoints: [
+                {
+                  turnId: TurnId.make("turn-1"),
+                  checkpointTurnCount: 1,
+                  checkpointRef: firstRef,
+                  status: "ready",
+                  files: [],
+                  assistantMessageId: null,
+                  completedAt: "2026-07-17T00:00:00.000Z",
+                },
+                {
+                  turnId: TurnId.make("turn-2"),
+                  checkpointTurnCount: 2,
+                  checkpointRef: secondRef,
+                  status: "ready",
+                  files: [],
+                  assistantMessageId: null,
+                  completedAt: "2026-07-17T00:01:00.000Z",
+                },
+              ],
+            }),
+          );
+        },
+        getThreadShellById: () => Effect.succeed(Option.some(idleThreadShell(threadId))),
+      }),
+      Layer.mock(CheckpointStore.CheckpointStore)({ restoreCheckpoint }),
+      Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
+        resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+          Effect.succeed({
+            absolutePath: `${workspaceRoot}/${relativePath}`,
+            relativePath,
+          }),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshLocalStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: true,
+            refName: "main",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+      }),
+    );
+
+    const error = yield* CheckpointWorkspaceRestore.restoreWorkspaceCheckpoint({
+      threadId,
+      turnCount: 1,
+    }).pipe(Effect.provide(dependencies), Effect.flip);
+
+    assert.strictEqual(error._tag, "CheckpointWorkspaceRestoreFailedError");
+    if (error._tag === "CheckpointWorkspaceRestoreFailedError") {
+      assert.strictEqual(error.detail, "Only the latest workspace checkpoint can be rewound.");
+    }
+    assert.strictEqual(restoreCheckpoint.mock.calls.length, 0);
+    assert.strictEqual(contextReads, 2);
+  }),
+);
+
+it.effect("returns success when recapturing the restored checkpoint fails", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-1");
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1");
+    const restoreCheckpoint = vi.fn((_input: CheckpointStore.RestoreCheckpointInput) =>
+      Effect.succeed(true),
+    );
+    const captureCheckpoint = vi.fn((_input: CheckpointStore.CaptureCheckpointInput) =>
+      Effect.die(new Error("capture failed")),
+    );
+    const refreshEntries = vi.fn((_cwd: string) => Effect.void);
+
+    const dependencies = Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getThreadCheckpointContext: () =>
+          Effect.succeed(
+            Option.some({
+              threadId,
+              projectId: ProjectId.make("project-1"),
+              workspaceRoot: "/workspace",
+              worktreePath: "/workspace/worktree",
+              checkpoints: [
+                {
+                  turnId: TurnId.make("turn-1"),
+                  checkpointTurnCount: 1,
+                  checkpointRef,
+                  status: "ready",
+                  files: [],
+                  assistantMessageId: null,
+                  completedAt: "2026-07-17T00:00:00.000Z",
+                },
+              ],
+            }),
+          ),
+        getThreadShellById: () => Effect.succeed(Option.some(idleThreadShell(threadId))),
+      }),
+      Layer.mock(CheckpointStore.CheckpointStore)({ restoreCheckpoint, captureCheckpoint }),
+      Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: refreshEntries }),
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
+        resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+          Effect.succeed({
+            absolutePath: `${workspaceRoot}/${relativePath}`,
+            relativePath,
+          }),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshLocalStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: true,
+            refName: "main",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+      }),
+    );
+
+    const result = yield* CheckpointWorkspaceRestore.restoreWorkspaceCheckpoint({
+      threadId,
+      turnCount: 1,
+    }).pipe(Effect.provide(dependencies));
+
+    assert.deepStrictEqual(result, { restored: true });
+    assert.strictEqual(restoreCheckpoint.mock.calls.length, 1);
+    assert.strictEqual(captureCheckpoint.mock.calls.length, 1);
+    assert.strictEqual(refreshEntries.mock.calls.length, 1);
   }),
 );

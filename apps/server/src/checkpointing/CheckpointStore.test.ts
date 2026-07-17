@@ -147,6 +147,41 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(yield* fileSystem.exists(addedPath)).toBe(false);
       }),
     );
+
+    it.effect("rejects empty filePaths without resetting the index", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-empty-file-paths"),
+          0,
+        );
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "staged change\n");
+        yield* git(tmp, ["add", "README.md"]);
+
+        const error = yield* checkpointStore
+          .restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef,
+            filePaths: [],
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("VcsProcessExitError");
+        if (error._tag === "VcsProcessExitError") {
+          expect(error.detail).toBe("At least one file path is required for a scoped restore.");
+        }
+
+        expect(yield* fileSystem.readFileString(NodePath.join(tmp, "README.md"))).toBe(
+          "staged change\n",
+        );
+        expect(yield* git(tmp, ["diff", "--cached", "--name-only"])).toBe("README.md");
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {

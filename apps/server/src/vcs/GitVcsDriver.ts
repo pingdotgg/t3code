@@ -770,6 +770,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return true;
       }
 
+      if (input.filePaths.length === 0) {
+        return yield* new VcsProcessExitError({
+          operation,
+          command: "git reset",
+          cwd: input.cwd,
+          exitCode: 1,
+          detail: "At least one file path is required for a scoped restore.",
+        });
+      }
+
       // Path-scoped: restore each path individually so a missing source path
       // cannot abort restore of the others (git restore fails the whole batch).
       for (const filePath of input.filePaths) {
