@@ -50,12 +50,16 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
-/** Max wait for first/non-empty available_commands_update after session/new. */
+/**
+ * Headroom so slash-command wait + returning from discovery finishes before the
+ * outer Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS) fires.
+ */
+const GROK_ACP_DISCOVERY_TIMEOUT_RESERVE_MS = 200;
+/** Ideal max wait for available_commands_update after session/new (may be capped). */
 const GROK_ACP_SLASH_COMMAND_WAIT_MS = 2_000;
 /**
  * After an empty update, briefly watch for a follow-up non-empty "changed"
- * update without burning the full wait budget (avoids pushing the 15s discovery
- * timeout when model setup already took most of the window).
+ * update without burning the full wait budget.
  */
 const GROK_ACP_SLASH_EMPTY_SETTLE_MS = 250;
 const GROK_ACP_SLASH_COMMAND_POLL_MS = 50;
@@ -150,22 +154,33 @@ function buildGrokDiscoveredModelsFromSessionModelState(
 }
 
 /**
- * Wait for ACP `available_commands_update` during the probe window.
+ * Wait for ACP `available_commands_update` within `maxWaitMs` (remaining discovery budget).
  *
- * - Option.none = no notification yet → wait up to GROK_ACP_SLASH_COMMAND_WAIT_MS
- * - Option.some([]) = empty update → wait only GROK_ACP_SLASH_EMPTY_SETTLE_MS more
- *   for a possible non-empty "changed" update, then accept empty
+ * - Option.none = no notification yet → wait up to maxWaitMs
+ * - Option.some([]) = empty → wait min(empty settle, maxWaitMs) for a non-empty follow-up
  * - Option.some(nonEmpty) = return immediately
+ * - maxWaitMs <= 0 = return whatever is already on the ref (slash wait is non-fatal)
  */
 const waitForGrokSlashCommands = (
   slashCommandsRef: Ref.Ref<Option.Option<ReadonlyArray<ServerProviderSlashCommand>>>,
+  maxWaitMs: number,
 ) =>
   Effect.gen(function* () {
+    const readCommands = Effect.map(Ref.get(slashCommandsRef), (commandsOpt) =>
+      Option.isSome(commandsOpt) ? commandsOpt.value : [],
+    );
+
+    if (maxWaitMs <= 0) {
+      return yield* readCommands;
+    }
+
     const startedAt = yield* Clock.currentTimeMillis;
+    const emptySettleMs = Math.min(GROK_ACP_SLASH_EMPTY_SETTLE_MS, maxWaitMs);
     let emptySeenAt: number | undefined;
 
     while (true) {
       const now = yield* Clock.currentTimeMillis;
+      const elapsed = now - startedAt;
       const commandsOpt = yield* Ref.get(slashCommandsRef);
 
       if (Option.isSome(commandsOpt) && commandsOpt.value.length > 0) {
@@ -174,16 +189,17 @@ const waitForGrokSlashCommands = (
 
       if (Option.isSome(commandsOpt) && commandsOpt.value.length === 0) {
         emptySeenAt ??= now;
-        if (now - emptySeenAt >= GROK_ACP_SLASH_EMPTY_SETTLE_MS) {
+        if (now - emptySeenAt >= emptySettleMs) {
           return commandsOpt.value;
         }
       }
 
-      if (now - startedAt >= GROK_ACP_SLASH_COMMAND_WAIT_MS) {
+      const remaining = maxWaitMs - elapsed;
+      if (remaining <= 0) {
         return Option.isSome(commandsOpt) ? commandsOpt.value : [];
       }
 
-      yield* Effect.sleep(Duration.millis(GROK_ACP_SLASH_COMMAND_POLL_MS));
+      yield* Effect.sleep(Duration.millis(Math.min(GROK_ACP_SLASH_COMMAND_POLL_MS, remaining)));
     }
   });
 
@@ -197,6 +213,9 @@ const discoverGrokModelsViaAcp = (
   cwd: string = process.cwd(),
 ) =>
   Effect.gen(function* () {
+    // Wall clock for the whole discovery effect so slash wait cannot overrun the
+    // outer GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS and discard already-found models.
+    const discoveryStartedAt = yield* Clock.currentTimeMillis;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const acp = yield* makeGrokAcpRuntime({
       grokSettings,
@@ -227,12 +246,23 @@ const discoverGrokModelsViaAcp = (
     const models = buildGrokDiscoveredModelsFromSessionModelState(
       started.sessionSetupResult.models,
     );
-    // Prefer an already-populated list; otherwise wait (short settle if empty).
+
+    // Slash discovery is best-effort: cap wait by remaining outer budget so a slow
+    // acp.start() never turns a successful model discovery into a timeout failure.
+    const now = yield* Clock.currentTimeMillis;
+    const remainingDiscoveryMs = Math.max(
+      0,
+      GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS -
+        (now - discoveryStartedAt) -
+        GROK_ACP_DISCOVERY_TIMEOUT_RESERVE_MS,
+    );
+    const slashWaitMs = Math.min(GROK_ACP_SLASH_COMMAND_WAIT_MS, remainingDiscoveryMs);
+
     const slashCommandsOpt = yield* Ref.get(slashCommandsRef);
     const slashCommands =
       Option.isSome(slashCommandsOpt) && slashCommandsOpt.value.length > 0
         ? slashCommandsOpt.value
-        : yield* waitForGrokSlashCommands(slashCommandsRef);
+        : yield* waitForGrokSlashCommands(slashCommandsRef, slashWaitMs);
 
     return { models, slashCommands } satisfies GrokAcpDiscoveryResult;
   }).pipe(Effect.scoped);
