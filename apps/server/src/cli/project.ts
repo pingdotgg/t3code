@@ -337,7 +337,9 @@ const dispatchLiveOrchestrationCommand = (
 
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  return yield* projectionSnapshotQuery.getSnapshot();
+  // Project resolution only reads `.projects`; the command read model returns the
+  // same shape without loading the heavy per-thread activity/message tables.
+  return yield* projectionSnapshotQuery.getCommandReadModel();
 });
 
 const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(

@@ -69,6 +69,7 @@ import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
+  resolveOlderHistoryAutoLoad,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -179,6 +180,12 @@ interface MessagesTimelineProps {
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
+  /** Older history beyond the live activity window can be lazy-loaded. */
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  /** Increments after the older-history cursor advances or is reset. */
+  olderHistoryCursorVersion?: number;
+  onLoadOlder?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +219,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   onIsAtEndChange,
   onManualNavigation,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  olderHistoryCursorVersion = 0,
+  onLoadOlder,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -322,6 +333,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     null,
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
+  const olderHistoryAutoLoadArmedRef = useRef(true);
+  const olderHistoryObservedProgressVersionRef = useRef(olderHistoryCursorVersion);
+  const requestOlderHistory = useCallback(() => {
+    // Disarm before both automatic and explicit requests. If a request fails,
+    // prop changes while the viewport remains at the start must not trigger an
+    // immediate retry loop; the header button still permits a deliberate retry.
+    olderHistoryAutoLoadArmedRef.current = false;
+    onLoadOlder?.();
+  }, [onLoadOlder]);
+  useEffect(() => {
+    olderHistoryAutoLoadArmedRef.current = true;
+    olderHistoryObservedProgressVersionRef.current = olderHistoryCursorVersion;
+  }, [routeThreadKey, olderHistoryCursorVersion]);
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
@@ -353,6 +377,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     if (isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
     }
+    // Reaching the top lazy-loads older history; maintainVisibleContentPosition
+    // (set on the list) keeps the viewport anchored when rows prepend.
+    const olderHistoryDecision = resolveOlderHistoryAutoLoad({
+      armed: olderHistoryAutoLoadArmedRef.current,
+      hasMore: hasMoreOlder,
+      isAtStart: state?.isAtStart ?? false,
+      loading: loadingOlder,
+      observedProgressVersion: olderHistoryObservedProgressVersionRef.current,
+      progressVersion: olderHistoryCursorVersion,
+    });
+    olderHistoryAutoLoadArmedRef.current = olderHistoryDecision.armed;
+    olderHistoryObservedProgressVersionRef.current = olderHistoryDecision.observedProgressVersion;
+    if (olderHistoryDecision.shouldLoad) {
+      requestOlderHistory();
+    }
     if (!state || minimapItems.length === 0) {
       return;
     }
@@ -375,7 +414,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+  }, [
+    listRef,
+    minimapItems,
+    minimapStripMap,
+    onIsAtEndChange,
+    hasMoreOlder,
+    loadingOlder,
+    olderHistoryCursorVersion,
+    requestOlderHistory,
+  ]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -405,6 +453,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       observer.disconnect();
     };
   }, [timelineViewportElement, rows.length]);
+
+  const listHeader = useMemo(() => {
+    if (loadingOlder) {
+      return (
+        <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
+          Loading older history…
+        </div>
+      );
+    }
+    if (hasMoreOlder) {
+      return (
+        <button
+          type="button"
+          onClick={requestOlderHistory}
+          className="flex w-full cursor-pointer items-center justify-center py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Load older history
+        </button>
+      );
+    }
+    return TIMELINE_LIST_HEADER;
+  }, [loadingOlder, hasMoreOlder, requestOlderHistory]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -457,7 +527,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [],
   );
 
-  if (rows.length === 0 && !isWorking) {
+  // Only short-circuit to the empty state when there is genuinely nothing to
+  // fetch: the window can derive zero VISIBLE rows (e.g. only tool-neutral work
+  // entries) while older history still exists — the list must render then so
+  // its "Load older history" header stays reachable.
+  if (rows.length === 0 && !isWorking && !hasMoreOlder && !loadingOlder) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground/30">
@@ -499,7 +573,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }}
             onScroll={handleScroll}
             className="scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5"
-            ListHeaderComponent={TIMELINE_LIST_HEADER}
+            ListHeaderComponent={listHeader}
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
           <TimelineMinimap

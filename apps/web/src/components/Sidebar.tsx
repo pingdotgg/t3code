@@ -3495,7 +3495,11 @@ export default function Sidebar() {
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
   const prewarmedSidebarThreadKeys = useMemo(
-    () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
+    // Browser clients can sit behind constrained remote links. Prewarming every
+    // visible thread hydrates several full detail windows before the user opens
+    // any of them, so keep the eager cache warm-up desktop-only. The active
+    // route still subscribes to its selected thread normally in either mode.
+    () => (isElectron ? getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys) : []),
     [visibleSidebarThreadKeys],
   );
   const prewarmedSidebarThreadRefs = useMemo(

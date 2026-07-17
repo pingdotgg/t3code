@@ -34,6 +34,7 @@ import {
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationGetThreadActivitiesError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   type ProjectEntriesFailure,
@@ -279,6 +280,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.getThreadActivities, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
@@ -1018,6 +1020,20 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new OrchestrationGetTurnDiffError({
                     message: "Failed to load turn diff",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getThreadActivities]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getThreadActivities,
+            projectionSnapshotQuery.getThreadActivitiesPage(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetThreadActivitiesError({
+                    message: "Failed to load thread activities page",
                     cause,
                   }),
               ),
