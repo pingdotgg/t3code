@@ -236,6 +236,29 @@ export function resolveAppModelSelection(
   );
 }
 
+/**
+ * Resolve a human-friendly model label for a slug, preferring the provider
+ * instance it belongs to. Falls back to a slug match across all providers,
+ * then to the raw slug when the model is not in the catalog.
+ */
+export function resolveModelDisplayName(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: string | null | undefined,
+  slug: string | null | undefined,
+): string {
+  if (!slug) return "";
+  if (instanceId) {
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    const model = provider?.models.find((entry) => entry.slug === slug);
+    if (model) return model.name;
+  }
+  for (const provider of providers) {
+    const model = provider.models.find((entry) => entry.slug === slug);
+    if (model) return model.name;
+  }
+  return slug;
+}
+
 export function resolveAppModelSelectionForInstance(
   instanceId: ProviderInstanceId,
   settings: UnifiedSettings,

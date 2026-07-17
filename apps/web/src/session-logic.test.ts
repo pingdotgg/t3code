@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveModelChangeNotices,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
@@ -47,6 +48,85 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+describe("deriveModelChangeNotices", () => {
+  it("extracts model-change notices and excludes them from work-log entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "model-changed-1",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "thread.model-changed",
+        summary: "Switched model to claude-sonnet-4-6",
+        tone: "info",
+        payload: {
+          fromInstanceId: "codex",
+          fromModel: "gpt-5.4",
+          toInstanceId: "claudeAgent",
+          toModel: "claude-sonnet-4-6",
+          isHandoff: true,
+        },
+      }),
+      makeActivity({ id: "tool-1", kind: "tool.completed", summary: "Ran a tool", tone: "tool" }),
+    ];
+
+    const notices = deriveModelChangeNotices(activities);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      id: "model-changed-1",
+      fromInstanceId: "codex",
+      fromModel: "gpt-5.4",
+      toInstanceId: "claudeAgent",
+      toModel: "claude-sonnet-4-6",
+      isHandoff: true,
+      summary: "Switched model to claude-sonnet-4-6",
+    });
+
+    // The notice must not also surface as a tool-like work-log entry.
+    const workEntries = deriveWorkLogEntries(activities);
+    expect(workEntries.some((entry) => entry.id === "model-changed-1")).toBe(false);
+  });
+
+  it("merges notices into the timeline in chronological order", () => {
+    const notices = deriveModelChangeNotices([
+      makeActivity({
+        id: "model-changed-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "thread.model-changed",
+        summary: "Switched to Claude Sonnet 4.6",
+        tone: "info",
+        payload: { toInstanceId: "claudeAgent", toModel: "claude-sonnet-4-6", isHandoff: false },
+      }),
+    ]);
+    const entries = deriveTimelineEntries([], [], [], notices);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: "notice", id: "model-changed-2" });
+  });
+
+  it("orders a notice above the user message that shares its timestamp", () => {
+    const sharedTimestamp = "2026-02-23T00:00:02.000Z";
+    const userMessage = {
+      id: MessageId.make("user-msg"),
+      role: "user" as const,
+      text: "continue on the new model",
+      turnId: null,
+      streaming: false,
+      createdAt: sharedTimestamp,
+      updatedAt: sharedTimestamp,
+    };
+    const notices = deriveModelChangeNotices([
+      makeActivity({
+        id: "model-changed-3",
+        createdAt: sharedTimestamp,
+        kind: "thread.model-changed",
+        summary: "Switched to GPT-5.4",
+        tone: "info",
+        payload: { toInstanceId: "codex", toModel: "gpt-5.4", isHandoff: true },
+      }),
+    ]);
+    const entries = deriveTimelineEntries([userMessage], [], [], notices);
+    expect(entries.map((entry) => entry.kind)).toEqual(["notice", "message"]);
+  });
+});
 
 describe("derivePendingApprovals", () => {
   it("tracks open approvals and removes resolved ones", () => {

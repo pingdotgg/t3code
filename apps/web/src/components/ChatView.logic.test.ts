@@ -1,4 +1,11 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -225,7 +232,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
     ).toBeNull();
   });
 
-  it("blocks started-session model changes when either provider requires a new thread", () => {
+  it("allows cross-instance switches on started sessions (provider handoff)", () => {
     expect(
       getStartedThreadModelChangeBlockReason({
         providers,
@@ -239,11 +246,82 @@ describe("getStartedThreadModelChangeBlockReason", () => {
           model: "grok-build",
         },
       }),
+    ).toBeNull();
+  });
+
+  it("blocks started-session model changes on providers that require a new thread", () => {
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+        },
+        nextModelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-other",
+        },
+      }),
     ).toEqual({
       title: "Start a new chat to change models",
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+
+  it("blocks a cross-instance switch the server treats as in-session (same driver + continuation)", () => {
+    // Two grok instances sharing a driver and continuation group: the server
+    // handles this as an in-session model change, not a handoff, and rejects it
+    // for a requiresNewThreadForModelChange provider — so the picker must block.
+    const sharedContinuationProviders = [
+      {
+        instanceId: ProviderInstanceId.make("grok_a"),
+        driver: ProviderDriverKind.make("grok"),
+        continuation: { groupKey: "grok:shared" },
+        requiresNewThreadForModelChange: true,
+      },
+      {
+        instanceId: ProviderInstanceId.make("grok_b"),
+        driver: ProviderDriverKind.make("grok"),
+        continuation: { groupKey: "grok:shared" },
+        requiresNewThreadForModelChange: true,
+      },
+    ];
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers: sharedContinuationProviders,
+        hasStartedSession: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("grok_a"),
+          model: "grok-build",
+        },
+        nextModelSelection: { instanceId: ProviderInstanceId.make("grok_b"), model: "grok-other" },
+      }),
+    ).toEqual({
+      title: "Start a new chat to change models",
+      description:
+        "This provider does not allow switching models after a conversation has started.",
+    });
+  });
+
+  it("allows a cross-instance switch to a different driver (true handoff)", () => {
+    const crossDriverProviders = [
+      { instanceId: ProviderInstanceId.make("codex"), driver: ProviderDriverKind.make("codex") },
+      {
+        instanceId: ProviderInstanceId.make("grok"),
+        driver: ProviderDriverKind.make("grok"),
+        requiresNewThreadForModelChange: true,
+      },
+    ];
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers: crossDriverProviders,
+        hasStartedSession: true,
+        currentModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        nextModelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      }),
+    ).toBeNull();
   });
 });
 

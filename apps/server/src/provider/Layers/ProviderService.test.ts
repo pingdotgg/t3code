@@ -1049,35 +1049,42 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("dies when an active session conflicts with its persisted binding", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-      const threadId = asThreadId("thread-binding-mismatch");
+  it.effect(
+    "lists a session as-is when it conflicts with its persisted binding (handoff in flight)",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const threadId = asThreadId("thread-binding-mismatch");
 
-      yield* provider.startSession(threadId, {
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        threadId,
-        cwd: "/tmp/project-binding-mismatch",
-        runtimeMode: "full-access",
-      });
-      yield* directory.upsert({
-        threadId,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        providerInstanceId: claudeAgentInstanceId,
-        runtimeMode: "full-access",
-      });
+        yield* provider.startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/project-binding-mismatch",
+          runtimeMode: "full-access",
+        });
+        yield* directory.upsert({
+          threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeAgentInstanceId,
+          runtimeMode: "full-access",
+        });
 
-      const exit = yield* Effect.exit(provider.listSessions());
-      assert.equal(Exit.hasDies(exit), true);
-      yield* directory.upsert({
-        threadId,
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        runtimeMode: "full-access",
-      });
-    }),
+        // The binding no longer describes this session (expected transiently
+        // during a provider handoff): the live session is surfaced without
+        // binding overrides instead of crashing.
+        const sessions = yield* provider.listSessions();
+        const mismatched = sessions.find((session) => session.threadId === threadId);
+        assert.equal(mismatched?.provider, "codex");
+        assert.equal(mismatched?.providerInstanceId, codexInstanceId);
+        yield* directory.upsert({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+      }),
   );
 
   it.effect("stops stale sessions in other providers after a successful replacement start", () =>

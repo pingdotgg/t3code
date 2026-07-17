@@ -1,9 +1,7 @@
 import {
   type EnvironmentId,
-  isProviderDriverKind,
   ProjectId,
   type ModelSelection,
-  type ProviderDriverKind,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
@@ -266,43 +264,16 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
-export function deriveLockedProvider(input: {
-  thread: Thread | null | undefined;
-  selectedProvider: string | null;
-  threadProvider: string | null;
-}): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
-    return null;
-  }
-  const sessionProvider = input.thread?.session?.providerName ?? null;
-  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
-    return sessionProvider;
-  }
-  const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
-  const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
-}
-
+// Blocks in-thread model changes for providers that cannot resume their own
+// thread with a different model (`requiresNewThreadForModelChange`). Selecting
+// a *different* provider instance is never blocked: the server treats that as
+// a handoff and starts a fresh provider session with the prior conversation
+// replayed as context.
 export function getStartedThreadModelChangeBlockReason(input: {
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange"> &
+      Partial<Pick<ServerProvider, "driver" | "continuation">>
+  >;
   hasStartedSession: boolean;
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
@@ -315,18 +286,31 @@ export function getStartedThreadModelChangeBlockReason(input: {
     ...input.currentModelSelection,
     instanceId: input.currentProviderInstanceId ?? input.currentModelSelection.instanceId,
   };
-  if (
-    currentModelSelection.instanceId === input.nextModelSelection.instanceId &&
-    currentModelSelection.model === input.nextModelSelection.model
-  ) {
-    return null;
-  }
   const currentProvider = input.providers.find(
     (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
   );
   const nextProvider = input.providers.find(
     (snapshot) => snapshot.instanceId === input.nextModelSelection.instanceId,
   );
+
+  if (currentModelSelection.instanceId !== input.nextModelSelection.instanceId) {
+    // Cross-instance: the server treats this as a fresh-session handoff — and
+    // does not apply `requiresNewThreadForModelChange` — UNLESS the two
+    // instances share a driver and continuation group (i.e. the same resumable
+    // provider thread), in which case it is really an in-session model change.
+    const sameDriver =
+      currentProvider?.driver !== undefined && currentProvider.driver === nextProvider?.driver;
+    const currentKey = currentProvider?.continuation?.groupKey ?? null;
+    const nextKey = nextProvider?.continuation?.groupKey ?? null;
+    const sameContinuation = currentKey !== null && currentKey === nextKey;
+    if (!sameDriver || !sameContinuation) {
+      return null;
+    }
+    // Falls through to the in-session block check below.
+  } else if (currentModelSelection.model === input.nextModelSelection.model) {
+    return null;
+  }
+
   if (
     currentProvider?.requiresNewThreadForModelChange !== true &&
     nextProvider?.requiresNewThreadForModelChange !== true

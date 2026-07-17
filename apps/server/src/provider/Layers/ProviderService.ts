@@ -616,7 +616,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           threadId,
           currentInstanceId: resolvedInstanceId,
         });
-        yield* upsertSessionBinding(sessionWithInstance, threadId, {
+        // When the thread moves to a different provider instance, the
+        // previously persisted resume cursor belongs to the old driver and
+        // must not survive the rebind (directory.upsert would otherwise keep
+        // it), or a later recovery would feed it to the wrong adapter.
+        const bindingInstanceChanged =
+          persistedBinding !== undefined &&
+          persistedBinding.providerInstanceId !== resolvedInstanceId;
+        const sessionForBinding =
+          bindingInstanceChanged && sessionWithInstance.resumeCursor === undefined
+            ? { ...sessionWithInstance, resumeCursor: null }
+            : sessionWithInstance;
+        yield* upsertSessionBinding(sessionForBinding, threadId, {
           modelSelection: input.modelSelection,
         });
         yield* analytics.record("provider.session.started", {
@@ -918,46 +929,53 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
       }
 
-      const sessions: ProviderSession[] = [];
+      // Dedupe by threadId. During a cross-instance handoff two live sessions
+      // can briefly coexist for one thread (the new one starts before the
+      // stale one is stopped). The persisted binding names the authoritative
+      // instance, so a session that matches it always wins; a mismatched
+      // (stale) session is only kept if nothing authoritative is present. This
+      // guarantees at most one session per threadId for downstream `.find()`.
+      const resultByThreadId = new Map<
+        ThreadId,
+        { readonly session: ProviderSession; readonly bindingMatched: boolean }
+      >();
       for (const session of activeSessions) {
         const binding = bindingsByThreadId.get(session.threadId);
+        const existing = resultByThreadId.get(session.threadId);
         if (!binding) {
-          sessions.push(session);
+          if (!existing) {
+            resultByThreadId.set(session.threadId, { session, bindingMatched: false });
+          }
           continue;
         }
 
-        const overrides: {
-          resumeCursor?: ProviderSession["resumeCursor"];
-          runtimeMode?: ProviderSession["runtimeMode"];
-          providerInstanceId?: ProviderSession["providerInstanceId"];
-        } = {};
-        overrides.providerInstanceId = dieOnMissingBindingInstanceId(
+        const bindingInstanceId = dieOnMissingBindingInstanceId(
           "ProviderService.listSessions",
           binding,
         );
-        if (binding.provider !== session.provider) {
-          return yield* Effect.die(
-            new Error(
-              `ProviderService.listSessions: thread '${session.threadId}' is active on provider '${session.provider}' but persisted binding names provider '${binding.provider}'.`,
-            ),
-          );
+        const matchesBinding =
+          binding.provider === session.provider && bindingInstanceId === session.providerInstanceId;
+        if (matchesBinding) {
+          const overrides: {
+            resumeCursor?: ProviderSession["resumeCursor"];
+            runtimeMode?: ProviderSession["runtimeMode"];
+            providerInstanceId?: ProviderSession["providerInstanceId"];
+          } = { providerInstanceId: bindingInstanceId };
+          if (session.resumeCursor === undefined && binding.resumeCursor !== undefined) {
+            overrides.resumeCursor = binding.resumeCursor;
+          }
+          if (binding.runtimeMode !== undefined) {
+            overrides.runtimeMode = binding.runtimeMode;
+          }
+          resultByThreadId.set(session.threadId, {
+            session: Object.assign({}, session, overrides),
+            bindingMatched: true,
+          });
+        } else if (!existing || !existing.bindingMatched) {
+          resultByThreadId.set(session.threadId, { session, bindingMatched: false });
         }
-        if (overrides.providerInstanceId !== session.providerInstanceId) {
-          return yield* Effect.die(
-            new Error(
-              `ProviderService.listSessions: thread '${session.threadId}' is active on provider instance '${session.providerInstanceId}' but persisted binding names '${overrides.providerInstanceId}'.`,
-            ),
-          );
-        }
-        if (session.resumeCursor === undefined && binding.resumeCursor !== undefined) {
-          overrides.resumeCursor = binding.resumeCursor;
-        }
-        if (binding.runtimeMode !== undefined) {
-          overrides.runtimeMode = binding.runtimeMode;
-        }
-        sessions.push(Object.assign({}, session, overrides));
       }
-      return sessions;
+      return [...resultByThreadId.values()].map((entry) => entry.session);
     },
   );
 

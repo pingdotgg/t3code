@@ -40,6 +40,7 @@ import {
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowRightLeftIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -820,6 +821,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         <AssistantTimelineRow row={row} />
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {row.kind === "notice" ? <NoticeTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
     </div>
   );
@@ -1046,6 +1048,17 @@ function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
       />
+    </div>
+  );
+}
+
+function NoticeTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "notice" }> }) {
+  return (
+    <div className="flex items-center justify-center py-1">
+      <div className="flex items-center gap-1.5 rounded-full border border-border/60 bg-secondary/40 px-3 py-1 text-muted-foreground text-xs">
+        <ArrowRightLeftIcon className="size-3 shrink-0" />
+        <span>{row.notice.summary}</span>
+      </div>
     </div>
   );
 }
