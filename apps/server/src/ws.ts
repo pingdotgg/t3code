@@ -1179,6 +1179,14 @@ const makeWsRpcLayer = (
                 })),
               );
 
+              // Attach live delivery before reading either replay or snapshot state.
+              // Otherwise an event published while the snapshot is loading is lost.
+              const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+              yield* Effect.forkScoped(
+                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+              );
+              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+
               // When the client already loaded the snapshot over HTTP it passes
               // that snapshot's sequence, and we resume the live subscription by
               // replaying persisted events after it instead of re-sending the
@@ -1198,28 +1206,20 @@ const makeWsRpcLayer = (
               // so a global cap could otherwise omit this thread's events.
               if (input.afterSequence !== undefined) {
                 const afterSequence = input.afterSequence;
-                return Stream.unwrap(
-                  Effect.gen(function* () {
-                    const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-                    yield* Effect.forkScoped(
-                      liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-                    );
-                    const catchUpStream = orchestrationEngine
-                      .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
-                      .pipe(
-                        Stream.filter(isThisThreadDetailEvent),
-                        Stream.map((event) => ({ kind: "event" as const, event })),
-                        Stream.mapError(
-                          (cause) =>
-                            new OrchestrationGetSnapshotError({
-                              message: `Failed to replay thread ${input.threadId} events`,
-                              cause,
-                            }),
-                        ),
-                      );
-                    return Stream.concat(catchUpStream, Stream.fromQueue(liveBuffer));
-                  }),
-                );
+                const catchUpStream = orchestrationEngine
+                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+                  .pipe(
+                    Stream.filter(isThisThreadDetailEvent),
+                    Stream.map((event) => ({ kind: "event" as const, event })),
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to replay thread ${input.threadId} events`,
+                          cause,
+                        }),
+                    ),
+                  );
+                return Stream.concat(catchUpStream, bufferedLiveStream);
               }
 
               const snapshot = yield* projectionSnapshotQuery
@@ -1246,7 +1246,7 @@ const makeWsRpcLayer = (
                   kind: "snapshot" as const,
                   snapshot: snapshot.value,
                 }),
-                liveStream,
+                bufferedLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },
