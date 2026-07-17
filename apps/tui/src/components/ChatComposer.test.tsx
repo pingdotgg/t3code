@@ -56,6 +56,7 @@ const base = {
   onSend: noop,
   onSubmitAnswer: noop,
   onRemoveAttachment: noop,
+  onPasteImage: noop,
 } as const;
 
 async function frameOf(node: React.ReactNode): Promise<string> {
@@ -263,6 +264,48 @@ describe("ChatComposer", () => {
     expect(frame).toContain("line three");
     expect(captured).toBe("line one\nline two\nline three");
     expect(sent).toBe(0);
+    t.renderer.destroy();
+  });
+
+  it("Given image clipboard bytes, when pasted in a non-empty prompt, then it stages the image without changing the draft", async () => {
+    let captured = "";
+    let pasted:
+      | {
+          readonly bytes: Uint8Array;
+          readonly mimeType: string;
+        }
+      | undefined;
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={(value) => {
+            captured = value;
+            setReply(value);
+          }}
+          onPasteImage={(value) => {
+            pasted = value;
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 10 });
+    await t.renderOnce();
+    await t.mockInput.typeText("keep this draft");
+    t.renderer.keyInput.processPaste(new Uint8Array([137, 80, 78, 71]), {
+      kind: "binary",
+      mimeType: "image/png",
+    });
+    await t.waitFor(() => pasted !== undefined);
+
+    expect(pasted?.mimeType).toBe("image/png");
+    expect(pasted?.bytes).toEqual(new Uint8Array([137, 80, 78, 71]));
+    expect(captured).toBe("keep this draft");
+    expect(t.captureCharFrame()).toContain("keep this draft");
     t.renderer.destroy();
   });
 

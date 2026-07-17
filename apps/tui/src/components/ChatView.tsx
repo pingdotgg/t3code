@@ -4,13 +4,14 @@ import {
   type GitStackedAction,
   type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderInteractionMode,
   type RuntimeMode,
   type VcsRef,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
-import { getKittyImageManager } from "@t3tools/opentui-image";
+import { getKittyClipboardManager, getKittyImageManager } from "@t3tools/opentui-image";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -20,8 +21,10 @@ import * as React from "react";
 import { derivePendingApprovals } from "../approvals.ts";
 import {
   type ComposerImageAttachment,
+  imageExtensionForMimeType,
   isSupportedImagePath,
   prepareComposerImage,
+  prepareComposerImageBytes,
   removeComposerImage,
 } from "../composerAttachments.ts";
 import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
@@ -225,6 +228,8 @@ export function ChatView({
   const [composerImages, setComposerImages] = React.useState<
     ReadonlyArray<ComposerImageAttachment>
   >([]);
+  const clipboardImageSequenceRef = React.useRef(0);
+  const clipboardImageLoadsRef = React.useRef(0);
   // These refs close the same-event gap before React can paint a pending state:
   // rapid Enter presses must never start the same mutation twice.
   const replySubmissionPendingRef = React.useRef(false);
@@ -790,6 +795,27 @@ export function ChatView({
   // dropdown opens over the still-present composer rather than replacing it.
   const popoverOpen =
     !!picker || overlay === "command" || overlay === "revert" || overlay === "confirmDelete";
+  const composerThreadId = detail?.id ?? null;
+  const composerInputFocused =
+    !terminalFocused &&
+    !replySubmissionPending &&
+    !newSubmissionPending &&
+    !diffOpen &&
+    !filesOpen &&
+    !settingsOpen &&
+    !expandedImage &&
+    !popoverOpen &&
+    !rightPanelFocused &&
+    focus !== "filter";
+
+  React.useEffect(() => {
+    if (!composerInputFocused || focus !== "compose" || userInputActive || !composerThreadId)
+      return;
+    return getKittyClipboardManager(renderer).activate({
+      maxBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+      onError: (error) => store.setStatus(error.message, "error"),
+    });
+  }, [composerInputFocused, composerThreadId, focus, renderer, store, userInputActive]);
   // A pending question renders a panel inside the composer (header + question +
   // options + hint + spacer), so the composer grows to fit it.
   const pendingPanelHeight = userInputActive && uiQuestion ? uiQuestion.options.length + 4 : 0;
@@ -1266,6 +1292,53 @@ export function ChatView({
   };
   const removeStagedComposerImage = (relativePath: string) => {
     setComposerImages((current) => removeComposerImage(current, relativePath));
+  };
+
+  const pasteComposerImage = (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => {
+    if (!detail) {
+      store.setStatus("Select a thread before pasting an image.", "error");
+      return;
+    }
+    if (userInputActive) {
+      store.setStatus("Answer the pending question before attaching an image.", "error");
+      return;
+    }
+    if (
+      composerImages.length + clipboardImageLoadsRef.current >=
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+    ) {
+      store.setStatus(
+        `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
+        "error",
+      );
+      return;
+    }
+    const extension = imageExtensionForMimeType(paste.mimeType);
+    if (!extension) {
+      store.setStatus("Paste a supported image format.", "error");
+      return;
+    }
+
+    clipboardImageSequenceRef.current += 1;
+    const name = `clipboard-image-${clipboardImageSequenceRef.current}.${extension}`;
+    clipboardImageLoadsRef.current += 1;
+    store.setStatus("Adding pasted image…", "busy");
+    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes)
+      .then((image) => {
+        setComposerImages((current) =>
+          current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ? current : [...current, image],
+        );
+        store.setStatus(`Attached ${image.upload.name}.`, "success");
+      })
+      .catch((error) => {
+        store.setStatus(
+          error instanceof Error ? error.message : "Could not attach pasted image.",
+          "error",
+        );
+      })
+      .finally(() => {
+        clipboardImageLoadsRef.current = Math.max(0, clipboardImageLoadsRef.current - 1);
+      });
   };
 
   const toggleFocus = () => {
@@ -2043,18 +2116,7 @@ export function ChatView({
           newBranchStatus={newBranchStatus}
           newField={newField}
           editorRows={promptLines}
-          inputFocused={
-            !terminalFocused &&
-            !replySubmissionPending &&
-            !newSubmissionPending &&
-            !diffOpen &&
-            !filesOpen &&
-            !settingsOpen &&
-            !expandedImage &&
-            !popoverOpen &&
-            !rightPanelFocused &&
-            focus !== "filter"
-          }
+          inputFocused={composerInputFocused}
           composerEpoch={composerEpoch}
           controls={controls}
           working={working}
@@ -2083,6 +2145,7 @@ export function ChatView({
           onSend={sendReply}
           onSubmitAnswer={submitUserInput}
           onRemoveAttachment={removeStagedComposerImage}
+          onPasteImage={pasteComposerImage}
         />
       </ComposerDock>
 

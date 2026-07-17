@@ -1,6 +1,6 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { installKittyImageExtension } from "@t3tools/opentui-image";
+import { installKittyClipboardExtension, installKittyImageExtension } from "@t3tools/opentui-image";
 
 import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
@@ -100,6 +100,9 @@ async function main(): Promise<void> {
   const tmuxPassthrough = detectKittyGraphicsTerminal();
   const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
   installKittyImageExtension(renderer, {
+    tmuxPassthrough,
+  });
+  installKittyClipboardExtension(renderer, {
     tmuxPassthrough,
   });
 

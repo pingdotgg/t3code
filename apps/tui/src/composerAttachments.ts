@@ -22,6 +22,17 @@ const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   webp: "image/webp",
 };
 
+const IMAGE_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
+  "image/avif": "avif",
+  "image/bmp": "bmp",
+  "image/gif": "gif",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/svg+xml": "svg",
+  "image/tiff": "tiff",
+  "image/webp": "webp",
+};
+
 export interface Base64WorkspaceFile {
   readonly contents: string;
   readonly byteLength: number;
@@ -41,6 +52,15 @@ export function imageMimeTypeForPath(relativePath: string): string | null {
 
 export function isSupportedImagePath(relativePath: string): boolean {
   return imageMimeTypeForPath(relativePath) !== null;
+}
+
+export function imageExtensionForMimeType(mimeType: string): string | null {
+  const baseMimeType = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return IMAGE_EXTENSION_BY_MIME[baseMimeType] ?? null;
+}
+
+export function isSupportedImageMimeType(mimeType: string): boolean {
+  return imageExtensionForMimeType(mimeType) !== null;
 }
 
 export function removeComposerImage(
@@ -70,18 +90,41 @@ export async function prepareComposerImage(
   if (encoded.byteLength !== file.byteLength) {
     throw new Error("Image changed while it was being loaded.");
   }
+  return prepareComposerImageBytes(relativePath, mimeType, encoded, decoder);
+}
+
+export async function prepareComposerImageBytes(
+  relativePath: string,
+  mimeType: string,
+  encoded: Uint8Array,
+  decoder: (encoded: Uint8Array) => Promise<RgbaImage> = (value) =>
+    decodeImage(value, { maxWidth: PREVIEW_MAX_WIDTH, maxHeight: PREVIEW_MAX_HEIGHT }),
+): Promise<ComposerImageAttachment> {
+  const extension = imageExtensionForMimeType(mimeType);
+  if (!extension) throw new Error("Paste a supported image format.");
+  if (encoded.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+    throw new Error("Image exceeds the 10MB attachment limit.");
+  }
+  if (encoded.byteLength <= 0) throw new Error("Image file is empty.");
+
   const name = relativePath.split(/[\\/]/).at(-1)?.trim() ?? "";
   if (name.length === 0 || name.length > 255) throw new Error("Image filename is invalid.");
 
   const preview = await decoder(encoded);
+  const canonicalMimeType = IMAGE_MIME_BY_EXTENSION[extension] ?? mimeType;
+  const base64 = NodeBuffer.Buffer.from(
+    encoded.buffer,
+    encoded.byteOffset,
+    encoded.byteLength,
+  ).toString("base64");
   return {
     relativePath,
     upload: {
       type: "image",
       name,
-      mimeType,
+      mimeType: canonicalMimeType,
       sizeBytes: encoded.byteLength,
-      dataUrl: `data:${mimeType};base64,${file.contents}`,
+      dataUrl: `data:${canonicalMimeType};base64,${base64}`,
     },
     preview,
   };

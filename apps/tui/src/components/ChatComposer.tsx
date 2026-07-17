@@ -1,4 +1,8 @@
-import { defaultTextareaKeyBindings, type TextareaRenderable } from "@opentui/core";
+import {
+  defaultTextareaKeyBindings,
+  type PasteEvent,
+  type TextareaRenderable,
+} from "@opentui/core";
 import { Image } from "@t3tools/opentui-image/react";
 import * as React from "react";
 
@@ -208,6 +212,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   onSend,
   onSubmitAnswer,
   onRemoveAttachment,
+  onPasteImage,
 }: {
   readonly mode: "compose" | "new" | "rename" | "filter" | "commit";
   readonly reply: string;
@@ -262,6 +267,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onSend: () => void;
   readonly onSubmitAnswer: () => void;
   readonly onRemoveAttachment: (relativePath: string) => void;
+  readonly onPasteImage: (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => void;
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
@@ -458,6 +464,13 @@ export const ChatComposer = React.memo(function ChatComposer({
             placeholderColor={palette.dim}
             onContentChange={() => onReplyInput(replyRef.current?.plainText ?? "")}
             onSubmit={onReplySubmit}
+            onPaste={(event: PasteEvent) => {
+              const mimeType = event.metadata?.mimeType;
+              if (!mimeType?.toLowerCase().startsWith("image/")) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onPasteImage({ bytes: event.bytes, mimeType });
+            }}
           />
         ) : showAnswerInput ? (
           <input

@@ -179,20 +179,6 @@ const CLIENT_UI_GAPS = [
     ],
   },
   {
-    id: "composer-clipboard-attachments",
-    area: "Composer clipboard image attachments",
-    serverCapabilities: ["thread.turn.start"],
-    serverSources: ["apps/server/src/orchestration/decider.ts"],
-    clientSources: [
-      { client: "web", path: "apps/web/src/components/chat/ChatComposer.tsx" },
-      { client: "mobile", path: "apps/mobile/src/features/threads/ThreadComposer.tsx" },
-    ],
-    scenarios: [
-      "Given the clipboard contains a supported image, when the user pastes in the composer, then the TUI previews it and sends it as a bounded attachment.",
-      "Given pasted images exceed attachment count or size limits, when they are staged, then the TUI rejects the excess safely and preserves valid draft content.",
-    ],
-  },
-  {
     id: "composer-context-chips",
     area: "Structured composer context",
     serverCapabilities: ["thread.turn.start"],

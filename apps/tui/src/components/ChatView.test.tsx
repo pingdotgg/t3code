@@ -7,6 +7,9 @@ import { DEFAULT_SERVER_SETTINGS, type VcsStatusResult } from "@t3tools/contract
 import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "../connection.ts";
 import { ChatView } from "./ChatView.tsx";
 
+const PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 interface Deferred<T> {
   readonly promise: Promise<T>;
   readonly resolve: (value: T) => void;
@@ -610,6 +613,50 @@ describe("ChatView acknowledged submissions", () => {
       ],
     } as never);
     expect(calls[0]?.[0].interactionMode).toBe("plan");
+    setup.renderer.destroy();
+  });
+
+  it("Given the clipboard contains a supported image, when it is pasted into the prompt and sent, then the bounded attachment is dispatched with the draft", async () => {
+    const calls: Array<Parameters<TuiClient["sendReply"]>> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      sendReply: async (...args) => {
+        calls.push(args);
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      await setup.mockInput.typeText("explain this screenshot");
+      setup.renderer.keyInput.processPaste(Uint8Array.from(Buffer.from(PNG_BASE64, "base64")), {
+        kind: "binary",
+        mimeType: "image/png",
+      });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("explain this screenshot") && frame.includes("clipboard-i"),
+    );
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitFor(() => calls.length === 1);
+
+    expect(calls[0]?.[1]).toBe("explain this screenshot");
+    expect(calls[0]?.[2]).toEqual([
+      {
+        type: "image",
+        name: "clipboard-image-1.png",
+        mimeType: "image/png",
+        sizeBytes: 68,
+        dataUrl: `data:image/png;base64,${PNG_BASE64}`,
+      },
+    ]);
     setup.renderer.destroy();
   });
 
