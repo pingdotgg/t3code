@@ -18,7 +18,7 @@ import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { subscribe } from "../rpc/client.ts";
+import { subscribeWithInputEffect } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
@@ -151,39 +151,30 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   yield* Effect.forkScoped(
     Effect.gen(function* () {
-      // Establish the base shell snapshot to resume from, minimizing bytes over
-      // the wire:
-      // - Warm cache: reuse the cached snapshot (zero network) and resume via
-      //   `afterSequence` so we only receive shell events since the cached
-      //   sequence.
-      // - Cold cache: load the full shell snapshot over HTTP (gzip-compressible,
-      //   and off the socket), then resume via `afterSequence`.
-      // If no base can be established we fall back to the socket-embedded
-      // snapshot so the shell still synchronizes. Overlapping/replayed events are
-      // deduped by sequence in applyItem.
-      const base = Option.isSome(cachedSnapshot)
-        ? cachedSnapshot
-        : yield* Effect.gen(function* () {
-            const prepared = yield* SubscriptionRef.changes(supervisor.prepared).pipe(
-              Stream.filter(Option.isSome),
-              Stream.map((current) => current.value),
-              Stream.runHead,
-            );
-            return Option.isSome(prepared)
-              ? yield* snapshotLoader.load(prepared.value)
-              : Option.none<OrchestrationShellSnapshot>();
-          });
-
-      if (Option.isSome(base)) {
-        yield* applyItem({ kind: "snapshot", snapshot: base.value });
-      }
-
-      const subscribeInput = Option.match(base, {
-        onNone: () => ({}),
-        onSome: (snapshot) => ({ afterSequence: snapshot.snapshotSequence }),
+      // The cache is only a fast paint. Establish a fresh, authoritative base
+      // for every WebSocket session before resuming the shell event stream.
+      // Event history may be compacted (for example when archived threads move
+      // to cold storage), so replaying exclusively from a warm cache cannot
+      // prove that cached projects and threads still exist.
+      const subscriptionInput = Effect.gen(function* () {
+        const prepared = yield* SubscriptionRef.changes(supervisor.prepared).pipe(
+          Stream.filter(Option.isSome),
+          Stream.map((current) => current.value),
+          Stream.runHead,
+        );
+        const snapshot = Option.isSome(prepared)
+          ? yield* snapshotLoader.load(prepared.value)
+          : Option.none<OrchestrationShellSnapshot>();
+        if (Option.isNone(snapshot)) {
+          // Asking for no sequence makes the socket return its authoritative
+          // snapshot instead of attempting an incomplete cache replay.
+          return {};
+        }
+        yield* applyItem({ kind: "snapshot", snapshot: snapshot.value });
+        return { afterSequence: snapshot.value.snapshotSequence };
       });
 
-      yield* subscribe(ORCHESTRATION_WS_METHODS.subscribeShell, subscribeInput, {
+      yield* subscribeWithInputEffect(ORCHESTRATION_WS_METHODS.subscribeShell, subscriptionInput, {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
       }).pipe(Stream.runForEach(applyItem));
     }),

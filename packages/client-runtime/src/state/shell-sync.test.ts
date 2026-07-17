@@ -1,6 +1,9 @@
 import {
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
 } from "@t3tools/contracts";
@@ -137,21 +140,59 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("resumes a warm shell cache via afterSequence without an HTTP fetch", () =>
+  it.effect("refreshes a warm shell cache for every WebSocket session", () =>
     Effect.gen(function* () {
       const cachedSnapshot: OrchestrationShellSnapshot = {
         snapshotSequence: 5,
         projects: [],
+        threads: [
+          {
+            id: ThreadId.make("stale-archived-thread"),
+            projectId: ProjectId.make("project-1"),
+            title: "Stale archived thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            latestTurn: null,
+            createdAt: "2026-06-01T00:00:00.000Z",
+            updatedAt: "2026-06-05T00:00:00.000Z",
+            archivedAt: null,
+            session: null,
+            latestUserMessageAt: null,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            hasActionableProposedPlan: false,
+          },
+        ],
+        updatedAt: "2026-06-05T00:00:00.000Z",
+      };
+      const firstAuthoritativeSnapshot: OrchestrationShellSnapshot = {
+        snapshotSequence: 8,
+        projects: [],
         threads: [],
-        updatedAt: "2026-06-06T00:00:00.000Z",
+        updatedAt: "2026-06-08T00:00:00.000Z",
+      };
+      const reconnectedAuthoritativeSnapshot: OrchestrationShellSnapshot = {
+        snapshotSequence: 13,
+        projects: [],
+        threads: [],
+        updatedAt: "2026-06-13T00:00:00.000Z",
       };
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-      const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
+      const capturedAfterSequences = yield* Queue.unbounded<number | undefined>();
+      const authoritativeSnapshots = yield* Queue.unbounded<OrchestrationShellSnapshot>();
+      yield* Queue.offer(authoritativeSnapshots, firstAuthoritativeSnapshot);
+      yield* Queue.offer(authoritativeSnapshots, reconnectedAuthoritativeSnapshot);
       const loaderCalls = yield* SubscriptionRef.make(0);
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: { readonly afterSequence?: number }) =>
           Stream.unwrap(
-            SubscriptionRef.set(capturedAfterSequence, input.afterSequence).pipe(
+            Queue.offer(capturedAfterSequences, input.afterSequence).pipe(
               Effect.as(Stream.fromQueue(events)),
             ),
           ),
@@ -183,22 +224,29 @@ describe("environment shell synchronization", () => {
       });
       const snapshotLoader = ShellSnapshotLoader.of({
         load: () =>
-          SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(Effect.as(Option.none())),
+          SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(
+            Effect.andThen(Queue.take(authoritativeSnapshots)),
+            Effect.map(Option.some),
+          ),
       });
-      yield* makeEnvironmentShellState().pipe(
+      const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader, snapshotLoader),
       );
 
-      // Wait until the subscription is established from the warm cache.
-      yield* SubscriptionRef.changes(capturedAfterSequence).pipe(
-        Stream.filter((value) => value !== undefined),
-        Stream.runHead,
+      expect(yield* Queue.take(capturedAfterSequences)).toBe(8);
+      expect(Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot)).toEqual(
+        firstAuthoritativeSnapshot,
       );
 
-      expect(yield* SubscriptionRef.get(capturedAfterSequence)).toBe(5);
-      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(0);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      expect(yield* Queue.take(capturedAfterSequences)).toBe(13);
+      expect(Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot)).toEqual(
+        reconnectedAuthoritativeSnapshot,
+      );
+      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(2);
     }),
   );
 });
