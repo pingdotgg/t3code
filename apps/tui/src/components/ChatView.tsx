@@ -207,6 +207,11 @@ export function ChatView({
   const [threadModelSelections, setThreadModelSelections] = React.useState<
     ReadonlyMap<string, ModelSelection>
   >(() => new Map());
+  // Build/Plan is a composer choice in the web UI. Keep an optimistic value per
+  // thread so the control responds immediately while persistence round-trips.
+  const [threadInteractionModes, setThreadInteractionModes] = React.useState<
+    ReadonlyMap<string, ProviderInteractionMode>
+  >(() => new Map());
   const [newModelSelection, setNewModelSelection] = React.useState<ModelSelection | null>(null);
   // Pending user-input form state.
   const [userInputDeferred, setUserInputDeferred] = React.useState(false);
@@ -296,6 +301,9 @@ export function ChatView({
     [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
+  const threadInteractionMode = detail
+    ? (threadInteractionModes.get(detail.id) ?? detail.interactionMode)
+    : "default";
   const threadModelSelection = React.useMemo(
     () =>
       detail
@@ -358,7 +366,10 @@ export function ChatView({
           worktreePath: detail.worktreePath,
         }
       : null;
-  const controls = composerControls(detail, threadModelSelection, threadReasoning?.selectedId);
+  const controls = {
+    ...composerControls(detail, threadModelSelection, threadReasoning?.selectedId),
+    interactionMode: threadInteractionMode,
+  };
   const newReasoning = React.useMemo(
     () => reasoningChoicesForSelection(modelOptions, resolvedNewModelSelection),
     [modelOptions, resolvedNewModelSelection],
@@ -375,6 +386,15 @@ export function ChatView({
     setTerminalFocused(false);
     setExpandedImage(null);
   }, [detailId]);
+  React.useEffect(() => {
+    if (!detail || threadInteractionModes.get(detail.id) !== detail.interactionMode) return;
+    setThreadInteractionModes((current) => {
+      if (current.get(detail.id) !== detail.interactionMode) return current;
+      const next = new Map(current);
+      next.delete(detail.id);
+      return next;
+    });
+  }, [detail, threadInteractionModes]);
   const actionablePlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
     [detail],
@@ -435,9 +455,19 @@ export function ChatView({
 
   const togglePlanMode = () => {
     if (!detail) return;
-    const next = detail.interactionMode === "plan" ? "default" : "plan";
-    void client.setInteractionMode(detail.id, next).catch(() => {});
+    const threadId = detail.id;
+    const next = threadInteractionMode === "plan" ? "default" : "plan";
+    setThreadInteractionModes((current) => new Map(current).set(threadId, next));
     store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+    void client.setInteractionMode(threadId, next).catch((error) => {
+      setThreadInteractionModes((current) => {
+        if (current.get(threadId) !== next) return current;
+        const rolledBack = new Map(current);
+        rolledBack.delete(threadId);
+        return rolledBack;
+      });
+      store.setStatus(`mode change failed: ${String(error)}`, "error");
+    });
   };
 
   // Right-panel git actions: commit-bearing ones open the commit-message dialog
@@ -852,7 +882,14 @@ export function ChatView({
     setReplySubmissionPending(true);
     store.setStatus("Sending reply…", "busy");
     void Promise.resolve()
-      .then(() => client.sendReply(detail, text, attachments, threadModelSelection ?? undefined))
+      .then(() =>
+        client.sendReply(
+          { ...detail, interactionMode: threadInteractionMode },
+          text,
+          attachments,
+          threadModelSelection ?? undefined,
+        ),
+      )
       .then(
         () => {
           replySubmissionPendingRef.current = false;
@@ -1303,7 +1340,7 @@ export function ChatView({
     if (detail) {
       list.push({
         id: "plan",
-        title: detail.interactionMode === "plan" ? "Switch to build mode" : "Switch to plan mode",
+        title: threadInteractionMode === "plan" ? "Switch to build mode" : "Switch to plan mode",
         hint: "^B",
         keywords: "interaction mode",
         run: () => runCommand(togglePlanMode),
@@ -1494,6 +1531,7 @@ export function ChatView({
     composerImages,
     pendingUserInput,
     threadModelSelection,
+    threadInteractionMode,
   ]);
 
   const filteredCommands = React.useMemo(
@@ -1989,9 +2027,7 @@ export function ChatView({
           auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
           placeholder={placeholder}
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
-          interactionMode={
-            focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")
-          }
+          interactionMode={focus === "new" ? newInteractionMode : threadInteractionMode}
           newRuntimeMode={newRuntimeMode}
           newModel={resolvedNewModelSelection?.model ?? null}
           newReasoning={newReasoning?.selectedId ?? null}

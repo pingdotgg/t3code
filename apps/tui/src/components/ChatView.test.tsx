@@ -78,6 +78,7 @@ function fakeClient({
   createThread = async () => "t-new" as never,
   terminalClear = async () => {},
   terminalRestart = async () => {},
+  setInteractionMode = async () => {},
   vcsStatus,
   runGitPull = async () => {},
   listModels = async () =>
@@ -98,6 +99,7 @@ function fakeClient({
   readonly createThread?: TuiClient["createThread"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
+  readonly setInteractionMode?: TuiClient["setInteractionMode"];
   readonly vcsStatus?: VcsStatusResult;
   readonly runGitPull?: TuiClient["runGitPull"];
   readonly listModels?: TuiClient["listModels"];
@@ -133,6 +135,7 @@ function fakeClient({
     terminalResize: async () => {},
     terminalClear,
     terminalRestart,
+    setInteractionMode,
     terminalClose: async () => {},
     listModels,
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
@@ -327,6 +330,70 @@ describe("ChatView tmux scrolling", () => {
 });
 
 describe("ChatView acknowledged submissions", () => {
+  it("Given a thread is in Build mode, when Build is clicked, then it persists Plan mode", async () => {
+    const interactionModes: string[] = [];
+    const persistence = deferred<void>();
+    const fake = fakeClient({
+      detail: thread(),
+      setInteractionMode: (_threadId, mode) => {
+        interactionModes.push(mode);
+        return persistence.promise;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    const frame = await setup.waitForFrame((current) => current.includes("^B Build"));
+    const lines = frame.split("\n");
+    const row = lines.findIndex((line) => line.includes("^B Build"));
+    const col = (lines[row] ?? "").indexOf("Build");
+    await React.act(async () => {
+      await setup.mockMouse.click(col, row);
+      await setup.flush();
+    });
+
+    expect(interactionModes).toEqual(["plan"]);
+    expect(await setup.waitForFrame((current) => current.includes("^B Plan"))).toContain("^B Plan");
+    persistence.resolve();
+    setup.renderer.destroy();
+  });
+
+  it("Given a Plan mode change fails, then the composer returns to Build and shows the error", async () => {
+    const persistence = deferred<void>();
+    const fake = fakeClient({
+      detail: thread(),
+      setInteractionMode: () => persistence.promise,
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    const frame = await setup.waitForFrame((current) => current.includes("^B Build"));
+    const lines = frame.split("\n");
+    const row = lines.findIndex((line) => line.includes("^B Build"));
+    const col = (lines[row] ?? "").indexOf("Build");
+    await React.act(async () => {
+      await setup.mockMouse.click(col, row);
+      await setup.flush();
+    });
+    await setup.waitForFrame((current) => current.includes("^B Plan"));
+    await React.act(async () => {
+      persistence.reject(new Error("not supported"));
+      await setup.flush();
+    });
+
+    const rolledBack = await setup.waitForFrame(
+      (current) => current.includes("^B Build") && current.includes("mode change failed"),
+    );
+    expect(rolledBack).toContain("mode change failed");
+    setup.renderer.destroy();
+  });
+
   it("Given the terminal opens, then the centered prompt stays above it like the web layout", async () => {
     const fake = fakeClient({ detail: thread() });
     const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
@@ -421,7 +488,7 @@ describe("ChatView acknowledged submissions", () => {
     setup.renderer.destroy();
   });
 
-  it("Given model and effort are changed, when the next reply is sent, then the complete selection is dispatched", async () => {
+  it("Given model, effort, and Plan mode are changed, when the next reply is sent, then the complete selection is dispatched", async () => {
     const calls: Array<Parameters<TuiClient["sendReply"]>> = [];
     const fake = fakeClient({
       detail: thread(),
@@ -519,6 +586,11 @@ describe("ChatView acknowledged submissions", () => {
     });
     await setup.waitForFrame((frame) => frame.includes("effort high"));
     await React.act(async () => {
+      setup.mockInput.pressKey("b", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("^B Plan"));
+    await React.act(async () => {
       await setup.mockInput.typeText("use the selected model");
       await setup.renderOnce();
     });
@@ -537,6 +609,7 @@ describe("ChatView acknowledged submissions", () => {
         { id: "reasoningEffort", value: "high" },
       ],
     } as never);
+    expect(calls[0]?.[0].interactionMode).toBe("plan");
     setup.renderer.destroy();
   });
 
