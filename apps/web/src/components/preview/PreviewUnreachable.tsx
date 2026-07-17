@@ -17,7 +17,7 @@ interface Props {
 export function PreviewUnreachable({ url, code, description, onReload }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;
-  const friendly = describePreviewError(code, description);
+  const friendly = describePreviewError(description);
   const errorLabel = description.length > 0 ? description : `ERR_${Math.abs(code) || "FAILED"}`;
 
   return (
