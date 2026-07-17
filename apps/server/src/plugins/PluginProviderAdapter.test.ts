@@ -59,13 +59,10 @@ const collecting = <A, E>(
 describe("makePluginProviderAdapter", () => {
   it.effect("streams a plugin's deltas as host-stamped assistant text", () =>
     Effect.gen(function* () {
-      let emitter: ((event: PluginProviderEvent) => void) | null = null;
       const adapter = yield* adapterFor({
-        startSession: (input) =>
-          Effect.sync(() => {
-            emitter = input.emit;
-          }),
-        sendTurn: () => Effect.sync(() => emitter?.({ type: "assistant-delta", text: "hello" })),
+        startSession: () => Effect.void,
+        sendTurn: (input) =>
+          Effect.sync(() => input.emit({ type: "assistant-delta", text: "hello" })),
         stopSession: () => Effect.void,
       });
 
@@ -115,14 +112,10 @@ describe("makePluginProviderAdapter", () => {
 
   it.effect("turns a plugin failure into a failed turn, not a host crash", () =>
     Effect.gen(function* () {
-      let emitter: ((event: PluginProviderEvent) => void) | null = null;
       const adapter = yield* adapterFor({
-        startSession: (input) =>
-          Effect.sync(() => {
-            emitter = input.emit;
-          }),
-        sendTurn: () =>
-          Effect.sync(() => emitter?.({ type: "assistant-delta", text: "partial" })).pipe(
+        startSession: () => Effect.void,
+        sendTurn: (input) =>
+          Effect.sync(() => input.emit({ type: "assistant-delta", text: "partial" })).pipe(
             Effect.flatMap(() => Effect.fail(new DriverExploded("boom"))),
           ),
         stopSession: () => Effect.void,
@@ -148,15 +141,18 @@ describe("makePluginProviderAdapter", () => {
     }),
   );
 
-  it.effect("drops an emit that arrives outside a turn", () =>
+  it.effect("drops an emit that arrives after its turn ended", () =>
     Effect.gen(function* () {
       let emitter: ((event: PluginProviderEvent) => void) | null = null;
       const adapter = yield* adapterFor({
-        startSession: (input) =>
+        startSession: () => Effect.void,
+        // Capture the turn-bound emit, then return — the turn ends. A driver that
+        // holds the emit and fires it from later background work must have that late
+        // delta DROPPED, not attributed to whatever turn is active when it arrives.
+        sendTurn: (input) =>
           Effect.sync(() => {
             emitter = input.emit;
           }),
-        sendTurn: () => Effect.void,
         stopSession: () => Effect.void,
       });
 
@@ -164,13 +160,107 @@ describe("makePluginProviderAdapter", () => {
         adapter,
         Effect.gen(function* () {
           yield* start(adapter);
-          // No turn is running: a late or stray emit must not manufacture output.
+          yield* adapter.sendTurn({ threadId, input: "hi" } as never);
+          yield* Effect.yieldNow;
+          // The turn is over; a late emit must not manufacture output.
           emitter?.({ type: "assistant-delta", text: "should not appear" });
           yield* Effect.yieldNow;
         }),
       );
 
       assert.isUndefined(events.find((event) => event.type === "content.delta"));
+    }),
+  );
+
+  it.effect("a finished turn's late delta is not attributed to a newer active turn", () =>
+    Effect.gen(function* () {
+      const released = yield* Deferred.make<void>();
+      let firstTurnEmit: ((event: PluginProviderEvent) => void) | null = null;
+      let calls = 0;
+      const adapter = yield* adapterFor({
+        startSession: () => Effect.void,
+        sendTurn: (input) =>
+          Effect.suspend(() => {
+            calls += 1;
+            if (calls === 1) {
+              // Turn A: capture its emit and return — turn A ends.
+              firstTurnEmit = input.emit;
+              return Effect.void;
+            }
+            // Turn B: block so it stays the single active turn while A's late emit fires.
+            return Deferred.await(released);
+          }),
+        stopSession: () => Effect.void,
+      });
+
+      const { events } = yield* collecting(
+        adapter,
+        Effect.gen(function* () {
+          yield* start(adapter);
+          yield* adapter.sendTurn({ threadId, input: "A" } as never);
+          yield* Effect.yieldNow;
+          // Turn B becomes the active turn.
+          yield* adapter.sendTurn({ threadId, input: "B" } as never);
+          yield* Effect.yieldNow;
+          // Fire turn A's captured emit AFTER A ended and B is active. With a
+          // session-scoped emit this delta would be stamped with B's id and mixed
+          // into B's output; the turn-bound emit must drop it instead.
+          firstTurnEmit?.({ type: "assistant-delta", text: "late-from-A" });
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(released, undefined);
+          yield* Effect.yieldNow;
+        }),
+      );
+
+      // Neither turn emitted its own delta, so any content.delta would be A's late
+      // one leaking into B — there must be none.
+      assert.isUndefined(events.find((event) => event.type === "content.delta"));
+    }),
+  );
+
+  it.effect("keeps a streaming turn alive after the dispatch caller fiber returns", () =>
+    Effect.gen(function* () {
+      const proceed = yield* Deferred.make<void>();
+      const adapter = yield* adapterFor({
+        startSession: () => Effect.void,
+        // Emits only AFTER an external signal — i.e. after the sendTurn dispatch has
+        // already returned the turn-start result and its caller fiber has ended.
+        sendTurn: (input) =>
+          Deferred.await(proceed).pipe(
+            Effect.flatMap(() =>
+              Effect.sync(() => input.emit({ type: "assistant-delta", text: "late-but-valid" })),
+            ),
+          ),
+        stopSession: () => Effect.void,
+      });
+
+      const seen = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const pump = yield* Effect.forkChild(
+        adapter.streamEvents.pipe(
+          Stream.runForEach((event) => Ref.update(seen, (a) => [...a, event])),
+        ),
+      );
+
+      yield* start(adapter);
+      // Dispatch the turn in a SHORT-LIVED fiber that returns immediately, modelling
+      // the reactor forking sendTurn and letting the dispatch fiber terminate as soon
+      // as it has the turn-start result. If the driver fiber were a child of this
+      // dispatch fiber it would be cancelled here and the delta below never arrives.
+      const dispatch = yield* Effect.forkChild(
+        adapter.sendTurn({ threadId, input: "hi" } as never),
+      );
+      yield* Fiber.join(dispatch);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(proceed, undefined);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(pump).pipe(Effect.orDie);
+
+      const events = yield* Ref.get(seen);
+      assert.isDefined(
+        events.find((event) => event.type === "content.delta"),
+        "the turn must keep streaming after its dispatch caller returned",
+      );
     }),
   );
 
@@ -207,16 +297,12 @@ describe("makePluginProviderAdapter", () => {
     () =>
       Effect.gen(function* () {
         const released = yield* Deferred.make<void>();
-        let emitter: ((event: PluginProviderEvent) => void) | null = null;
         const adapter = yield* adapterFor({
-          startSession: (input) =>
-            Effect.sync(() => {
-              emitter = input.emit;
-            }),
+          startSession: () => Effect.void,
           // The first turn emits a delta, then blocks until released — so it is
           // still the single active turn when the second turn is attempted.
-          sendTurn: () =>
-            Effect.sync(() => emitter?.({ type: "assistant-delta", text: "first" })).pipe(
+          sendTurn: (input) =>
+            Effect.sync(() => input.emit({ type: "assistant-delta", text: "first" })).pipe(
               Effect.flatMap(() => Deferred.await(released)),
             ),
           stopSession: () => Effect.void,
@@ -279,21 +365,17 @@ describe("makePluginProviderAdapter", () => {
         const exitB = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
         const interrupted = yield* Ref.make(false);
         const driverCalls = yield* Ref.make(0);
-        let emitter: ((event: PluginProviderEvent) => void) | null = null;
         const adapter = yield* adapterFor({
-          startSession: (input) =>
-            Effect.sync(() => {
-              emitter = input.emit;
-            }),
+          startSession: () => Effect.void,
           // The winning turn emits a delta then parks until released — so it stays the
           // single active turn while the loser's reservation is attempted. The call
           // counter and onInterrupt let the test observe that exactly one driver turn
           // was ever forked, and that its turnFiber is a real, reachable handle (not
           // one lost to a racing overwrite).
-          sendTurn: () =>
+          sendTurn: (input) =>
             Ref.update(driverCalls, (n) => n + 1).pipe(
               Effect.flatMap(() =>
-                Effect.sync(() => emitter?.({ type: "assistant-delta", text: "winner" })),
+                Effect.sync(() => input.emit({ type: "assistant-delta", text: "winner" })),
               ),
               Effect.flatMap(() =>
                 Deferred.await(released).pipe(Effect.onInterrupt(() => Ref.set(interrupted, true))),

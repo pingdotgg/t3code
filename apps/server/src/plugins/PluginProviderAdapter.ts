@@ -77,6 +77,12 @@ export const makePluginProviderAdapter = (input: {
     // any downstream subscriber fiber blocks forever — one orphaned fiber leaked per
     // removal/reconfiguration.
     yield* Effect.addFinalizer(() => Queue.shutdown(events));
+    // The adapter/session scope. Turn fibers are forked INTO this scope (not as
+    // children of the short-lived sendTurn dispatch fiber), so a streaming plugin turn
+    // is not cancelled the instant the reactor's dispatch fiber returns the turn-start
+    // result. The scope closing (provider instance removed) still interrupts them, and
+    // interruptTurn/stopSession interrupt via the retained fiber handle.
+    const adapterScope = yield* Effect.scope;
 
     const publish = (event: ProviderRuntimeEvent) => Queue.offer(events, event);
 
@@ -134,24 +140,26 @@ export const makePluginProviderAdapter = (input: {
       }) as ProviderRuntimeEvent;
 
     /**
-     * An `emit` closed over ONE session's identity, and over the window in which it is
-     * valid. The plugin cannot address another thread with it, and a late emit (after
-     * the turn ended, or after stopSession) is dropped and logged rather than
-     * producing output nobody expects.
+     * An `emit` closed over ONE turn's identity. Bound to a specific `turnId`, not to
+     * "whatever turn is active now": a late `assistant-delta` from turn A (a driver
+     * emitting after its `sendTurn` ended) is DROPPED once A is no longer the active
+     * turn, rather than stamped with a successor turn B's id and mixed into B's output.
+     * The plugin also cannot address another thread with it.
      */
-    const makeEmit = (threadId: ThreadId) => (event: PluginProviderEvent) => {
+    const makeTurnEmit = (threadId: ThreadId, turnId: TurnId) => (event: PluginProviderEvent) => {
       Effect.runSync(
         Effect.gen(function* () {
           const state = (yield* Ref.get(sessions)).get(threadId);
-          if (state === undefined || state.activeTurnId === null) {
-            yield* Effect.logDebug("plugin provider emitted outside a turn; dropping", {
+          if (state === undefined || state.activeTurnId !== turnId) {
+            yield* Effect.logDebug("plugin provider emitted outside its turn; dropping", {
               driverKind: input.driverKind,
               threadId,
+              turnId,
             });
             return;
           }
           if (event.type === "assistant-delta" && event.text !== "") {
-            yield* publish(stampDelta(threadId, state.activeTurnId, event.text));
+            yield* publish(stampDelta(threadId, turnId, event.text));
           }
         }),
       );
@@ -167,7 +175,7 @@ export const makePluginProviderAdapter = (input: {
         // of a defect escaping the adapter. Driver code is dynamically loaded plugin
         // JS, so its return contract is not runtime-enforced.
         yield* Effect.suspend(() =>
-          input.driver.startSession({ threadId, config: input.config, emit: makeEmit(threadId) }),
+          input.driver.startSession({ threadId, config: input.config }),
         ).pipe(
           Effect.timeoutOrElse({
             duration: PLUGIN_LIFECYCLE_TIMEOUT,
@@ -270,17 +278,26 @@ export const makePluginProviderAdapter = (input: {
           // the guarded region regardless so nothing can leak the reservation.
           yield* publish(stampTurnStarted(threadId, turnId));
           // The turn is over when sendTurn returns or fails — there is no completion
-          // event to race with. Run it in a fiber so interrupt/removal can cancel it.
-          // startImmediately: WITHOUT it the child does not begin until the next yield,
+          // event to race with. Run it in a fiber (forked into the ADAPTER scope, so
+          // the reactor's short-lived dispatch fiber returning the turn-start result
+          // cannot cancel a still-streaming plugin turn) so interrupt/removal can still
+          // cancel it via the retained handle.
+          // startImmediately: WITHOUT it the fiber does not begin until the next yield,
           // so the plugin's sendTurn has not started when this returns — an interrupt
           // arriving straight after would cancel a turn the driver never began, and
           // early deltas would have nowhere to go. (A probe caught this: the interrupt
           // test failed because there was nothing running to interrupt.)
-          const fiber = yield* Effect.forkChild(
+          const fiber = yield* Effect.forkIn(
             // Effect.suspend so a synchronous throw from the driver's sendTurn is
             // captured as a turn failure (published terminal) rather than a defect.
+            // The emit is bound to THIS turn (see makeTurnEmit).
             Effect.suspend(() =>
-              input.driver.sendTurn({ threadId, turnId, prompt: turnInput.input ?? "" }),
+              input.driver.sendTurn({
+                threadId,
+                turnId,
+                prompt: turnInput.input ?? "",
+                emit: makeTurnEmit(threadId, turnId),
+              }),
             ).pipe(
               Effect.timeoutOrElse({
                 duration: PLUGIN_CALL_TIMEOUT,
@@ -306,6 +323,7 @@ export const makePluginProviderAdapter = (input: {
               ),
               Effect.ensuring(endTurn(threadId, turnId)),
             ),
+            adapterScope,
             { startImmediately: true },
           );
 
