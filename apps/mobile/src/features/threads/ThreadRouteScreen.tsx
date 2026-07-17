@@ -160,14 +160,14 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     refreshSelectedThreadDetailRef.current = selectedThreadDetailQuery.refresh;
   }, [selectedThreadDetailQuery.refresh]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    setStalledDetailKey(null);
+    return () => {
       if (routeThreadKey !== null) {
         detailRefreshAttemptsRef.current.delete(routeThreadKey);
       }
-    },
-    [routeThreadKey],
-  );
+    };
+  }, [routeThreadKey]);
 
   useEffect(() => {
     if (routeThreadKey === null) {
