@@ -25,23 +25,40 @@ import * as RelayConfiguration from "../Config.ts";
 export class EnvironmentLinkProofExpired extends Schema.TaggedErrorClass<EnvironmentLinkProofExpired>()(
   "EnvironmentLinkProofExpired",
   {
+    userId: Schema.String,
+    environmentId: Schema.String,
     expiresAt: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Environment link proof expired at ${this.expiresAt}`;
+    return `Environment '${this.environmentId}' link proof expired at ${this.expiresAt}`;
   }
 }
 
 export class EnvironmentLinkProofInvalid extends Schema.TaggedErrorClass<EnvironmentLinkProofInvalid>()(
   "EnvironmentLinkProofInvalid",
   {
+    userId: Schema.String,
     environmentId: Schema.String,
     reason: RelayEnvironmentLinkProofInvalidReason,
+    stage: Schema.Literals([
+      "decode_token",
+      "decode_payload",
+      "verify_proof",
+      "authorize_capabilities",
+      "validate_descriptor",
+      "verify_challenge",
+      "validate_expiration",
+      "consume_proof_nonce",
+      "consume_challenge_nonce",
+      "validate_origin",
+      "validate_endpoint",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Environment '${this.environmentId}' link proof is invalid: ${this.reason}`;
+    return `Environment '${this.environmentId}' link proof is invalid during ${this.stage}: ${this.reason}`;
   }
 }
 
@@ -132,20 +149,27 @@ const make = Effect.gen(function* () {
       const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
       const unverified = yield* Effect.try({
         try: () => decodeRelayJwt(input.request.proof),
-        catch: () =>
+        catch: (cause) =>
           new EnvironmentLinkProofInvalid({
+            userId: input.userId,
             environmentId: "unknown",
             reason: "invalid_signature_or_scope",
+            stage: "decode_token",
+            cause,
           }),
       });
-      const decoded = yield* decodeProof(unverified).pipe(Effect.option);
-      if (decoded._tag === "None") {
-        return yield* new EnvironmentLinkProofInvalid({
-          environmentId: "unknown",
-          reason: "invalid_signature_or_scope",
-        });
-      }
-      const candidate = decoded.value;
+      const candidate = yield* decodeProof(unverified).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentLinkProofInvalid({
+              userId: input.userId,
+              environmentId: "unknown",
+              reason: "invalid_signature_or_scope",
+              stage: "decode_payload",
+              cause,
+            }),
+        ),
+      );
       yield* Effect.annotateCurrentSpan({
         "relay.environment_id": candidate.environmentId,
         "relay.link.notifications_enabled": input.request.notificationsEnabled,
@@ -154,6 +178,8 @@ const make = Effect.gen(function* () {
       });
       if (candidate.exp <= nowSeconds) {
         return yield* new EnvironmentLinkProofExpired({
+          userId: input.userId,
+          environmentId: candidate.environmentId,
           expiresAt: DateTime.formatIso(DateTime.makeUnsafe(candidate.exp * 1_000)),
         });
       }
@@ -169,10 +195,13 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.flatMap(decodeProof),
         Effect.mapError(
-          () =>
+          (cause) =>
             new EnvironmentLinkProofInvalid({
+              userId: input.userId,
               environmentId: candidate.environmentId,
               reason: "invalid_signature_or_scope",
+              stage: "verify_proof",
+              cause,
             }),
         ),
       );
@@ -181,14 +210,18 @@ const make = Effect.gen(function* () {
         !proofAuthorizesRequestedCapabilities(verified, input.request)
       ) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: candidate.environmentId,
           reason: "invalid_signature_or_scope",
+          stage: "authorize_capabilities",
         });
       }
       if (verified.descriptor.environmentId !== verified.environmentId) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "descriptor_mismatch",
+          stage: "validate_descriptor",
         });
       }
       const challenge = yield* relayTokens.verifyLinkChallenge({
@@ -203,15 +236,19 @@ const make = Effect.gen(function* () {
       });
       if (challenge === null) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "challenge_invalid",
+          stage: "verify_challenge",
         });
       }
       const expiresAt = DateTime.make(verified.exp * 1_000);
       if (expiresAt._tag === "None") {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "invalid_signature_or_scope",
+          stage: "validate_expiration",
         });
       }
       const consumedNonce = yield* proofReplay.consume({
@@ -222,8 +259,10 @@ const make = Effect.gen(function* () {
       });
       if (!consumedNonce) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "replayed_nonce",
+          stage: "consume_proof_nonce",
         });
       }
       const consumedChallenge = yield* proofReplay.consume({
@@ -234,15 +273,40 @@ const make = Effect.gen(function* () {
       });
       if (!consumedChallenge) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "challenge_invalid",
+          stage: "consume_challenge_nonce",
         });
       }
       if (input.request.managedTunnelsEnabled && !isLoopbackManagedTunnelOrigin(verified.origin)) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "origin_not_allowed",
+          stage: "validate_origin",
         });
+      }
+      // Downgrading a managed link to publish-only must release the tunnel and
+      // DNS that were provisioned for it — nothing else cleans them up until a
+      // full unlink. Best effort: a cleanup failure must not block the link
+      // itself, and the provider treats an absent allocation as already
+      // deprovisioned, so retrying on every non-tunnel link is cheap.
+      if (!input.request.managedTunnelsEnabled) {
+        yield* managedEndpointProvider
+          .deprovision({
+            userId: input.userId,
+            environmentId: verified.environmentId,
+          })
+          .pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("managed endpoint deprovision on publish-only link failed", {
+                environmentId: verified.environmentId,
+                errorTag: error._tag,
+              }),
+            ),
+            Effect.ignore,
+          );
       }
       const provisioned = input.request.managedTunnelsEnabled
         ? yield* managedEndpointProvider.provision({
@@ -252,10 +316,16 @@ const make = Effect.gen(function* () {
           })
         : null;
       const endpoint = provisioned?.endpoint ?? verified.endpoint;
-      if (!isSecureManagedEndpoint(endpoint)) {
+      // The secure-endpoint requirement only matters when the relay advertises
+      // this endpoint for other devices to reach (managed tunnel). Publish-only
+      // links are reached out of band (e.g. Tailscale) and their stored endpoint
+      // is never used for routing, so a nominal endpoint is acceptable.
+      if (input.request.managedTunnelsEnabled && !isSecureManagedEndpoint(endpoint)) {
         return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
           environmentId: verified.environmentId,
           reason: "endpoint_not_secure",
+          stage: "validate_endpoint",
         });
       }
       yield* links.upsert({ ...input, proof: verified, endpoint });

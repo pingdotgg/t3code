@@ -27,47 +27,46 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-const keyPairPersistenceError = (message: string, cause?: unknown) =>
-  new ServerSecretStore.SecretStoreError({ message, cause });
+const KEY_PAIR_RESOURCE = "environment signing key pair";
+
+const keyPairDecodeError = (cause: unknown): ServerSecretStore.SecretStoreDecodeError =>
+  new ServerSecretStore.SecretStoreDecodeError({ resource: KEY_PAIR_RESOURCE, cause });
+
+const keyPairEncodeError = (cause: unknown): ServerSecretStore.SecretStoreEncodeError =>
+  new ServerSecretStore.SecretStoreEncodeError({ resource: KEY_PAIR_RESOURCE, cause });
+
+const keyPairConcurrentReadError = (): ServerSecretStore.SecretStoreConcurrentReadError =>
+  new ServerSecretStore.SecretStoreConcurrentReadError({ resource: KEY_PAIR_RESOURCE });
 
 const readEnvironmentKeyPair = Effect.fn("readEnvironmentKeyPair")(function* (
-  secrets: ServerSecretStore.ServerSecretStoreShape,
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {
   const encoded = yield* secrets.get(CLOUD_LINK_KEY_PAIR);
   if (Option.isNone(encoded)) {
     return Option.none<EnvironmentKeyPair>();
   }
   const decoded = yield* decodeEnvironmentKeyPair(bytesToString(encoded.value)).pipe(
-    Effect.mapError((cause) =>
-      keyPairPersistenceError("Failed to decode environment signing key pair.", cause),
-    ),
+    Effect.mapError(keyPairDecodeError),
   );
   return Option.some(decoded);
 });
 
 const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(function* (
-  secrets: ServerSecretStore.ServerSecretStoreShape,
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
   keyPair: EnvironmentKeyPair,
 ) {
   const encoded = yield* encodeEnvironmentKeyPair(keyPair).pipe(
-    Effect.mapError((cause) =>
-      keyPairPersistenceError("Failed to encode environment signing key pair.", cause),
-    ),
+    Effect.mapError(keyPairEncodeError),
   );
   return yield* secrets.create(CLOUD_LINK_KEY_PAIR, stringToBytes(encoded)).pipe(
     Effect.as(keyPair),
-    Effect.catchTag("SecretStoreError", (error) =>
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
       ServerSecretStore.isSecretAlreadyExistsError(error)
         ? readEnvironmentKeyPair(secrets).pipe(
             Effect.flatMap(
               Option.match({
                 onSome: Effect.succeed,
-                onNone: () =>
-                  Effect.fail(
-                    keyPairPersistenceError(
-                      "Failed to read environment signing key pair after concurrent creation.",
-                    ),
-                  ),
+                onNone: () => Effect.fail(keyPairConcurrentReadError()),
               }),
             ),
           )
@@ -77,7 +76,7 @@ const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(functio
 });
 
 export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* (
-  secrets: ServerSecretStore.ServerSecretStoreShape,
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {
   const existing = yield* readEnvironmentKeyPair(secrets);
   if (Option.isSome(existing)) {

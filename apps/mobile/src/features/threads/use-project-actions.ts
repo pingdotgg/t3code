@@ -4,8 +4,6 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
-  CommandId,
-  MessageId,
   ThreadId,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -17,20 +15,12 @@ import { AsyncResult } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../../state/threads";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { uuidv4 } from "../../lib/uuid";
+import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
+import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
+import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
-
-function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return "New thread";
-  }
-
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
-}
+import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -42,67 +32,50 @@ export function useCreateProjectThread() {
       readonly envMode: "local" | "worktree";
       readonly branch: string | null;
       readonly worktreePath: string | null;
+      readonly startFromOrigin?: boolean;
       readonly runtimeMode: RuntimeMode;
       readonly interactionMode: ProviderInteractionMode;
       readonly initialMessageText: string;
       readonly initialAttachments: ReadonlyArray<DraftComposerImageAttachment>;
+      /** Reuse identifiers from a queued pending task instead of minting new ones. */
+      readonly turnMetadata?: TurnCommandMetadata;
     }) => {
-      const metadata = makeTurnCommandMetadata();
+      const metadata = input.turnMetadata ?? makeTurnCommandMetadata();
       const threadId = ThreadId.make(metadata.threadId);
       const initialMessageText = input.initialMessageText.trim();
-      const nextTitle = deriveThreadTitleFromPrompt(input.initialMessageText);
 
-      if (initialMessageText.length === 0) {
-        const error = new Error("Enter a task before starting the thread.");
-        setPendingConnectionError(error.message);
-        return AsyncResult.failure(Cause.fail(error));
-      }
-      if (input.envMode === "worktree" && !input.branch) {
-        const error = new Error("Select a base branch before creating a worktree.");
-        setPendingConnectionError(error.message);
-        return AsyncResult.failure(Cause.fail(error));
+      const validationError = validateProjectThreadCreation({
+        environmentId: input.project.environmentId,
+        projectId: input.project.id,
+        environmentMode: input.envMode,
+        branch: input.branch,
+        initialMessageText,
+      });
+      if (validationError !== null) {
+        setPendingConnectionError(validationError.message);
+        return AsyncResult.failure(Cause.fail(validationError));
       }
 
-      const isWorktree = input.envMode === "worktree";
       const result = await startTurn({
         environmentId: input.project.environmentId,
-        input: {
-          commandId: CommandId.make(metadata.commandId),
-          threadId,
-          message: {
-            messageId: MessageId.make(metadata.messageId),
-            role: "user",
-            text: initialMessageText,
-            attachments: input.initialAttachments,
-          },
+        input: buildProjectThreadStartTurnInput({
+          projectId: input.project.id,
+          projectCwd: input.project.workspaceRoot,
+          threadId: metadata.threadId,
+          commandId: metadata.commandId,
+          messageId: metadata.messageId,
+          createdAt: metadata.createdAt,
+          text: initialMessageText,
+          attachments: input.initialAttachments,
           modelSelection: input.modelSelection,
-          titleSeed: nextTitle,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
-          bootstrap: {
-            createThread: {
-              projectId: input.project.id,
-              title: nextTitle,
-              modelSelection: input.modelSelection,
-              runtimeMode: input.runtimeMode,
-              interactionMode: input.interactionMode,
-              branch: input.branch,
-              worktreePath: isWorktree ? null : input.worktreePath,
-              createdAt: metadata.createdAt,
-            },
-            ...(isWorktree
-              ? {
-                  prepareWorktree: {
-                    projectCwd: input.project.workspaceRoot,
-                    baseBranch: input.branch!,
-                    branch: buildTemporaryWorktreeBranchName(uuidv4),
-                  },
-                  runSetupScript: true,
-                }
-              : {}),
-          },
-          createdAt: metadata.createdAt,
-        },
+          workspaceMode: input.envMode,
+          branch: input.branch,
+          worktreePath: input.worktreePath,
+          startFromOrigin: input.startFromOrigin ?? false,
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        }),
       });
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);

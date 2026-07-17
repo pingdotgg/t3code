@@ -12,10 +12,19 @@ import { relayDeliveryAttempts } from "../persistence/schema.ts";
 
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedErrorClass<DeliveryAttemptRecordPersistenceError>()(
   "DeliveryAttemptRecordPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    operation: Schema.Literals(["record", "claim-source-job", "complete-source-job"]),
+    sourceJobId: Schema.NullOr(Schema.String),
+    userId: Schema.NullOr(Schema.String),
+    environmentId: Schema.NullOr(Schema.String),
+    threadId: Schema.NullOr(Schema.String),
+    deviceId: Schema.NullOr(Schema.String),
+    kind: Schema.NullOr(Schema.String),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to persist APNs delivery attempt";
+    return `Failed to persist APNs delivery attempt during ${this.operation}.`;
   }
 }
 
@@ -99,30 +108,43 @@ export const make = Effect.gen(function* () {
   };
 
   return DeliveryAttempts.of({
-    record: Effect.fn("relay.delivery_attempts.record")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.delivery.kind": input.kind,
-          ...(input.sourceJobId ? { "relay.delivery.job_id": input.sourceJobId } : {}),
-          ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
-          ...(input.environmentId ? { "relay.environment_id": input.environmentId } : {}),
-          ...(input.threadId ? { "relay.thread_id": input.threadId } : {}),
-        });
+    record: Effect.fn("relay.delivery_attempts.record")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.delivery.kind": input.kind,
+        ...(input.sourceJobId ? { "relay.delivery.job_id": input.sourceJobId } : {}),
+        ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
+        ...(input.environmentId ? { "relay.environment_id": input.environmentId } : {}),
+        ...(input.threadId ? { "relay.thread_id": input.threadId } : {}),
+      });
+      yield* Effect.gen(function* () {
         const id = yield* crypto.randomUUIDv4;
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         yield* db.insert(relayDeliveryAttempts).values(insertValues(input, id, createdAt));
-      },
-      Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause })),
-    ),
-    claimSourceJob: Effect.fn("relay.delivery_attempts.claim_source_job")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.delivery.kind": input.kind,
-          "relay.delivery.job_id": input.sourceJobId,
-          ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
-          ...(input.environmentId ? { "relay.environment_id": input.environmentId } : {}),
-          ...(input.threadId ? { "relay.thread_id": input.threadId } : {}),
-        });
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeliveryAttemptRecordPersistenceError({
+              operation: "record",
+              sourceJobId: input.sourceJobId ?? null,
+              userId: input.userId,
+              environmentId: input.environmentId,
+              threadId: input.threadId,
+              deviceId: input.deviceId,
+              kind: input.kind,
+              cause,
+            }),
+        ),
+      );
+    }),
+    claimSourceJob: Effect.fn("relay.delivery_attempts.claim_source_job")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.delivery.kind": input.kind,
+        "relay.delivery.job_id": input.sourceJobId,
+        ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
+        ...(input.environmentId ? { "relay.environment_id": input.environmentId } : {}),
+        ...(input.threadId ? { "relay.thread_id": input.threadId } : {}),
+      });
+      return yield* Effect.gen(function* () {
         const id = yield* crypto.randomUUIDv4;
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
@@ -179,26 +201,51 @@ export const make = Effect.gen(function* () {
           )
           .returning({ id: relayDeliveryAttempts.id });
         return reclaimed.length > 0 ? "claimed" : "in_flight";
-      },
-      Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause })),
-    ),
-    completeSourceJob: Effect.fn("relay.delivery_attempts.complete_source_job")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": input.sourceJobId });
-        const completedAt = DateTime.formatIso(yield* DateTime.now);
-        yield* db
-          .update(relayDeliveryAttempts)
-          .set({
-            createdAt: completedAt,
-            apnsStatus: input.apnsStatus ?? null,
-            apnsReason: input.apnsReason ?? null,
-            apnsId: input.apnsId ?? null,
-            transportError: input.transportError ?? null,
-          })
-          .where(eq(relayDeliveryAttempts.sourceJobId, input.sourceJobId));
-      },
-      Effect.mapError((cause) => new DeliveryAttemptRecordPersistenceError({ cause })),
-    ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeliveryAttemptRecordPersistenceError({
+              operation: "claim-source-job",
+              sourceJobId: input.sourceJobId,
+              userId: input.userId,
+              environmentId: input.environmentId,
+              threadId: input.threadId,
+              deviceId: input.deviceId,
+              kind: input.kind,
+              cause,
+            }),
+        ),
+      );
+    }),
+    completeSourceJob: Effect.fn("relay.delivery_attempts.complete_source_job")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": input.sourceJobId });
+      const completedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* db
+        .update(relayDeliveryAttempts)
+        .set({
+          createdAt: completedAt,
+          apnsStatus: input.apnsStatus ?? null,
+          apnsReason: input.apnsReason ?? null,
+          apnsId: input.apnsId ?? null,
+          transportError: input.transportError ?? null,
+        })
+        .where(eq(relayDeliveryAttempts.sourceJobId, input.sourceJobId))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeliveryAttemptRecordPersistenceError({
+                operation: "complete-source-job",
+                sourceJobId: input.sourceJobId,
+                userId: null,
+                environmentId: null,
+                threadId: null,
+                deviceId: null,
+                kind: null,
+                cause,
+              }),
+          ),
+        );
+    }),
   });
 });
 

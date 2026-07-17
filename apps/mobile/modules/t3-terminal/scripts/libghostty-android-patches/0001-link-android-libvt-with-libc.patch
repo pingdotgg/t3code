@@ -1,0 +1,25 @@
+diff --git a/src/build/GhosttyZig.zig b/src/build/GhosttyZig.zig
+index 44c300e15..f8d4296a2 100644
+--- a/src/build/GhosttyZig.zig
++++ b/src/build/GhosttyZig.zig
+@@ -123,7 +123,7 @@ fn initVt(
+         // no-libcxx mode (HWY_NO_LIBCXX / SIMDUTF_NO_LIBCXX) so we
+         // don't need libcpp. System-provided simdutf headers still
+         // use C++ stdlib headers, so we need libcpp in that case.
+-        .link_libc = if (cfg.simd) true else null,
++        .link_libc = if (cfg.simd or cfg.target.result.abi.isAndroid()) true else null,
+         .link_libcpp = if (cfg.simd and
+             b.systemIntegrationOption("simdutf", .{}) and
+             cfg.target.result.abi != .msvc) true else null,
+diff --git a/src/terminal/c/sys.zig b/src/terminal/c/sys.zig
+index c4b2b17f2..afb98ed4b 100644
+--- a/src/terminal/c/sys.zig
++++ b/src/terminal/c/sys.zig
+@@ -227,6 +227,7 @@ pub fn logStderr(
+     message_len: usize,
+ ) callconv(lib.calling_conv) void {
+     if (comptime builtin.target.cpu.arch.isWasm()) return;
++    if (comptime builtin.target.abi.isAndroid()) return;
+ 
+     const scope = scope_ptr[0..scope_len];
+     const message = message_ptr[0..message_len];

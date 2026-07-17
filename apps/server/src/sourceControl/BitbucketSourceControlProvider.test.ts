@@ -51,6 +51,44 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
   }),
 );
 
+it.effect("adds repository context while retaining Bitbucket API causes", () =>
+  Effect.gen(function* () {
+    const upstreamCause = new Error("raw upstream failure");
+    const cause = new BitbucketApi.BitbucketRequestError({
+      operation: "getRepository",
+      cause: upstreamCause,
+    });
+    const provider = yield* makeProvider({
+      getRepositoryCloneUrls: () => Effect.fail(cause),
+    });
+
+    const error = yield* provider
+      .getRepositoryCloneUrls({ cwd: "/repo", repository: "owner/repo" })
+      .pipe(Effect.flip);
+
+    assert.deepStrictEqual(
+      {
+        provider: error.provider,
+        operation: error.operation,
+        command: error.command,
+        cwd: error.cwd,
+        repository: error.repository,
+        detail: error.detail,
+      },
+      {
+        provider: "bitbucket",
+        operation: "getRepositoryCloneUrls",
+        command: undefined,
+        cwd: "/repo",
+        repository: "owner/repo",
+        detail: "Failed to get repository clone URLs.",
+      },
+    );
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.message.includes(upstreamCause.message), false);
+  }),
+);
+
 it.effect("lists Bitbucket PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let listInput: Parameters<BitbucketApi.BitbucketApi["Service"]["listPullRequests"]>[0] | null =
