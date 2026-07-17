@@ -18,6 +18,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -459,3 +460,316 @@ it.effect("keeps ingesting owned child events after the root turn terminalizes",
     assert.deepEqual(yield* Ref.get(order), ["root-finalized", "child-message"]);
   }),
 );
+
+it.effect("keeps ingesting a late background command item completion after root terminal", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario("bg-command", (ids) => [
+      backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+      rootTerminalEvent(ids, "completed"),
+      backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
+    ]);
+    assert.deepEqual(observed, ["turn_item:running", "root-finalized", "turn_item:completed"]);
+  }),
+);
+
+it.effect("ingests the trailing subagent item completion after the subagent row completes", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario("subagent-trailing-item", (ids) => [
+      subagentEvent(ids, "running"),
+      backgroundTurnItemEvent(ids, "subagent", "running", 1),
+      rootTerminalEvent(ids, "completed"),
+      subagentEvent(ids, "completed"),
+      backgroundTurnItemEvent(ids, "subagent", "completed", 2),
+    ]);
+    assert.deepEqual(observed, [
+      "subagent:running",
+      "turn_item:running",
+      "root-finalized",
+      "subagent:completed",
+      "turn_item:completed",
+    ]);
+  }),
+);
+
+it.effect("keeps ingesting a child thread's late background item completion", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario("bg-child-item", (ids) => [
+      childThreadCreatedEvent(ids),
+      subagentEvent(ids, "running"),
+      childBackgroundTurnItemEvent(ids, "running", 1),
+      rootTerminalEvent(ids, "completed"),
+      subagentEvent(ids, "completed"),
+      childBackgroundTurnItemEvent(ids, "completed", 2),
+    ]);
+    assert.deepEqual(observed, [
+      "subagent:running",
+      "turn_item:running",
+      "root-finalized",
+      "subagent:completed",
+      "turn_item:completed",
+    ]);
+  }),
+);
+
+it.effect("keeps ingesting until the last of several background items terminalizes", () =>
+  Effect.gen(function* () {
+    const secondItemId = TurnItemId.make("turn-item:bg-multi:second");
+    const observed = yield* runBackgroundItemScenario("bg-multi", (ids) => [
+      backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+      backgroundTurnItemEvent(ids, "dynamic_tool", "running", 2, secondItemId),
+      rootTerminalEvent(ids, "completed"),
+      backgroundTurnItemEvent(ids, "command_execution", "completed", 3),
+      backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 4, secondItemId),
+    ]);
+    assert.deepEqual(observed, [
+      "turn_item:running",
+      "turn_item:running",
+      "root-finalized",
+      "turn_item:completed",
+      "turn_item:completed",
+    ]);
+  }),
+);
+
+it.effect("does not pin ingestion on background items when the root turn is interrupted", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario("bg-interrupted", (ids) => [
+      backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+      rootTerminalEvent(ids, "interrupted"),
+      backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
+    ]);
+    assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
+  }),
+);
+
+interface BackgroundScenarioIds {
+  readonly threadId: ThreadId;
+  readonly childThreadId: ThreadId;
+  readonly runId: RunId;
+  readonly attemptId: RunAttemptId;
+  readonly providerThreadId: ProviderThreadId;
+  readonly rootProviderTurnId: ProviderTurnId;
+  readonly rootNodeId: NodeId;
+  readonly itemId: TurnItemId;
+  readonly childItemId: TurnItemId;
+  readonly subagentNodeId: NodeId;
+}
+
+function backgroundScenarioIds(key: string): BackgroundScenarioIds {
+  return {
+    threadId: ThreadId.make(`thread:${key}`),
+    childThreadId: ThreadId.make(`thread:${key}:child`),
+    runId: RunId.make(`run:${key}`),
+    attemptId: RunAttemptId.make(`attempt:${key}`),
+    providerThreadId: ProviderThreadId.make(`provider-thread:${key}`),
+    rootProviderTurnId: ProviderTurnId.make(`provider-turn:${key}`),
+    rootNodeId: NodeId.make(`node:${key}`),
+    itemId: TurnItemId.make(`turn-item:${key}`),
+    childItemId: TurnItemId.make(`turn-item:${key}:child`),
+    subagentNodeId: NodeId.make(`node:${key}:subagent`),
+  };
+}
+
+function childThreadCreatedEvent(ids: BackgroundScenarioIds): ProviderAdapterV2Event {
+  return {
+    type: "app_thread.created",
+    driver,
+    appThread: {
+      id: ids.childThreadId,
+      lineage: {
+        parentThreadId: ids.threadId,
+        relationshipToParent: "subagent",
+        rootThreadId: ids.threadId,
+      },
+    },
+  } as ProviderAdapterV2Event;
+}
+
+function childBackgroundTurnItemEvent(
+  ids: BackgroundScenarioIds,
+  status: "running" | "completed",
+  ordinal: number,
+): ProviderAdapterV2Event {
+  return {
+    type: "turn_item.updated",
+    driver,
+    turnItem: {
+      id: ids.childItemId,
+      threadId: ids.childThreadId,
+      runId: null,
+      providerTurnId: null,
+      ordinal,
+      type: "command_execution",
+      status,
+    },
+  } as ProviderAdapterV2Event;
+}
+
+function backgroundTurnItemEvent(
+  ids: BackgroundScenarioIds,
+  type: "command_execution" | "dynamic_tool" | "subagent",
+  status: "running" | "completed",
+  ordinal: number,
+  itemId?: TurnItemId,
+): ProviderAdapterV2Event {
+  return {
+    type: "turn_item.updated",
+    driver,
+    turnItem: {
+      id: itemId ?? ids.itemId,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      providerTurnId: ids.rootProviderTurnId,
+      ordinal,
+      type,
+      status,
+    },
+  } as ProviderAdapterV2Event;
+}
+
+function subagentEvent(
+  ids: BackgroundScenarioIds,
+  status: "running" | "completed",
+): ProviderAdapterV2Event {
+  return {
+    type: "subagent.updated",
+    driver,
+    subagent: {
+      id: ids.subagentNodeId,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      status,
+    },
+  } as ProviderAdapterV2Event;
+}
+
+function rootTerminalEvent(
+  ids: BackgroundScenarioIds,
+  status: "completed" | "interrupted",
+): ProviderAdapterV2Event {
+  return {
+    type: "turn.terminal",
+    driver,
+    providerThreadId: ids.providerThreadId,
+    providerTurnId: ids.rootProviderTurnId,
+    runOrdinal: 1,
+    status,
+    failure: null,
+    threadDisposition: "reusable",
+  } as ProviderAdapterV2Event;
+}
+
+function runBackgroundItemScenario(
+  key: string,
+  makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapterV2Event>,
+) {
+  return Effect.gen(function* () {
+    const ids = backgroundScenarioIds(key);
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const observed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const ingestionDone = yield* Deferred.make<void>();
+    const testLayer = runExecutionServiceLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(EventSinkV2)({
+            write: () => Effect.succeed([]),
+            writeWithEffects: (input) =>
+              Effect.gen(function* () {
+                if (
+                  input.events.some(
+                    (event) => event.type === "run.updated" && event.runId === ids.runId,
+                  )
+                ) {
+                  yield* Ref.update(observed, (current) => [...current, "root-finalized"]);
+                }
+                return [];
+              }),
+            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+          }),
+          idAllocatorLayer,
+          Layer.mock(ProviderEventIngestorV2)({
+            ingestNormalized: (input) =>
+              Effect.gen(function* () {
+                const event = input.event;
+                if (event.type === "turn_item.updated") {
+                  yield* Ref.update(observed, (current) => [
+                    ...current,
+                    `turn_item:${event.turnItem.status}`,
+                  ]);
+                }
+                if (event.type === "subagent.updated") {
+                  yield* Ref.update(observed, (current) => [
+                    ...current,
+                    `subagent:${event.subagent.status}`,
+                  ]);
+                }
+                return [];
+              }),
+          }),
+          ServerSettingsService.layerTest(),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make(`command:${key}`),
+        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+        providerSessionId: ProviderSessionId.make(`session:${key}`),
+        session: {
+          events: Stream.empty,
+          subscribeEvents: Effect.succeed({
+            events: Stream.fromIterable(makeEvents(ids)),
+            close: Deferred.succeed(ingestionDone, undefined),
+          }),
+          startTurn: () => Effect.void,
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: ids.runId,
+          threadId: ids.threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make(`checkpoint-scope:${key}`),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ids.providerThreadId,
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: ids.attemptId,
+          providerTurnId: ids.rootProviderTurnId,
+        } as OrchestrationV2RunAttempt,
+        attemptId: ids.attemptId,
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make(`message:${key}:user`),
+          text: "Start a background item and finish.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(Effect.provide(testLayer));
+
+    const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
+    assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
+    return yield* Ref.get(observed);
+  });
+}

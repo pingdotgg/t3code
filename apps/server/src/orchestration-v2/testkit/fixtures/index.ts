@@ -1,7 +1,11 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
+import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
+import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
+import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { grokSubagentLineageInput } from "./grok_subagent_lineage/input.ts";
 import { assertGrokSubagentLineageOutput } from "./grok_subagent_lineage/output.ts";
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
@@ -92,6 +96,33 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeLocalBashTaskOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_idle_resume",
+    buildInput: claudeIdleResumeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./claude_idle_resume/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeIdleResumeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_result_is_error",
+    buildInput: claudeResultIsErrorInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_result_is_error/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeResultIsErrorOutput,
       },
     ],
   },

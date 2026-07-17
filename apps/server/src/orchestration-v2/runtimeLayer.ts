@@ -24,6 +24,8 @@ import { layer as orchestratorLayer } from "./Orchestrator.ts";
 import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts";
 import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromProviderInstances } from "./ProviderAdapterRegistry.ts";
+import { layer as providerContinuationRequestsLayer } from "./ProviderContinuationRequests.ts";
+import { workerLive as providerContinuationWorkerLive } from "./ProviderContinuationService.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
 import { layer as providerRuntimeRecoveryLayer } from "./ProviderRuntimeRecoveryService.ts";
@@ -221,6 +223,11 @@ const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
 const scheduledTaskProvided = scheduledTaskServiceLayer.pipe(
   Layer.provide(Layer.mergeAll(threadLaunchProvided, threadManagementProvided)),
 );
+const providerContinuationWorkerProvided = providerContinuationWorkerLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(providerContinuationRequestsLayer, threadManagementProvided, idAllocatorLayer),
+  ),
+);
 
 export const OrchestrationV2LayerLive = Layer.mergeAll(
   orchestratorProvided,
@@ -238,4 +245,5 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   threadLaunchProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
+  providerContinuationWorkerProvided,
 );

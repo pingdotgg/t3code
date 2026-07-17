@@ -63,6 +63,10 @@ import {
   type ProviderAdapterDriver,
 } from "../ProviderAdapterDriver.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import {
+  type ProviderContinuationRequest,
+  ProviderContinuationRequests,
+} from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
@@ -281,6 +285,29 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
         completed: true,
       };
   }
+}
+
+const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
+const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
+
+export function codexBackgroundCommandDetail(item: {
+  readonly command: string;
+  readonly exitCode?: number | null | undefined;
+  readonly aggregatedOutput?: string | null | undefined;
+}): string {
+  const command =
+    item.command.length > BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH
+      ? `${item.command.slice(0, BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH)}...`
+      : item.command;
+  const exit =
+    item.exitCode === null || item.exitCode === undefined ? "" : ` (exit ${item.exitCode})`;
+  const output = (item.aggregatedOutput ?? "").trimEnd();
+  const outputTail =
+    output.length > BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH
+      ? `...${output.slice(-BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH)}`
+      : output;
+  const header = `Background command completed${exit}: ${command}`;
+  return outputTail.length === 0 ? header : `${header}\n\nOutput tail:\n${outputTail}`;
 }
 
 export interface CodexDynamicToolProjection {
@@ -1169,6 +1196,7 @@ export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAda
   create: ({ instanceId, environment, enabled, config }) =>
     Effect.gen(function* () {
       const clientFactory = yield* CodexAppServerClientFactory;
+      const continuationRequests = yield* ProviderContinuationRequests;
       const fileSystem = yield* FileSystem.FileSystem;
       const hostEnvironment = yield* HostProcessEnvironment;
       const idAllocator = yield* IdAllocatorV2;
@@ -1201,6 +1229,7 @@ export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAda
         fileSystem,
         idAllocator,
         serverConfig,
+        continuationRequests,
       });
     }),
 };
@@ -1213,6 +1242,7 @@ export const layer: Layer.Layer<
   ProviderAdapterV2,
   Effect.gen(function* () {
     const clientFactory = yield* CodexAppServerClientFactory;
+    const continuationRequests = yield* ProviderContinuationRequests;
     const fileSystem = yield* FileSystem.FileSystem;
     const hostEnvironment = yield* HostProcessEnvironment;
     const idAllocator = yield* IdAllocatorV2;
@@ -1226,6 +1256,7 @@ export const layer: Layer.Layer<
       fileSystem,
       idAllocator,
       serverConfig,
+      continuationRequests,
     });
   }),
 );
@@ -1238,10 +1269,19 @@ export interface CodexAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
+  /**
+   * Sink for post-settle background command completions so the orchestrator
+   * can start a continuation run. Optional: adapters that omit it keep
+   * projection-only handling for late item completions.
+   */
+  readonly continuationRequests?: {
+    readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
+  };
 }
 
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
+  const continuationRequests = adapterOptions.continuationRequests;
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1296,6 +1336,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
         );
+        /**
+         * Turn contexts retained past turn/completed while background command
+         * items started in that turn are still running, so late item events
+         * keep projecting instead of being dropped.
+         */
+        const settledTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        const runningCommandItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
@@ -1378,6 +1426,48 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
             yield* Effect.yieldNow;
             return yield* awaitActiveTurn(nativeTurnId, attemptsRemaining - 1);
+          });
+
+        /**
+         * Like awaitActiveTurn, but item lifecycle events for a turn that
+         * already settled (background command completions) resolve the
+         * retained settled context instead of dropping.
+         */
+        const resolveItemEventContext = (nativeTurnId: string) =>
+          Effect.gen(function* () {
+            const settled = (yield* Ref.get(settledTurns)).get(nativeTurnId);
+            if (settled !== undefined) {
+              return { context: settled, settled: true } as const;
+            }
+            const context = yield* awaitActiveTurn(nativeTurnId);
+            return context === undefined ? undefined : ({ context, settled: false } as const);
+          });
+
+        const trackRunningCommandItem = (nativeTurnId: string, nativeItemId: string) =>
+          Ref.update(runningCommandItemsByTurn, (current) => {
+            const updated = new Map(current);
+            const items = new Set(updated.get(nativeTurnId) ?? []);
+            items.add(nativeItemId);
+            updated.set(nativeTurnId, items);
+            return updated;
+          });
+
+        /** Returns true when the turn has no running command items left. */
+        const clearRunningCommandItem = (nativeTurnId: string, nativeItemId: string) =>
+          Ref.modify(runningCommandItemsByTurn, (current) => {
+            const items = current.get(nativeTurnId);
+            if (items === undefined || !items.has(nativeItemId)) {
+              return [items === undefined || items.size === 0, current] as const;
+            }
+            const remaining = new Set(items);
+            remaining.delete(nativeItemId);
+            const updated = new Map(current);
+            if (remaining.size === 0) {
+              updated.delete(nativeTurnId);
+            } else {
+              updated.set(nativeTurnId, remaining);
+            }
+            return [remaining.size === 0, updated] as const;
           });
 
         const resolveItemOrdinal = (context: ActiveCodexTurnContext, nativeItemId: string) =>
@@ -1515,6 +1605,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updated.set(turn.nativeTurnId, activeContext);
               return updated;
             });
+            if (providerTurnOrdinal > 1 && subagent.task.status !== "running") {
+              yield* emitSubagentTaskUpdate({
+                subagent,
+                status: "running",
+                result: null,
+              });
+            }
             const now = yield* DateTime.now;
             yield* emitProviderEvent({
               type: "provider_thread.updated",
@@ -2821,6 +2918,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "commandExecution") {
+              if (!codexItemStatus(payload.item.status).completed) {
+                yield* trackRunningCommandItem(payload.turnId, payload.item.id);
+              }
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
@@ -2874,10 +2974,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
-            const context = yield* awaitActiveTurn(payload.turnId);
-            if (context === undefined) {
+            const resolved = yield* resolveItemEventContext(payload.turnId);
+            if (resolved === undefined) {
               return;
             }
+            const { context, settled } = resolved;
 
             if (payload.item.type === "userMessage") {
               if (yield* emitSubagentUserMessage(context, payload.item)) {
@@ -2886,6 +2987,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "commandExecution") {
+              const turnDrained = yield* clearRunningCommandItem(payload.turnId, payload.item.id);
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
@@ -2897,6 +2999,47 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 driver: CODEX_PROVIDER,
                 turnItem: artifacts.turnItem,
               });
+              if (settled) {
+                if (context.subagent === null && continuationRequests !== undefined) {
+                  const alreadyOffered = yield* Ref.modify(
+                    offeredContinuationItemsByTurn,
+                    (current) => {
+                      const items = current.get(payload.turnId);
+                      if (items !== undefined && items.has(payload.item.id)) {
+                        return [true, current] as const;
+                      }
+                      const updated = new Map(current);
+                      const updatedItems = new Set(items ?? []);
+                      updatedItems.add(payload.item.id);
+                      updated.set(payload.turnId, updatedItems);
+                      return [false, updated] as const;
+                    },
+                  );
+                  if (!alreadyOffered) {
+                    yield* continuationRequests.offer({
+                      threadId: context.projectionThreadId,
+                      providerThreadId: context.providerThread.id,
+                      driver: CODEX_PROVIDER,
+                      detail: codexBackgroundCommandDetail(payload.item),
+                    });
+                  }
+                }
+                if (turnDrained) {
+                  yield* Ref.update(settledTurns, (current) => {
+                    const updated = new Map(current);
+                    updated.delete(payload.turnId);
+                    return updated;
+                  });
+                  yield* Ref.update(offeredContinuationItemsByTurn, (current) => {
+                    if (!current.has(payload.turnId)) {
+                      return current;
+                    }
+                    const updated = new Map(current);
+                    updated.delete(payload.turnId);
+                    return updated;
+                  });
+                }
+              }
               return;
             }
 
@@ -3011,11 +3154,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               itemId: payload.item.id,
               finalText: payload.item.text,
             });
-            if (
-              context.subagent !== null &&
-              context.providerTurnOrdinal === 1 &&
-              payload.item.phase !== "commentary"
-            ) {
+            if (context.subagent !== null && payload.item.phase !== "commentary") {
               yield* emitSubagentTaskUpdate({
                 subagent: context.subagent,
                 status: context.subagent.task.status,
@@ -3452,34 +3591,32 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   updatedAt: completedAt,
                 },
               });
-              if (context.providerTurnOrdinal === 1) {
-                yield* emitProviderEvent({
-                  type: "node.updated",
-                  driver: CODEX_PROVIDER,
-                  node: {
-                    id: context.subagent.subagentNodeId,
-                    threadId: context.subagent.parentContext.projectionThreadId,
-                    runId: context.subagent.parentContext.projectionRunId,
-                    parentNodeId: context.subagent.parentContext.itemParentNodeId,
-                    rootNodeId: context.subagent.parentContext.rootNodeId,
-                    kind: "subagent",
-                    status,
-                    countsForRun: false,
-                    providerThreadId: context.providerThread.id,
-                    providerTurnId: context.subagent.parentContext.providerTurnId,
-                    nativeItemRef: context.subagent.task.nativeTaskRef,
-                    runtimeRequestId: null,
-                    checkpointScopeId: null,
-                    startedAt: context.subagent.startedAt,
-                    completedAt,
-                  },
-                });
-                yield* emitSubagentTaskUpdate({
-                  subagent: context.subagent,
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: {
+                  id: context.subagent.subagentNodeId,
+                  threadId: context.subagent.parentContext.projectionThreadId,
+                  runId: context.subagent.parentContext.projectionRunId,
+                  parentNodeId: context.subagent.parentContext.itemParentNodeId,
+                  rootNodeId: context.subagent.parentContext.rootNodeId,
+                  kind: "subagent",
                   status,
+                  countsForRun: false,
+                  providerThreadId: context.providerThread.id,
+                  providerTurnId: context.subagent.parentContext.providerTurnId,
+                  nativeItemRef: context.subagent.task.nativeTaskRef,
+                  runtimeRequestId: null,
+                  checkpointScopeId: null,
+                  startedAt: context.subagent.startedAt,
                   completedAt,
-                });
-              }
+                },
+              });
+              yield* emitSubagentTaskUpdate({
+                subagent: context.subagent,
+                status,
+                completedAt,
+              });
             }
             if (context.subagent === null) {
               const terminalStatus = providerTurnStatusToTerminal(status);
@@ -3518,11 +3655,34 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (waiter !== undefined) {
               yield* Deferred.succeed(waiter, undefined);
             }
+            const runningItems = (yield* Ref.get(runningCommandItemsByTurn)).get(payload.turn.id);
+            // Failed and interrupted turns intentionally drop background command
+            // tracking: late completions should not wake a turn the user stopped
+            // or that errored, and the session should not stay pinned for them.
+            const retainSettledContext =
+              status === "completed" && runningItems !== undefined && runningItems.size > 0;
+            if (retainSettledContext) {
+              yield* Ref.update(settledTurns, (current) => {
+                const updated = new Map(current);
+                updated.set(payload.turn.id, context);
+                return updated;
+              });
+            }
             yield* Ref.update(activeTurns, (current) => {
               const updated = new Map(current);
               updated.delete(payload.turn.id);
               return updated;
             });
+            if (!retainSettledContext) {
+              yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                if (!current.has(payload.turn.id)) {
+                  return current;
+                }
+                const updated = new Map(current);
+                updated.delete(payload.turn.id);
+                return updated;
+              });
+            }
           }),
         );
 
@@ -3532,6 +3692,23 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          // Known gap: a subagent that Codex resumes later reads as completed
+          // (not pending) between turns, so idle release can win the race
+          // against a long-delayed resume. Codex emits no resume-expected
+          // signal to pin on.
+          hasPendingBackgroundWork: Effect.gen(function* () {
+            for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
+              if (items.size > 0) {
+                return true;
+              }
+            }
+            for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
+              if (subagent.task.status === "running") {
+                return true;
+              }
+            }
+            return false;
+          }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
               Effect.andThen(
