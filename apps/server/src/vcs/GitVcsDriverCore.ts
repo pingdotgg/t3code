@@ -2257,22 +2257,48 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const resolveAvailableWorktreeBranchName = Effect.fn("resolveAvailableWorktreeBranchName")(
+    function* (cwd: string, desiredBranch: string) {
+      if (!(yield* branchExists(cwd, desiredBranch))) {
+        return desiredBranch;
+      }
+      for (let suffix = 2; suffix <= 100; suffix += 1) {
+        const candidate = `${desiredBranch}-${suffix}`;
+        if (!(yield* branchExists(cwd, candidate))) {
+          return candidate;
+        }
+      }
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree",
+          cwd,
+          args: ["worktree", "add", "-b", desiredBranch],
+        }),
+        detail: `Could not find an available worktree branch name for '${desiredBranch}'.`,
+      });
+    },
+  );
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
-    const targetBranch = input.newRefName ?? input.refName;
+    const newRefName =
+      input.newRefName !== undefined && input.uniquifyNewRefName
+        ? yield* resolveAvailableWorktreeBranchName(input.cwd, input.newRefName)
+        : input.newRefName;
+    const targetBranch = newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+    const args = newRefName
+      ? ["worktree", "add", "-b", newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
     });
 
-    if (input.newRefName && input.baseRefName) {
+    if (newRefName && input.baseRefName) {
       const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
       const parsedBaseRef = parseRemoteRefWithRemoteNames(
         input.baseRefName,
@@ -2281,7 +2307,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
       yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
         "config",
-        `branch.${input.newRefName}.gh-merge-base`,
+        `branch.${newRefName}.gh-merge-base`,
         baseBranch,
       ]);
     }

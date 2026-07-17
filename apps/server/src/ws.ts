@@ -91,6 +91,8 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as WorktreeBasePlanner from "./git/WorktreeBasePlanner.ts";
+import * as WorktreeRegistry from "./git/WorktreeRegistry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -310,6 +312,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPrefetchRemote, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
   [WS_METHODS.gitRunStackedAction, AuthOrchestrationOperateScope],
   [WS_METHODS.gitResolvePullRequest, AuthOrchestrationOperateScope],
@@ -401,6 +404,8 @@ const makeWsRpcLayer = (
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const worktreeBasePlanner = yield* WorktreeBasePlanner.WorktreeBasePlanner;
+      const worktreeRegistry = yield* WorktreeRegistry.WorktreeRegistry;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -527,7 +532,11 @@ const makeWsRpcLayer = (
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;
-        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
+        readonly kind:
+          | "setup-script.requested"
+          | "setup-script.started"
+          | "setup-script.failed"
+          | "worktree.base-pinned";
         readonly summary: string;
         readonly createdAt: string;
         readonly payload: Record<string, unknown>;
@@ -554,6 +563,53 @@ const makeWsRpcLayer = (
               createdAt: input.createdAt,
             }),
           ),
+        );
+
+      /**
+       * Record where a new worktree thread's base came from as a thread
+       * activity — the durable, user-visible provenance ("pinned at <sha>",
+       * and a warning when the remote was unreachable and the last-known
+       * commit was used instead). Never fails the bootstrap.
+       */
+      const appendWorktreeBaseActivity = (input: {
+        readonly threadId: ThreadId;
+        readonly branch: string;
+        readonly worktreePath: string;
+        readonly baseRefName: string;
+        readonly basePin: WorktreeBasePlanner.WorktreeBasePin | null;
+      }) =>
+        Effect.gen(function* () {
+          const createdAt = yield* nowIso;
+          const shortSha = input.basePin?.commitSha.slice(0, 7);
+          const summary =
+            input.basePin === null
+              ? `Created worktree from local ${input.baseRefName}`
+              : input.basePin.provenance === "stale"
+                ? `Remote unreachable — created worktree from last-known ${input.baseRefName} (${shortSha})`
+                : `Created worktree from ${input.baseRefName} (${shortSha})`;
+          yield* appendSetupScriptActivity({
+            threadId: input.threadId,
+            kind: "worktree.base-pinned",
+            summary,
+            createdAt,
+            payload: {
+              branch: input.branch,
+              worktreePath: input.worktreePath,
+              baseRefName: input.baseRefName,
+              baseCommitSha: input.basePin?.commitSha ?? null,
+              baseProvenance: input.basePin?.provenance ?? "local",
+              baseFetchedAt: input.basePin?.fetchedAt ?? null,
+            },
+            tone: input.basePin?.provenance === "stale" ? "error" : "info",
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to record worktree base provenance activity", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+          Effect.asVoid,
         );
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
@@ -836,25 +892,28 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              if (bootstrap.prepareWorktree.startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
+              const prepareWorktree = bootstrap.prepareWorktree;
+              let worktreeBaseRef = prepareWorktree.baseBranch;
+              let basePin: WorktreeBasePlanner.WorktreeBasePin | null = null;
+              if (prepareWorktree.startFromOrigin) {
+                // Pin the base to a remote commit via the freshness ladder:
+                // fresh fetch → recent fetch (stale, fail-visible) → fail
+                // closed. Never silently falls back to the local ref.
+                basePin = yield* worktreeBasePlanner.pinRemoteBase({
+                  cwd: prepareWorktree.projectCwd,
+                  baseRef: prepareWorktree.baseBranch,
                 });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
+                worktreeBaseRef = basePin.commitSha;
               }
               const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
+                cwd: prepareWorktree.projectCwd,
                 refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
+                newRefName: prepareWorktree.branch,
+                baseRefName: prepareWorktree.baseBranch,
                 path: null,
+                // Branch names derive from the thread id, so a resend after a
+                // partial failure may find the branch already exists.
+                uniquifyNewRefName: true,
               });
               targetWorktreePath = worktree.worktree.path;
               yield* orchestrationEngine.dispatch({
@@ -863,6 +922,24 @@ const makeWsRpcLayer = (
                 threadId: command.threadId,
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
+              });
+              yield* worktreeRegistry.register({
+                threadId: command.threadId,
+                worktreePath: targetWorktreePath,
+                branch: worktree.worktree.refName,
+                projectCwd: prepareWorktree.projectCwd,
+                baseRefName: basePin?.remoteRefName ?? prepareWorktree.baseBranch,
+                baseCommitSha: basePin?.commitSha ?? null,
+                baseProvenance:
+                  basePin?.provenance ?? (prepareWorktree.startFromOrigin ? null : "local"),
+                createdAt: yield* nowIso,
+              });
+              yield* appendWorktreeBaseActivity({
+                threadId: command.threadId,
+                branch: worktree.worktree.refName,
+                worktreePath: targetWorktreePath,
+                baseRefName: basePin?.remoteRefName ?? prepareWorktree.baseBranch,
+                basePin,
               });
               yield* refreshGitStatus(targetWorktreePath);
             }
@@ -1536,6 +1613,12 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "vcs",
             },
+          ),
+        [WS_METHODS.vcsPrefetchRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPrefetchRemote,
+            worktreeBasePlanner.ensureFreshRemote({ cwd: input.cwd }),
+            { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(

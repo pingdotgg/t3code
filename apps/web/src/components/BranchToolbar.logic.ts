@@ -50,8 +50,66 @@ export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null):
   return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
 }
 
-export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Worktree" : "Local checkout";
+/**
+ * Provenance of a worktree thread's pinned base, derived from the
+ * `worktree.base-pinned` activity the server records during bootstrap.
+ */
+export interface WorktreePinnedBase {
+  readonly baseRefName: string;
+  readonly baseCommitSha: string | null;
+  readonly baseProvenance: "fresh" | "stale" | "local";
+}
+
+export function derivePinnedWorktreeBase(
+  activities: ReadonlyArray<{ kind: string; payload: unknown }>,
+): WorktreePinnedBase | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (activity?.kind !== "worktree.base-pinned") continue;
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    if (!payload) return null;
+    const baseRefName = typeof payload.baseRefName === "string" ? payload.baseRefName : null;
+    if (!baseRefName) return null;
+    const baseCommitSha = typeof payload.baseCommitSha === "string" ? payload.baseCommitSha : null;
+    const baseProvenance =
+      payload.baseProvenance === "fresh" ||
+      payload.baseProvenance === "stale" ||
+      payload.baseProvenance === "local"
+        ? payload.baseProvenance
+        : "local";
+    return { baseRefName, baseCommitSha, baseProvenance };
+  }
+  return null;
+}
+
+/**
+ * Locked (post-send) workspace label. Once the base pin is known the promise
+ * becomes a fact: "Worktree · a1b2c3f" instead of just "Worktree".
+ */
+export function resolveLockedWorkspaceLabel(
+  activeWorktreePath: string | null,
+  pinnedBase?: WorktreePinnedBase | null,
+): string {
+  if (!activeWorktreePath) {
+    return "Local checkout";
+  }
+  const shortSha = pinnedBase?.baseCommitSha?.slice(0, 7);
+  return shortSha ? `Worktree · ${shortSha}` : "Worktree";
+}
+
+export function resolvePinnedBaseTitle(pinnedBase: WorktreePinnedBase | null): string | null {
+  if (!pinnedBase?.baseCommitSha) {
+    return null;
+  }
+  const shortSha = pinnedBase.baseCommitSha.slice(0, 7);
+  return pinnedBase.baseProvenance === "stale"
+    ? `Pinned at ${shortSha} from ${pinnedBase.baseRefName} (remote was unreachable — last-known commit)`
+    : pinnedBase.baseProvenance === "fresh"
+      ? `Pinned at ${shortSha} from latest ${pinnedBase.baseRefName}`
+      : `Pinned at ${shortSha} from local ${pinnedBase.baseRefName}`;
 }
 
 export function resolveEffectiveEnvMode(input: {

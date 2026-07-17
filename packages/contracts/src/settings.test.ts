@@ -88,14 +88,31 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
-  it("defaults start-from-origin off for legacy configs", () => {
-    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(false);
+  it("defaults start-from-origin on so new worktrees pin the latest remote base", () => {
+    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
+  });
+
+  it("defaults to surface-derived thread env mode resolution", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.deriveThreadEnvModeFromSurface).toBe(true);
+    // The wire value stays within the legacy literal set so pre-surface
+    // clients can still decode the server config snapshot.
+    expect(decoded.defaultThreadEnvMode).toBe("local");
+  });
+
+  it("accepts explicit env modes for legacy configs", () => {
+    expect(decodeServerSettings({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe(
+      "worktree",
+    );
+    expect(decodeServerSettings({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe(
+      "local",
+    );
   });
 
   it("accepts start-from-origin updates", () => {
     expect(
-      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: true }).newWorktreesStartFromOrigin,
-    ).toBe(true);
+      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
+    ).toBe(false);
   });
 });
 

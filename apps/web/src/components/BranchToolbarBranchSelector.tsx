@@ -38,6 +38,8 @@ import {
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
+import { useEnvironmentSettings } from "../hooks/useSettings";
+import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
@@ -107,6 +109,7 @@ export function BranchToolbarBranchSelector({
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
   const startFromOriginSwitchId = useId();
+  const settings = useEnvironmentSettings(environmentId);
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
@@ -191,6 +194,16 @@ export function BranchToolbarBranchSelector({
         branch,
         worktreePath,
         envMode: nextDraftEnvMode,
+        // Mode changes re-derive the origin pin from settings so a draft
+        // flipped into worktree mode here doesn't silently skip the fetch.
+        ...(nextDraftEnvMode !== effectiveEnvMode
+          ? {
+              startFromOrigin: resolveNewDraftStartFromOrigin({
+                envMode: nextDraftEnvMode,
+                newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
+              }),
+            }
+          : {}),
         projectRef: scopeProjectRef(environmentId, activeProject.id),
       });
     },
@@ -202,6 +215,7 @@ export function BranchToolbarBranchSelector({
       hasServerThread,
       onActiveThreadBranchOverrideChange,
       setDraftThreadContext,
+      settings.newWorktreesStartFromOrigin,
       draftId,
       threadRef,
       environmentId,

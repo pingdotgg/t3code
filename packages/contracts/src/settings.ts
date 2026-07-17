@@ -9,6 +9,9 @@ import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.t
 
 // ── Client Settings (local-only) ───────────────────────────────
 
+export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
+export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
@@ -75,6 +78,12 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
+  // Per-project default workspace mode, keyed by scoped project key. This is
+  // the sanctioned way to retrain the new-thread default for one project —
+  // the composer's draft-only exceptions never write here implicitly.
+  projectThreadEnvModeOverrides: Schema.Record(TrimmedNonEmptyString, ThreadEnvMode).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   sidebarProjectGroupingOverrides: Schema.Record(
     TrimmedNonEmptyString,
     SidebarProjectGroupingMode,
@@ -98,9 +107,6 @@ export type ClientSettings = typeof ClientSettingsSchema.Type;
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettingsSchema)({});
 
 // ── Server Settings (server-authoritative) ────────────────────
-
-export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
-export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
@@ -363,6 +369,28 @@ export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
+/**
+ * A remote fetch younger than this window counts as "fresh": worktree
+ * creation pins the remote-tracking commit without fetching again.
+ */
+export const WORKTREE_BASE_FRESHNESS_WINDOW = Duration.seconds(30);
+
+/**
+ * Fail-visible horizon: when a send-time fetch fails but the last successful
+ * fetch is within this horizon, worktree creation proceeds on the last-known
+ * remote commit and reports stale provenance instead of failing.
+ */
+export const WORKTREE_BASE_USABLE_HORIZON = Duration.hours(1);
+
+/**
+ * Provenance of the commit a worktree thread was pinned to.
+ * - `fresh`: pinned from a remote fetch within the freshness window
+ * - `stale`: remote unreachable; pinned from the last-known remote commit
+ * - `local`: pinned from a local ref without consulting the remote
+ */
+export const WorktreeBaseProvenance = Schema.Literals(["fresh", "stale", "local"]);
+export type WorktreeBaseProvenance = typeof WorktreeBaseProvenance.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -371,11 +399,23 @@ export const ServerSettings = Schema.Struct({
       Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
     ),
   ),
+  /**
+   * When true (the default), the workspace mode for new threads derives from
+   * the surface the client runs on: attached to a visible local checkout
+   * (desktop app, CLI-launched local browser) → current checkout; detached
+   * (remote browser, mobile, relay/SSH environments) → fresh worktree.
+   * `defaultThreadEnvMode` only applies when this is false. A separate
+   * boolean (rather than a third `defaultThreadEnvMode` literal) keeps the
+   * wire value decodable by clients that predate surface derivation.
+   */
+  deriveThreadEnvModeFromSurface: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
@@ -506,6 +546,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  deriveThreadEnvModeFromSurface: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
@@ -558,6 +599,9 @@ export const ClientSettingsPatch = Schema.Struct({
         ),
       }),
     ),
+  ),
+  projectThreadEnvModeOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, ThreadEnvMode),
   ),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

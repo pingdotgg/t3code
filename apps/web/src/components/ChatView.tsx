@@ -27,6 +27,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   parseScopedThreadKey,
+  scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
@@ -112,7 +113,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteContext";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { buildThreadWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
@@ -150,7 +151,13 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { useEnvironmentSettings } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentSettings,
+  useUpdateClientSettings,
+} from "../hooks/useSettings";
+import { useEnvironmentPresentation } from "../state/presentation";
+import { resolveSurfaceThreadEnvMode } from "../lib/threadSurface";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -2120,6 +2127,43 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitCwd },
         }),
   );
+  const prefetchRemote = useAtomCommand(vcsEnvironment.prefetchRemote, { reportFailure: false });
+  // Prefetch the remote the moment a worktree-mode draft composer is open, so
+  // the send-time freshness check almost always hits the fresh window and the
+  // user never waits on a blocking fetch. Fire-and-forget; the server dedupes
+  // concurrent fetches per repository.
+  const prefetchedDraftCwdRef = useRef<string | null>(null);
+  const draftEnvModeForPrefetch = isLocalDraftThread ? draftThread?.envMode : undefined;
+  const draftStartFromOriginForPrefetch = isLocalDraftThread
+    ? draftThread?.startFromOrigin
+    : undefined;
+  useEffect(() => {
+    const projectCwd = activeProject?.workspaceRoot ?? null;
+    if (
+      !isLocalDraftThread ||
+      draftEnvModeForPrefetch !== "worktree" ||
+      draftStartFromOriginForPrefetch !== true ||
+      projectCwd === null
+    ) {
+      return;
+    }
+    const prefetchKey = `${environmentId}:${projectCwd}`;
+    if (prefetchedDraftCwdRef.current === prefetchKey) {
+      return;
+    }
+    prefetchedDraftCwdRef.current = prefetchKey;
+    void prefetchRemote({
+      environmentId,
+      input: { cwd: projectCwd },
+    });
+  }, [
+    activeProject?.workspaceRoot,
+    draftEnvModeForPrefetch,
+    draftStartFromOriginForPrefetch,
+    environmentId,
+    isLocalDraftThread,
+    prefetchRemote,
+  ]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -4154,7 +4198,7 @@ function ChatViewContent(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      branch: buildThreadWorktreeBranchName(threadIdForSend, randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
@@ -4867,6 +4911,34 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const projectThreadEnvModeOverrides = useClientSettings(
+    (clientSettings) => clientSettings.projectThreadEnvModeOverrides,
+  );
+  const updateClientSettings = useUpdateClientSettings();
+  const { presentation: activeEnvironmentPresentation } = useEnvironmentPresentation(environmentId);
+  const envModeOverrideProjectKey = activeProjectRef ? scopedProjectKey(activeProjectRef) : null;
+  const projectDefaultEnvMode: DraftThreadEnvMode | null = envModeOverrideProjectKey
+    ? (projectThreadEnvModeOverrides[envModeOverrideProjectKey] ??
+      resolveSurfaceThreadEnvMode({
+        settings,
+        target: activeEnvironmentPresentation?.entry.target ?? null,
+      }))
+    : null;
+  // "Always for this project": the only sanctioned way a composer choice
+  // becomes a default, and it goes through an explicit settings write.
+  const onSetProjectDefaultEnvMode = useCallback(
+    (mode: DraftThreadEnvMode) => {
+      if (!envModeOverrideProjectKey) return;
+      updateClientSettings({
+        projectThreadEnvModeOverrides: {
+          ...projectThreadEnvModeOverrides,
+          [envModeOverrideProjectKey]: mode,
+        },
+      });
+    },
+    [envModeOverrideProjectKey, projectThreadEnvModeOverrides, updateClientSettings],
+  );
+
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
     if (canOverrideServerThreadEnvMode && activeThread) {
       setPendingServerThreadStartFromOriginByThreadId((current) =>
@@ -5232,6 +5304,9 @@ function ChatViewContent(props: ChatViewProps) {
                       onEnvModeChange={onEnvModeChange}
                       startFromOrigin={startFromOrigin}
                       onStartFromOriginChange={onStartFromOriginChange}
+                      workingTreeDirty={Boolean(gitStatusQuery.data?.hasWorkingTreeChanges)}
+                      projectDefaultEnvMode={projectDefaultEnvMode}
+                      onSetProjectDefaultEnvMode={onSetProjectDefaultEnvMode}
                       {...(canOverrideServerThreadEnvMode
                         ? { effectiveEnvModeOverride: envMode }
                         : {})}

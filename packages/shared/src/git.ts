@@ -11,7 +11,11 @@ import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+// Optional `-N` suffix: bootstrap retries uniquify a taken thread-derived
+// branch name (t3code/a1b2c3d4-2), and those are still temporary branches.
+const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}(-\\d+)?$`,
+);
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
@@ -91,6 +95,24 @@ export function buildTemporaryWorktreeBranchName(
 ): string {
   const token = randomHex(4).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+/**
+ * Deterministic worktree branch name derived from the thread id (the first
+ * UUID segment), so every worktree is attributable to its thread by
+ * construction and resends of the same thread reuse one branch name.
+ * Falls back to the caller-supplied randomness when the id has no usable
+ * hex prefix (non-UUID ids from older clients).
+ */
+export function buildThreadWorktreeBranchName(
+  threadId: string,
+  randomHex: (byteLength: number) => string,
+): string {
+  const token = threadId.trim().toLowerCase().slice(0, 8);
+  if (/^[0-9a-f]{8}$/.test(token)) {
+    return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  }
+  return buildTemporaryWorktreeBranchName(randomHex);
 }
 
 export function isTemporaryWorktreeBranch(refName: string): boolean {

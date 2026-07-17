@@ -188,6 +188,12 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
     }),
+    prefetchRemote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:prefetch-remote",
+      tag: WS_METHODS.vcsPrefetchRemote,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",
       tag: WS_METHODS.vcsCreateWorktree,

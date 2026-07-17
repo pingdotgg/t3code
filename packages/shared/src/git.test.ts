@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyGitStatusStreamEvent,
   buildTemporaryWorktreeBranchName,
+  buildThreadWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
@@ -71,10 +72,41 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
   });
 
+  it("matches uniquified retry suffixes on thread-derived branches", () => {
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-2`)).toBe(true);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-10`)).toBe(true);
+  });
+
   it("rejects non-temporary refName names", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("buildThreadWorktreeBranchName", () => {
+  const failRandomHex = (): string => {
+    throw new Error("randomness must not be used for UUID thread ids");
+  };
+
+  it("derives a deterministic branch from the thread id's UUID prefix", () => {
+    expect(
+      buildThreadWorktreeBranchName("A1B2C3D4-0000-4000-8000-000000000000", failRandomHex),
+    ).toBe(`${WORKTREE_BRANCH_PREFIX}/a1b2c3d4`);
+  });
+
+  it("produces a valid temporary worktree branch shape", () => {
+    expect(
+      isTemporaryWorktreeBranch(
+        buildThreadWorktreeBranchName("deadbeef-1111-4222-8333-444455556666", failRandomHex),
+      ),
+    ).toBe(true);
+  });
+
+  it("falls back to randomness for non-UUID thread ids", () => {
+    expect(buildThreadWorktreeBranchName("thread-1", () => "CAFEF00D")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}/cafef00d`,
+    );
   });
 });
 

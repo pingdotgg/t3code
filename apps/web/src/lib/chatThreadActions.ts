@@ -26,8 +26,6 @@ interface NewThreadHandler {
   ): Promise<void>;
 }
 
-type NewThreadOptions = NonNullable<Parameters<NewThreadHandler>[1]>;
-
 export interface ChatThreadActionContext {
   readonly activeDraftThread: DraftThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
@@ -57,25 +55,15 @@ export function resolveThreadActionProjectRef(
   return context.defaultProjectRef;
 }
 
-function buildContextualThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
-  return {
-    branch: context.activeThread?.branch ?? context.activeDraftThread?.branch ?? null,
-    worktreePath:
-      context.activeThread?.worktreePath ?? context.activeDraftThread?.worktreePath ?? null,
-    envMode:
-      context.activeDraftThread?.envMode ??
-      (context.activeThread?.worktreePath ? "worktree" : "local"),
-    ...(context.activeDraftThread
-      ? { startFromOrigin: context.activeDraftThread.startFromOrigin }
-      : {}),
-  };
-}
-
 export async function startNewThreadInProjectFromContext(
   context: ChatThreadActionContext,
   projectRef: ScopedProjectRef,
 ): Promise<void> {
-  await context.handleNewThread(projectRef, buildContextualThreadOptions(context));
+  // Only the project carries over from the active thread. Workspace mode,
+  // branch, and worktree choices are draft-only exceptions — a new thread
+  // always starts from the resolved default so exceptions never become
+  // sticky.
+  await context.handleNewThread(projectRef);
 }
 
 export async function startNewThreadFromContext(
@@ -98,6 +86,7 @@ export async function startNewLocalThreadFromContext(
     return false;
   }
 
-  await context.handleNewThread(projectRef);
+  // chat.newLocal is the explicit current-checkout exception (draft-only).
+  await context.handleNewThread(projectRef, { envMode: "local" });
   return true;
 }

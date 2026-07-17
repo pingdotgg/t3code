@@ -139,8 +139,30 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  /**
+   * When `newRefName` already exists (e.g. a resend after a partially failed
+   * bootstrap reusing the deterministic thread-derived branch name), append a
+   * numeric suffix instead of failing.
+   */
+  uniquifyNewRefName: Schema.optional(Schema.Boolean),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
+
+export const VcsPrefetchRemoteInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsPrefetchRemoteInput = typeof VcsPrefetchRemoteInput.Type;
+
+/**
+ * Result of a composer-open prefetch. `fetchedAt` is the time of the last
+ * successful fetch of the repository's primary remote (`null` when the fetch
+ * failed and no earlier fetch succeeded this session).
+ */
+export const VcsPrefetchRemoteResult = Schema.Struct({
+  fetchedAt: Schema.NullOr(Schema.String),
+  fetchSucceeded: Schema.Boolean,
+});
+export type VcsPrefetchRemoteResult = typeof VcsPrefetchRemoteResult.Type;
 
 export const GitPullRequestRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,

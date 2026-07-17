@@ -184,50 +184,17 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
+/**
+ * New threads always start from the resolved default workspace mode.
+ * Mode/branch/worktree choices on the active thread or draft are draft-only
+ * exceptions and are deliberately NOT inherited — a one-off "use current
+ * checkout" must never retrain what the next new thread does.
+ */
 export function resolveSidebarNewThreadSeedContext(input: {
-  projectId: string;
   defaultEnvMode: SidebarNewThreadEnvMode;
-  activeThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-  } | null;
-  activeDraftThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-    envMode: SidebarNewThreadEnvMode;
-    startFromOrigin: boolean;
-  } | null;
 }): {
-  branch?: string | null;
-  worktreePath?: string | null;
   envMode: SidebarNewThreadEnvMode;
-  startFromOrigin?: boolean;
 } {
-  if (input.defaultEnvMode === "worktree") {
-    return {
-      envMode: "worktree",
-    };
-  }
-
-  if (input.activeDraftThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeDraftThread.branch,
-      worktreePath: input.activeDraftThread.worktreePath,
-      envMode: input.activeDraftThread.envMode,
-      startFromOrigin: input.activeDraftThread.startFromOrigin,
-    };
-  }
-
-  if (input.activeThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeThread.branch,
-      worktreePath: input.activeThread.worktreePath,
-      envMode: input.activeThread.worktreePath ? "worktree" : "local",
-    };
-  }
-
   return {
     envMode: input.defaultEnvMode,
   };

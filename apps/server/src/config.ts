@@ -42,6 +42,7 @@ export interface ServerDerivedPaths {
   readonly anonymousIdPath: string;
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
+  readonly worktreeRegistryPath: string;
   readonly secretsDir: string;
 }
 
@@ -116,6 +117,7 @@ export const deriveServerPaths = Effect.fn(function* (
     anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),
     serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
+    worktreeRegistryPath: join(stateDir, "worktree-registry.json"),
     secretsDir: join(stateDir, "secrets"),
   };
 });

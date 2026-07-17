@@ -16,6 +16,7 @@ import { useIsMobile } from "../hooks/useMediaQuery";
 import {
   type EnvMode,
   type EnvironmentOption,
+  derivePinnedWorktreeBase,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
@@ -48,6 +49,12 @@ interface BranchToolbarProps {
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   envLocked: boolean;
+  /** The project checkout has uncommitted changes (pre-send disclosure). */
+  workingTreeDirty?: boolean;
+  /** Mode this project's new threads currently default to. */
+  projectDefaultEnvMode?: EnvMode | null;
+  /** Persist the current mode as this project's default (explicit write). */
+  onSetProjectDefaultEnvMode?: (mode: EnvMode) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
@@ -201,6 +208,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   startFromOrigin,
   onStartFromOriginChange,
   envLocked,
+  workingTreeDirty,
+  projectDefaultEnvMode,
+  onSetProjectDefaultEnvMode,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
   availableEnvironments,
@@ -222,6 +232,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeProject = useProject(activeProjectRef);
   const hasActiveThread = serverThread !== null || draftThread !== null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const pinnedBase = useMemo(
+    () => (serverThread ? derivePinnedWorktreeBase(serverThread.activities) : null),
+    [serverThread],
+  );
   const effectiveEnvMode =
     effectiveEnvModeOverride ??
     resolveEffectiveEnvMode({
@@ -238,56 +252,92 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   if (!hasActiveThread || !activeProject) return null;
 
+  // Dirty-state disclosure runs both directions and only while the choice is
+  // still editable: in checkout mode the agent's edits will mix with the
+  // user's uncommitted work; in worktree mode those uncommitted changes won't
+  // be included. Each hint offers the one-click switch to the other mode.
+  const dirtyDisclosure =
+    !envModeLocked && workingTreeDirty && serverThread === null
+      ? effectiveEnvMode === "local"
+        ? {
+            text: "This checkout has uncommitted changes — the agent will work alongside them.",
+            action: "Use a fresh worktree",
+            nextMode: "worktree" as const,
+          }
+        : {
+            text: "Uncommitted changes in this checkout won't be included in the fresh worktree.",
+            action: "Use current checkout",
+            nextMode: "local" as const,
+          }
+      : null;
+
   return (
-    <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
-      {isMobile ? (
-        <MobileRunContextSelector
-          envLocked={envLocked}
-          envModeLocked={envModeLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          showEnvironmentPicker={showEnvironmentPicker}
-          onEnvironmentChange={onEnvironmentChange}
-          effectiveEnvMode={effectiveEnvMode}
-          activeWorktreePath={activeWorktreePath}
-          onEnvModeChange={onEnvModeChange}
-        />
-      ) : (
-        <div className="flex min-w-0 shrink-0 items-center gap-1">
-          {showEnvironmentPicker && availableEnvironments && onEnvironmentChange && (
-            <>
-              <BranchToolbarEnvironmentSelector
-                envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                onEnvironmentChange={onEnvironmentChange}
-              />
-              <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
-            </>
-          )}
-          <BranchToolbarEnvModeSelector
-            envLocked={envModeLocked}
+    <div className="mx-auto flex w-full max-w-3xl flex-col px-2.5 pb-3 pt-1 sm:px-3">
+      {dirtyDisclosure ? (
+        <div className="flex items-center gap-1.5 px-1 pb-1 text-xs text-muted-foreground/80">
+          <span className="min-w-0 truncate">{dirtyDisclosure.text}</span>
+          <button
+            type="button"
+            className="shrink-0 font-medium text-foreground/70 underline-offset-2 hover:underline"
+            onClick={() => onEnvModeChange(dirtyDisclosure.nextMode)}
+          >
+            {dirtyDisclosure.action}
+          </button>
+        </div>
+      ) : null}
+      <div className="flex w-full items-center gap-2">
+        {isMobile ? (
+          <MobileRunContextSelector
+            envLocked={envLocked}
+            envModeLocked={envModeLocked}
+            environmentId={environmentId}
+            availableEnvironments={availableEnvironments}
+            showEnvironmentPicker={showEnvironmentPicker}
+            onEnvironmentChange={onEnvironmentChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
           />
-        </div>
-      )}
+        ) : (
+          <div className="flex min-w-0 shrink-0 items-center gap-1">
+            {showEnvironmentPicker && availableEnvironments && onEnvironmentChange && (
+              <>
+                <BranchToolbarEnvironmentSelector
+                  envLocked={envLocked}
+                  environmentId={environmentId}
+                  availableEnvironments={availableEnvironments}
+                  onEnvironmentChange={onEnvironmentChange}
+                />
+                <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              </>
+            )}
+            <BranchToolbarEnvModeSelector
+              envLocked={envModeLocked}
+              effectiveEnvMode={effectiveEnvMode}
+              activeWorktreePath={activeWorktreePath}
+              pinnedBase={pinnedBase}
+              projectDefaultEnvMode={projectDefaultEnvMode ?? null}
+              onEnvModeChange={onEnvModeChange}
+              {...(onSetProjectDefaultEnvMode ? { onSetProjectDefaultEnvMode } : {})}
+            />
+          </div>
+        )}
 
-      <BranchToolbarBranchSelector
-        className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
-        environmentId={environmentId}
-        threadId={threadId}
-        {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
-        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-        startFromOrigin={startFromOrigin}
-        onStartFromOriginChange={onStartFromOriginChange}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+        <BranchToolbarBranchSelector
+          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      </div>
     </div>
   );
 });

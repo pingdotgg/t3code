@@ -413,7 +413,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
         : []),
-      ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
+      ...(settings.deriveThreadEnvModeFromSurface !==
+        DEFAULT_UNIFIED_SETTINGS.deriveThreadEnvModeFromSurface ||
+      settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
       ...(settings.newWorktreesStartFromOrigin !==
@@ -438,6 +440,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
+      settings.deriveThreadEnvModeFromSurface,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.automaticGitFetchInterval,
@@ -470,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+      deriveThreadEnvModeFromSurface: DEFAULT_UNIFIED_SETTINGS.deriveThreadEnvModeFromSurface,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -733,8 +737,10 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="New threads"
-          description="Pick the default workspace mode for newly created draft threads."
+          description="Pick the default workspace mode for newly created draft threads. Auto uses the current checkout when you're on the same machine as the environment and a fresh worktree everywhere else."
           resetAction={
+            settings.deriveThreadEnvModeFromSurface !==
+              DEFAULT_UNIFIED_SETTINGS.deriveThreadEnvModeFromSurface ||
             settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
             settings.newWorktreesStartFromOrigin !==
               DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
@@ -742,6 +748,8 @@ export function GeneralSettingsPanel() {
                 label="new threads"
                 onClick={() =>
                   updateSettings({
+                    deriveThreadEnvModeFromSurface:
+                      DEFAULT_UNIFIED_SETTINGS.deriveThreadEnvModeFromSurface,
                     defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
                     newWorktreesStartFromOrigin:
                       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
@@ -752,19 +760,35 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Select
-              value={settings.defaultThreadEnvMode}
+              value={
+                settings.deriveThreadEnvModeFromSurface ? "surface" : settings.defaultThreadEnvMode
+              }
               onValueChange={(value) => {
+                if (value === "surface") {
+                  updateSettings({ deriveThreadEnvModeFromSurface: true });
+                  return;
+                }
                 if (value === "local" || value === "worktree") {
-                  updateSettings({ defaultThreadEnvMode: value });
+                  updateSettings({
+                    deriveThreadEnvModeFromSurface: false,
+                    defaultThreadEnvMode: value,
+                  });
                 }
               }}
             >
               <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
                 <SelectValue>
-                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+                  {settings.deriveThreadEnvModeFromSurface
+                    ? "Auto"
+                    : settings.defaultThreadEnvMode === "worktree"
+                      ? "New worktree"
+                      : "Local"}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="surface">
+                  Auto
+                </SelectItem>
                 <SelectItem hideIndicator value="local">
                   Local
                 </SelectItem>
@@ -776,7 +800,7 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        {settings.defaultThreadEnvMode === "worktree" ? (
+        {settings.deriveThreadEnvModeFromSurface || settings.defaultThreadEnvMode !== "local" ? (
           <SettingsRow
             className="bg-muted/20 sm:pl-9"
             title="Start from origin"

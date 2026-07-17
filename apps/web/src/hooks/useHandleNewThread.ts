@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   scopedProjectKey,
   scopeProjectRef,
@@ -10,6 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
+
+import { environmentPresentations } from "../state/presentation";
+import { resolveSurfaceThreadEnvMode } from "../lib/threadSurface";
 import {
   markPromotedDraftThreadByRef,
   type DraftThreadEnvMode,
@@ -32,7 +36,11 @@ import { useClientSettings } from "./useSettings";
 export function useNewThreadHandler() {
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
+  const environmentPresentationById = useAtomValue(environmentPresentations.presentationsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectThreadEnvModeOverrides = useClientSettings(
+    (settings) => settings.projectThreadEnvModeOverrides,
+  );
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -72,6 +80,17 @@ export function useNewThreadHandler() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      // The default mode derives from the surface (attached checkout →
+      // local, detached → worktree) unless a project override or an explicit
+      // setting pins a mode. Draft exceptions never retrain this default —
+      // only the project override ("Always for this project") does, and only
+      // through an explicit settings write.
+      const resolveDefaultEnvMode = (): DraftThreadEnvMode =>
+        projectThreadEnvModeOverrides[scopedProjectKey(projectRef)] ??
+        resolveSurfaceThreadEnvMode({
+          settings: environmentSettings,
+          target: environmentPresentationById.get(projectRef.environmentId)?.entry.target ?? null,
+        });
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -88,6 +107,14 @@ export function useNewThreadHandler() {
           ? getDraftThread(currentRouteTarget.threadRef)
           : getDraftSession(currentRouteTarget.draftId)
         : null;
+      // Reusing a stored draft for a different project member must re-derive
+      // the mode from that member's default — otherwise the store's
+      // project-changed reset hard-codes "local" regardless of surface.
+      const storedDraftProjectChanged =
+        reusableStoredDraftThread !== null &&
+        reusableStoredDraftThread !== undefined &&
+        (reusableStoredDraftThread.environmentId !== projectRef.environmentId ||
+          reusableStoredDraftThread.projectId !== projectRef.projectId);
       if (reusableStoredDraftThread) {
         return (async () => {
           if (
@@ -109,6 +136,22 @@ export function useNewThreadHandler() {
             reusableStoredDraftThread.draftId,
             {
               threadId: reusableStoredDraftThread.threadId,
+              // Independently re-derive whichever values the caller didn't
+              // pin, so the store's project-changed reset (hard-coded
+              // "local"/false) never overrides the target's surface default.
+              ...(storedDraftProjectChanged && !hasEnvModeOption
+                ? { envMode: resolveDefaultEnvMode() }
+                : {}),
+              ...(storedDraftProjectChanged && !hasStartFromOriginOption
+                ? {
+                    startFromOrigin: resolveNewDraftStartFromOrigin({
+                      envMode: hasEnvModeOption
+                        ? (options?.envMode ?? resolveDefaultEnvMode())
+                        : resolveDefaultEnvMode(),
+                      newWorktreesStartFromOrigin: environmentSettings.newWorktreesStartFromOrigin,
+                    }),
+                  }
+                : {}),
             },
           );
           if (
@@ -159,7 +202,7 @@ export function useNewThreadHandler() {
       const draftId = newDraftId();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      const initialEnvMode = options?.envMode ?? environmentSettings.defaultThreadEnvMode;
+      const initialEnvMode = options?.envMode ?? resolveDefaultEnvMode();
       return (async () => {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
@@ -183,7 +226,15 @@ export function useNewThreadHandler() {
         });
       })();
     },
-    [getCurrentRouteTarget, projectGroupingSettings, projects, router, serverConfigs],
+    [
+      environmentPresentationById,
+      getCurrentRouteTarget,
+      projectGroupingSettings,
+      projects,
+      projectThreadEnvModeOverrides,
+      router,
+      serverConfigs,
+    ],
   );
 }
 

@@ -2,6 +2,7 @@ import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
+  derivePinnedWorktreeBase,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
@@ -11,6 +12,7 @@ import {
   resolveEnvModeLabel,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
+  resolvePinnedBaseTitle,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
@@ -165,6 +167,75 @@ describe("resolveLockedWorkspaceLabel", () => {
 
   it("uses a shorter label for an attached worktree", () => {
     expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
+  });
+
+  it("turns the label into the pinned fact once the base is known", () => {
+    expect(
+      resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a", {
+        baseRefName: "origin/main",
+        baseCommitSha: "0123456789abcdef",
+        baseProvenance: "fresh",
+      }),
+    ).toBe("Worktree · 0123456");
+  });
+});
+
+describe("derivePinnedWorktreeBase", () => {
+  it("reads the latest worktree.base-pinned activity payload", () => {
+    expect(
+      derivePinnedWorktreeBase([
+        { kind: "setup-script.started", payload: {} },
+        {
+          kind: "worktree.base-pinned",
+          payload: {
+            baseRefName: "origin/main",
+            baseCommitSha: "0123456789abcdef",
+            baseProvenance: "stale",
+          },
+        },
+      ]),
+    ).toEqual({
+      baseRefName: "origin/main",
+      baseCommitSha: "0123456789abcdef",
+      baseProvenance: "stale",
+    });
+  });
+
+  it("returns null when no pin activity exists", () => {
+    expect(derivePinnedWorktreeBase([{ kind: "tool.started", payload: {} }])).toBeNull();
+  });
+});
+
+describe("resolvePinnedBaseTitle", () => {
+  it("describes fresh pins", () => {
+    expect(
+      resolvePinnedBaseTitle({
+        baseRefName: "origin/main",
+        baseCommitSha: "0123456789abcdef",
+        baseProvenance: "fresh",
+      }),
+    ).toBe("Pinned at 0123456 from latest origin/main");
+  });
+
+  it("discloses stale pins", () => {
+    expect(
+      resolvePinnedBaseTitle({
+        baseRefName: "origin/main",
+        baseCommitSha: "0123456789abcdef",
+        baseProvenance: "stale",
+      }),
+    ).toContain("remote was unreachable");
+  });
+
+  it("returns null without a pinned commit", () => {
+    expect(
+      resolvePinnedBaseTitle({
+        baseRefName: "origin/main",
+        baseCommitSha: null,
+        baseProvenance: "local",
+      }),
+    ).toBeNull();
+    expect(resolvePinnedBaseTitle(null)).toBeNull();
   });
 });
 
