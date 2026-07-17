@@ -94,6 +94,7 @@ import {
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { useUpdatePrimarySettings } from "../../hooks/useSettings";
 import {
   createServerPairingCredential,
   revokeOtherServerClientSessions,
@@ -1698,6 +1699,7 @@ export function ConnectionsSettings() {
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const updateSettings = useUpdatePrimarySettings();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -1812,6 +1814,7 @@ export function ConnectionsSettings() {
     DesktopServerExposureState["mode"] | null
   >(null);
   const primaryServerConfig = primaryEnvironment?.serverConfig ?? null;
+  const primarySettings = primaryServerConfig?.settings ?? null;
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const [isAdvertisedEndpointListExpanded, setIsAdvertisedEndpointListExpanded] = useState(false);
   const defaultAdvertisedEndpointKey = useUiStateStore(
@@ -2924,6 +2927,73 @@ export function ConnectionsSettings() {
       control={renderNetworkAccessToggle()}
     />
   );
+  const renderVSCodeTunnelRow = () => {
+    if (!primarySettings || !primaryServerConfig) return null;
+    const status = primaryServerConfig.vscodeTunnelStatus;
+    const statusDescription = !primarySettings.enableVSCodeRemoteTunnels
+      ? "Disabled. T3 Code is not checking code tunnel status."
+      : !status.checked
+        ? "Tunnel status has not been checked yet."
+        : status.connected
+          ? `Connected${status.machineName ? ` as ${status.machineName}` : ""}.`
+          : "No connected VS Code tunnel was detected.";
+    const serviceStatus =
+      status.serviceInstalled === null
+        ? "Service unknown"
+        : status.serviceInstalled
+          ? "Service installed"
+          : "Service not installed";
+
+    return (
+      <SettingsRow
+        title="VS Code remote tunnels"
+        description="Offer a browser-based VS Code shortcut when this environment has a connected remote tunnel."
+        status={
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="block">{statusDescription}</span>
+            <span className="text-border" aria-hidden="true">
+              |
+            </span>
+            <span className="block">{status.checked ? serviceStatus : "Status not checked"}</span>
+          </span>
+        }
+        control={
+          <Switch
+            checked={primarySettings.enableVSCodeRemoteTunnels}
+            onCheckedChange={(checked) =>
+              updateSettings({ enableVSCodeRemoteTunnels: Boolean(checked) })
+            }
+            aria-label="Enable VS Code remote tunnels"
+          />
+        }
+      />
+    );
+  };
+  const renderVSCodeTunnelOpenTargetRow = () => {
+    if (!primarySettings?.enableVSCodeRemoteTunnels) return null;
+    return (
+      <SettingsRow
+        title="Open tunnels in VS Code Desktop"
+        description="Use the local VS Code app for tunnel shortcuts instead of opening vscode.dev in the browser."
+        status={
+          <span className="block">
+            {primarySettings.openVSCodeRemoteTunnelsInDesktop
+              ? "Tunnel shortcuts will use the vscode:// desktop link."
+              : "Tunnel shortcuts open the web UI."}
+          </span>
+        }
+        control={
+          <Switch
+            checked={primarySettings.openVSCodeRemoteTunnelsInDesktop}
+            onCheckedChange={(checked) =>
+              updateSettings({ openVSCodeRemoteTunnelsInDesktop: Boolean(checked) })
+            }
+            aria-label="Open VS Code tunnels in VS Code Desktop"
+          />
+        }
+      />
+    );
+  };
   const renderDisabledNetworkAccessRow = () => (
     <SettingsRow
       title="Network access"
@@ -2976,6 +3046,8 @@ export function ConnectionsSettings() {
               <>
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
+                {renderVSCodeTunnelRow()}
+                {renderVSCodeTunnelOpenTargetRow()}
                 {renderTailscaleRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />

@@ -406,6 +406,26 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
+export const ServerVSCodeTunnel = Schema.Struct({
+  machineName: TrimmedNonEmptyString,
+});
+export type ServerVSCodeTunnel = typeof ServerVSCodeTunnel.Type;
+
+export const ServerVSCodeTunnelStatus = Schema.Struct({
+  checked: Schema.Boolean,
+  connected: Schema.Boolean,
+  machineName: Schema.NullOr(TrimmedNonEmptyString),
+  serviceInstalled: Schema.NullOr(Schema.Boolean),
+});
+export type ServerVSCodeTunnelStatus = typeof ServerVSCodeTunnelStatus.Type;
+
+const DEFAULT_SERVER_VSCODE_TUNNEL_STATUS: ServerVSCodeTunnelStatus = {
+  checked: false,
+  connected: false,
+  machineName: null,
+  serviceInstalled: null,
+};
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -415,6 +435,12 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviders,
   availableEditors: Schema.Array(EditorId),
+  vscodeTunnel: Schema.NullOr(ServerVSCodeTunnel).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  vscodeTunnelStatus: ServerVSCodeTunnelStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SERVER_VSCODE_TUNNEL_STATUS)),
+  ),
   observability: ServerObservability,
   settings: ServerSettings,
 });
@@ -470,6 +496,13 @@ export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 
+export const ServerConfigVSCodeTunnelUpdatedPayload = Schema.Struct({
+  vscodeTunnel: Schema.NullOr(ServerVSCodeTunnel),
+  vscodeTunnelStatus: ServerVSCodeTunnelStatus,
+});
+export type ServerConfigVSCodeTunnelUpdatedPayload =
+  typeof ServerConfigVSCodeTunnelUpdatedPayload.Type;
+
 export const ServerConfigStreamSnapshotEvent = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("snapshot"),
@@ -501,11 +534,20 @@ export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamSettingsUpdatedEvent =
   typeof ServerConfigStreamSettingsUpdatedEvent.Type;
 
+export const ServerConfigStreamVSCodeTunnelUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("vscodeTunnelUpdated"),
+  payload: ServerConfigVSCodeTunnelUpdatedPayload,
+});
+export type ServerConfigStreamVSCodeTunnelUpdatedEvent =
+  typeof ServerConfigStreamVSCodeTunnelUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
   ServerConfigStreamSettingsUpdatedEvent,
+  ServerConfigStreamVSCodeTunnelUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

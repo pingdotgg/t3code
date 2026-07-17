@@ -3,6 +3,7 @@ import {
   type EditorId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type ServerVSCodeTunnel,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -29,6 +30,8 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  vscodeTunnel: ServerVSCodeTunnel | null;
+  openVSCodeRemoteTunnelsInDesktop: boolean;
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -63,6 +66,8 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
+  vscodeTunnel,
+  openVSCodeRemoteTunnelsInDesktop,
   rightPanelOpen,
   gitCwd,
   onRunProjectScript,
@@ -76,6 +81,9 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  const showTunnelPicker = Boolean(
+    !showOpenInPicker && activeProjectName && vscodeTunnel && openInCwd,
+  );
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -111,12 +119,14 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {showOpenInPicker && (
+        {(showOpenInPicker || showTunnelPicker) && (
           <OpenInPicker
             environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}
-            availableEditors={availableEditors}
+            availableEditors={showOpenInPicker ? availableEditors : []}
             openInCwd={openInCwd}
+            vscodeTunnel={vscodeTunnel}
+            openVSCodeRemoteTunnelsInDesktop={openVSCodeRemoteTunnelsInDesktop}
           />
         )}
         {activeProjectName && (

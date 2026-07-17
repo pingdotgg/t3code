@@ -7,6 +7,14 @@ import * as Electron from "electron";
 
 const SAFE_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
 
+function isSafeVSCodeTunnelUrl(url: URL): boolean {
+  return (
+    url.protocol === "vscode:" &&
+    url.hostname === "vscode-remote" &&
+    url.pathname.startsWith("/tunnel+")
+  );
+}
+
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {
     return Option.none();
@@ -14,7 +22,9 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
 
   try {
     const url = new URL(rawUrl);
-    return SAFE_EXTERNAL_PROTOCOLS.has(url.protocol) ? Option.some(url.href) : Option.none();
+    return SAFE_EXTERNAL_PROTOCOLS.has(url.protocol) || isSafeVSCodeTunnelUrl(url)
+      ? Option.some(url.href)
+      : Option.none();
   } catch {
     return Option.none();
   }

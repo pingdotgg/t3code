@@ -36,6 +36,13 @@ const CONFIG = {
   observability: null,
   providers: [],
   settings: {},
+  vscodeTunnel: null,
+  vscodeTunnelStatus: {
+    checked: false,
+    connected: false,
+    machineName: null,
+    serviceInstalled: null,
+  },
 } as unknown as ServerConfig;
 
 const snapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
@@ -78,6 +85,38 @@ describe("server state projection", () => {
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
+  });
+
+  it("applies VS Code tunnel updates to the projected snapshot", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const projected = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "vscodeTunnelUpdated",
+      payload: {
+        vscodeTunnel: { machineName: "mac" },
+        vscodeTunnelStatus: {
+          checked: true,
+          connected: true,
+          machineName: "mac",
+          serviceInstalled: true,
+        },
+      },
+    });
+
+    const result = Option.getOrThrow(projected);
+    expect(result.source).toBe("live");
+    expect(result.config.vscodeTunnel).toEqual({ machineName: "mac" });
+    expect(result.config.vscodeTunnelStatus).toEqual({
+      checked: true,
+      connected: true,
+      machineName: "mac",
+      serviceInstalled: true,
+    });
+    expect(result.latestEvent.type).toBe("vscodeTunnelUpdated");
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {

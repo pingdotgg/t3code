@@ -72,6 +72,16 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "vscodeTunnelUpdated":
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          vscodeTunnel: event.payload.vscodeTunnel,
+          vscodeTunnelStatus: event.payload.vscodeTunnelStatus,
+        },
+        latestEvent: event,
+        source: "live",
+      }));
   }
 }
 

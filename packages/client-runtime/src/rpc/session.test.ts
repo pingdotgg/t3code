@@ -123,6 +123,13 @@ const SERVER_CONFIG: ServerConfigType = {
   issues: [],
   providers: [],
   availableEditors: [],
+  vscodeTunnel: null,
+  vscodeTunnelStatus: {
+    checked: false,
+    connected: false,
+    machineName: null,
+    serviceInstalled: null,
+  },
   observability: {
     logsDirectoryPath: "/tmp/logs",
     localTracingEnabled: false,

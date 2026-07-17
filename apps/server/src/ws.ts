@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -39,6 +40,7 @@ import {
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  type ServerConfigStreamEvent,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchEntriesError,
@@ -95,10 +97,12 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as VSCodeTunnel from "./vscodeTunnel.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as ProcessRunner from "./processRunner.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -117,7 +121,6 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
@@ -390,6 +393,8 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  serverConfigUpdates: PubSub.PubSub<ServerConfigStreamEvent>,
+  vscodeTunnelMonitor: VSCodeTunnel.VSCodeTunnelMonitor["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -914,6 +919,9 @@ const makeWsRpcLayer = (
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const vscodeTunnel = yield* vscodeTunnelMonitor.getSnapshot({
+          enabled: settings.enableVSCodeRemoteTunnels,
+        });
 
         return {
           environment,
@@ -924,6 +932,8 @@ const makeWsRpcLayer = (
           issues: keybindingsConfig.issues,
           providers,
           availableEditors: yield* externalLauncher.resolveAvailableEditors(),
+          vscodeTunnel: vscodeTunnel.tunnel,
+          vscodeTunnelStatus: vscodeTunnel.status,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -1761,41 +1771,11 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,
             Effect.gen(function* () {
-              const keybindingsUpdates = keybindings.streamChanges.pipe(
-                Stream.map((event) => ({
-                  version: 1 as const,
-                  type: "keybindingsUpdated" as const,
-                  payload: {
-                    keybindings: event.keybindings,
-                    issues: event.issues,
-                  },
-                })),
-              );
-              const providerStatuses = providerRegistry.streamChanges.pipe(
-                Stream.map((providers) => ({
-                  version: 1 as const,
-                  type: "providerStatuses" as const,
-                  payload: { providers },
-                })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
-              );
-              const settingsUpdates = serverSettings.streamChanges.pipe(
-                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
-                Stream.map((settings) => ({
-                  version: 1 as const,
-                  type: "settingsUpdated" as const,
-                  payload: { settings },
-                })),
-              );
+              const liveUpdates = yield* PubSub.subscribe(serverConfigUpdates);
 
               yield* providerRegistry
                 .refresh()
                 .pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
-
-              const liveUpdates = Stream.merge(
-                keybindingsUpdates,
-                Stream.merge(providerStatuses, settingsUpdates),
-              );
 
               return Stream.concat(
                 Stream.make({
@@ -1803,7 +1783,7 @@ const makeWsRpcLayer = (
                   type: "snapshot" as const,
                   config: yield* loadServerConfig,
                 }),
-                liveUpdates,
+                Stream.fromSubscription(liveUpdates),
               );
             }),
             { "rpc.aggregate": "server" },
@@ -1862,6 +1842,62 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const keybindings = yield* Keybindings.Keybindings;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const vscodeTunnelMonitor = yield* VSCodeTunnel.VSCodeTunnelMonitor;
+    const serverConfigUpdates = yield* PubSub.unbounded<ServerConfigStreamEvent>();
+
+    const keybindingsUpdates: Stream.Stream<ServerConfigStreamEvent> =
+      keybindings.streamChanges.pipe(
+        Stream.map((event) => ({
+          version: 1 as const,
+          type: "keybindingsUpdated" as const,
+          payload: {
+            keybindings: event.keybindings,
+            issues: event.issues,
+          },
+        })),
+      );
+    const providerStatuses: Stream.Stream<ServerConfigStreamEvent> =
+      providerRegistry.streamChanges.pipe(
+        Stream.map((providers) => ({
+          version: 1 as const,
+          type: "providerStatuses" as const,
+          payload: { providers },
+        })),
+        Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
+      );
+    const settingsUpdates: Stream.Stream<ServerConfigStreamEvent> =
+      serverSettings.streamChanges.pipe(
+        Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
+        Stream.map((settings) => ({
+          version: 1 as const,
+          type: "settingsUpdated" as const,
+          payload: { settings },
+        })),
+      );
+    const vscodeTunnelUpdates: Stream.Stream<ServerConfigStreamEvent> =
+      vscodeTunnelMonitor.streamChanges.pipe(
+        Stream.map((vscodeTunnel) => ({
+          version: 1 as const,
+          type: "vscodeTunnelUpdated" as const,
+          payload: {
+            vscodeTunnel: vscodeTunnel.tunnel,
+            vscodeTunnelStatus: vscodeTunnel.status,
+          },
+        })),
+      );
+
+    yield* keybindingsUpdates.pipe(
+      Stream.merge(providerStatuses),
+      Stream.merge(settingsUpdates),
+      Stream.merge(vscodeTunnelUpdates),
+      Stream.runForEach((event) => PubSub.publish(serverConfigUpdates, event)),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkScoped({ startImmediately: true }),
+    );
+
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -1881,8 +1917,14 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(
+              session,
+              previewAutomationBroker,
+              serverConfigUpdates,
+              vscodeTunnelMonitor,
+            ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provideMerge(ProcessRunner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(

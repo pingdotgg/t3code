@@ -1,5 +1,10 @@
-import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo } from "react";
+import {
+  EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ServerVSCodeTunnel,
+} from "@t3tools/contracts";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
@@ -34,9 +39,24 @@ import {
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { readLocalApi } from "~/localApi";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+
+type EditorPickerOption = { label: string; Icon: Icon; value: EditorId };
+type VSCodeTunnelPickerOption = {
+  label: string;
+  Icon: Icon;
+  value: "vscode-tunnel";
+  vscodeTunnel: ServerVSCodeTunnel;
+};
+type PickerOption = EditorPickerOption | VSCodeTunnelPickerOption;
+
+function isVSCodeTunnelOption(option: PickerOption): option is VSCodeTunnelPickerOption {
+  return option.value === "vscode-tunnel";
+}
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
-  const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
+  const baseOptions: ReadonlyArray<EditorPickerOption> = [
     {
       label: "Cursor",
       Icon: CursorIcon,
@@ -151,10 +171,33 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
   return baseOptions.filter((option) => availableEditorSet.has(option.value));
 };
 
+function encodeVSCodeTunnelPath(cwd: string): string {
+  const normalized = cwd.replaceAll("\\", "/");
+  const hasLeadingSlash = normalized.startsWith("/");
+  const encodedSegments = normalized
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
+  return hasLeadingSlash ? `/${encodedSegments}` : encodedSegments;
+}
+
+function buildVSCodeTunnelUrl(machineName: string, cwd: string): string {
+  const encodedPath = encodeVSCodeTunnelPath(cwd);
+  return `https://vscode.dev/tunnel/${encodeURIComponent(machineName)}/${encodedPath}`;
+}
+
+function buildVSCodeTunnelDesktopUrl(machineName: string, cwd: string): string {
+  const encodedPath = encodeVSCodeTunnelPath(cwd);
+  return `vscode://vscode-remote/tunnel+${encodeURIComponent(machineName)}/${encodedPath}`;
+}
+
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
   availableEditors,
+  vscodeTunnel = null,
+  openVSCodeRemoteTunnelsInDesktop = false,
   openInCwd,
   compact = false,
   enableShortcut = true,
@@ -162,23 +205,88 @@ export const OpenInPicker = memo(function OpenInPicker({
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  vscodeTunnel?: ServerVSCodeTunnel | null;
+  openVSCodeRemoteTunnelsInDesktop?: boolean;
   openInCwd: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
-  const options = useMemo(
+  const [preferVSCodeTunnel, setPreferVSCodeTunnel] = useState(false);
+  const latestEditorSelectionRef = useRef(0);
+  const editorOptions = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
     [availableEditors],
   );
-  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
+  const vscodeTunnelOption = useMemo<VSCodeTunnelPickerOption | null>(
+    () =>
+      vscodeTunnel && openInCwd
+        ? {
+            label: `VS Code Tunnel (${vscodeTunnel.machineName})`,
+            Icon: VisualStudioCode,
+            value: "vscode-tunnel",
+            vscodeTunnel,
+          }
+        : null,
+    [openInCwd, vscodeTunnel],
+  );
+  const options = useMemo(
+    () => (vscodeTunnelOption ? [...editorOptions, vscodeTunnelOption] : editorOptions),
+    [editorOptions, vscodeTunnelOption],
+  );
+  const primaryOption =
+    (preferVSCodeTunnel ? vscodeTunnelOption : null) ??
+    editorOptions.find(({ value }) => value === preferredEditor) ??
+    (editorOptions.length === 0 ? vscodeTunnelOption : null);
 
-  const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
-      if (!openInCwd) return;
-      const editor = editorId ?? preferredEditor;
-      if (!editor) return;
+  useEffect(() => {
+    if (!vscodeTunnelOption && preferVSCodeTunnel) {
+      setPreferVSCodeTunnel(false);
+    }
+  }, [preferVSCodeTunnel, vscodeTunnelOption]);
+
+  const openOption = useCallback(
+    (option: PickerOption | null) => {
+      if (!openInCwd || !option) return;
+      if (isVSCodeTunnelOption(option)) {
+        latestEditorSelectionRef.current += 1;
+        const editorSelectionVersion = latestEditorSelectionRef.current;
+        const url = openVSCodeRemoteTunnelsInDesktop
+          ? buildVSCodeTunnelDesktopUrl(option.vscodeTunnel.machineName, openInCwd)
+          : buildVSCodeTunnelUrl(option.vscodeTunnel.machineName, openInCwd);
+        const localApi = readLocalApi();
+        if (!localApi) {
+          setPreferVSCodeTunnel(false);
+          toastManager.add({
+            type: "error",
+            title: "Link opening is unavailable.",
+          });
+          return;
+        }
+        void localApi.shell
+          .openExternal(url)
+          .then(() => {
+            if (latestEditorSelectionRef.current !== editorSelectionVersion) return;
+            setPreferVSCodeTunnel(true);
+          })
+          .catch((error) => {
+            if (latestEditorSelectionRef.current !== editorSelectionVersion) return;
+            setPreferVSCodeTunnel(false);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to open tunnel link",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          });
+        return;
+      }
+
+      const editor = option.value;
+      latestEditorSelectionRef.current += 1;
+      setPreferVSCodeTunnel(false);
       const result = openInEditorMutation({
         environmentId,
         input: {
@@ -189,7 +297,13 @@ export const OpenInPicker = memo(function OpenInPicker({
       setPreferredEditor(editor);
       return result;
     },
-    [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
+    [
+      environmentId,
+      openInCwd,
+      openInEditorMutation,
+      openVSCodeRemoteTunnelsInDesktop,
+      setPreferredEditor,
+    ],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -202,27 +316,14 @@ export const OpenInPicker = memo(function OpenInPicker({
     const handler = (e: globalThis.KeyboardEvent) => {
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
-      if (!preferredEditor) return;
+      if (!primaryOption) return;
 
       e.preventDefault();
-      void openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor: preferredEditor,
-        },
-      });
+      void openOption(primaryOption);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [
-    enableShortcut,
-    environmentId,
-    keybindings,
-    openInCwd,
-    openInEditorMutation,
-    preferredEditor,
-  ]);
+  }, [enableShortcut, keybindings, openInCwd, openOption, primaryOption]);
 
   return (
     <Group aria-label="Open in editor">
@@ -230,8 +331,8 @@ export const OpenInPicker = memo(function OpenInPicker({
         aria-label={compact ? "Open file in preferred editor" : undefined}
         size="xs"
         variant="outline"
-        disabled={!preferredEditor || !openInCwd}
-        onClick={() => openInEditor(preferredEditor)}
+        disabled={!primaryOption || !openInCwd}
+        onClick={() => openOption(primaryOption)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
         <span
@@ -258,14 +359,19 @@ export const OpenInPicker = memo(function OpenInPicker({
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
-              {label}
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-              )}
+          {options.length === 0 && <MenuItem disabled>No editors available</MenuItem>}
+          {options.map((option) => (
+            <MenuItem key={option.value} onClick={() => openOption(option)}>
+              {(() => {
+                const Icon = option.Icon;
+                return <Icon aria-hidden="true" className="text-muted-foreground" />;
+              })()}
+              {option.label}
+              {!isVSCodeTunnelOption(option) &&
+                option.value === preferredEditor &&
+                openFavoriteEditorShortcutLabel && (
+                  <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                )}
             </MenuItem>
           ))}
         </MenuPopup>

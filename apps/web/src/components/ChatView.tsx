@@ -5047,6 +5047,12 @@ function ChatViewContent(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
+            vscodeTunnel={
+              serverConfig?.settings.enableVSCodeRemoteTunnels ? serverConfig.vscodeTunnel : null
+            }
+            openVSCodeRemoteTunnelsInDesktop={
+              primaryEnvironment?.serverConfig?.settings.openVSCodeRemoteTunnelsInDesktop ?? false
+            }
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onRunProjectScript={runProjectScript}
