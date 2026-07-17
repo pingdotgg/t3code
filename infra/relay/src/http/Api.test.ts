@@ -2,11 +2,14 @@ import { createClerkClient, verifyToken } from "@clerk/backend";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -14,6 +17,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { RelayEnvironmentAuth } from "@t3tools/contracts/relay";
 
 import {
+  RELAY_REQUEST_DEADLINE_MS,
   relayCors,
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
@@ -30,7 +34,7 @@ vi.mock("@clerk/backend", () => ({
   verifyToken: vi.fn(),
 }));
 
-const relaySettings: RelayConfiguration.RelayConfigurationShape = {
+const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   relayIssuer: "https://relay.example.test",
   apns: {
     teamId: "apns-team",
@@ -108,9 +112,10 @@ describe("relay client authentication", () => {
 describe("relay environment authentication", () => {
   it.effect("preserves credential lookup persistence failures as internal errors", () => {
     const failure = new EnvironmentCredentials.EnvironmentCredentialAuthenticatePersistenceError({
+      stage: "lookup-credential",
       cause: "database unavailable",
     });
-    const credentials: EnvironmentCredentials.EnvironmentCredentialsShape = {
+    const credentials: EnvironmentCredentials.EnvironmentCredentials["Service"] = {
       create: () => Effect.die("unused create"),
       authenticate: () => Effect.fail(failure),
       revokeForEnvironmentPublicKey: () => Effect.die("unused revoke"),
@@ -201,6 +206,33 @@ describe("relay request tracing", () => {
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),
+  );
+
+  it.effect("fails hung requests with a 504 before the client's 10s abort", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://relay.test/v1/mobile/devices", { method: "POST" }),
+      );
+
+      const fiber = yield* traceRelayHttpRequestWith(
+        Effect.never,
+        Layer.succeed(Tracer.Tracer, tracer),
+      ).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.forkChild);
+      yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS));
+      const response = yield* Fiber.join(fiber);
+
+      expect(response.status).toBe(504);
+      expect(spans[0]?.attributes.get("relay.request.deadline_exceeded")).toBe(true);
+      expect(spans[0]?.attributes.get("http.response.status_code")).toBe(504);
+    }),
   );
 });
 

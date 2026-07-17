@@ -10,24 +10,14 @@ import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { ServerConfig } from "./config.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "./orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import {
-  getAutoBootstrapDefaultModelSelection,
-  launchStartupHeartbeat,
-  makeCommandGate,
-  resolveAutoBootstrapWelcomeTargets,
-  resolveWelcomeBase,
-  ServerRuntimeStartupError,
-} from "./serverRuntimeStartup.ts";
+import * as ServerConfig from "./config.ts";
+import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
 it("uses the canonical Codex default for auto-bootstrapped model selection", () => {
-  assert.deepStrictEqual(getAutoBootstrapDefaultModelSelection(), {
+  assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(), {
     instanceId: ProviderInstanceId.make("codex"),
     model: DEFAULT_MODEL,
   });
@@ -37,7 +27,7 @@ it.effect("enqueueCommand waits for readiness and then drains queued work", () =
   Effect.scoped(
     Effect.gen(function* () {
       const executionCount = yield* Ref.make(0);
-      const commandGate = yield* makeCommandGate;
+      const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
 
       const queuedCommandFiber = yield* commandGate
         .enqueueCommand(Ref.updateAndGet(executionCount, (count) => count + 1))
@@ -58,7 +48,7 @@ it.effect("enqueueCommand waits for readiness and then drains queued work", () =
 it.effect("enqueueCommand fails queued work when readiness fails", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const commandGate = yield* makeCommandGate;
+      const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
       const failure = yield* Deferred.make<void, never>();
 
       const queuedCommandFiber = yield* commandGate
@@ -66,13 +56,16 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
         .pipe(Effect.forkScoped);
 
       yield* commandGate.failCommandReady(
-        new ServerRuntimeStartupError({
-          message: "startup failed",
+        new ServerRuntimeStartup.ServerRuntimeStartupError({
+          mode: "web",
+          host: "127.0.0.1",
+          port: 3773,
+          cause: new Error("test startup failure"),
         }),
       );
 
       const error = yield* Effect.flip(Fiber.join(queuedCommandFiber));
-      assert.equal(error.message, "startup failed");
+      assert.equal(error.message, "Server runtime startup failed before command readiness.");
     }),
   ),
 );
@@ -82,8 +75,8 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
     Effect.gen(function* () {
       const releaseCounts = yield* Deferred.make<void, never>();
 
-      yield* launchStartupHeartbeat.pipe(
-        Effect.provideService(ProjectionSnapshotQuery, {
+      yield* ServerRuntimeStartup.launchStartupHeartbeat.pipe(
+        Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
           getCommandReadModel: () => Effect.die("unused"),
           getSnapshot: () => Effect.die("unused"),
           getShellSnapshot: () => Effect.die("unused"),
@@ -103,8 +96,9 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
         }),
-        Effect.provideService(AnalyticsService, {
+        Effect.provideService(AnalyticsService.AnalyticsService, {
           record: () => Effect.void,
           flush: Effect.void,
         }),
@@ -115,8 +109,8 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
 
 it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
   Effect.gen(function* () {
-    const welcome = yield* resolveWelcomeBase.pipe(
-      Effect.provideService(ServerConfig, {
+    const welcome = yield* ServerRuntimeStartup.resolveWelcomeBase.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
       } as never),
     );
@@ -134,12 +128,12 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
 
   return Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
-    const targets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provideService(ServerConfig, {
+    const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
       } as never),
-      Effect.provideService(ProjectionSnapshotQuery, {
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -152,7 +146,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               id: bootstrapProjectId,
               title: "Startup Project",
               workspaceRoot: "/tmp/startup-project",
-              defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
+              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
@@ -165,15 +159,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getThreadDetailSnapshot: () => Effect.die("unused"),
       }),
-      Effect.provideService(OrchestrationEngineService, {
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
-      } satisfies OrchestrationEngineShape),
+      } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
     );
 
@@ -188,12 +183,12 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
 it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when missing", () =>
   Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
-    const targets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provideService(ServerConfig, {
+    const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
       } as never),
-      Effect.provideService(ProjectionSnapshotQuery, {
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -207,15 +202,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getThreadDetailSnapshot: () => Effect.die("unused"),
       }),
-      Effect.provideService(OrchestrationEngineService, {
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
-      } satisfies OrchestrationEngineShape),
+      } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
     );
 
@@ -236,12 +232,12 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
     });
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
 
-    const error = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provideService(ServerConfig, {
+    const error = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
       } as never),
-      Effect.provideService(ProjectionSnapshotQuery, {
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -255,15 +251,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getThreadDetailSnapshot: () => Effect.die("unused"),
       }),
-      Effect.provideService(OrchestrationEngineService, {
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
-      } satisfies OrchestrationEngineShape),
+      } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provideService(Crypto.Crypto, {
         ...crypto,
         randomUUIDv4: Effect.fail(uuidError),

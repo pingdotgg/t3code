@@ -1,7 +1,7 @@
-import { spawn, spawnSync } from "node:child_process";
-import { watch } from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import { join } from "node:path";
+import * as NodePath from "node:path";
 
 import {
   desktopDir,
@@ -64,7 +64,7 @@ function killChildTreeByPid(pid, signal) {
     return;
   }
 
-  spawnSync("pkill", [`-${signal}`, "-P", String(pid)], { stdio: "ignore" });
+  NodeChildProcess.spawnSync("pkill", [`-${signal}`, "-P", String(pid)], { stdio: "ignore" });
 }
 
 function cleanupStaleDevApps() {
@@ -72,7 +72,9 @@ function cleanupStaleDevApps() {
     return;
   }
 
-  spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], { stdio: "ignore" });
+  NodeChildProcess.spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], {
+    stdio: "ignore",
+  });
 }
 
 function startApp() {
@@ -87,7 +89,7 @@ function startApp() {
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
   const electronCommand = resolveElectronLaunchCommand(launchArgs);
-  const app = spawn(electronCommand.electronPath, electronCommand.args, {
+  const app = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {
     cwd: desktopDir,
     env: childEnv,
     stdio: "inherit",
@@ -180,8 +182,8 @@ function scheduleRestart() {
 
 function startWatchers() {
   for (const { directory, files } of watchedDirectories) {
-    const watcher = watch(
-      join(desktopDir, directory),
+    const watcher = NodeFS.watch(
+      NodePath.join(desktopDir, directory),
       { persistent: true },
       (_eventType, filename) => {
         if (typeof filename !== "string" || !files.has(filename)) {
@@ -202,7 +204,9 @@ function killChildTree(signal) {
   }
 
   // Kill direct children as a final fallback in case normal shutdown leaves stragglers.
-  spawnSync("pkill", [`-${signal}`, "-P", String(process.pid)], { stdio: "ignore" });
+  NodeChildProcess.spawnSync("pkill", [`-${signal}`, "-P", String(process.pid)], {
+    stdio: "ignore",
+  });
 }
 
 async function shutdown(exitCode) {

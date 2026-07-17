@@ -1,39 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  type VcsActionState,
-  type VcsActionTarget,
-  EMPTY_VCS_ACTION_ATOM,
-  EMPTY_VCS_ACTION_STATE,
-  createVcsActionManager,
-  getVcsActionTargetKey,
-  vcsActionStateAtom,
-} from "@t3tools/client-runtime";
+import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
+import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { getEnvironmentClient } from "./environment-session-registry";
-
-export const vcsActionManager = createVcsActionManager({
-  getRegistry: () => appAtomRegistry,
-  getClient: (environmentId) => {
-    const client = getEnvironmentClient(environmentId);
-    return client ? { ...client.vcs, runChangeRequest: client.git.runStackedAction } : null;
-  },
-  getActionId: uuidv4,
-});
+import { vcsActionManager } from "./vcs";
 
 export function useVcsActionState(target: VcsActionTarget): VcsActionState {
-  const targetKey = getVcsActionTargetKey(target);
-  const state = useAtomValue(
-    targetKey !== null ? vcsActionStateAtom(targetKey) : EMPTY_VCS_ACTION_ATOM,
-  );
-  return targetKey === null ? EMPTY_VCS_ACTION_STATE : state;
+  return useAtomValue(vcsActionManager.stateAtom(target));
 }
-
-// ---------------------------------------------------------------------------
-// Git action result notification
-// ---------------------------------------------------------------------------
 
 export interface GitActionResultNotification {
   readonly type: "success" | "error";
@@ -44,26 +19,28 @@ export interface GitActionResultNotification {
 
 const RESULT_DISMISS_MS = 5_000;
 
-type ResultListener = (result: GitActionResultNotification | null) => void;
-const resultListeners = new Set<ResultListener>();
-let currentResult: GitActionResultNotification | null = null;
+const gitActionResultAtom = Atom.make<GitActionResultNotification | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:git-action-result"),
+);
 let dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
 function broadcast(result: GitActionResultNotification | null): void {
-  currentResult = result;
-  for (const listener of resultListeners) {
-    listener(result);
-  }
+  appAtomRegistry.set(gitActionResultAtom, result);
 }
 
 export function showGitActionResult(result: GitActionResultNotification): void {
   if (dismissTimer) clearTimeout(dismissTimer);
   broadcast(result);
-  dismissTimer = setTimeout(() => broadcast(null), RESULT_DISMISS_MS);
+  dismissTimer = setTimeout(() => {
+    dismissTimer = null;
+    broadcast(null);
+  }, RESULT_DISMISS_MS);
 }
 
 export function dismissGitActionResult(): void {
   if (dismissTimer) clearTimeout(dismissTimer);
+  dismissTimer = null;
   broadcast(null);
 }
 
@@ -71,22 +48,9 @@ export function useGitActionResultNotification(): {
   readonly result: GitActionResultNotification | null;
   readonly dismiss: () => void;
 } {
-  const [result, setResult] = useState<GitActionResultNotification | null>(currentResult);
-
-  useEffect(() => {
-    resultListeners.add(setResult);
-    setResult(currentResult);
-    return () => {
-      resultListeners.delete(setResult);
-    };
-  }, []);
-
+  const result = useAtomValue(gitActionResultAtom);
   return { result, dismiss: dismissGitActionResult };
 }
-
-// ---------------------------------------------------------------------------
-// Unified git action progress (combines running state + result notification)
-// ---------------------------------------------------------------------------
 
 export type GitActionProgressPhase = "idle" | "running" | "success" | "error";
 

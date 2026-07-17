@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -71,6 +72,29 @@ describe("ReviewService", () => {
       assert.strictEqual(result.cwd, workspaceRoot);
       assert.deepStrictEqual(result.sources, []);
       assert.deepStrictEqual(detectCalls, [{ cwd: workspaceRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves unexpected path-resolution failures", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const invalidCwd = `${workspaceRoot}\0invalid`;
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: invalidCwd }).pipe(Effect.flip);
+      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, detectCalls })));
+
+      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      if (error._tag !== "VcsRepositoryDetectionError") return;
+      assert.strictEqual(error.operation, "ReviewService.assertWorkspaceBoundCwd.canonicalizePath");
+      assert.strictEqual(error.cwd, invalidCwd);
+      assert.match(error.detail, /Failed to resolve a path/);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assert.deepStrictEqual(detectCalls, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
