@@ -7,7 +7,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -55,6 +56,8 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
@@ -253,7 +256,7 @@ function parseCodexSkillsListResponse(
 }
 
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
-  client: CodexClient.CodexAppServerClientShape,
+  client: CodexClient.CodexAppServerClient["Service"],
 ) {
   const models: ServerProviderModel[] = [];
   let cursor: string | null | undefined = undefined;

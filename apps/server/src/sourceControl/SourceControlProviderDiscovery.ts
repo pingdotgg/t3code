@@ -158,7 +158,7 @@ function isCliRemoteRefinementSpec(
 
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
-  readonly process: VcsProcess.VcsProcessShape;
+  readonly process: VcsProcess.VcsProcess["Service"];
   readonly cwd: string;
 }): Effect.Effect<DiscoveryProbeResult> {
   return input.process
@@ -202,7 +202,7 @@ function probeCli(input: {
 
 export function probeSourceControlProvider(input: {
   readonly spec: SourceControlProviderDiscoverySpec;
-  readonly process: VcsProcess.VcsProcessShape;
+  readonly process: VcsProcess.VcsProcess["Service"];
   readonly cwd: string;
 }): Effect.Effect<SourceControlProviderDiscoveryItem> {
   if (input.spec.type === "api") {
@@ -270,7 +270,7 @@ export function probeSourceControlProvider(input: {
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
-    readonly process: VcsProcess.VcsProcessShape;
+    readonly process: VcsProcess.VcsProcess["Service"];
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext | null;
   }): Effect.fn.Return<SourceControlProvider.SourceControlProviderContext | null> {
