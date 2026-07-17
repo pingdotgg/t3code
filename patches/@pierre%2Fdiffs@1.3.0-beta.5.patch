@@ -1,0 +1,69 @@
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+index e8013fc6eb6f243a6c912facf3fc0319ac66a8d0..80c82df4cdeb828bd331f5ec2f443d216bedc304 100644
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -77,15 +77,12 @@ var Editor = class {
+ 		this.#options = options;
+ 	}
+ 	edit(component) {
+-		const { useTokenTransformer, enableGutterUtility, enableLineSelection, expandUnchanged, diffStyle, lineHoverHighlight,...rest } = component.options;
++		const { useTokenTransformer, expandUnchanged, diffStyle,...rest } = component.options;
+ 		const isDiff = component.type === "file-diff";
+-		if (useTokenTransformer !== true || enableGutterUtility === true || enableLineSelection === true || lineHoverHighlight !== "disabled" || expandUnchanged !== true && isDiff || diffStyle === "unified" && isDiff) {
++		if (useTokenTransformer !== true || expandUnchanged !== true && isDiff || diffStyle === "unified" && isDiff) {
+ 			component.setOptions({
+ 				...rest,
+ 				useTokenTransformer: true,
+-				enableGutterUtility: false,
+-				enableLineSelection: false,
+-				lineHoverHighlight: "disabled",
+ 				expandUnchanged: true,
+ 				diffStyle: "split"
+ 			});
+@@ -511,6 +508,7 @@ var Editor = class {
+ 				return lineNumber - 1;
+ 			};
+ 			this.#editorEventDisposes.push(addEventListener(gutterEl, "pointerdown", (e) => {
++				if (this.#fileInstance?.options.enableLineSelection === true) return;
+ 				const textDocument = this.#textDocument;
+ 				const lineIndex = resolveEditableLine(resolveGutterTarget(e.composedPath()[0]));
+ 				if (lineIndex === void 0 || textDocument === void 0) return;
+diff --git a/dist/react/utils/useFileInstance.js b/dist/react/utils/useFileInstance.js
+index cb8e2026fb5d7a19f489c0a2402efbcb7dff3322..510fad6364d4a2214c7dd65fe2b114f1cce0c815 100644
+--- a/dist/react/utils/useFileInstance.js
++++ b/dist/react/utils/useFileInstance.js
+@@ -92,10 +92,7 @@ function mergeFileOptions({ options, controlledSelection, contentEditable, hasCu
+ 	};
+ 	if (needsEditorOptions) merged = {
+ 		...merged,
+-		useTokenTransformer: true,
+-		enableGutterUtility: false,
+-		enableLineSelection: false,
+-		lineHoverHighlight: "disabled"
++		useTokenTransformer: true
+ 	};
+ 	return merged;
+ }
+diff --git a/package.json b/package.json
+index d1558633de87044b7aa96cff09443db11f163cec..c0b16f0a0bec6fba2026f24f38b2c0a8fa06af7c 100644
+--- a/package.json
++++ b/package.json
+@@ -55,6 +55,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {

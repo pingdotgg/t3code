@@ -11,7 +11,12 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 
-import { buildThreadFeed, deriveThreadFeedPresentation } from "./threadActivity";
+import {
+  buildThreadFeed,
+  deriveThreadFeedPresentation,
+  type ThreadFeedActivity,
+  type ThreadFeedEntry,
+} from "./threadActivity";
 
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
@@ -86,7 +91,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     expect(feed).toMatchObject([
       {
         type: "activity-group",
@@ -144,7 +149,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     const group = feed[0];
 
     expect(group).toMatchObject({
@@ -161,12 +166,63 @@ describe("buildThreadFeed", () => {
         turnId: "turn-1",
         summary: "Run tests",
         detail: "bun run test",
-        fullDetail: null,
-        copyText: "Run tests\nbun run test",
+        fullDetail: "/bin/zsh -lc 'bun run test'",
+        copyText: "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
+        icon: "command",
         toolLike: true,
         status: "success",
       },
     ]);
+  });
+
+  it("keeps MCP inputs available to expanded mobile work rows", () => {
+    const turnId = TurnId.make("turn-mcp");
+    const thread = makeThread({
+      id: ThreadId.make("thread-mcp"),
+      projectId: ProjectId.make("project-1"),
+      title: "Expandable MCP call",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("mcp-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Call repository tool",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Call repository tool",
+            itemType: "mcp_tool_call",
+            detail: "repository.search",
+            status: "completed",
+            data: {
+              item: {
+                server: "repository",
+                tool: "search",
+                arguments: { query: "work log" },
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities[0]?.icon).toBe("wrench");
+    expect(group.activities[0]?.fullDetail).toContain('"query": "work log"');
+    expect(group.activities[0]?.fullDetail).toContain("repository.search");
   });
 
   it("folds settled turn work while leaving the terminal answer visible", () => {
@@ -220,7 +276,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
     expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:turn-1", "assistant-final"]);
     expect(collapsed[0]).toMatchObject({
@@ -308,7 +364,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
     expect(collapsed.find((entry) => entry.type === "turn-fold")).toMatchObject({
       turnId: firstTurnId,
@@ -348,11 +404,65 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set())).toEqual(feed);
     expect(feed[0]).toMatchObject({
       type: "activity-group",
       activities: [{ status: "failure" }],
+    });
+  });
+
+  it("models work-log overflow as list rows", () => {
+    const activity = (
+      id: string,
+      createdAt: string,
+      status: ThreadFeedActivity["status"] = "success",
+    ): ThreadFeedActivity => ({
+      id,
+      createdAt,
+      turnId: null,
+      summary: `Tool ${id}`,
+      detail: null,
+      fullDetail: null,
+      copyText: id,
+      icon: "command",
+      toolLike: true,
+      status,
+    });
+    const feed: ThreadFeedEntry[] = [
+      {
+        type: "activity-group",
+        id: "work-group-1",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        turnId: null,
+        activities: [
+          activity("activity-1", "2026-04-01T00:00:01.000Z"),
+          activity("activity-neutral", "2026-04-01T00:00:02.000Z", "neutral"),
+          activity("activity-2", "2026-04-01T00:00:03.000Z"),
+          activity("activity-3", "2026-04-01T00:00:04.000Z"),
+        ],
+      },
+    ];
+
+    const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual(["activity-3", "work-toggle:work-group-1"]);
+    expect(collapsed[1]).toMatchObject({
+      type: "work-toggle",
+      groupId: "work-group-1",
+      hiddenCount: 2,
+      expanded: false,
+    });
+
+    const expanded = deriveThreadFeedPresentation(feed, null, new Set(), new Set(["work-group-1"]));
+    expect(expanded.map((entry) => entry.id)).toEqual([
+      "activity-1",
+      "activity-2",
+      "activity-3",
+      "work-toggle:work-group-1",
+    ]);
+    expect(expanded.at(-1)).toMatchObject({
+      type: "work-toggle",
+      expanded: true,
     });
   });
 });

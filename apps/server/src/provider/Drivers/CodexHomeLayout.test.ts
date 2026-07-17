@@ -3,11 +3,13 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
-  CodexShadowHomeError,
+  CodexShadowHomeEntryConflictError,
+  CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -184,7 +186,14 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(CodexShadowHomeError);
+        expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
+        expect(error).toMatchObject({
+          sharedHomePath: sharedHome,
+          effectiveHomePath: sharedHome,
+        });
+        expect(error.message).toBe(
+          `Codex shadow home path '${sharedHome}' must be different from the shared home path '${sharedHome}'.`,
+        );
       }),
     );
 
@@ -206,7 +215,52 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
 
-        expect(error.detail).toContain("already exists and is not a symlink");
+        expect(error).toBeInstanceOf(CodexShadowHomeEntryConflictError);
+        expect(error).toMatchObject({
+          sharedHomePath: sharedHome,
+          effectiveHomePath: shadowHome,
+          entryName: "config.toml",
+          linkPath: path.join(shadowHome, "config.toml"),
+          targetPath: path.join(sharedHome, "config.toml"),
+        });
+        expect(error.message).toBe(
+          `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
+        );
+      }),
+    );
+
+    it.effect("preserves filesystem operation, paths, and cause", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const sharedRoot = yield* makeTempDir("t3code-codex-shared-root-");
+        const sharedHome = path.join(sharedRoot, "shared-home");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        yield* writeTextFile(sharedHome, "not a directory\n");
+
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+        expect(error._tag).toBe("CodexShadowHomeFileSystemError");
+        if (error._tag !== "CodexShadowHomeFileSystemError") {
+          return expect.fail("Expected CodexShadowHomeFileSystemError");
+        }
+        expect(error).toMatchObject({
+          operation: "makeDirectory",
+          sharedHomePath: sharedHome,
+          effectiveHomePath: shadowHome,
+        });
+        expect(error.path.startsWith(sharedHome)).toBe(true);
+        expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
+        expect(error.message).toBe(
+          `Codex shadow home filesystem operation 'makeDirectory' failed for '${error.path}'.`,
+        );
       }),
     );
   });

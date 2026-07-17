@@ -8,12 +8,39 @@ import jsxLanguage from "@shikijs/langs/jsx";
 import tsxLanguage from "@shikijs/langs/tsx";
 import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
+import * as Schema from "effect/Schema";
 
 import type { NativeReviewDiffFile, NativeReviewDiffLanguage } from "./nativeReviewDiffTypes";
 import type { NativeReviewDiffRow, NativeReviewDiffToken } from "./nativeReviewDiffSurface";
 
 export type NativeReviewDiffHighlightScheme = "light" | "dark";
 export type NativeReviewDiffHighlightEngine = "native" | "javascript";
+
+export class NativeReviewDiffHighlighterUnavailableError extends Schema.TaggedErrorClass<NativeReviewDiffHighlighterUnavailableError>()(
+  "NativeReviewDiffHighlighterUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "The native review diff highlighter is unavailable in this build.";
+  }
+}
+
+export const isNativeReviewDiffHighlighterUnavailableError = Schema.is(
+  NativeReviewDiffHighlighterUnavailableError,
+);
+
+export class NativeReviewDiffHighlighterInitializationError extends Schema.TaggedErrorClass<NativeReviewDiffHighlighterInitializationError>()(
+  "NativeReviewDiffHighlighterInitializationError",
+  {
+    requestedEngine: Schema.Literals(["native", "javascript"]),
+    attemptedEngine: Schema.Literals(["native", "javascript"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to initialize the ${this.attemptedEngine} review diff highlighter requested as ${this.requestedEngine}.`;
+  }
+}
 
 export interface NativeReviewDiffHighlighterHandle {
   readonly engine: NativeReviewDiffHighlightEngine;
@@ -27,6 +54,11 @@ interface NativeReviewDiffLineRow extends NativeReviewDiffRow {
   readonly kind: "line";
   readonly fileId: string;
   readonly content: string;
+}
+
+interface IndexedNativeReviewDiffLineRow {
+  readonly row: NativeReviewDiffLineRow;
+  readonly rowIndex: number;
 }
 
 export interface NativeReviewDiffTokenChunk {
@@ -197,7 +229,7 @@ function normalizeTokens(
 async function createNativeReviewDiffHighlighter(): Promise<NativeReviewDiffHighlighterHandle> {
   const nativeEngineModule = await import("react-native-shiki-engine");
   if (!nativeEngineModule.isNativeEngineAvailable()) {
-    throw new Error("Native Shiki engine is not available in this build.");
+    throw new NativeReviewDiffHighlighterUnavailableError();
   }
 
   const highlighter = await createHighlighterCore({
@@ -229,22 +261,108 @@ export async function getNativeReviewDiffHighlighter(
   engine: NativeReviewDiffHighlightEngine = "native",
 ): Promise<NativeReviewDiffHighlighterHandle> {
   if (engine === "javascript") {
-    javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
-    return javascriptHighlighterPromise;
+    try {
+      javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
+      return await javascriptHighlighterPromise;
+    } catch (cause) {
+      javascriptHighlighterPromise = null;
+      throw new NativeReviewDiffHighlighterInitializationError({
+        requestedEngine: engine,
+        attemptedEngine: "javascript",
+        cause,
+      });
+    }
   }
 
-  nativeHighlighterPromise ??= createNativeReviewDiffHighlighter().catch((error: unknown) => {
-    console.warn("[debug-native-diff] native highlighter unavailable", {
-      error: error instanceof Error ? error.message : String(error),
+  nativeHighlighterPromise ??= createNativeReviewDiffHighlighter()
+    .catch(async (cause: unknown) => {
+      const nativeError = isNativeReviewDiffHighlighterUnavailableError(cause)
+        ? cause
+        : new NativeReviewDiffHighlighterInitializationError({
+            requestedEngine: engine,
+            attemptedEngine: "native",
+            cause,
+          });
+      console.warn("[debug-native-diff] native highlighter unavailable", {
+        error: nativeError,
+      });
+      try {
+        javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
+        return await javascriptHighlighterPromise;
+      } catch (fallbackCause) {
+        javascriptHighlighterPromise = null;
+        throw new NativeReviewDiffHighlighterInitializationError({
+          requestedEngine: engine,
+          attemptedEngine: "javascript",
+          cause: new AggregateError(
+            [nativeError, fallbackCause],
+            "Native and JavaScript review diff highlighter initialization failed.",
+            { cause: nativeError },
+          ),
+        });
+      }
+    })
+    .catch((error) => {
+      nativeHighlighterPromise = null;
+      throw error;
     });
-    javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
-    return javascriptHighlighterPromise;
-  });
-  return nativeHighlighterPromise;
+  return await nativeHighlighterPromise;
 }
 
 function isHighlightableLineRow(row: NativeReviewDiffRow): row is NativeReviewDiffLineRow {
   return row.kind === "line" && typeof row.fileId === "string" && typeof row.content === "string";
+}
+
+function hasConsecutiveLineNumbers(
+  previous: number | null | undefined,
+  next: number | null | undefined,
+): boolean {
+  return typeof previous === "number" && typeof next === "number" && next === previous + 1;
+}
+
+function hasOnlyCommentRowsBetween(
+  rows: ReadonlyArray<NativeReviewDiffRow>,
+  previousRowIndex: number,
+  nextRowIndex: number,
+): boolean {
+  for (let rowIndex = previousRowIndex + 1; rowIndex < nextRowIndex; rowIndex += 1) {
+    if (rows[rowIndex]?.kind !== "comment") {
+      return false;
+    }
+  }
+  return true;
+}
+
+function canShareGrammarContext(
+  previous: IndexedNativeReviewDiffLineRow,
+  next: IndexedNativeReviewDiffLineRow,
+  rows: ReadonlyArray<NativeReviewDiffRow>,
+): boolean {
+  if (
+    next.row.fileId !== previous.row.fileId ||
+    !hasOnlyCommentRowsBetween(rows, previous.rowIndex, next.rowIndex)
+  ) {
+    return false;
+  }
+
+  if (previous.row.change === "delete" || next.row.change === "delete") {
+    return (
+      previous.row.change !== "add" &&
+      next.row.change !== "add" &&
+      hasConsecutiveLineNumbers(previous.row.oldLineNumber, next.row.oldLineNumber)
+    );
+  }
+
+  if (previous.row.change === "add" || next.row.change === "add") {
+    return hasConsecutiveLineNumbers(previous.row.newLineNumber, next.row.newLineNumber);
+  }
+
+  return (
+    previous.row.change === "context" &&
+    next.row.change === "context" &&
+    hasConsecutiveLineNumbers(previous.row.oldLineNumber, next.row.oldLineNumber) &&
+    hasConsecutiveLineNumbers(previous.row.newLineNumber, next.row.newLineNumber)
+  );
 }
 
 function groupLineRowsByFileId(rows: ReadonlyArray<NativeReviewDiffRow>) {
@@ -299,7 +417,7 @@ export async function highlightNativeReviewDiffVisibleRows(
   const maxRows = input.maxRows ?? NATIVE_REVIEW_DIFF_VISIBLE_MAX_ROWS;
   const startIndex = clampRowIndex(input.firstRowIndex - overscanRows, input.rows);
   const endIndex = clampRowIndex(input.lastRowIndex + overscanRows, input.rows);
-  const selectedRows: NativeReviewDiffLineRow[] = [];
+  const selectedRows: IndexedNativeReviewDiffLineRow[] = [];
 
   for (
     let rowIndex = startIndex;
@@ -313,12 +431,12 @@ export async function highlightNativeReviewDiffVisibleRows(
       !input.alreadyHighlightedRowIds?.has(row.id) &&
       fileMap.has(row.fileId)
     ) {
-      selectedRows.push(row);
+      selectedRows.push({ row, rowIndex });
     }
   }
 
   const tokensByRowId: Record<string, ReadonlyArray<NativeReviewDiffToken>> = {};
-  let segmentRows: NativeReviewDiffLineRow[] = [];
+  let segmentRows: IndexedNativeReviewDiffLineRow[] = [];
   let segmentFile: NativeReviewDiffFile | undefined;
 
   const flushSegment = () => {
@@ -328,27 +446,34 @@ export async function highlightNativeReviewDiffVisibleRows(
       return;
     }
 
-    const code = segmentRows.map((row) => row.content).join("\n");
+    const code = segmentRows.map(({ row }) => row.content).join("\n");
     const tokenLines = highlighter.tokenize(code, { lang: segmentFile.language, theme });
-    segmentRows.forEach((row, rowIndex) => {
+    segmentRows.forEach(({ row }, rowIndex) => {
       tokensByRowId[row.id] = tokenLines[rowIndex] ?? makePlainTokenFallback(row);
     });
     segmentRows = [];
     segmentFile = undefined;
   };
 
-  for (const row of selectedRows) {
+  for (const selectedRow of selectedRows) {
+    const { row } = selectedRow;
     const file = fileMap.get(row.fileId);
     if (!file) {
       continue;
     }
 
-    if (segmentFile && segmentFile.id !== file.id) {
+    const previousRow = segmentRows.at(-1);
+    if (
+      segmentFile &&
+      (segmentFile.id !== file.id ||
+        (previousRow !== undefined &&
+          !canShareGrammarContext(previousRow, selectedRow, input.rows)))
+    ) {
       flushSegment();
     }
 
     segmentFile = file;
-    segmentRows.push(row);
+    segmentRows.push(selectedRow);
   }
   flushSegment();
 

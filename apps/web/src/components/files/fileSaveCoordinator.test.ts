@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 
 function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
+  let resolve!: (result: AtomCommandResult<void, never>) => void;
+  const promise = new Promise<AtomCommandResult<void, never>>((resolvePromise) => {
     resolve = resolvePromise;
   });
   return { promise, resolve };
@@ -17,7 +20,9 @@ describe("FileSaveCoordinator", () => {
 
   it("debounces edits and persists only the latest contents", async () => {
     vi.useFakeTimers();
-    const persist = vi.fn<(contents: string) => Promise<void>>().mockResolvedValue(undefined);
+    const persist = vi
+      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
+      .mockResolvedValue(AsyncResult.success(undefined));
     const onPendingChange = vi.fn();
     const onConfirmed = vi.fn();
     const coordinator = new FileSaveCoordinator({
@@ -44,9 +49,9 @@ describe("FileSaveCoordinator", () => {
     vi.useFakeTimers();
     const firstWrite = deferred();
     const persist = vi
-      .fn<(contents: string) => Promise<void>>()
+      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
       .mockReturnValueOnce(firstWrite.promise)
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
     const onPendingChange = vi.fn();
     const coordinator = new FileSaveCoordinator({
       debounceMs: 500,
@@ -61,7 +66,7 @@ describe("FileSaveCoordinator", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(persist).toHaveBeenCalledTimes(1);
 
-    firstWrite.resolve();
+    firstWrite.resolve(AsyncResult.success(undefined));
     await vi.runAllTimersAsync();
     expect(persist).toHaveBeenCalledTimes(2);
     expect(persist).toHaveBeenLastCalledWith("latest");
@@ -73,7 +78,9 @@ describe("FileSaveCoordinator", () => {
     const onPendingChange = vi.fn();
     const coordinator = new FileSaveCoordinator({
       debounceMs: 500,
-      persist: vi.fn().mockRejectedValue(new Error("write failed")),
+      persist: vi
+        .fn()
+        .mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("write failed")))),
       onPendingChange,
       onConfirmed: vi.fn(),
     });

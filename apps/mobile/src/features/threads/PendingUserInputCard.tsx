@@ -20,13 +20,13 @@ export interface PendingUserInputCardProps {
     questionId: string,
     customAnswer: string,
   ) => void;
-  readonly onSubmit: () => Promise<void>;
+  readonly onSubmit: () => Promise<unknown>;
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   return (
     <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
-      <Text className="font-t3-bold text-[11px] uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
         User input needed
       </Text>
       <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
@@ -39,7 +39,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500 dark:text-neutral-500">
               {question.header}
             </Text>
-            <Text className="font-sans text-[15px] leading-[21px] text-neutral-950 dark:text-neutral-50">
+            <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
               {question.question}
             </Text>
             <View className="flex-row flex-wrap gap-2.5">
@@ -65,7 +65,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   >
                     <Text
                       className={cn(
-                        "font-t3-bold text-[13px]",
+                        "font-t3-bold text-sm",
                         selected
                           ? "text-sky-700 dark:text-sky-300"
                           : "text-neutral-600 dark:text-neutral-300",
@@ -83,7 +83,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
               }
               placeholder="Or type a custom answer"
-              className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-[15px] text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
+              className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-base text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
             />
           </View>
         );
