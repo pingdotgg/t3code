@@ -1,8 +1,8 @@
 import { isWindowsPlatform } from "./utils";
 
 const WCO_CLASS_NAME = "wco";
-export const ELECTRON_CLASS_NAME = "electron";
-export const ELECTRON_WINDOWS_CLASS_NAME = "electron-windows";
+const ELECTRON_CLASS_NAME = "electron";
+const ELECTRON_WINDOWS_CLASS_NAME = "electron-windows";
 
 interface WindowControlsOverlayLike {
   readonly visible: boolean;
