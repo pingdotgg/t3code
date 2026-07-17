@@ -66,7 +66,7 @@ function AgentBrowserCursorEvent(props: {
       {event.phase === "click" ? (
         <span
           key={event.sequence}
-          className="absolute left-0.5 top-0.5 size-4 animate-ping rounded-full bg-primary/25 motion-reduce:animate-none"
+          className="absolute left-0.5 top-0.5 size-4 animate-status-ping rounded-full bg-primary/25 motion-reduce:animate-none"
         />
       ) : null}
       <MousePointer2
