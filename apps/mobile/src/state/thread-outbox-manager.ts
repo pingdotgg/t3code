@@ -101,7 +101,10 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
           cause,
         });
       }
-      setMessages([...currentMessages(), message]);
+      setMessages([
+        ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),
+        message,
+      ]);
     });
 
   // Rewrites an already-queued message. A no-op when the message has been

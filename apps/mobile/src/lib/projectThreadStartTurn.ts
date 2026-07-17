@@ -8,7 +8,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import type { DraftComposerImageAttachment } from "./composerImages";
+import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = value.trim();
@@ -55,7 +55,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
       text: spec.text,
-      attachments: spec.attachments,
+      attachments: toUploadChatImageAttachments(spec.attachments),
     },
     modelSelection: spec.modelSelection,
     titleSeed: title,
