@@ -112,6 +112,83 @@ describe("mosh", () => {
     );
   });
 
+  it.effect("replaces a dropped control session without disturbing the remote environment", () => {
+    let firstSessionRunning = true;
+    let firstSessionKillCount = 0;
+    const commands: Array<{ command: string; args: readonly string[] }> = [];
+    const finishedHandle = (pid: number) =>
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(pid),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    const sessionHandle = (
+      pid: number,
+      isRunning: Effect.Effect<boolean>,
+      onKill: Effect.Effect<void>,
+    ) =>
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(pid),
+        exitCode: Effect.never,
+        isRunning,
+        kill: () => onKill,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode("T3_MOSH_CONTROL_READY\n")),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    const firstSession = sessionHandle(
+      503,
+      Effect.sync(() => firstSessionRunning),
+      Effect.sync(() => {
+        firstSessionRunning = false;
+        firstSessionKillCount += 1;
+      }),
+    );
+    const secondSession = sessionHandle(506, Effect.succeed(true), Effect.void);
+    const spawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((process) => {
+        const spec = process as unknown as { command: string; args: readonly string[] };
+        commands.push(spec);
+        if (commands.length === 3) return Effect.succeed(firstSession);
+        if (commands.length === 6) return Effect.succeed(secondSession);
+        return Effect.succeed(finishedHandle(500 + commands.length));
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* MoshControlManager;
+      const first = yield* manager.ensure(TARGET);
+      firstSessionRunning = false;
+      const replacement = yield* manager.ensure(TARGET);
+
+      assert.equal(first.pid, 503);
+      assert.equal(replacement.pid, 506);
+      assert.equal(firstSessionKillCount, 1);
+      assert.deepEqual(
+        commands.map(({ command }) => command),
+        ["mosh", "ssh", "mosh", "mosh", "ssh", "mosh"],
+      );
+      assert.strictEqual(yield* manager.status(TARGET), replacement);
+    }).pipe(
+      Effect.provide(MoshControlManager.layer),
+      Effect.provide(spawner),
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
   it.effect("fails setup when the roaming UDP session never becomes ready", () => {
     let spawnCount = 0;
     let sessionKilled = false;

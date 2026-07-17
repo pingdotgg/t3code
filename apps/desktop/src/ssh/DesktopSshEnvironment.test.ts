@@ -2,6 +2,8 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
+import { MoshControlManager, MoshSessionStartError } from "@t3tools/mosh";
+import * as SshTunnel from "@t3tools/ssh/tunnel";
 import { SshPasswordPromptError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -129,4 +131,75 @@ describe("sshEnvironment", () => {
       Effect.scoped,
     ),
   );
+
+  it.effect("keeps the Tailscale data plane usable when Mosh recovery fails", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.tail.example.ts.net",
+      username: "emil",
+      port: 22,
+    } as const;
+    const bootstrap = {
+      target,
+      httpBaseUrl: "https://devbox.tail.example.ts.net",
+      wsBaseUrl: "wss://devbox.tail.example.ts.net",
+      pairingToken: null,
+      remotePort: 49_123,
+      remoteServerKind: "managed",
+      accessMode: "tailscale",
+      tailscale: {
+        magicDnsName: "devbox.tail.example.ts.net",
+        tailnetIpv4Addresses: ["100.64.0.10"],
+        servePort: 443,
+      },
+    } as const;
+    let ensureCount = 0;
+    let moshEnsureCount = 0;
+    const manager = SshTunnel.SshEnvironmentManager.of({
+      authenticationOptions: () => Effect.succeed({ batchMode: "yes", interactiveAuth: false }),
+      ensureEnvironment: () =>
+        Effect.sync(() => {
+          ensureCount += 1;
+          return bootstrap;
+        }),
+      disconnectEnvironment: () => Effect.void,
+    });
+    const mosh = MoshControlManager.of({
+      ensure: () =>
+        Effect.suspend(() => {
+          moshEnsureCount += 1;
+          return Effect.fail(
+            new MoshSessionStartError({
+              command: ["mosh"],
+              stderr: "simulated roaming transport loss",
+            }),
+          );
+        }),
+      disconnect: () => Effect.void,
+      status: () => Effect.succeed(null),
+    });
+
+    return Effect.gen(function* () {
+      const environment = yield* DesktopSshEnvironment.make;
+      const reconnect = yield* environment.ensureEnvironment(target, {
+        accessMode: "tailscale",
+        requireMosh: false,
+      });
+
+      assert.strictEqual(reconnect, bootstrap);
+      assert.equal(reconnect.wsBaseUrl, "wss://devbox.tail.example.ts.net");
+      assert.equal(ensureCount, 1);
+      assert.equal(moshEnsureCount, 1);
+    }).pipe(
+      Effect.provideService(SshTunnel.SshEnvironmentManager, manager),
+      Effect.provideService(MoshControlManager, mosh),
+      Effect.provideService(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
+        request: () => Effect.die("unexpected password prompt request"),
+        resolve: () => Effect.die("unexpected password prompt resolution"),
+      }),
+      Effect.provide(NodeServices.layer),
+      Effect.provide(NodeHttpClient.layerUndici),
+      Effect.provide(NetService.layer),
+    );
+  });
 });
