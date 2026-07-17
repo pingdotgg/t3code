@@ -120,7 +120,7 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
       // the bare command — maintenance can't run in that state anyway.
       const kimiUpdateExecutable = yield* resolveCommandPath(resolvedKimiCommand, {
         env: processEnv,
-      }).pipe(Effect.catchTag("CommandResolutionError", () => Effect.succeed(resolvedKimiCommand)));
+      }).pipe(Effect.catchTags({ CommandResolutionError: () => Effect.succeed(resolvedKimiCommand) }));
       const update = makeStaticProviderMaintenanceResolver(
         makeProviderMaintenanceCapabilities({
           provider: KIMI_DRIVER_KIND,
