@@ -110,6 +110,22 @@ describe("makePluginProviderAdapter", () => {
     }),
   );
 
+  it.effect("rejects startSession for a thread that already has a session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* adapterFor({
+        startSession: () => Effect.void,
+        sendTurn: () => Effect.void,
+        stopSession: () => Effect.void,
+      });
+
+      yield* start(adapter);
+      // A second startSession must FAIL rather than overwrite the SessionState (which
+      // would orphan a running turn's fiber and drop its deltas).
+      const exit = yield* Effect.exit(start(adapter));
+      assert.isTrue(Exit.isFailure(exit));
+    }),
+  );
+
   it.effect("turns a plugin failure into a failed turn, not a host crash", () =>
     Effect.gen(function* () {
       const adapter = yield* adapterFor({
