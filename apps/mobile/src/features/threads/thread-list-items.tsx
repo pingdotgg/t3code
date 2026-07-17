@@ -4,7 +4,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { MenuAction } from "@react-native-menu/menu";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -131,6 +131,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       >
         <ProjectFavicon
           environmentId={props.project.environmentId}
+          open={!props.collapsed}
           size={compact ? 22 : 18}
           projectTitle={props.project.title}
           workspaceRoot={props.project.workspaceRoot}
@@ -644,12 +645,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       threadTitle={thread.title}
     >
       {(close) => (
-        // Messages-style row actions: a real UIContextMenuInteraction on
-        // long-press / pointer right-click, with the row as the zoom preview.
-        // Requires the patched @react-native-menu (see
-        // patches/@react-native-menu__menu@2.0.0.patch): in long-press mode
-        // the interaction is hosted by the component view and the underlying
-        // UIButton passes touches through, so row taps keep working.
+        // Messages-style row actions on long-press. iOS: a real
+        // UIContextMenuInteraction with the row as the zoom preview (needs the
+        // patched @react-native-menu, see
+        // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
+        // interaction is hosted by the component view and the underlying
+        // UIButton passes touches through, so row taps keep working). Android:
+        // ControlPillMenu injects onLongPress into the row and anchors the
+        // token-styled dropdown to it; taps and swipes are untouched.
         <ControlPillMenu
           actions={THREAD_ROW_MENU_ACTIONS}
           onPressAction={handleMenuAction}
