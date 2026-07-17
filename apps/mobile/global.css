@@ -12,7 +12,7 @@
       /* Card / surface */
       --color-card: #ffffff;
       --color-card-alt: #f5f5f5;
-      --color-card-translucent: rgba(255, 255, 255, 0.94);
+      --color-card-translucent: rgba(255, 255, 255, 0.8);
 
       /* Text */
       --color-foreground: #262626;
@@ -51,6 +51,7 @@
       /* Inputs */
       --color-input: #ffffff;
       --color-input-border: rgba(0, 0, 0, 0.1);
+      --color-sidebar-search: rgba(118, 118, 128, 0.12);
       --color-placeholder: #a3a3a3;
 
       /* Icons */
@@ -105,7 +106,7 @@
       /* Card / surface */
       --color-card: #171717;
       --color-card-alt: #1c1c1c;
-      --color-card-translucent: rgba(17, 17, 17, 0.94);
+      --color-card-translucent: rgba(17, 17, 17, 0.8);
 
       /* Text */
       --color-foreground: #f5f5f5;
@@ -144,6 +145,7 @@
       /* Inputs */
       --color-input: #141414;
       --color-input-border: rgba(255, 255, 255, 0.08);
+      --color-sidebar-search: rgba(118, 118, 128, 0.24);
       --color-placeholder: #8e8e93;
 
       /* Icons */
@@ -192,23 +194,44 @@
   }
 }
 
-/* ─── Font family ───────────────────────────────────────────────────── */
+/* ─── Typography ────────────────────────────────────────────────────── */
 @theme {
-  --font-sans: "DMSans_400Regular";
-  --font-medium: "DMSans_500Medium";
-  --font-bold: "DMSans_700Bold";
+  /* Keep these native family names aligned with app.config.ts. */
+  --font-sans: "DMSans-Regular";
+  --font-medium: "DMSans-Medium";
+  --font-bold: "DMSans-Bold";
+
+  /* Keep this scale aligned with src/lib/typography.ts for native style props. */
+  --text-3xs: 11px;
+  --text-3xs--line-height: 14px;
+  --text-2xs: 12px;
+  --text-2xs--line-height: 16px;
+  --text-xs: 13px;
+  --text-xs--line-height: 17px;
+  --text-sm: 14px;
+  --text-sm--line-height: 19px;
+  --text-base: 16px;
+  --text-base--line-height: 23px;
+  --text-lg: 18px;
+  --text-lg--line-height: 23px;
+  --text-xl: 21px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 26px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 36px;
 }
 
 /* ─── Custom utilities ──────────────────────────────────────────────── */
 @utility font-t3-medium {
-  font-family: "DMSans_500Medium";
+  font-family: var(--font-medium);
 }
 
 @utility font-t3-bold {
-  font-family: "DMSans_700Bold";
+  font-family: var(--font-bold);
 }
 
 @utility font-t3-extrabold {
-  font-family: "DMSans_700Bold";
+  font-family: var(--font-bold);
   font-weight: 800;
 }
