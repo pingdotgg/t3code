@@ -2612,6 +2612,24 @@ export default {
     }),
   );
 
+  it.effect("rejects an RPC descriptor with an empty method", () =>
+    rejectionCase({
+      id: "rpc-empty-method",
+      // RPC validation does not require a dedicated capability pairing — empty
+      // method is rejected before capability checks matter.
+      capabilities: [],
+      // Reuse the httpDescriptorEntry require embed (string concat avoids a new
+      // top-level JSON.stringify site under the preferSchemaOverJson lint).
+      entrySource: httpDescriptorEntry(
+        `{ method: "GET", path: "/unused", auth: "public", handler: () => Effect.succeed({ status: 200, body: {} }) }`,
+      ).replace(
+        'return { http: [ { method: "GET", path: "/unused", auth: "public", handler: () => Effect.succeed({ status: 200, body: {} }) } ] };',
+        'return { rpc: [{ method: "", scope: "read", handler: () => Effect.succeed({}) }] };',
+      ),
+      errorPattern: /empty method|RPC/,
+    }),
+  );
+
   it.effect("rejects a descriptor with an empty path", () =>
     rejectionCase({
       id: "http-empty-path",

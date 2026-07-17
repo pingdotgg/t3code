@@ -55,9 +55,11 @@ const jsonSchemaDepth = (value: unknown, depth: number): number => {
 };
 
 const isServiceFreeDecoder = (value: unknown): value is Schema.Decoder<unknown, never> => {
-  if (value === null || typeof value !== "object") return false;
-  // Effect Schema codecs expose an AST; reject plain objects/functions that
-  // cannot participate in getJsonSchemaFromSchema / decodeUnknownEffect.
+  if (value === null) return false;
+  // Effect Schema codecs expose an AST. Schema.Class is a constructor function
+  // (typeof "function") with an `ast` property — still a valid decoder. Reject
+  // plain objects/functions that cannot participate in getJsonSchemaFromSchema.
+  if (typeof value !== "object" && typeof value !== "function") return false;
   return "ast" in value;
 };
 
@@ -70,25 +72,66 @@ const deriveJsonSchema = (inputSchema: Schema.Decoder<unknown, never>): unknown 
 };
 
 /**
- * True when a JSON Schema constrains its instance to a string-keyed object —
- * either a plain `type: "object"` root, or a `anyOf`/`oneOf`/`allOf` combinator
- * whose branches are ALL themselves object-root schemas. The combinators
- * constrain the same `tools/call.arguments` instance, so a union/intersection of
- * object schemas (e.g. `Schema.Union([Schema.Struct(...), Schema.Struct(...)])`)
- * still always yields an object the protocol can deliver.
+ * Resolve a local JSON Schema `$ref` (e.g. `#/$defs/A`) against `documentRoot`,
+ * following chains with cycle detection. External/non-fragment refs are left as-is
+ * so the caller can reject them as non-object roots.
  */
-const isObjectRootJsonSchema = (value: unknown): boolean => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+const resolveLocalJsonSchemaRef = (
+  documentRoot: Record<string, unknown>,
+  value: unknown,
+  seen: Set<string>,
+): unknown => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
   const schema = value as Record<string, unknown>;
+  const ref = schema["$ref"];
+  if (typeof ref !== "string" || !ref.startsWith("#/")) return value;
+  if (seen.has(ref)) return value;
+  seen.add(ref);
+  let current: unknown = documentRoot;
+  for (const part of ref.slice(2).split("/")) {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) return value;
+    // JSON Pointer unescapes ~1 -> / and ~0 -> ~
+    const key = part.replace(/~1/g, "/").replace(/~0/g, "~");
+    current = (current as Record<string, unknown>)[key];
+  }
+  return resolveLocalJsonSchemaRef(documentRoot, current, seen);
+};
+
+/**
+ * True when a JSON Schema constrains its instance to a string-keyed object —
+ * either a plain `type: "object"` root, a local `$ref` that resolves to one, or a
+ * `anyOf`/`oneOf`/`allOf` combinator whose branches are ALL themselves object-root
+ * schemas. The combinators constrain the same `tools/call.arguments` instance, so
+ * a union/intersection of object schemas (e.g.
+ * `Schema.Union([Schema.Struct(...), Schema.Struct(...)])`) still always yields an
+ * object the protocol can deliver.
+ *
+ * Effect's JSON-schema generator often emits `{ "$ref": "#/$defs/A", $defs: ... }`
+ * at the root for `Schema.Class` (and similar), so local `$ref` targets are resolved
+ * before the `type` check — otherwise those tools would fail registration despite
+ * describing a perfectly callable object schema.
+ */
+const isObjectRootJsonSchema = (
+  value: unknown,
+  documentRoot?: Record<string, unknown>,
+): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const root = documentRoot ?? (value as Record<string, unknown>);
+  const resolved = resolveLocalJsonSchemaRef(root, value, new Set());
+  if (typeof resolved !== "object" || resolved === null || Array.isArray(resolved)) return false;
+  const schema = resolved as Record<string, unknown>;
   const combinatorKeys = (["anyOf", "oneOf", "allOf"] as const).filter((key) => key in schema);
   if (combinatorKeys.length > 0) {
     // Every present combinator's branches must all be object-root; a single
     // non-object branch means the instance could be a value the protocol cannot
-    // express as a string-keyed record.
+    // express as a string-keyed record. Resolve branches against the same document
+    // root so nested `$ref`s inside `$defs` still resolve.
     return combinatorKeys.every((key) => {
       const branches = schema[key];
       return (
-        Array.isArray(branches) && branches.length > 0 && branches.every(isObjectRootJsonSchema)
+        Array.isArray(branches) &&
+        branches.length > 0 &&
+        branches.every((branch) => isObjectRootJsonSchema(branch, root))
       );
     });
   }
@@ -358,9 +401,8 @@ export const validatePluginToolResult = (
   if (!Array.isArray(record.content)) {
     return { ok: false, detail: "tool result.content must be an array" };
   }
-  if (record.content.length === 0) {
-    return { ok: false, detail: "tool result.content must be non-empty" };
-  }
+  // Empty content is protocol-valid (MCP CallToolResult has no minItems): a tool
+  // may return only side effects or structuredContent with no text blocks.
   if (record.content.length > PLUGIN_TOOL_MAX_CONTENT_ITEMS) {
     return {
       ok: false,

@@ -551,6 +551,28 @@ it.effect("source control rejects cwd/bodyFile outside the plugin's granted root
     }
     assert.deepEqual(createCalls, []);
 
+    // Relative bodyFile is resolved against request.cwd (gh's working dir), not
+    // the server process cwd — so "body.md" validates as "/repo/body.md".
+    const relativeOk = yield* Effect.result(
+      capability.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature",
+        title: "PR",
+        bodyFile: "body.md",
+      }),
+    );
+    assert.isTrue(Result.isSuccess(relativeOk));
+    assert.deepEqual(createCalls, [
+      {
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature",
+        title: "PR",
+        bodyFile: "/repo/body.md",
+      },
+    ]);
+
     // cwd pointing at an arbitrary repo is likewise rejected before the gh op.
     const foreignCwd = yield* Effect.result(
       capability.listOpenPullRequests({ cwd: "/other/repo", headSelector: "feature" }),

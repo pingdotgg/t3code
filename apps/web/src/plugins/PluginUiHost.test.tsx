@@ -142,6 +142,54 @@ describe("PluginUiHost", () => {
     expect(emptySnapshot.failures).toEqual({});
   });
 
+  it("reloads when lifecycle state changes at the same version (failed→active)", async () => {
+    const state = createPluginUiHostState();
+    let registerCalls = 0;
+    const module = {
+      default: defineWebPlugin({
+        settings: {
+          schema: Schema.Struct({ token: Schema.String }),
+        },
+        register(ctx: PluginUiContext) {
+          registerCalls += 1;
+          ctx.registerRoute({ path: "board", component: () => null });
+        },
+      }),
+    };
+
+    // First load while failed: declarative settings only, no register().
+    const failedSnapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [
+        pluginInfo({
+          state: "failed",
+          capabilities: ["settings"],
+          hasWeb: true,
+        }),
+      ],
+      waitForHost: async () => undefined,
+      importWebPlugin: async () => module,
+    });
+    expect(registerCalls).toBe(0);
+    expect(failedSnapshot.routes).toHaveLength(0);
+
+    // Same version, now active: must re-run register so routes appear.
+    const activeSnapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [
+        pluginInfo({
+          state: "active",
+          capabilities: ["settings"],
+          hasWeb: true,
+        }),
+      ],
+      waitForHost: async () => undefined,
+      importWebPlugin: async () => module,
+    });
+    expect(registerCalls).toBe(1);
+    expect(activeSnapshot.routes).toHaveLength(1);
+  });
+
   it("resolves registered plugin routes and settings pages without crashing unknown paths", async () => {
     const state = createPluginUiHostState();
     const snapshot = await syncPluginUiHostRegistrations({

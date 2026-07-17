@@ -21,6 +21,7 @@ import { PluginHttpRegistry } from "./PluginHttpRegistry.ts";
 import * as PluginHttpRegistryLayer from "./PluginHttpRegistry.ts";
 import {
   makePluginHttpRouteLayer,
+  parsePluginPath,
   pluginHttpRouteLayer,
   respondToPluginHandlerExit,
 } from "./PluginHttpRoutes.ts";
@@ -197,6 +198,19 @@ it.layer(PluginHttpRegistryLayer.layer)("PluginHttpRegistry", (it) => {
       assert.isTrue(Option.isNone(matched));
     }),
   );
+
+  it("percent-decodes route path segments so non-ASCII registered paths match", () => {
+    // A request to /hooks/plugins/<id>/caf%C3%A9 must produce routePath "/café"
+    // so PluginHttpRegistry can match a descriptor registered as "/café".
+    const parsed = parsePluginPath(`/hooks/plugins/${pluginId}/caf%C3%A9`);
+    assert.isNotNull(parsed);
+    assert.equal(parsed?.pluginId, pluginId);
+    assert.equal(parsed?.routePath, "/café");
+  });
+
+  it("returns null for a malformed percent-escape in the route path", () => {
+    assert.isNull(parsePluginPath(`/hooks/plugins/${pluginId}/bad%E0%A4%A`));
+  });
 
   it.effect("removes a plugin's routes so a closed-scope plugin stops matching", () =>
     Effect.gen(function* () {

@@ -774,16 +774,31 @@ export function PluginsSettingsPanel() {
   const [consentError, setConsentError] = useState<string | null>(null);
   // Monotonic token so an out-of-order catalog response can't overwrite a newer one.
   const catalogGenerationRef = useRef(0);
+  // Concurrent ops (mount refreshSources + refreshCatalog) share the busy UI.
+  // Track every in-flight key so one completion cannot clear another op's busy
+  // state or re-enable controls while work is still pending.
+  const busyKeysRef = useRef(new Set<string>());
 
   const installSourceId = useMemo(
     () => effectiveInstallSourceId(selectedSourceId, sources),
     [selectedSourceId, sources],
   );
 
+  const beginBusy = (key: string) => {
+    busyKeysRef.current.add(key);
+    setBusyKey(key);
+  };
+
+  const endBusy = (key: string) => {
+    busyKeysRef.current.delete(key);
+    setBusyKey(busyKeysRef.current.size === 0 ? null : ([...busyKeysRef.current][0] ?? null));
+  };
+
   const refreshSources = useCallback(async () => {
-    setBusyKey("sources");
+    const myKey = "sources";
+    beginBusy(myKey);
     const result = await commands.listSources(undefined);
-    setBusyKey(null);
+    endBusy(myKey);
     const failure = commandFailureMessage(result, "Could not load plugin sources.");
     if (failure) {
       setSourcesError(failure);
@@ -807,14 +822,16 @@ export function PluginsSettingsPanel() {
     // state — otherwise a slow response for a previously-selected source clobbers the
     // catalog the user is now looking at.
     const generation = ++catalogGenerationRef.current;
-    setBusyKey("catalog");
+    const myKey = "catalog";
+    beginBusy(myKey);
     const result = await commands.catalog(
       selectedSourceId === ALL_PLUGIN_SOURCES_VALUE ? undefined : { sourceId: selectedSourceId },
     );
     if (generation !== catalogGenerationRef.current) {
+      endBusy(myKey);
       return;
     }
-    setBusyKey(null);
+    endBusy(myKey);
     const failure = commandFailureMessage(result, "Could not load the plugin catalog.");
     if (failure) {
       setCatalogError(failure);
@@ -828,9 +845,10 @@ export function PluginsSettingsPanel() {
   }, [commands, selectedSourceId]);
 
   const checkUpdates = useCallback(async () => {
-    setBusyKey("updates");
+    const myKey = "updates";
+    beginBusy(myKey);
     const result = await commands.checkUpdates(undefined);
-    setBusyKey(null);
+    endBusy(myKey);
     const failure = commandFailureMessage(result, "Could not check plugin updates.");
     if (failure) {
       setInstalledError(failure);
@@ -853,9 +871,10 @@ export function PluginsSettingsPanel() {
   const addSource = useCallback(async () => {
     const url = addUrl.trim();
     if (!url) return;
-    setBusyKey("sources");
+    const myKey = "sources";
+    beginBusy(myKey);
     const result = await addPluginSourceFlow(commands, url);
-    setBusyKey(null);
+    endBusy(myKey);
     if (!result.ok) {
       setSourcesError(result.error);
       return;
@@ -868,9 +887,10 @@ export function PluginsSettingsPanel() {
 
   const removeSource = useCallback(
     async (sourceId: string) => {
-      setBusyKey("sources");
+      const myKey = "sources";
+      beginBusy(myKey);
       const result = await removePluginSourceFlow(commands, sourceId);
-      setBusyKey(null);
+      endBusy(myKey);
       if (!result.ok) {
         setSourcesError(result.error);
         return;
@@ -884,9 +904,10 @@ export function PluginsSettingsPanel() {
 
   const toggleEnabled = useCallback(
     async (plugin: PluginInfo, enabled: boolean) => {
-      setBusyKey(plugin.id);
+      const myKey = plugin.id;
+      beginBusy(myKey);
       const result = await commands.setEnabled({ pluginId: plugin.id, enabled });
-      setBusyKey(null);
+      endBusy(myKey);
       const failure = commandFailureMessage(result, "Could not update plugin enabled state.");
       setInstalledError(failure);
     },
@@ -904,9 +925,10 @@ export function PluginsSettingsPanel() {
         pluginId: entry.id,
         version: version.version,
       };
-      setBusyKey(entry.id);
+      const myKey = entry.id;
+      beginBusy(myKey);
       const result = await beginPluginInstallConsentFlow(commands, input);
-      setBusyKey(null);
+      endBusy(myKey);
       if (!result.ok) {
         setCatalogError(result.error);
         return;
@@ -920,9 +942,10 @@ export function PluginsSettingsPanel() {
 
   const beginUpgrade = useCallback(
     async (plugin: PluginInfo, version: string) => {
-      setBusyKey(plugin.id);
+      const myKey = plugin.id;
+      beginBusy(myKey);
       const result = await commands.beginUpgrade({ pluginId: plugin.id, version });
-      setBusyKey(null);
+      endBusy(myKey);
       const failure = commandFailureMessage(result, "Could not stage plugin upgrade.");
       if (failure) {
         setInstalledError(failure);
@@ -952,12 +975,13 @@ export function PluginsSettingsPanel() {
   const confirmStaged = useCallback(async () => {
     const staged = stagedAction;
     if (!staged) return;
-    setBusyKey("consent");
+    const myKey = "consent";
+    beginBusy(myKey);
     if (staged.intent === "install") {
       const result = await confirmPluginInstallConsentFlow(commands, {
         stageToken: staged.staged.stageToken,
       });
-      setBusyKey(null);
+      endBusy(myKey);
       if (!result.ok) {
         setConsentError(result.error);
         return;
@@ -969,7 +993,7 @@ export function PluginsSettingsPanel() {
     }
 
     const result = await commands.confirmUpgrade({ stageToken: staged.staged.stageToken });
-    setBusyKey(null);
+    endBusy(myKey);
     const failure = commandFailureMessage(result, "Could not upgrade plugin.");
     if (failure) {
       setConsentError(failure);
@@ -983,12 +1007,13 @@ export function PluginsSettingsPanel() {
   const confirmUninstall = useCallback(async () => {
     const target = uninstallTarget;
     if (!target) return;
-    setBusyKey(target.plugin.id);
+    const myKey = target.plugin.id;
+    beginBusy(myKey);
     const result = await commands.uninstall({
       pluginId: target.plugin.id,
       removeData: target.removeData,
     });
-    setBusyKey(null);
+    endBusy(myKey);
     const failure = commandFailureMessage(result, "Could not uninstall plugin.");
     if (failure) {
       setInstalledError(failure);

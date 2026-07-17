@@ -76,7 +76,11 @@ const isNodeNotFound = (cause: unknown): boolean =>
   typeof cause === "object" &&
   cause !== null &&
   "code" in cause &&
-  (cause as { readonly code?: unknown }).code === "ENOENT";
+  // ENOENT: path component missing. ENOTDIR: an intermediate component is a
+  // file (e.g. lstat("file.txt/child")) — treat both as "does not exist" for
+  // exists()/lstatOrNull so callers get false instead of a hard I/O error.
+  ((cause as { readonly code?: unknown }).code === "ENOENT" ||
+    (cause as { readonly code?: unknown }).code === "ENOTDIR");
 
 const isNodeSymlinkLoop = (cause: unknown): boolean =>
   typeof cause === "object" &&

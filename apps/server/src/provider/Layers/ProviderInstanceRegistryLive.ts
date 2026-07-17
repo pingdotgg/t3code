@@ -247,7 +247,14 @@ const makeReconcile = <R>(input: {
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        // Also rebuild when the driver is no longer registered (e.g. a plugin
+        // provider was disabled/uninstalled): entryEqual alone would keep a
+        // live instance whose driver code is gone instead of an unavailable
+        // snapshot.
+        if (
+          nextEntry !== undefined &&
+          (!entryEqual(live.entry, nextEntry) || !driversById.has(live.entry.driver))
+        ) {
           replacedIds.add(instanceId);
         }
       }

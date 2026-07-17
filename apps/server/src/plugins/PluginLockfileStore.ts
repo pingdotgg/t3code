@@ -218,20 +218,23 @@ const acquireAdvisoryLock = (input: {
           yield* file.writeAll(new TextEncoder().encode(`${ownerToken}\n`)).pipe(
             Effect.andThen(file.sync),
             Effect.onError(() =>
-              fs.readFileString(input.advisoryLockPath).pipe(
-                Effect.flatMap((content) => {
-                  const trimmed = content.trim();
-                  // Remove only what is OURS: our token, or an empty file (our
-                  // `wx` created it but the write failed before any token
-                  // landed). A different non-empty token means another process
-                  // reclaimed the lock and wrote its own — leave that valid lock
-                  // in place.
-                  return trimmed === "" || trimmed === ownerToken
-                    ? fs.remove(input.advisoryLockPath, { force: true })
-                    : Effect.void;
-                }),
-                Effect.ignore,
-              ),
+              // Atomic claim-then-inspect: a read-then-remove race can delete
+              // another process's lock after it reclaims the stale file (we
+              // read our empty/token, they rewrite, we remove). Rename the
+              // path to a unique claim file first; only remove if the claimed
+              // contents are still ours (or empty). If the contents belong to
+              // another holder, put the lock back.
+              Effect.gen(function* () {
+                const claimPath = `${input.advisoryLockPath}.claim-${ownerToken.replaceAll(":", "-")}`;
+                yield* fs.rename(input.advisoryLockPath, claimPath);
+                const content = yield* fs.readFileString(claimPath);
+                const trimmed = content.trim();
+                if (trimmed === "" || trimmed === ownerToken) {
+                  yield* fs.remove(claimPath, { force: true });
+                } else {
+                  yield* fs.rename(claimPath, input.advisoryLockPath);
+                }
+              }).pipe(Effect.ignore),
             ),
           );
         }),

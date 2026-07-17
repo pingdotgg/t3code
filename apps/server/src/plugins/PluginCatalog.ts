@@ -77,7 +77,10 @@ export const make = Effect.fn("PluginCatalog.make")(function* () {
     readInstalledManifest(pluginId, entry).pipe(
       Effect.map(
         (manifest): PluginInfo => ({
-          id: manifest.id,
+          // Always use the lockfile key, not manifest.id: management actions
+          // target the installed entry. A mismatched manifest id would otherwise
+          // make catalog rows point at the wrong / nonexistent plugin.
+          id: PluginId.make(pluginId),
           name: manifest.name,
           version: manifest.version,
           state: entry.state,

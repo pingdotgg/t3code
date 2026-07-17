@@ -116,15 +116,35 @@ const removedObjects = (
 // Strip single-quoted string literals ('...', with '' as an escaped quote) and
 // comments (-- to end of line, /* */ block) from a SQL body so the core-table
 // word-scan below only sees real identifiers, not table names mentioned inside a
-// RAISE message or a `-- mirrors the users feed` comment. Double-quoted "..."
-// spans are quoted IDENTIFIERS in SQLite and CAN be genuine table references, so
-// they are copied through intact — a stray `'` inside one must not flip
-// string-literal state either. Deliberately a dumb single-pass lexer, not a SQL
-// parser: unterminated literals/comments are consumed to the end of the body.
+// RAISE message or a `-- mirrors the users feed` comment. Quoted IDENTIFIERS —
+// double-quoted "...", square-bracket [...], and backtick `...` — CAN be genuine
+// table references, so they are copied through intact; a stray `'` inside one
+// (e.g. `[owner's data]`) must not flip string-literal state and truncate the
+// rest of the body. Deliberately a dumb single-pass lexer, not a SQL parser:
+// unterminated literals/comments are consumed to the end of the body.
 const stripSqlLiteralsAndComments = (sql: string): string => {
   let out = "";
   let index = 0;
   const length = sql.length;
+
+  const copyQuotedIdentifier = (open: string, close: string, escapeDoubled: boolean) => {
+    out += open;
+    index++;
+    while (index < length) {
+      out += sql[index];
+      if (sql[index] === close) {
+        if (escapeDoubled && sql[index + 1] === close) {
+          out += sql[index + 1];
+          index += 2;
+          continue;
+        }
+        index++;
+        break;
+      }
+      index++;
+    }
+  };
+
   while (index < length) {
     const char = sql[index];
     if (char === "'") {
@@ -144,21 +164,17 @@ const stripSqlLiteralsAndComments = (sql: string): string => {
       continue;
     }
     if (char === '"') {
-      out += char;
-      index++;
-      while (index < length) {
-        out += sql[index];
-        if (sql[index] === '"') {
-          if (sql[index + 1] === '"') {
-            out += sql[index + 1];
-            index += 2;
-            continue;
-          }
-          index++;
-          break;
-        }
-        index++;
-      }
+      copyQuotedIdentifier('"', '"', true);
+      continue;
+    }
+    if (char === "[") {
+      // SQL Server / SQLite bracket identifiers: `]` ends; `]]` is an escaped `]`.
+      copyQuotedIdentifier("[", "]", true);
+      continue;
+    }
+    if (char === "`") {
+      // MySQL-style backtick identifiers; doubled `` is the escape form.
+      copyQuotedIdentifier("`", "`", true);
       continue;
     }
     if (char === "-" && sql[index + 1] === "-") {
@@ -327,6 +343,17 @@ export const make = Effect.fn("PluginMigrator.make")(function* () {
             const tempBefore = yield* sql<{ readonly name: string; readonly sql: string | null }>`
               SELECT name, sql FROM sqlite_temp_master
             `.pipe(Effect.orElseSucceed(() => []));
+            // Snapshot attachments BEFORE the migration so pre-existing ATTACHes
+            // on this shared SqlClient are not treated as migration violations
+            // (and must never be DETACHed — that would break other code on the
+            // connection). Only names ADDED (or pre-existing ones REMOVED) by
+            // the migration are violations.
+            const databasesBefore = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
+            const attachedBefore = new Set(
+              databasesBefore
+                .filter((database) => database.name !== "main" && database.name !== "temp")
+                .map((database) => database.name),
+            );
             yield* migration.up.pipe(
               Effect.provideService(SqlClient.SqlClient, sql),
               Effect.mapError(
@@ -344,25 +371,34 @@ export const make = Effect.fn("PluginMigrator.make")(function* () {
             // outright rather than pretend they are covered.
             // database_list always reports "main" (and "temp" once the temp
             // schema exists); anything else is an ATTACHed database.
-            const databases = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
-            const attachedDatabases = databases.filter(
+            const databasesAfter = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
+            const attachedAfter = databasesAfter.filter(
               (database) => database.name !== "main" && database.name !== "temp",
             );
-            if (attachedDatabases.length > 0) {
-              // Best-effort DETACH of EVERY attachment, not `.find(...)`'s first: a
-              // migration that attached two databases used to leave the second one
-              // live on the SHARED connection after the violation — leaked file
-              // handles and schema visible to every later database operation.
-              yield* Effect.forEach(attachedDatabases, (database) =>
+            const attachedAfterNames = new Set(attachedAfter.map((database) => database.name));
+            const newlyAttached = attachedAfter.filter(
+              (database) => !attachedBefore.has(database.name),
+            );
+            const removedPreExisting = [...attachedBefore].filter(
+              (name) => !attachedAfterNames.has(name),
+            );
+            if (newlyAttached.length > 0 || removedPreExisting.length > 0) {
+              // Best-effort DETACH of only what THIS migration attached — never
+              // touch pre-existing attachments that other code may rely on.
+              yield* Effect.forEach(newlyAttached, (database) =>
                 sql
                   .unsafe(`DETACH DATABASE "${database.name.replaceAll('"', '""')}"`)
                   .unprepared.pipe(Effect.ignore),
               );
+              const objectName = newlyAttached[0]?.name ?? removedPreExisting[0] ?? "unknown";
               return yield* new PluginMigrationViolation({
                 pluginId,
                 version: migration.version,
-                objectName: attachedDatabases[0]!.name,
-                detail: "ATTACH DATABASE is not permitted in plugin migrations",
+                objectName,
+                detail:
+                  newlyAttached.length > 0
+                    ? "ATTACH DATABASE is not permitted in plugin migrations"
+                    : "DETACH DATABASE of a pre-existing attachment is not permitted in plugin migrations",
               });
             }
             const tempAfter = yield* sql<{ readonly name: string; readonly sql: string | null }>`
