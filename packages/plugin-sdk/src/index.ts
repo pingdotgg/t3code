@@ -1432,21 +1432,11 @@ export interface PluginProviderDriver {
     readonly threadId: ThreadId;
     /** Already decoded against `configSchema`. */
     readonly config: unknown;
-    /**
-     * Emit streaming output. CLOSED by the host over this session's provider and
-     * thread — it is not a bus you can address elsewhere. Output is only produced
-     * while a TURN is active (i.e. during a `sendTurn` call for this thread); the
-     * host stamps each event with the active turn's id. Emits made outside an active
-     * turn — between turns, or after `stopSession` — are dropped and logged rather
-     * than crashing anything. Emit from within your `sendTurn`, not from background
-     * work that outlives it.
-     */
-    readonly emit: (event: PluginProviderEvent) => void;
   }) => Effect.Effect<void, Error>;
 
   /**
    * Run one turn. The turn is over when this effect RETURNS (success) or FAILS —
-   * stream text with `emit` while it runs.
+   * stream text with the `emit` passed HERE while it runs.
    *
    * There is deliberately no "turn finished" event: two ways to signal completion is
    * how a thread ends up silently empty, with the host waiting for an event that
@@ -1457,6 +1447,13 @@ export interface PluginProviderDriver {
     /** Host-stamped, so concurrent turns and interrupts correlate. */
     readonly turnId: TurnId;
     readonly prompt: string;
+    /**
+     * Emit streaming output for THIS turn. Bound by the host to this exact turn: the
+     * host stamps each event with `turnId`, and an emit made after this turn ends
+     * (e.g. from background work that outlived your `sendTurn`) is dropped rather than
+     * mis-attributed to a later turn. Emit only from within this call.
+     */
+    readonly emit: (event: PluginProviderEvent) => void;
   }) => Effect.Effect<void, Error>;
 
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, Error>;

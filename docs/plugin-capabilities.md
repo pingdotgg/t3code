@@ -302,12 +302,12 @@ providers: [
     driver: {
       startSession: (input) =>
         Effect.sync(() => {
-          /* capture input.config, input.emit */
+          /* capture input.config */
         }),
       sendTurn: (input) =>
         Effect.gen(function* () {
-          // stream output via the emit captured at startSession:
-          // emit({ type: "assistant-delta", text })
+          // stream output via THIS turn's emit (passed to sendTurn, not startSession):
+          // input.emit({ type: "assistant-delta", text })
           // the turn ends when this effect returns or fails — there is no terminal event
         }),
       stopSession: (threadId) => Effect.void,
@@ -318,8 +318,9 @@ providers: [
 ```
 
 The host owns identity: it stamps every event's id, provider kind, thread, and turn, so
-a plugin cannot attribute output to another provider's thread. `emit` is closed over
-the session and drops anything sent outside a turn. `config` arrives **decoded** —
+a plugin cannot attribute output to another provider's thread. `emit` is bound to the
+turn it is passed to (`sendTurn`): the host drops a delta emitted after that turn ends,
+so a late emit from background work is never mixed into a later turn. `config` arrives **decoded** —
 validated against `configSchema` before `startSession` runs, so there is no raw
 `unknown` to defend against.
 
