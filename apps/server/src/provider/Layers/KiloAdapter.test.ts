@@ -130,6 +130,9 @@ const KiloRuntimeTestDouble: KiloRuntimeShape = {
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
             }
+            // Keep the subscription open so a clean stream end does not tear
+            // the session down mid-test (production SSE is long-lived).
+            await new Promise(() => {});
           })(),
         }),
       },
