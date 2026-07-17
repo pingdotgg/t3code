@@ -54,7 +54,10 @@ export function assertRgbaImage(data: Uint8Array, imageWidth: number, imageHeigh
   }
 }
 
-function encodeKittyCommand(command: string, transport: KittyProtocolTransport): string {
+export function encodeKittyCommand(
+  command: string,
+  transport: KittyProtocolTransport = "direct",
+): string {
   if (transport === "direct") return command;
   // tmux passthrough is a DCS payload prefixed with "tmux;". Every ESC in the
   // wrapped command must be doubled so tmux forwards it instead of parsing it.

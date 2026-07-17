@@ -36,6 +36,33 @@ import { decodeImage } from "@t3tools/opentui-image";
 const preview = await decodeImage(encoded, { maxWidth: 720, maxHeight: 480 });
 ```
 
+## Rich clipboard paste
+
+`installKittyClipboardExtension(renderer)` adds Kitty OSC 5522 paste-event support.
+Activate it only while an editor that understands MIME-aware paste owns input:
+
+```ts
+import { getKittyClipboardManager, installKittyClipboardExtension } from "@t3tools/opentui-image";
+
+installKittyClipboardExtension(renderer);
+
+const deactivate = getKittyClipboardManager(renderer).activate({
+  maxBytes: 10 * 1024 * 1024,
+  onError: console.error,
+});
+```
+
+The manager requests a supported image before the plain-text fallback, decodes
+each protocol chunk independently, and emits the result through OpenTUI's normal
+paste event with `metadata.mimeType` and `metadata.kind`. Call `deactivate()` when
+the editor loses focus so terminal panes and other inputs retain normal bracketed
+paste behavior.
+
+Kitty may ask for clipboard-read permission unless its `clipboard_control`
+configuration allows reads. When tmux passthrough is enabled, the clipboard
+extension uses the same DCS envelope as image rendering; tmux still requires
+`set -g allow-passthrough on`.
+
 ## React
 
 Import the React entry point once to register the custom intrinsic element:
