@@ -7,15 +7,6 @@
       "layers": [
         {
           "glass": true,
-          "image-name": "text-glass.svg",
-          "name": "Text Glass",
-          "position": {
-            "scale": 8.5,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
-          "glass": false,
           "image-name": "text.svg",
           "name": "Text",
           "position": {
