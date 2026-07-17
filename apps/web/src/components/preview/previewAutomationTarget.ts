@@ -23,3 +23,15 @@ export function resolvePreviewAutomationTarget(
   const snapshot = requestedTabId ? (state.sessions[requestedTabId] ?? null) : state.snapshot;
   return { tabId: snapshot?.tabId ?? null, snapshot };
 }
+
+export function resolvePreviewAutomationOpenTab(
+  state: PreviewAutomationSessionIndex,
+  requestedTabId: string | undefined,
+  reuseExistingTab: boolean,
+): string | null {
+  if (!reuseExistingTab) return null;
+  if (requestedTabId !== undefined) {
+    return state.sessions[requestedTabId]?.tabId ?? null;
+  }
+  return state.snapshot?.tabId ?? null;
+}

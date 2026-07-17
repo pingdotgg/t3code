@@ -17,24 +17,88 @@ vi.mock("@legendapp/list/react", async () => {
       anchorIndex: number;
       anchorMaxSize?: number;
       anchorOffset?: number;
+      onReady?: (info: { anchorIndex: number }) => void;
+      onSizeChanged?: (size: number) => void;
     };
     contentInsetEndAdjustment?: number;
+    className?: string;
+    maintainScrollAtEnd?:
+      | boolean
+      | {
+          animated?: boolean;
+          on?: {
+            dataChange?: boolean;
+            itemLayout?: boolean;
+            layout?: boolean;
+          };
+        };
+    maintainVisibleContentPosition?:
+      | boolean
+      | {
+          data?: boolean;
+          size?: boolean;
+          shouldRestorePosition?: (item: { id: string }) => boolean;
+        };
     ref?: Ref<LegendListRef>;
-  }) => (
-    <div
-      data-testid={legendListTestId}
-      data-anchor-index={props.anchoredEndSpace?.anchorIndex}
-      data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
-      data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
-      data-content-inset-end={props.contentInsetEndAdjustment}
-    >
-      {props.ListHeaderComponent}
-      {props.data.map((item) => (
-        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-      ))}
-      {props.ListFooterComponent}
-    </div>
-  );
+  }) => {
+    if (props.anchoredEndSpace) {
+      props.anchoredEndSpace.onSizeChanged?.(240);
+      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+    }
+    return (
+      <div
+        data-testid={legendListTestId}
+        data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
+        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
+        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
+        data-content-inset-end={props.contentInsetEndAdjustment}
+        data-class-name={props.className}
+        data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
+        data-maintain-scroll-at-end-animated={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.animated
+            : undefined
+        }
+        data-maintain-scroll-at-end-data-change={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.dataChange
+            : undefined
+        }
+        data-maintain-scroll-at-end-item-layout={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.itemLayout
+            : undefined
+        }
+        data-maintain-scroll-at-end-layout={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.layout
+            : undefined
+        }
+        data-maintain-visible-content-position={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? "object"
+            : props.maintainVisibleContentPosition
+        }
+        data-maintain-visible-content-position-data={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.data
+            : undefined
+        }
+        data-maintain-visible-content-position-size={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+      >
+        {props.ListHeaderComponent}
+        {props.data.map((item) => (
+          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+        ))}
+        {props.ListFooterComponent}
+      </div>
+    );
+  };
 
   return { LegendList };
 });
@@ -123,8 +187,11 @@ function buildProps() {
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
     anchorMessageId: null,
+    onAnchorReady: () => {},
+    onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
+    onManualNavigation: () => {},
   };
 }
 
@@ -152,8 +219,47 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
+    const {
+      resolveTimelineIsAtEnd,
+      resolveTimelineMinimapHasPersistentGutter,
+      resolveTimelineMinimapHeightStyle,
+      resolveTimelineMinimapIndexFromPointer,
+      resolveTimelineMinimapTopPercent,
+    } = await import("./MessagesTimeline.logic");
+
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
+    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+
+    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+    expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
+    expect(
+      resolveTimelineMinimapIndexFromPointer({
+        itemCount: 101,
+        railTop: 100,
+        railHeight: 500,
+        pointerY: 350,
+      }),
+    ).toBe(50);
+    expect(
+      resolveTimelineMinimapIndexFromPointer({
+        itemCount: 101,
+        railTop: 100,
+        railHeight: 500,
+        pointerY: 999,
+      }),
+    ).toBe(100);
+    expect(resolveTimelineMinimapHasPersistentGutter(832)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(863)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
+  });
+
   it("anchors a sent attachment message using its measured height", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
+    const onAnchorReady = vi.fn();
+    const onAnchorSizeChanged = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -177,6 +283,8 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         anchorMessageId={secondEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        onAnchorSizeChanged={onAnchorSizeChanged}
         contentInsetEndAdjustment={144}
         timelineEntries={[firstEntry, secondEntry]}
       />,
@@ -184,8 +292,17 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-anchor-index="1"');
     expect(markup).toContain('data-anchor-offset="16"');
+    expect(markup).toContain('data-anchor-on-ready="true"');
     expect(markup).not.toContain("data-anchor-max-size=");
     expect(markup).toContain('data-content-inset-end="144"');
+    expect(markup).toContain("[overflow-anchor:none]");
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-visible-content-position="object"');
+    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+    expect(onAnchorReady).toHaveBeenCalledOnce();
+    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
   });
 
   it("renders collapse controls for long user messages", async () => {
@@ -198,6 +315,11 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
+    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');

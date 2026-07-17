@@ -228,7 +228,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
-        assert.match(String(delta.itemId), /^assistant:mock-session-1:segment:0$/);
+        assert.match(String(delta.itemId), /^assistant:mock-session-1:runtime:[^:]+:segment:0$/);
       }
 
       const assistantCompleted = runtimeEvents.find(
@@ -687,7 +687,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (contentDelta?.type === "content.delta") {
             assert.equal(String(contentDelta.turnId), String(turn.turnId));
             assert.equal(contentDelta.payload.delta, "hello from mock");
-            assert.equal(String(contentDelta.itemId), "assistant:mock-session-1:segment:0");
+            assert.match(
+              String(contentDelta.itemId),
+              /^assistant:mock-session-1:runtime:[^:]+:segment:0$/,
+            );
           }
         });
 
@@ -974,8 +977,13 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (String(event.threadId) !== String(threadId)) {
             return;
           }
-          if (event.type === "request.opened" && !interrupted) {
+          if (event.type === "request.opened" && event.requestId && !interrupted) {
             interrupted = true;
+            yield* adapter.respondToRequest(
+              threadId,
+              ApprovalRequestId.make(String(event.requestId)),
+              "cancel",
+            );
             yield* adapter.interruptTurn(threadId);
             return;
           }
@@ -1021,24 +1029,20 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         assert.equal(turnCompleted.payload.stopReason, "cancelled");
       }
 
-      const requests = yield* waitForJsonLogMatch(
+      const isCancelledApprovalResponse = (entry: Record<string, unknown>) =>
+        !("method" in entry) &&
+        typeof entry.result === "object" &&
+        entry.result !== null &&
+        "outcome" in entry.result &&
+        typeof entry.result.outcome === "object" &&
+        entry.result.outcome !== null &&
+        "outcome" in entry.result.outcome &&
+        entry.result.outcome.outcome === "cancelled";
+      const approvalResponses = yield* waitForJsonLogMatch(
         requestLogPath,
-        (entry) => entry.method === "session/cancel",
+        isCancelledApprovalResponse,
       );
-      assert.isTrue(requests.some((entry) => entry.method === "session/cancel"));
-      assert.isTrue(
-        requests.some(
-          (entry) =>
-            !("method" in entry) &&
-            typeof entry.result === "object" &&
-            entry.result !== null &&
-            "outcome" in entry.result &&
-            typeof entry.result.outcome === "object" &&
-            entry.result.outcome !== null &&
-            "outcome" in entry.result.outcome &&
-            entry.result.outcome.outcome === "cancelled",
-        ),
-      );
+      assert.isTrue(approvalResponses.some(isCancelledApprovalResponse));
 
       yield* adapter.stopSession(threadId);
     }),
