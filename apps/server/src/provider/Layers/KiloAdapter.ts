@@ -1021,7 +1021,11 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         const existing = sessions.get(input.threadId);
         if (existing) {
           yield* stopKiloContext(existing);
-          sessions.delete(input.threadId);
+          // Only remove the map entry if it still points at the context we
+          // stopped — a concurrent startSession may already have replaced it.
+          if (sessions.get(input.threadId) === existing) {
+            sessions.delete(input.threadId);
+          }
         }
 
         const started = yield* Effect.gen(function* () {
