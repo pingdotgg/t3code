@@ -68,7 +68,7 @@ describe("Kitty graphics protocol", () => {
     expect(encodeKittyDelete(42)).toBe("\x1b_Ga=d,d=i,i=42,q=2\x1b\\");
   });
 
-  it("wraps every graphics command for tmux while leaving cursor positioning in the pane", () => {
+  it("uses a cursor-independent Unicode virtual placement through tmux", () => {
     const output = encodeKittyTransmit(
       {
         imageId: 7,
@@ -83,10 +83,11 @@ describe("Kitty graphics protocol", () => {
       "tmux",
     );
 
-    expect(output).toStartWith("\x1b7\x1b[4;3H\x1bPtmux;\x1b\x1b_G");
-    expect(output).toEndWith("\x1b\x1b\\\x1b\\\x1b8");
-    expect(output).not.toContain("\x1bPtmux;\x1b[4;3H");
-    expect(output).not.toContain("\x1bPtmux;\x1b\x1b7");
+    expect(output).toStartWith("\x1bPtmux;\x1b\x1b_Ga=T,U=1,");
+    expect(output).toEndWith("\x1b\x1b\\\x1b\\");
+    expect(output).not.toContain("\x1b[4;3H");
+    expect(output).not.toContain("\x1b7");
+    expect(output).not.toContain("\x1b8");
   });
 
   it("wraps Kitty deletion for tmux passthrough", () => {

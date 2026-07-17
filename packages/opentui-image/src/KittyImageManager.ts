@@ -28,6 +28,13 @@ export interface KittyImagePatch {
   readonly data: Uint8Array;
 }
 
+export interface KittyImageSubmission {
+  readonly imageId: number;
+  readonly transport: KittyProtocolTransport;
+  /** Unicode placeholders may be painted only after their virtual placement was uploaded. */
+  readonly ready: boolean;
+}
+
 export interface KittyImageExtensionOptions {
   /** Use `always` only if the host independently established Kitty support. */
   readonly capability?: "auto" | "always";
@@ -49,7 +56,7 @@ export class KittyImageManager {
   #writer: KittyImageWriter;
   #capability: "auto" | "always";
   #tmuxPassthrough: boolean;
-  readonly #pending = new Map<number, KittyImagePatch>();
+  readonly #pending = new Map<number, ActivePatch>();
   #active = new Map<number, ActivePatch>();
   #nextImageId = 1;
   #scrollPaused = false;
@@ -116,8 +123,8 @@ export class KittyImageManager {
     this.#pending.clear();
   }
 
-  submit(patch: KittyImagePatch): void {
-    if (this.#disposed || this.#scrollPaused) return;
+  submit(patch: KittyImagePatch): KittyImageSubmission | null {
+    if (this.#disposed || this.#scrollPaused) return null;
     assertRgbaImage(patch.data, patch.imageWidth, patch.imageHeight);
     if (!Number.isSafeInteger(patch.columns) || patch.columns <= 0) {
       throw new RangeError("columns must be a positive safe integer");
@@ -125,7 +132,18 @@ export class KittyImageManager {
     if (!Number.isSafeInteger(patch.rows) || patch.rows <= 0) {
       throw new RangeError("rows must be a positive safe integer");
     }
-    this.#pending.set(patch.key, patch);
+    if (!this.isSupported) return null;
+
+    const transport = this.#transport();
+    const active = this.#active.get(patch.key);
+    if (active && active.transport === transport && samePatch(active, patch)) {
+      this.#pending.set(patch.key, active);
+      return { imageId: active.imageId, transport: active.transport, ready: true };
+    }
+
+    const submission = { ...patch, imageId: this.#allocateImageId(), transport };
+    this.#pending.set(patch.key, submission);
+    return { imageId: submission.imageId, transport: submission.transport, ready: false };
   }
 
   flushFrame(): void {
@@ -139,6 +157,7 @@ export class KittyImageManager {
     const output: string[] = [];
     const nextActive = new Map<number, ActivePatch>();
     const transport = this.#transport();
+    let needsPlaceholderRender = false;
 
     for (const [key, active] of this.#active) {
       const pending = this.#pending.get(key);
@@ -154,13 +173,14 @@ export class KittyImageManager {
         continue;
       }
 
-      const imageId = this.#allocateImageId();
-      output.push(encodeKittyTransmit({ ...pending, imageId }, transport));
-      nextActive.set(key, { ...pending, imageId, transport });
+      output.push(encodeKittyTransmit(pending, transport));
+      nextActive.set(key, pending);
+      if (transport === "tmux") needsPlaceholderRender = true;
     }
 
     this.#active = nextActive;
     if (output.length > 0) this.#writer.write(output.join(""));
+    if (needsPlaceholderRender) this.#renderer.requestRender();
   }
 
   /**
@@ -220,7 +240,8 @@ export class KittyImageManager {
 
   #allocateImageId(): number {
     const imageId = this.#nextImageId;
-    this.#nextImageId = imageId === 0xffff_ffff ? 1 : imageId + 1;
+    // tmux Unicode placeholders encode the image id in a truecolor foreground.
+    this.#nextImageId = imageId === 0xff_ffff ? 1 : imageId + 1;
     return imageId;
   }
 

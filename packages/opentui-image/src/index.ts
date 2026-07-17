@@ -3,3 +3,4 @@ export * from "./ImageRenderable.ts";
 export * from "./KittyClipboardManager.ts";
 export * from "./KittyImageManager.ts";
 export * from "./kittyProtocol.ts";
+export * from "./unicodePlaceholder.ts";

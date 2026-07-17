@@ -87,6 +87,12 @@ the host has positively identified a Kitty-capable outer terminal, pass
 set -g allow-passthrough on
 ```
 
+Under tmux, images use Kitty Unicode virtual placements. OpenTUI paints the
+corresponding Unicode placeholder cells into the pane while only the pixel
+upload passes through to the outer terminal. This keeps placement relative to
+the pane and lets tmux handle splits, status bars, and redraws without relying
+on the outer terminal's cursor position.
+
 The option is deliberately not inferred from tmux alone: an unidentified outer
 terminal may not implement Kitty graphics and should retain the text/link
 fallback.

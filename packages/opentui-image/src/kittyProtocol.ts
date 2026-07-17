@@ -104,22 +104,21 @@ export function encodeKittyTransmit(
   // total if the validation rules ever expand to permit zero-sized placeholders.
   if (chunks.length === 0) chunks.push("");
 
+  const virtualPlacement = transport === "tmux";
+  const commands = chunks
+    .map((chunk, index) => {
+      const more = index === chunks.length - 1 ? 0 : 1;
+      if (index === 0) {
+        return encodeKittyCommand(
+          `${ESC}_Ga=T,${virtualPlacement ? "U=1," : ""}f=32,s=${imageWidth},v=${imageHeight},x=${sourceX},y=${sourceY},w=${sourceWidth},h=${sourceHeight},c=${columns},r=${rows},C=1,i=${imageId},m=${more},q=2;${chunk}${ST}`,
+          transport,
+        );
+      }
+      return encodeKittyCommand(`${ESC}_Gm=${more},q=2;${chunk}${ST}`, transport);
+    })
+    .join("");
+  if (virtualPlacement) return commands;
+
   const cursor = `${ESC}[${Math.max(0, Math.trunc(y)) + 1};${Math.max(0, Math.trunc(x)) + 1}H`;
-  return (
-    SAVE_CURSOR +
-    cursor +
-    chunks
-      .map((chunk, index) => {
-        const more = index === chunks.length - 1 ? 0 : 1;
-        if (index === 0) {
-          return encodeKittyCommand(
-            `${ESC}_Ga=T,f=32,s=${imageWidth},v=${imageHeight},x=${sourceX},y=${sourceY},w=${sourceWidth},h=${sourceHeight},c=${columns},r=${rows},C=1,i=${imageId},m=${more},q=2;${chunk}${ST}`,
-            transport,
-          );
-        }
-        return encodeKittyCommand(`${ESC}_Gm=${more},q=2;${chunk}${ST}`, transport);
-      })
-      .join("") +
-    RESTORE_CURSOR
-  );
+  return SAVE_CURSOR + cursor + commands + RESTORE_CURSOR;
 }

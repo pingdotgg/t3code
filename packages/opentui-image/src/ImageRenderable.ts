@@ -10,6 +10,10 @@ import {
 
 import { getKittyImageManager, type KittyImageManager } from "./KittyImageManager.ts";
 import { assertRgbaImage } from "./kittyProtocol.ts";
+import {
+  encodeKittyUnicodePlaceholder,
+  KITTY_UNICODE_PLACEHOLDER_LIMIT,
+} from "./unicodePlaceholder.ts";
 
 const DEFAULT_CELL_WIDTH = 18;
 const DEFAULT_CELL_HEIGHT = 35;
@@ -137,7 +141,7 @@ export class ImageRenderable extends Renderable {
       buffer.drawText(label, x, y, SCROLL_PLACEHOLDER_COLOR);
       return;
     }
-    this.#manager.submit({
+    const submission = this.#manager.submit({
       key: this.num,
       revision: this.#revision,
       x: visible.x,
@@ -152,6 +156,9 @@ export class ImageRenderable extends Renderable {
       rows: visible.rows,
       data: this.#data,
     });
+    if (submission?.transport === "tmux" && submission.ready) {
+      this.#renderUnicodePlaceholders(buffer, visible, submission.imageId);
+    }
   }
 
   protected override destroySelf(): void {
@@ -170,6 +177,28 @@ export class ImageRenderable extends Renderable {
     });
     this.width = size.columns;
     this.height = size.rows;
+  }
+
+  #renderUnicodePlaceholders(
+    buffer: OptimizedBuffer,
+    visible: VisibleImageRect,
+    imageId: number,
+  ): void {
+    const rows = Math.min(visible.rows, KITTY_UNICODE_PLACEHOLDER_LIMIT);
+    const columns = Math.min(visible.columns, KITTY_UNICODE_PLACEHOLDER_LIMIT);
+    const imageIdColor = RGBA.fromInts(
+      (imageId >> 16) & 0xff,
+      (imageId >> 8) & 0xff,
+      imageId & 0xff,
+      255,
+    );
+    for (let row = 0; row < rows; row += 1) {
+      let placeholders = "";
+      for (let column = 0; column < columns; column += 1) {
+        placeholders += encodeKittyUnicodePlaceholder(row, column);
+      }
+      buffer.drawText(placeholders, visible.x, visible.y + row, imageIdColor);
+    }
   }
 
   /**

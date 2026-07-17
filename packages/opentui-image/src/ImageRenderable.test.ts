@@ -1,5 +1,5 @@
 import { BoxRenderable, ScrollBoxRenderable } from "@opentui/core";
-import { createTestRenderer } from "@opentui/core/testing";
+import { createTestRenderer, setRendererCapabilities } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
 
 import { ImageRenderable } from "./ImageRenderable.ts";
@@ -171,6 +171,46 @@ describe("ImageRenderable", () => {
     expect(t.captureCharFrame()).toContain("[ image paused while scrolling ]");
     expect(writes.at(-1)).toContain("a=d");
     manager.resumeAfterScroll();
+    t.renderer.destroy();
+  });
+
+  it("uses tmux-positioned Unicode cells instead of the outer terminal cursor", async () => {
+    const t = await createTestRenderer({ width: 20, height: 8 });
+    const writes: string[] = [];
+    installKittyImageExtension(t.renderer, {
+      capability: "always",
+      tmuxPassthrough: true,
+      writer: { write: (value) => writes.push(value) },
+    });
+    setRendererCapabilities(t.renderer, {
+      kitty_graphics: false,
+      multiplexer: "tmux",
+    });
+    const row = new BoxRenderable(t.renderer, {
+      width: 10,
+      height: 5,
+      paddingLeft: 3,
+      paddingTop: 2,
+    });
+    row.add(
+      new ImageRenderable(t.renderer, {
+        data: new Uint8Array(2 * 2 * 4),
+        imageWidth: 2,
+        imageHeight: 2,
+        columns: 2,
+        rows: 2,
+      }),
+    );
+    t.renderer.root.add(row);
+
+    await t.renderOnce();
+    expect(writes.join("")).toContain("a=T,U=1");
+    expect(t.captureCharFrame()).not.toContain("\u{10eeee}");
+    await t.renderOnce();
+
+    expect(writes.join("")).not.toContain("\x1b[3;4H");
+    const frame = t.captureCharFrame().split("\n");
+    expect(frame[2]?.codePointAt(3)).toBe(0x10eeee);
     t.renderer.destroy();
   });
 });

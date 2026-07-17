@@ -59,12 +59,14 @@ describe("KittyImageManager", () => {
   it("transmits once and deduplicates an unchanged frame", () => {
     const { manager, writes } = createHarness();
     manager.beginFrame();
-    manager.submit(patch());
+    const first = manager.submit(patch());
     manager.flushFrame();
     manager.beginFrame();
-    manager.submit(patch());
+    const second = manager.submit(patch());
     manager.flushFrame();
 
+    expect(first).toMatchObject({ imageId: 1, ready: false });
+    expect(second).toMatchObject({ imageId: 1, ready: true });
     expect(writes).toHaveLength(1);
     expect(writes[0]).toContain("a=T");
   });
