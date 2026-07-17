@@ -66,6 +66,13 @@
             try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
 
+            // Changes panel segmented control: Files (default) then Activity.
+            toggleSection("activity")
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("1b-changes-activity", dir: dir)
+            toggleSection("files")
+            try? await Task.sleep(for: .seconds(0.5))
+
             // Subagent stability: server-driven stall badge (appears on a
             // synthetic session.health stall, clears on active), the delegated
             // sibling-agent roster, and the session.exited stderr disclosure.
