@@ -62,7 +62,7 @@ const promptText = NodeProcess.argv[4] ?? "helo";
 const targetReasoning = NodeProcess.env.CURSOR_REASONING ?? "";
 const targetContext = NodeProcess.env.CURSOR_CONTEXT ?? "";
 const targetFast = NodeProcess.env.CURSOR_FAST ?? "";
-const agentBin = NodeProcess.env.CURSOR_AGENT_BIN ?? "agent";
+const agentBin = NodeProcess.env.CURSOR_AGENT_BIN ?? "cursor-agent";
 const promptWaitMs = Number(NodeProcess.env.CURSOR_PROMPT_WAIT_MS ?? "4000");
 const requestTimeoutMs = Number(NodeProcess.env.CURSOR_REQUEST_TIMEOUT_MS ?? "20000");
 
