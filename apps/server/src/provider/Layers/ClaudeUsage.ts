@@ -1,8 +1,9 @@
 /**
  * ClaudeUsage — account-level subscription usage for the Claude driver.
  *
- * Reads the Claude Code OAuth token from `<home>/.claude/.credentials.json`
- * (the same HOME the driver runs the CLI with) and calls Anthropic's
+ * Reads the Claude Code OAuth token from `<configDir>/.credentials.json`
+ * (the same CLAUDE_CONFIG_DIR the driver runs the CLI with; defaults to
+ * `$HOME/.claude` when no instance config dir is set) and calls Anthropic's
  * OAuth usage endpoint. The endpoint is undocumented and shared with Claude
  * Code itself, so the response is parsed leniently: unknown fields are
  * ignored, model-scoped window labels come from the response verbatim
@@ -241,8 +242,15 @@ export const makeClaudeUsage = Effect.fn("makeClaudeUsage")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
-  const homePath = yield* resolveClaudeHomePath(config, environment);
-  const credentialsPath = path.join(homePath, ".claude", ".credentials.json");
+  // Mirror where the driver's CLI stores credentials: an instance homePath is
+  // used directly as CLAUDE_CONFIG_DIR; otherwise the CLI falls back to the
+  // environment's CLAUDE_CONFIG_DIR, then $HOME/.claude.
+  const resolvedHome = yield* resolveClaudeHomePath(config, environment);
+  const configDir =
+    config.homePath.trim().length > 0
+      ? resolvedHome
+      : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(resolvedHome, ".claude");
+  const credentialsPath = path.join(configDir, ".credentials.json");
 
   const fetchUsage = Effect.gen(function* () {
     const fetchedAt = DateTime.formatIso(yield* DateTime.now);
