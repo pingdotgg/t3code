@@ -35,7 +35,7 @@ export function buildCursorAcpSpawnInput(
   environment?: NodeJS.ProcessEnv,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
-    command: cursorSettings?.binaryPath || "agent",
+    command: cursorSettings?.binaryPath || "cursor-agent",
     args: [
       ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
       "acp",

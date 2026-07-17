@@ -252,11 +252,11 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("agent").pipe(
+    binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "agent", clearWhenEmpty: "omit" },
+        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
       }),
     ),
     apiEndpoint: TrimmedString.pipe(
