@@ -13,7 +13,7 @@ import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
@@ -38,6 +38,7 @@ const flushCallbacks = Effect.yieldNow;
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let allowDowngrade = false;
+  let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
@@ -73,6 +74,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       Effect.sync(() => {
         allowDowngrade = value;
       }),
+    setFullChangelog: (value) =>
+      Effect.sync(() => {
+        fullChangelog = value;
+      }),
     setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
@@ -107,7 +112,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
-  const backendLayer = Layer.succeed(DesktopBackendManager.DesktopBackendManager, {
+  const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
+    id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+    label: Effect.succeed("Windows"),
     start: Effect.void,
     stop: () => options.stopBackend ?? Effect.void,
     currentConfig: Effect.succeed(Option.none()),
@@ -118,7 +125,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartAttempt: 0,
       restartScheduled: false,
     }),
-  });
+    waitForReady: () => Effect.succeed(true),
+  };
+  const backendLayer = DesktopBackendPool.layerTest([stubBackendInstance]);
 
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -152,6 +161,11 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         setServerExposureMode: () => Effect.die("unexpected server exposure update"),
         setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
         setUpdateChannel: () => Effect.fail(setUpdateChannelError),
+        setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+        setWslDistro: () => Effect.die("unexpected WSL distro change"),
+        setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+        applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+        applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
       } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
     : DesktopAppSettings.layer;
 
@@ -177,6 +191,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     layer,
     checkCount: () => checkCount,
     feedUrls: () => feedUrls,
+    fullChangelog: () => fullChangelog,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
@@ -274,6 +289,49 @@ describe("DesktopUpdates", () => {
         assert.equal(state.availableVersion, "1.2.4");
         assert.isNotNull(state.checkedAt);
         assert.equal(harness.sentStates.at(-1)?.status, "available");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* updates.setChannel("nightly");
+        assert.equal(harness.fullChangelog(), true);
+
+        harness.emit("update-available", {
+          version: "1.2.4-nightly.20260709.766",
+          releaseNotes: [
+            {
+              version: "1.2.4-nightly.20260709.766",
+              note: `<h2>What's Changed</h2><ul><li>feat(client): persist offline environment data by <a>@juliusmarminge</a> in <a>#3795</a></li></ul><h2>Full Changelog</h2>`,
+            },
+            {
+              version: "1.2.4-nightly.20260709.765",
+              note: "- [codex] Upgrade Clerk stack by @juliusmarminge in #3821",
+            },
+          ],
+        });
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.deepEqual(state.releaseNotes, [
+          {
+            version: "1.2.4-nightly.20260709.766",
+            items: ["feat(client): persist offline environment data by @juliusmarminge in #3795"],
+          },
+          {
+            version: "1.2.4-nightly.20260709.765",
+            items: ["[codex] Upgrade Clerk stack by @juliusmarminge in #3821"],
+          },
+        ]);
+        assert.deepEqual(harness.sentStates.at(-1)?.releaseNotes, state.releaseNotes);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
