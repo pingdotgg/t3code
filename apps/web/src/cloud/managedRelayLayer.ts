@@ -1,8 +1,4 @@
-import {
-  managedRelayClientLayer,
-  ManagedRelayDpopSigner,
-  ManagedRelayDpopSignerError,
-} from "@t3tools/client-runtime";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -17,8 +13,8 @@ import {
   type BrowserDpopKey,
 } from "./dpop";
 
-export const webRelayDpopSignerLayer = Layer.effect(
-  ManagedRelayDpopSigner,
+export const relayDpopSignerLayer = Layer.effect(
+  ManagedRelay.ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const keyLoadSemaphore = yield* Semaphore.make(1);
@@ -39,24 +35,48 @@ export const webRelayDpopSignerLayer = Layer.effect(
         return generated;
       }),
     );
-    const signerError = (cause: unknown) => new ManagedRelayDpopSignerError({ cause });
-    return ManagedRelayDpopSigner.of({
+
+    return ManagedRelay.ManagedRelayDpopSigner.of({
       thumbprint: loadOrCreateBrowserDpopKey.pipe(
         Effect.map((proofKey) => proofKey.thumbprint),
-        Effect.mapError(signerError),
+        Effect.mapError(
+          (error) =>
+            new ManagedRelay.ManagedRelayDpopKeyLoadError({
+              keyStore: "indexed-db",
+              cause: error,
+            }),
+        ),
+        Effect.withSpan("web.managedRelayDpopSigner.loadThumbprint"),
       ),
-      createProof: (input) =>
-        loadOrCreateBrowserDpopKey.pipe(
-          Effect.flatMap((proofKey) => createBrowserDpopProof({ ...input, proofKey })),
+      createProof: Effect.fn("web.managedRelayDpopSigner.createProof")(function* (input) {
+        const proofKey = yield* loadOrCreateBrowserDpopKey.pipe(
+          Effect.mapError(
+            (error) =>
+              new ManagedRelay.ManagedRelayDpopProofCreationError({
+                method: input.method,
+                url: input.url,
+                cause: error,
+              }),
+          ),
+        );
+        return yield* createBrowserDpopProof({ ...input, proofKey }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.map((proof) => proof.proof),
-          Effect.mapError(signerError),
-        ),
+          Effect.mapError(
+            (error) =>
+              new ManagedRelay.ManagedRelayDpopProofCreationError({
+                method: input.method,
+                url: input.url,
+                cause: error,
+              }),
+          ),
+        );
+      }),
     });
   }),
 );
 
-export const webManagedRelayClientLayer = (relayUrl: string) =>
-  managedRelayClientLayer({ relayUrl, clientId: RelayWebClientId }).pipe(
-    Layer.provideMerge(webRelayDpopSignerLayer),
+export const managedRelayClientLayer = (relayUrl: string) =>
+  ManagedRelay.layer({ relayUrl, clientId: RelayWebClientId }).pipe(
+    Layer.provideMerge(relayDpopSignerLayer),
   );

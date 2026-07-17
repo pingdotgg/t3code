@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -28,7 +28,7 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import * as GitVcsDriverCore from "./GitVcsDriverCore.ts";
+import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -161,6 +161,22 @@ export interface GitFetchRemoteTrackingBranchInput {
   remoteBranch: string;
 }
 
+export interface GitFetchRemoteInput {
+  cwd: string;
+  remoteName: string;
+}
+
+export interface GitResolveRemoteTrackingCommitInput {
+  cwd: string;
+  refName: string;
+  fallbackRemoteName: string;
+}
+
+export interface GitResolveRemoteTrackingCommitResult {
+  commitSha: string;
+  remoteRefName: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -168,76 +184,88 @@ export interface GitSetBranchUpstreamInput {
   remoteBranch: string;
 }
 
-export interface GitVcsDriverShape {
-  readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
-  readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
-  readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
-  readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
-  readonly statusDetailsRemote: (
-    cwd: string,
-  ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
-  readonly prepareCommitContext: (
-    cwd: string,
-    filePaths?: readonly string[],
-  ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
-  readonly commit: (
-    cwd: string,
-    subject: string,
-    body: string,
-    options?: GitCommitOptions,
-  ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
-  readonly pushCurrentBranch: (
-    cwd: string,
-    fallbackBranch: string | null,
-    options?: { readonly remoteName?: string | null },
-  ) => Effect.Effect<GitPushResult, GitCommandError>;
-  readonly readRangeContext: (
-    cwd: string,
-    baseRef: string,
-  ) => Effect.Effect<GitRangeContext, GitCommandError>;
-  readonly getReviewDiffPreview: (
-    input: ReviewDiffPreviewInput,
-  ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
-  readonly readConfigValue: (
-    cwd: string,
-    key: string,
-  ) => Effect.Effect<string | null, GitCommandError>;
-  readonly listRefs: (input: VcsListRefsInput) => Effect.Effect<VcsListRefsResult, GitCommandError>;
-  readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
-  readonly createWorktree: (
-    input: VcsCreateWorktreeInput,
-  ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
-  readonly fetchPullRequestBranch: (
-    input: GitFetchPullRequestBranchInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
-  readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
-  readonly fetchRemoteBranch: (
-    input: GitFetchRemoteBranchInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly fetchRemoteTrackingBranch: (
-    input: GitFetchRemoteTrackingBranchInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly setBranchUpstream: (
-    input: GitSetBranchUpstreamInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
-  readonly renameBranch: (
-    input: GitRenameBranchInput,
-  ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;
-  readonly createRef: (
-    input: VcsCreateRefInput,
-  ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
-  readonly switchRef: (
-    input: VcsSwitchRefInput,
-  ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
-  readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
-  readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+export interface GitRemoteStatusOptions {
+  readonly refreshUpstream?: boolean;
 }
 
-export class GitVcsDriver extends Context.Service<GitVcsDriver, GitVcsDriverShape>()(
-  "t3/vcs/GitVcsDriver",
-) {}
+export class GitVcsDriver extends Context.Service<
+  GitVcsDriver,
+  {
+    readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
+    readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
+    readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly statusDetailsRemote: (
+      cwd: string,
+      options?: GitRemoteStatusOptions,
+    ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    readonly prepareCommitContext: (
+      cwd: string,
+      filePaths?: readonly string[],
+    ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
+    readonly commit: (
+      cwd: string,
+      subject: string,
+      body: string,
+      options?: GitCommitOptions,
+    ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
+    readonly pushCurrentBranch: (
+      cwd: string,
+      fallbackBranch: string | null,
+      options?: { readonly remoteName?: string | null },
+    ) => Effect.Effect<GitPushResult, GitCommandError>;
+    readonly readRangeContext: (
+      cwd: string,
+      baseRef: string,
+    ) => Effect.Effect<GitRangeContext, GitCommandError>;
+    readonly getReviewDiffPreview: (
+      input: ReviewDiffPreviewInput,
+    ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
+    readonly readConfigValue: (
+      cwd: string,
+      key: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
+    readonly listRefs: (
+      input: VcsListRefsInput,
+    ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly createWorktree: (
+      input: VcsCreateWorktreeInput,
+    ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    readonly fetchPullRequestBranch: (
+      input: GitFetchPullRequestBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
+    readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+    readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
+    readonly resolveRemoteTrackingCommit: (
+      input: GitResolveRemoteTrackingCommitInput,
+    ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
+    readonly fetchRemoteBranch: (
+      input: GitFetchRemoteBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly fetchRemoteTrackingBranch: (
+      input: GitFetchRemoteTrackingBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly setBranchUpstream: (
+      input: GitSetBranchUpstreamInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly removeWorktree: (
+      input: VcsRemoveWorktreeInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly renameBranch: (
+      input: GitRenameBranchInput,
+    ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;
+    readonly createRef: (
+      input: VcsCreateRefInput,
+    ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
+    readonly switchRef: (
+      input: VcsSwitchRefInput,
+    ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+    readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
+    readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+  }
+>()("t3/vcs/GitVcsDriver") {}
 
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
@@ -332,7 +360,7 @@ function parseGitRemoteVerboseOutput(
 }
 
 const gitCommand = (
-  process: VcsProcess.VcsProcessShape,
+  process: VcsProcess.VcsProcess["Service"],
   operation: string,
   cwd: string,
   args: ReadonlyArray<string>,
@@ -376,7 +404,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     ignoreClassifier: "native" as const,
   };
 
-  const isInsideWorkTree: VcsDriver.VcsDriverShape["isInsideWorkTree"] = (cwd) =>
+  const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
     gitCommand(
       vcsProcess,
       "GitVcsDriver.isInsideWorkTree",
@@ -389,7 +417,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       },
     ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
 
-  const execute: VcsDriver.VcsDriverShape["execute"] = (input) =>
+  const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
@@ -401,7 +429,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         : {}),
     });
 
-  const detectRepository: VcsDriver.VcsDriverShape["detectRepository"] = Effect.fn(
+  const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
     if (!(yield* isInsideWorkTree(cwd))) {
@@ -427,7 +455,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     };
   });
 
-  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = (cwd) =>
+  const listWorkspaceFiles: VcsDriver.VcsDriver["Service"]["listWorkspaceFiles"] = (cwd) =>
     gitCommand(
       vcsProcess,
       "GitVcsDriver.listWorkspaceFiles",
@@ -469,7 +497,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ),
     );
 
-  const listRemotes: VcsDriver.VcsDriverShape["listRemotes"] = Effect.fn("listRemotes")(
+  const listRemotes: VcsDriver.VcsDriver["Service"]["listRemotes"] = Effect.fn("listRemotes")(
     function* (cwd) {
       const result = yield* gitCommand(
         vcsProcess,
@@ -515,7 +543,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     },
   );
 
-  const filterIgnoredPaths: VcsDriver.VcsDriverShape["filterIgnoredPaths"] = Effect.fn(
+  const filterIgnoredPaths: VcsDriver.VcsDriver["Service"]["filterIgnoredPaths"] = Effect.fn(
     "filterIgnoredPaths",
   )(function* (cwd, relativePaths) {
     if (relativePaths.length === 0) {
@@ -562,7 +590,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
   });
 
-  const initRepository: VcsDriver.VcsDriverShape["initRepository"] = (input) =>
+  const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = (input) =>
     gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
@@ -623,7 +651,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-      const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${randomUUID()}`);
+      const tempIndexPath = path.join(
+        gitCommonDir,
+        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
+      );
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
@@ -819,7 +850,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     ),
   };
 
-  return VcsDriver.VcsDriver.of({
+  return {
     capabilities,
     execute,
     checkpoints,
@@ -829,18 +860,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     listRemotes,
     filterIgnoredPaths,
     initRepository,
-  });
+  };
 });
 
-export const makeVcsDriver = Effect.fn("makeGitVcsDriver")(function* () {
+export const makeVcsDriver = Effect.gen(function* () {
   const driver = yield* makeVcsDriverShape();
   return VcsDriver.VcsDriver.of(driver);
 });
 
-export const make = Effect.fn("makeGitVcsDriverService")(function* () {
-  const git = yield* GitVcsDriverCore.makeGitVcsDriverCore();
+export const make = Effect.gen(function* () {
+  const git = yield* makeGitVcsDriverCore();
   return GitVcsDriver.of(git);
 });
 
-export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver());
-export const layer = Layer.effect(GitVcsDriver, make());
+export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
+export const layer = Layer.effect(GitVcsDriver, make);

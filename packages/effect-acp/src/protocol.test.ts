@@ -48,6 +48,8 @@ const decodeExtRequest = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encoder = new TextEncoder();
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
@@ -132,6 +134,49 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       }),
   );
 
+  it.effect("keeps invalid core notification values only in the schema cause", () =>
+    Effect.gen(function* () {
+      const secret = "acp-core-notification-secret-sentinel";
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: { secret },
+              update: {
+                sessionUpdate: "plan",
+                entries: [],
+              },
+            },
+          })}\n`,
+        ),
+      );
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpProtocolParseError);
+      const parseError = error as AcpError.AcpProtocolParseError;
+      const { cause, ...directDiagnostics } = parseError;
+      assert.equal(parseError.operation, "decode-notification-payload");
+      assert.equal(parseError.method, "session/update");
+      assert.isAbove(parseError.issueCount ?? 0, 0);
+      assert.include(parseError.issueKinds ?? [], "Pointer");
+      assert.isAbove(parseError.maximumPathDepth ?? 0, 0);
+      assert.isTrue(Schema.isSchemaError(cause));
+      assert.notInclude(parseError.message, secret);
+      assert.notInclude(encodeUnknownJsonString(directDiagnostics), secret);
+    }),
+  );
+
   it.effect("logs outgoing notifications when logOutgoing is enabled", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
@@ -172,6 +217,38 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("logs decode failures without copying the cause or wire payload", () =>
+    Effect.gen(function* () {
+      const secret = "acp-wire-secret-sentinel";
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const events: Array<AcpProtocol.AcpProtocolLogEvent> = [];
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        logIncoming: true,
+        logger: (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(input, encoder.encode(`{"secret":"${secret}"\n`));
+      yield* Deferred.await(termination);
+
+      const event = events.find(({ stage }) => stage === "decode_failed");
+      assert.deepEqual(event, {
+        direction: "incoming",
+        stage: "decode_failed",
+        payload: {
+          operation: "decode-wire-message",
+        },
+      });
+      assert.notInclude(encodeUnknownJsonString(event), secret);
+    }),
+  );
+
   it.effect("fails notification encoding through the declared ACP error channel", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
@@ -182,13 +259,34 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       const bigintError = yield* transport.notify("x/test", 1n).pipe(Effect.flip);
       assert.instanceOf(bigintError, AcpError.AcpProtocolParseError);
-      assert.equal(bigintError.detail, "Failed to encode ACP message");
+      assert.equal(bigintError.operation, "encode-message");
+      assert.equal(bigintError.method, "x/test");
+      assert.instanceOf(bigintError.cause, TypeError);
+      assert.equal(
+        bigintError.message,
+        "ACP protocol operation 'encode-message' failed for method 'x/test'.",
+      );
 
       const circular: Record<string, unknown> = {};
       circular.self = circular;
       const circularError = yield* transport.notify("x/test", circular).pipe(Effect.flip);
       assert.instanceOf(circularError, AcpError.AcpProtocolParseError);
-      assert.equal(circularError.detail, "Failed to encode ACP message");
+      assert.equal(circularError.operation, "encode-message");
+      assert.equal(circularError.method, "x/test");
+      assert.instanceOf(circularError.cause, TypeError);
+
+      const requestError = yield* transport.request("x/request", 1n).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected request encoding to fail"),
+        }),
+      );
+      assert.instanceOf(requestError, AcpError.AcpProtocolParseError);
+      assert.deepInclude(requestError, {
+        operation: "encode-message",
+        method: "x/request",
+        requestId: "1",
+      });
     }),
   );
 
@@ -227,6 +325,60 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       const resolved = yield* Fiber.join(response);
       assert.deepEqual(resolved, { ok: true });
+    }),
+  );
+
+  it.effect("correlates extension response errors with the originating request", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const response = yield* transport
+        .request("x/private", { hello: "world" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: 1,
+            error: {
+              _tag: "Cause",
+              code: -32602,
+              message: "Invalid params",
+              data: [
+                {
+                  _tag: "Fail",
+                  error: {
+                    code: -32602,
+                    message: "Invalid params",
+                    data: { field: "hello" },
+                  },
+                },
+              ],
+            },
+          })}\n`,
+        ),
+      );
+
+      const error = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected extension request to fail"),
+        }),
+      );
+      assert.instanceOf(error, AcpError.AcpRequestError);
+      assert.deepInclude(error, {
+        code: -32602,
+        errorMessage: "Invalid params",
+        method: "x/private",
+        requestId: "1",
+        operation: "receive-response",
+      });
     }),
   );
 
@@ -381,11 +533,32 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.equal((message as { readonly _tag?: string })._tag, "ClientProtocolError");
       const defect = (message as { readonly error: { readonly reason: unknown } }).error.reason as {
         readonly _tag: string;
+        readonly message: string;
         readonly cause: unknown;
       };
       assert.equal(defect._tag, "RpcClientDefect");
+      assert.equal(defect.message, "ACP protocol terminated.");
       assert.instanceOf(defect.cause, AcpError.AcpProcessExitedError);
       assert.equal((defect.cause as AcpError.AcpProcessExitedError).code, 7);
+    }),
+  );
+
+  it.effect("classifies an input stream ending without inventing a cause", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.end(input);
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpInputStreamEndedError);
+      assert.equal(error.message, "ACP input stream ended.");
+      assert.equal("cause" in error, false);
     }),
   );
 
@@ -413,9 +586,40 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.equal((message as { readonly _tag?: string })._tag, "ClientProtocolError");
       const defect = (message as { readonly error: { readonly reason: unknown } }).error.reason as {
         readonly _tag: string;
+        readonly message: string;
         readonly cause: unknown;
       };
       assert.equal(defect._tag, "RpcClientDefect");
+      assert.equal(defect.message, "ACP protocol terminated.");
+      assert.instanceOf(defect.cause, AcpError.AcpProtocolParseError);
+    }),
+  );
+
+  it.effect("keeps client send failure messages independent from the cause", () =>
+    Effect.gen(function* () {
+      const { stdio } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const failure = yield* transport.clientProtocol
+        .send(0, {
+          _tag: "Request",
+          id: "request-1",
+          tag: "x/test",
+          payload: 1n,
+          headers: [],
+        })
+        .pipe(Effect.flip);
+      const defect = failure.reason as {
+        readonly _tag: string;
+        readonly message: string;
+        readonly cause: unknown;
+      };
+
+      assert.equal(defect._tag, "RpcClientDefect");
+      assert.equal(defect.message, "Failed to send ACP protocol message.");
       assert.instanceOf(defect.cause, AcpError.AcpProtocolParseError);
     }),
   );

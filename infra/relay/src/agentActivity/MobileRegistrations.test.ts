@@ -7,6 +7,7 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -19,6 +20,7 @@ import * as RelayConfiguration from "../Config.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
+import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as MobileRegistrations from "./MobileRegistrations.ts";
 
@@ -38,7 +40,9 @@ const device: RelayDeviceRegistrationRequest = {
   },
 };
 
-function makeDevices(overrides: Partial<Devices.DevicesShape> = {}): Devices.DevicesShape {
+function makeDevices(
+  overrides: Partial<Devices.Devices["Service"]> = {},
+): Devices.Devices["Service"] {
   return {
     register: () => Effect.void,
     unregister: () => Effect.void,
@@ -48,8 +52,8 @@ function makeDevices(overrides: Partial<Devices.DevicesShape> = {}): Devices.Dev
 }
 
 function makeLiveActivities(
-  overrides: Partial<LiveActivities.LiveActivitiesShape> = {},
-): LiveActivities.LiveActivitiesShape {
+  overrides: Partial<LiveActivities.LiveActivities["Service"]> = {},
+): LiveActivities.LiveActivities["Service"] {
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
@@ -62,11 +66,12 @@ function makeLiveActivities(
 }
 
 function makeAgentActivityRows(
-  overrides: Partial<AgentActivityRows.AgentActivityRowsShape> = {},
-): AgentActivityRows.AgentActivityRowsShape {
+  overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
+): AgentActivityRows.AgentActivityRows["Service"] {
   return {
     upsert: () => Effect.void,
     remove: () => Effect.void,
+    pruneTerminal: () => Effect.void,
     listForUser: () => {
       const activeState: RelayAgentActivityState = {
         environmentId: "env-1" as RelayAgentActivityState["environmentId"],
@@ -81,13 +86,14 @@ function makeAgentActivityRows(
       };
       return Effect.succeed([activeState]);
     },
+    getForUserThread: () => Effect.succeed(null),
     ...overrides,
   };
 }
 
 function makeEnvironmentLinks(
-  overrides: Partial<EnvironmentLinks.EnvironmentLinksShape> = {},
-): EnvironmentLinks.EnvironmentLinksShape {
+  overrides: Partial<EnvironmentLinks.EnvironmentLinks["Service"]> = {},
+): EnvironmentLinks.EnvironmentLinks["Service"] {
   return {
     upsert: () => Effect.void,
     listUsersForEnvironment: () => Effect.succeed(["dev:julius"]),
@@ -108,8 +114,8 @@ function makeEnvironmentLinks(
 }
 
 function makeDeliveryAttempts(
-  overrides: Partial<DeliveryAttempts.DeliveryAttemptsShape> = {},
-): DeliveryAttempts.DeliveryAttemptsShape {
+  overrides: Partial<DeliveryAttempts.DeliveryAttempts["Service"]> = {},
+): DeliveryAttempts.DeliveryAttempts["Service"] {
   return {
     record: () => Effect.void,
     claimSourceJob: () => Effect.succeed("claimed"),
@@ -138,13 +144,17 @@ const config = RelayConfiguration.RelayConfiguration.of({
 });
 
 function makeRegistrationReplayLayer(input: {
-  readonly devices: Devices.DevicesShape;
-  readonly liveActivities: LiveActivities.LiveActivitiesShape;
+  readonly devices: Devices.Devices["Service"];
+  readonly liveActivities: LiveActivities.LiveActivities["Service"];
   readonly queuedJobs: Array<SignedApnsDeliveryJob>;
 }) {
   return MobileRegistrations.layer.pipe(
     Layer.provide(AgentActivityPublisher.layer),
-    Layer.provide(ApnsDeliveries.layer.pipe(Layer.provide(ApnsClient.layer))),
+    Layer.provide(
+      ApnsDeliveries.layer.pipe(
+        Layer.provide(ApnsClient.layer.pipe(Layer.provide(ApnsProviderTokens.layer))),
+      ),
+    ),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
     Layer.provide(
       Layer.mergeAll(
@@ -153,7 +163,7 @@ function makeRegistrationReplayLayer(input: {
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
         Layer.succeed(LiveActivities.LiveActivities, input.liveActivities),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, makeDeliveryAttempts()),
-        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
+        RelayConfiguration.layer(config),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
           send: (body) =>
             Effect.sync(() => {
@@ -167,8 +177,8 @@ function makeRegistrationReplayLayer(input: {
 }
 
 function makeAgentActivityPublisher(
-  overrides: Partial<AgentActivityPublisher.AgentActivityPublisherShape> = {},
-): AgentActivityPublisher.AgentActivityPublisherShape {
+  overrides: Partial<AgentActivityPublisher.AgentActivityPublisher["Service"]> = {},
+): AgentActivityPublisher.AgentActivityPublisher["Service"] {
   return {
     publish: () => Effect.succeed({ ok: true, deliveries: [] }),
     replayForLiveActivityRegistration: () => Effect.succeed(null),
@@ -178,10 +188,10 @@ function makeAgentActivityPublisher(
 
 describe("MobileRegistrations", () => {
   it.effect("registers devices through the device persistence service", () => {
-    let registered: Parameters<Devices.DevicesShape["register"]>[0] | null = null;
+    let registered: Parameters<Devices.Devices["Service"]["register"]>[0] | null = null;
     let replayed:
       | Parameters<
-          AgentActivityPublisher.AgentActivityPublisherShape["replayForLiveActivityRegistration"]
+          AgentActivityPublisher.AgentActivityPublisher["Service"]["replayForLiveActivityRegistration"]
         >[0]
       | null = null;
 
@@ -204,6 +214,7 @@ describe("MobileRegistrations", () => {
                   }),
                 ),
                 Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
                 Layer.succeed(
                   AgentActivityPublisher.AgentActivityPublisher,
                   makeAgentActivityPublisher({
@@ -230,6 +241,11 @@ describe("MobileRegistrations", () => {
   });
 
   it.effect("keeps device registration successful when activity replay fails", () => {
+    const messages: unknown[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+
     return Effect.gen(function* () {
       const result = yield* Effect.gen(function* () {
         const registrations = yield* MobileRegistrations.MobileRegistrations;
@@ -241,13 +257,15 @@ describe("MobileRegistrations", () => {
               Layer.mergeAll(
                 Layer.succeed(Devices.Devices, makeDevices()),
                 Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
                 Layer.succeed(
                   AgentActivityPublisher.AgentActivityPublisher,
                   makeAgentActivityPublisher({
                     replayForLiveActivityRegistration: () =>
                       Effect.fail(
                         new AgentActivityRows.AgentActivityRowListPersistenceError({
-                          cause: "replay failed",
+                          userId: "dev:julius",
+                          cause: "sensitive device replay detail",
                         }),
                       ),
                   }),
@@ -259,11 +277,15 @@ describe("MobileRegistrations", () => {
       );
 
       expect(result).toEqual({ ok: true });
-    });
+      expect(messages).toContainEqual([
+        "device registration activity replay failed",
+        { errorTag: "AgentActivityRowListPersistenceError" },
+      ]);
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
 
   it.effect("unregisters the current user's device", () => {
-    let unregistered: Parameters<Devices.DevicesShape["unregister"]>[0] | null = null;
+    let unregistered: Parameters<Devices.Devices["Service"]["unregister"]>[0] | null = null;
 
     return Effect.gen(function* () {
       const result = yield* Effect.gen(function* () {
@@ -287,6 +309,7 @@ describe("MobileRegistrations", () => {
                   }),
                 ),
                 Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
                 Layer.succeed(
                   AgentActivityPublisher.AgentActivityPublisher,
                   makeAgentActivityPublisher(),
@@ -310,10 +333,11 @@ describe("MobileRegistrations", () => {
       deviceId: "device-1" as const,
       activityPushToken: "activity-token" as const,
     };
-    let registered: Parameters<LiveActivities.LiveActivitiesShape["register"]>[0] | null = null;
+    let registered: Parameters<LiveActivities.LiveActivities["Service"]["register"]>[0] | null =
+      null;
     let replayed:
       | Parameters<
-          AgentActivityPublisher.AgentActivityPublisherShape["replayForLiveActivityRegistration"]
+          AgentActivityPublisher.AgentActivityPublisher["Service"]["replayForLiveActivityRegistration"]
         >[0]
       | null = null;
 
@@ -330,6 +354,7 @@ describe("MobileRegistrations", () => {
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(Devices.Devices, makeDevices()),
+                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
                 Layer.succeed(
                   LiveActivities.LiveActivities,
                   makeLiveActivities({
@@ -367,14 +392,42 @@ describe("MobileRegistrations", () => {
     });
   });
 
+  it.effect("returns the current aggregate for the app's arming decision", () => {
+    return Effect.gen(function* () {
+      const registrations = yield* MobileRegistrations.MobileRegistrations;
+      const snapshot = yield* registrations.getAgentActivitySnapshot({ userId: "dev:julius" });
+
+      expect(snapshot.aggregate).toMatchObject({
+        activeCount: 1,
+        activities: [{ threadId: "thread-1", phase: "running" }],
+      });
+    }).pipe(
+      Effect.provide(
+        MobileRegistrations.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(Devices.Devices, makeDevices()),
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+              Layer.succeed(
+                AgentActivityPublisher.AgentActivityPublisher,
+                makeAgentActivityPublisher(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect(
-    "starts a remote Live Activity through the real publisher and APNs queue when a device registers after work is already active",
+    "does not remotely start a Live Activity when a device registers after work is already active",
     () => {
       const queuedJobs: Array<SignedApnsDeliveryJob> = [];
       const queuedStarts: Array<
-        Parameters<LiveActivities.LiveActivitiesShape["markStartQueued"]>[0]
+        Parameters<LiveActivities.LiveActivities["Service"]["markStartQueued"]>[0]
       > = [];
-      const registeredDevices: Array<Parameters<Devices.DevicesShape["register"]>[0]> = [];
+      const registeredDevices: Array<Parameters<Devices.Devices["Service"]["register"]>[0]> = [];
       const devices = makeDevices({
         register: (input) =>
           Effect.sync(() => {
@@ -390,6 +443,8 @@ describe("MobileRegistrations", () => {
               platform: "ios",
               ios_major_version: 18,
               app_version: "1.0.0",
+              bundle_id: null,
+              aps_environment: null,
               push_token: "apns-device-token",
               push_to_start_token: "push-to-start-token",
               preferences_json: JSON.stringify(device.preferences),
@@ -418,46 +473,13 @@ describe("MobileRegistrations", () => {
           },
         });
 
+        // Activities are armed by the app in the foreground; a device
+        // registration alone never remote-starts one, even when work is
+        // already active and a push-to-start token is on file.
         expect(result).toEqual({ ok: true });
-        expect(registeredDevices).toEqual([
-          {
-            userId: "dev:julius",
-            registration: {
-              ...device,
-              pushToken: "apns-device-token",
-              pushToStartToken: "push-to-start-token",
-            },
-          },
-        ]);
-        expect(queuedStarts).toMatchObject([
-          {
-            userId: "dev:julius",
-            deviceId: "device-1",
-          },
-        ]);
-        expect(queuedJobs).toHaveLength(1);
-        expect(queuedJobs[0]?.payload).toMatchObject({
-          kind: "live_activity_start",
-          target: {
-            userId: "dev:julius",
-            deviceId: "device-1",
-            token: "push-to-start-token",
-          },
-          aggregate: {
-            title: "T3 Code",
-            subtitle: "Agent work in progress",
-            activeCount: 1,
-            activities: [
-              {
-                environmentId: "env-1",
-                threadId: "thread-1",
-                threadTitle: "Implement APNs",
-                status: "Working",
-              },
-            ],
-          },
-          notification: null,
-        });
+        expect(registeredDevices).toHaveLength(1);
+        expect(queuedStarts).toEqual([]);
+        expect(queuedJobs).toEqual([]);
       }).pipe(Effect.provide(makeRegistrationReplayLayer({ devices, liveActivities, queuedJobs })));
     },
   );

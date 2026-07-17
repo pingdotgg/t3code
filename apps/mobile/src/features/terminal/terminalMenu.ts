@@ -1,4 +1,4 @@
-import type { KnownTerminalSession } from "@t3tools/client-runtime";
+import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import * as Arr from "effect/Array";
@@ -112,6 +112,35 @@ export function buildTerminalMenuSessions(input: {
   }
 
   return Arr.sort(sessionsById.values(), terminalMenuSessionOrder);
+}
+
+/**
+ * Picks the session to show after a terminal exits: the nearest live session
+ * below the exited id (terminal n-1), falling back to the nearest one above.
+ * Returns null when no other live session remains and the terminal UI should
+ * be dismissed instead.
+ */
+export function previousLiveTerminalId(input: {
+  readonly sessions: ReadonlyArray<TerminalMenuSession>;
+  readonly exitedTerminalId: string;
+}): string | null {
+  const live = Arr.sort(
+    input.sessions.filter(
+      (session) =>
+        session.terminalId !== input.exitedTerminalId &&
+        (session.status === "running" || session.status === "starting"),
+    ),
+    terminalMenuSessionOrder,
+  );
+  if (live.length === 0) {
+    return null;
+  }
+
+  const below = live.filter(
+    (session) =>
+      session.terminalId.localeCompare(input.exitedTerminalId, undefined, { numeric: true }) < 0,
+  );
+  return (below[below.length - 1] ?? live[0])?.terminalId ?? null;
 }
 
 export function resolveProjectScriptTerminalId(input: {
