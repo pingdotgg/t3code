@@ -1,8 +1,10 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { SymbolView } from "expo-symbols";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 import { Platform, StyleSheet, TextInput, View, useColorScheme } from "react-native";
@@ -14,10 +16,12 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
+import { SymbolView } from "../../components/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -40,6 +44,7 @@ import {
 } from "../home/homeListItems";
 import { buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
+import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
@@ -47,7 +52,12 @@ import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
-import { ThreadListGroupHeader, ThreadListRow, ThreadListShowMoreRow } from "./thread-list-items";
+import {
+  PendingTaskListRow,
+  ThreadListGroupHeader,
+  ThreadListRow,
+  ThreadListShowMoreRow,
+} from "./thread-list-items";
 
 /**
  * Shared capsule behind the sidebar header buttons — a native liquid-glass
@@ -87,8 +97,6 @@ function SidebarHeaderButtonGroup(props: {
 
 const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
 const SIDEBAR_STICKY_HEADER_FADE_HEIGHT = 44;
-const IOS_SEARCH_FILL_DARK = "rgba(118, 118, 128, 0.24)";
-const IOS_SEARCH_FILL_LIGHT = "rgba(118, 118, 128, 0.12)";
 const SIDEBAR_HEADER_WASH_OPACITY = {
   dark: [0.22, 0.14, 0.04],
   light: [0.46, 0.3, 0.08],
@@ -100,6 +108,7 @@ interface ThreadNavigationSidebarProps {
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
+  readonly onNewThreadInProject: (project: EnvironmentProject) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -129,15 +138,13 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
   return (
     <View
       testID="thread-navigation-sidebar"
-      style={[
-        styles.container,
-        {
-          width: props.width,
-          backgroundColor,
-          borderRightColor: borderColor,
-          borderRightWidth: StyleSheet.hairlineWidth,
-        },
-      ]}
+      className="flex-1"
+      style={{
+        width: props.width,
+        backgroundColor,
+        borderRightColor: borderColor,
+        borderRightWidth: StyleSheet.hairlineWidth,
+      }}
     >
       <SidebarNavigationShell>
         <ThreadNavigationSidebarPane {...props} nativeChrome />
@@ -162,6 +169,8 @@ function ThreadNavigationSidebarPane(
   const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const pendingTasks = usePendingNewTasks();
+  const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
     () =>
       Object.values(savedConnectionsById)
@@ -188,13 +197,14 @@ function ThreadNavigationSidebarPane(
       buildHomeThreadGroups({
         projects,
         threads,
+        pendingTasks,
         environmentId: options.selectedEnvironmentId,
         searchQuery: props.searchQuery,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
       }),
-    [options, projects, props.searchQuery, threads],
+    [options, pendingTasks, projects, props.searchQuery, threads],
   );
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
@@ -324,11 +334,8 @@ function ThreadNavigationSidebarPane(
 
   const backgroundColor = useThemeColor("--color-drawer");
   const borderColor = useThemeColor("--color-border");
-  const foregroundColor = useThemeColor("--color-foreground");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const placeholderColor = useThemeColor("--color-placeholder");
-  const searchBackgroundColor =
-    colorScheme === "dark" ? IOS_SEARCH_FILL_DARK : IOS_SEARCH_FILL_LIGHT;
   const headerFadeColor = String(backgroundColor);
   const headerWashOpacity = SIDEBAR_HEADER_WASH_OPACITY[colorScheme];
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
@@ -403,9 +410,28 @@ function ThreadNavigationSidebarPane(
               isFirst={item.isFirst}
               groupKey={item.group.key}
               onGroupAction={updateGroupDisplay}
+              // Same gating as the compact Home list: aggregated groups have no
+              // single target project, and pending-project groups hold a
+              // placeholder shell rather than a real project.
+              newThreadTarget={item.group.newThreadTarget}
+              onNewThread={props.onNewThreadInProject}
               project={item.group.representative}
-              threadCount={item.group.threads.length}
+              threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
+            />
+          );
+        case "pending-task":
+          return (
+            <PendingTaskListRow
+              variant="sidebar"
+              pendingTask={item.pendingTask}
+              environmentLabel={
+                savedConnectionsById[item.pendingTask.message.environmentId]?.environmentLabel ??
+                null
+              }
+              isLast={item.isLast}
+              onSelectPendingTask={openPendingTask}
+              onDeletePendingTask={confirmDeletePendingTask}
             />
           );
         case "thread": {
@@ -449,11 +475,14 @@ function ThreadNavigationSidebarPane(
     },
     [
       archiveThread,
+      confirmDeletePendingTask,
       confirmDeleteThread,
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      openPendingTask,
       projectCwdByKey,
+      props.onNewThreadInProject,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
@@ -496,7 +525,7 @@ function ThreadNavigationSidebarPane(
     [filterIcon, filterMenu, props.onOpenSettings],
   );
   const listEmpty = (
-    <Text className="px-2 py-4 text-sm" style={{ color: mutedColor }}>
+    <Text className="px-2 py-4 text-sm text-foreground-muted">
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
@@ -530,7 +559,7 @@ function ThreadNavigationSidebarPane(
             unstable_headerRightItems: () => nativeHeaderItems,
           }}
         />
-        <View style={styles.container}>
+        <View className="flex-1">
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
@@ -560,7 +589,7 @@ function ThreadNavigationSidebarPane(
                 style={styles.threadList}
                 ListHeaderComponent={
                   showsConnectionStatus ? (
-                    <View style={styles.connectionStatusNative}>
+                    <View className="px-1.5 pt-0.5 pb-2">
                       <WorkspaceConnectionStatus
                         onPress={props.onOpenEnvironmentSettings}
                         state={catalogState}
@@ -581,17 +610,15 @@ function ThreadNavigationSidebarPane(
   return (
     <View
       testID="thread-navigation-sidebar"
-      style={[
-        styles.container,
-        {
-          width: props.width,
-          backgroundColor,
-          borderRightColor: borderColor,
-          borderRightWidth: StyleSheet.hairlineWidth,
-        },
-      ]}
+      className="flex-1"
+      style={{
+        width: props.width,
+        backgroundColor,
+        borderRightColor: borderColor,
+        borderRightWidth: StyleSheet.hairlineWidth,
+      }}
     >
-      <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+      <View className="flex-1" style={{ paddingBottom: insets.bottom }}>
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <GestureDetector gesture={sidebarScrollGesture}>
             <LegendList
@@ -624,25 +651,17 @@ function ThreadNavigationSidebarPane(
       </View>
 
       <View
+        className="absolute inset-x-0 top-0 z-[4]"
         onLayout={handleStickyHeaderLayout}
         pointerEvents="box-none"
-        style={[
-          styles.stickyHeader,
-          {
-            paddingTop: insets.top,
-          },
-        ]}
+        style={{ paddingTop: insets.top }}
       >
         <View
+          className="absolute inset-x-0 top-0"
           pointerEvents="none"
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={[
-            styles.stickyHeaderWash,
-            {
-              height: stickyHeaderHeight + SIDEBAR_STICKY_HEADER_FADE_HEIGHT,
-            },
-          ]}
+          style={{ height: stickyHeaderHeight + SIDEBAR_STICKY_HEADER_FADE_HEIGHT }}
         >
           <Svg width="100%" height="100%">
             <Defs>
@@ -668,12 +687,8 @@ function ThreadNavigationSidebarPane(
             <Rect width="100%" height="100%" fill="url(#sidebar-header-wash)" />
           </Svg>
         </View>
-        <View style={styles.header}>
-          <Text
-            className="flex-1 text-[34px] font-t3-bold"
-            numberOfLines={1}
-            style={{ color: foregroundColor }}
-          >
+        <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
+          <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
             Threads
           </Text>
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>
@@ -688,14 +703,7 @@ function ThreadNavigationSidebarPane(
           </SidebarHeaderButtonGroup>
         </View>
 
-        <View
-          style={[
-            styles.searchField,
-            {
-              backgroundColor: searchBackgroundColor,
-            },
-          ]}
-        >
+        <View className="mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]">
           <SymbolView name="magnifyingglass" size={15} tintColor={mutedColor} type="monochrome" />
           <TextInput
             ref={searchInputRef}
@@ -707,14 +715,13 @@ function ThreadNavigationSidebarPane(
             placeholder="Search"
             placeholderTextColor={placeholderColor}
             returnKeyType="search"
-            className="text-base"
-            style={[styles.searchInput, { color: foregroundColor }]}
+            className="h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
             value={props.searchQuery}
           />
         </View>
 
         {showsConnectionStatus ? (
-          <View style={styles.connectionStatus}>
+          <View className="px-3.5 pt-2.5">
             <WorkspaceConnectionStatus
               onPress={props.onOpenEnvironmentSettings}
               state={catalogState}
@@ -728,62 +735,11 @@ function ThreadNavigationSidebarPane(
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  stickyHeader: {
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 4,
-  },
-  stickyHeaderWash: {
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-  },
-  header: {
-    height: 50,
-    paddingLeft: 20,
-    paddingRight: 8,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 2,
-  },
   headerButtonGroup: {
     alignItems: "center",
     borderRadius: 22,
     flexDirection: "row",
     overflow: "hidden",
-  },
-  connectionStatus: {
-    paddingTop: 10,
-    paddingHorizontal: 14,
-  },
-  connectionStatusNative: {
-    paddingBottom: 8,
-    paddingHorizontal: 6,
-    paddingTop: 2,
-  },
-  searchField: {
-    height: 38,
-    marginTop: 9,
-    marginHorizontal: 16,
-    paddingLeft: 11,
-    paddingRight: 10,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  searchInput: {
-    flex: 1,
-    height: 34,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    fontFamily: "DMSans_400Regular",
   },
   threadList: {
     flex: 1,

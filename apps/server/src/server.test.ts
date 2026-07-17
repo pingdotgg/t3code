@@ -702,6 +702,7 @@ const buildAppUnderTest = (options?: {
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -1699,7 +1700,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects managed cloud link proofs for manual endpoint providers", () =>
+  it.effect("rejects cloud link proofs for unsupported endpoint providers", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -1720,7 +1721,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             wsBaseUrl: linkProofUrl
               .replace("http://", "ws://")
               .replace("/api/connect/link-proof", "/ws"),
-            providerKind: "manual",
+            // "manual" and "cloudflare_tunnel" are supported; "t3_relay" is not.
+            providerKind: "t3_relay",
           },
           origin: {
             localHttpHost: "127.0.0.1",
@@ -5603,6 +5605,64 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result.failure.cause instanceof Error);
       assert.include(result.failure.cause.message, projectionError.message);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers thread events published while the initial snapshot loads", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const messageEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-message"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: defaultThreadId,
+          messageId: MessageId.make("message-1"),
+          role: "user",
+          text: "First message",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("25 millis");
+                yield* PubSub.publish(liveEvents, messageEvent);
+                return Option.some({ snapshotSequence: 1, thread });
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "event");
+      assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("enriches replayed project events with repository identity metadata", () =>

@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import type { HomeThreadGroup } from "./homeThreadList";
 
 /** Threads shown per project before the "Show more" affordance appears. */
@@ -33,6 +34,13 @@ export interface HomeThreadListItem {
   readonly isLast: boolean;
 }
 
+export interface HomePendingTaskListItem {
+  readonly type: "pending-task";
+  readonly key: string;
+  readonly pendingTask: PendingNewTask;
+  readonly isLast: boolean;
+}
+
 export interface HomeShowMoreListItem {
   readonly type: "show-more";
   readonly key: string;
@@ -43,7 +51,11 @@ export interface HomeShowMoreListItem {
   readonly canShowLess: boolean;
 }
 
-export type HomeListItem = HomeHeaderListItem | HomeThreadListItem | HomeShowMoreListItem;
+export type HomeListItem =
+  | HomeHeaderListItem
+  | HomePendingTaskListItem
+  | HomeThreadListItem
+  | HomeShowMoreListItem;
 
 export interface HomeListLayout {
   readonly items: ReadonlyArray<HomeListItem>;
@@ -81,6 +93,12 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
         previous.group === item.group &&
         previous.collapsed === item.collapsed &&
         previous.isFirst === item.isFirst
+      );
+    case "pending-task":
+      return (
+        previous.type === "pending-task" &&
+        previous.pendingTask === item.pendingTask &&
+        previous.isLast === item.isLast
       );
     case "thread":
       return (
@@ -127,12 +145,40 @@ export function buildHomeListLayout(input: {
     }
 
     const totalCount = group.threads.length;
+    // Default to the group's recent-activity window (last few days, or a small
+    // fallback for stale projects), capped at the initial page size. Until the
+    // user taps "Show more", older threads stay hidden to save vertical space;
+    // "Show less" resets visibleCount to the initial constant, which lands back
+    // here at the recency baseline.
+    const baselineCount = Math.min(
+      group.recentThreads.length,
+      HOME_INITIAL_VISIBLE_THREADS,
+      totalCount,
+    );
     const visibleCount = input.showAllThreads
       ? totalCount
-      : Math.min(Math.max(display.visibleCount, HOME_INITIAL_VISIBLE_THREADS), totalCount);
+      : Math.min(
+          display.visibleCount > HOME_INITIAL_VISIBLE_THREADS
+            ? display.visibleCount
+            : baselineCount,
+          totalCount,
+        );
     const visibleThreads = group.threads.slice(0, visibleCount);
     const hiddenCount = totalCount - visibleCount;
-    const hasShowMoreRow = !input.showAllThreads && totalCount > HOME_INITIAL_VISIBLE_THREADS;
+    const hasShowMoreRow = !input.showAllThreads && totalCount > baselineCount;
+
+    // Pending (unsent) tasks lead the group and are never paginated away.
+    for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
+      items.push({
+        type: "pending-task",
+        key: `pending-task:${pendingTask.message.messageId}`,
+        pendingTask,
+        isLast:
+          pendingIndex === group.pendingTasks.length - 1 &&
+          visibleThreads.length === 0 &&
+          !hasShowMoreRow,
+      });
+    }
 
     for (const [threadIndex, thread] of visibleThreads.entries()) {
       items.push({
@@ -149,7 +195,10 @@ export function buildHomeListLayout(input: {
         key: `show-more:${group.key}`,
         groupKey: group.key,
         hiddenCount,
-        canShowLess: visibleCount > HOME_INITIAL_VISIBLE_THREADS,
+        // Compare against the group's own baseline, not the global page size:
+        // stale projects start below HOME_INITIAL_VISIBLE_THREADS, and "Show
+        // less" must be offered as soon as anything beyond the baseline shows.
+        canShowLess: visibleCount > baselineCount,
       });
     }
   }
