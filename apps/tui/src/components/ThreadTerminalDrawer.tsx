@@ -337,7 +337,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
       height={safeRows + 4}
       flexShrink={0}
       border
-      borderStyle="rounded"
+      borderStyle="single"
       borderColor={focused ? palette.accent : palette.dim}
       paddingLeft={1}
       paddingRight={1}

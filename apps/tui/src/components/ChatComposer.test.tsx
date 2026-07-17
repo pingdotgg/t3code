@@ -67,14 +67,14 @@ async function frameOf(node: React.ReactNode): Promise<string> {
 }
 
 describe("ChatComposer", () => {
-  it("Given compose mode without focus, when rendered, then it shows the static ^P hint (no input)", async () => {
+  it("Given compose mode without focus, when rendered, then it shows the static prompt shortcut (no input)", async () => {
     const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused={false} />);
-    expect(frame).toContain("^P to type a reply");
+    expect(frame).toContain("^P prompt · Type a reply");
   });
 
   it("Given compose mode with focus, when rendered, then the ^P hint is gone (input is mounted)", async () => {
     const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused />);
-    expect(frame).not.toContain("^P to type a reply");
+    expect(frame).not.toContain("^P prompt");
   });
 
   it("Given a pending question, then the composer stays put with the question panel + Submit answer", async () => {
@@ -111,7 +111,7 @@ describe("ChatComposer", () => {
   });
 
   it("Given compose mode, then the controls render inside the composer box, model first", async () => {
-    const t = await testRender(<ChatComposer {...base} mode="compose" inputFocused />, {
+    const t = await testRender(<ChatComposer {...base} mode="compose" inputFocused width={72} />, {
       width: 72,
       height: 8,
     });
@@ -121,6 +121,7 @@ describe("ChatComposer", () => {
     const controlsRow = lines.find((line) => line.includes("model gpt-5")) ?? "";
     expect(controlsRow).toContain("model gpt-5");
     expect(controlsRow).toContain("effort high");
+    expect(controlsRow.indexOf("Full access")).toBeLessThan(controlsRow.indexOf("^B"));
     expect(controlsRow.trimStart().startsWith("│") || controlsRow.includes("│")).toBe(true);
     // model precedes the plan/build (^B) chip — matches the web footer order.
     expect(controlsRow.indexOf("model")).toBeLessThan(controlsRow.indexOf("^B"));

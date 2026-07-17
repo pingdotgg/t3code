@@ -14,24 +14,31 @@ function Chip({
   label,
   active,
   muted,
+  dropdown,
   onClick,
 }: {
   readonly keyHint: string;
   readonly label: string;
   readonly active?: boolean;
   readonly muted?: boolean;
+  readonly dropdown?: boolean;
   readonly onClick: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   const labelColor = active ? palette.accent : muted ? palette.dim : palette.text;
   return (
-    <box onMouseDown={onClick} flexShrink={0} marginRight={3}>
+    <box onMouseDown={onClick} flexShrink={0}>
       <text>
-        <span fg={active ? palette.accent : palette.dim}>{`${keyHint} `}</span>
-        <span fg={labelColor}>{label}</span>
+        {keyHint ? <span fg={active ? palette.accent : palette.dim}>{`${keyHint} `}</span> : null}
+        <span fg={labelColor}>{`${label}${dropdown ? " ▾" : ""}`}</span>
       </text>
     </box>
   );
+}
+
+function FooterSeparator(): React.ReactNode {
+  const palette = usePalette();
+  return <text fg={palette.dim}>{" │ "}</text>;
 }
 
 /** The model selector (web ProviderModelPicker), leading the footer. */
@@ -42,36 +49,47 @@ function ProviderModelPicker({
   readonly model: string | null;
   readonly onOpen: () => void;
 }): React.ReactNode {
-  return <Chip keyHint="model" label={model ?? "—"} muted={!model} onClick={onOpen} />;
+  return <Chip keyHint="model" label={model ?? "—"} muted={!model} dropdown onClick={onOpen} />;
 }
 
 /** Effort + plan/build mode + runtime access (web ComposerFooterModeControls). */
 function ComposerFooterModeControls({
   controls,
+  compact,
   onOpenReasoning,
   onTogglePlan,
   onOpenAccess,
 }: {
   readonly controls: ComposerControls;
+  readonly compact: boolean;
   readonly onOpenReasoning: () => void;
   readonly onTogglePlan: () => void;
   readonly onOpenAccess: () => void;
 }): React.ReactNode {
   return (
     <>
+      <FooterSeparator />
       <Chip
         keyHint="effort"
         label={controls.reasoning ?? "—"}
         muted={!controls.reasoning}
+        dropdown
         onClick={onOpenReasoning}
       />
+      <FooterSeparator />
       <Chip
-        keyHint="^B"
+        keyHint={compact ? "" : "^O"}
+        label={runtimeModeLabel(controls.runtimeMode)}
+        dropdown
+        onClick={onOpenAccess}
+      />
+      <FooterSeparator />
+      <Chip
+        keyHint={compact ? "" : "^B"}
         label={interactionModeLabel(controls.interactionMode)}
         active={controls.interactionMode === "plan"}
         onClick={onTogglePlan}
       />
-      <Chip keyHint="^O" label={runtimeModeLabel(controls.runtimeMode)} onClick={onOpenAccess} />
     </>
   );
 }
@@ -129,6 +147,7 @@ function ComposerFooterPrimaryActions({
 
 export const ComposerFooter = React.memo(function ComposerFooter({
   controls,
+  compact = false,
   working,
   answering,
   hasText,
@@ -141,6 +160,7 @@ export const ComposerFooter = React.memo(function ComposerFooter({
   onSubmitAnswer,
 }: {
   readonly controls: ComposerControls;
+  readonly compact?: boolean;
   readonly working: boolean;
   /** A pending question is awaiting an answer (primary action becomes Submit). */
   readonly answering: boolean;
@@ -154,26 +174,45 @@ export const ComposerFooter = React.memo(function ComposerFooter({
   readonly onSend: () => void;
   readonly onSubmitAnswer: () => void;
 }): React.ReactNode {
-  // Order mirrors the web composer footer: model → effort → mode → access on
+  // Order mirrors the web composer footer: model → effort → access → mode on
   // the left, the primary action pushed to the right.
-  return (
-    <box flexDirection="row" marginTop={1} flexShrink={0}>
+  const controlsRow = (
+    <box flexDirection="row" flexShrink={0}>
       <ProviderModelPicker model={controls.model} onOpen={onOpenModel} />
       <ComposerFooterModeControls
         controls={controls}
+        compact={compact}
         onOpenReasoning={onOpenReasoning}
         onTogglePlan={onTogglePlan}
         onOpenAccess={onOpenAccess}
       />
+    </box>
+  );
+  const primary = (
+    <ComposerFooterPrimaryActions
+      working={working}
+      answering={answering}
+      hasText={hasText}
+      onStop={onStop}
+      onSend={onSend}
+      onSubmitAnswer={onSubmitAnswer}
+    />
+  );
+  if (compact) {
+    return (
+      <box flexDirection="column" marginTop={1} flexShrink={0}>
+        {controlsRow}
+        <box flexDirection="row" justifyContent="flex-end">
+          {primary}
+        </box>
+      </box>
+    );
+  }
+  return (
+    <box flexDirection="row" marginTop={1} flexShrink={0}>
+      {controlsRow}
       <box flexGrow={1} />
-      <ComposerFooterPrimaryActions
-        working={working}
-        answering={answering}
-        hasText={hasText}
-        onStop={onStop}
-        onSend={onSend}
-        onSubmitAnswer={onSubmitAnswer}
-      />
+      {primary}
     </box>
   );
 });

@@ -290,6 +290,7 @@ export const ChatComposer = React.memo(function ChatComposer({
     return (
       <box
         flexDirection="column"
+        width={width}
         border
         borderStyle="rounded"
         borderColor={palette.accent}
@@ -321,6 +322,7 @@ export const ChatComposer = React.memo(function ChatComposer({
     return (
       <box
         flexDirection="column"
+        width={width}
         border
         borderStyle="rounded"
         borderColor={palette.accent}
@@ -409,9 +411,10 @@ export const ChatComposer = React.memo(function ChatComposer({
   return (
     <box
       flexDirection="column"
+      width={width}
       border
       borderStyle="rounded"
-      borderColor={inputFocused ? palette.accent : palette.dim}
+      borderColor={palette.dim}
       paddingLeft={1}
       paddingRight={1}
       flexShrink={0}
@@ -432,9 +435,6 @@ export const ChatComposer = React.memo(function ChatComposer({
         onRemove={onRemoveAttachment}
       />
       <box flexDirection="row" flexShrink={0}>
-        <text>
-          <span fg={palette.accent}>{"› "}</span>
-        </text>
         {showReplyEditor ? (
           // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
           // full clipboard (no single-line cap). Uncontrolled — remounted via
@@ -475,15 +475,22 @@ export const ChatComposer = React.memo(function ChatComposer({
             {answering ? (
               <span fg={palette.dim}>pick an option above, then Enter to submit</span>
             ) : reply.length > 0 ? (
-              <span fg={palette.text}>{reply}</span>
+              <>
+                <span fg={palette.accent}>{"^P prompt · "}</span>
+                <span fg={palette.text}>{reply}</span>
+              </>
             ) : (
-              <span fg={palette.dim}>^P to type a reply</span>
+              <>
+                <span fg={palette.accent}>{"^P prompt · "}</span>
+                <span fg={palette.dim}>{placeholder}</span>
+              </>
             )}
           </text>
         )}
       </box>
       <ComposerFooter
         controls={controls}
+        compact={width < 64}
         working={working}
         answering={answering}
         hasText={reply.length > 0 || attachments.length > 0}

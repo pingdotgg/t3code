@@ -327,6 +327,27 @@ describe("ChatView tmux scrolling", () => {
 });
 
 describe("ChatView acknowledged submissions", () => {
+  it("Given the terminal opens, then the centered prompt stays above it like the web layout", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("e", { ctrl: true });
+      await setup.renderOnce();
+    });
+    const frame = await setup.waitForFrame((current) => current.includes("Terminal · Thread one"));
+    const lines = frame.split("\n");
+    const promptRow = lines.findIndex((line) => line.includes("^P prompt"));
+    const terminalRow = lines.findIndex((line) => line.includes("Terminal · Thread one"));
+    expect(promptRow).toBeGreaterThanOrEqual(0);
+    expect(terminalRow).toBeGreaterThan(promptRow);
+    setup.renderer.destroy();
+  });
+
   it("Given a terminal tab is selected, when clear and restart run from the command palette, then both target that exact session", async () => {
     const clearCalls: Array<Parameters<TuiClient["terminalClear"]>> = [];
     const restartCalls: Array<Parameters<TuiClient["terminalRestart"]>[0]> = [];
