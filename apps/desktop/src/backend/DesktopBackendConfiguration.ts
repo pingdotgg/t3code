@@ -607,6 +607,7 @@ export const make = Effect.gen(function* () {
     const backendExposure = yield* serverExposure.backendConfig;
     const persistedSettings = yield* settings.get;
     const shared = yield* sharedInputs;
+    yield* wslEnvironment.preWarm(persistedSettings.wslDistro);
     return yield* resolveWslStartConfig({
       ...shared,
       port: backendExposure.port,
