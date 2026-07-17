@@ -620,6 +620,24 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(status, "a.txt");
       }),
     );
+
+    it.effect("treats selected file paths literally", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* writeTextFile(cwd, "selected[1].txt", "literal\n");
+        yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
+
+        yield* driver.prepareCommitContext(cwd, ["selected[1].txt"]);
+
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "selected[1].txt");
+
+        const status = yield* git(cwd, ["status", "--porcelain"]);
+        assert.include(status, "?? selected1.txt");
+      }),
+    );
   });
 
   describe("remote operations", () => {
