@@ -35,3 +35,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Android / Gradle build caches (regenerated per build)
+.gradle/
