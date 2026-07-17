@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
-function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCliShape>) {
-  return AzureDevOpsSourceControlProvider.make().pipe(
+function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCli["Service"]>) {
+  return AzureDevOpsSourceControlProvider.make.pipe(
     Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)(azure)),
   );
 }
@@ -46,10 +46,51 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
   }),
 );
 
+it.effect("adds change-request context while retaining Azure CLI causes", () =>
+  Effect.gen(function* () {
+    const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+      operation: "execute",
+      command: "az",
+      cwd: "/repo",
+      argumentCount: 2,
+      cause: new Error("raw upstream detail that should remain in the cause"),
+    });
+    const provider = yield* makeProvider({
+      checkoutPullRequest: () => Effect.fail(cause),
+    });
+
+    const error = yield* provider
+      .checkoutChangeRequest({ cwd: "/repo", reference: "#42" })
+      .pipe(Effect.flip);
+
+    assert.deepStrictEqual(
+      {
+        provider: error.provider,
+        operation: error.operation,
+        command: error.command,
+        cwd: error.cwd,
+        reference: error.reference,
+        detail: error.detail,
+      },
+      {
+        provider: "azure-devops",
+        operation: "checkoutChangeRequest",
+        command: "az",
+        cwd: "/repo",
+        reference: "#42",
+        detail: "Azure DevOps CLI command failed.",
+      },
+    );
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.message.includes("raw upstream detail"), false);
+  }),
+);
+
 it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["createPullRequest"]>[0] | null =
-      null;
+    let createInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["createPullRequest"]>[0]
+      | null = null;
     const provider = yield* makeProvider({
       createPullRequest: (input) => {
         createInput = input;

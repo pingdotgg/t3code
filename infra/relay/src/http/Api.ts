@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -66,10 +67,9 @@ import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllo
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import { withSpanAttributes } from "../observability.ts";
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 
 const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
-const RELAY_DPOP_ACCESS_TOKEN_TTL = "30 minutes";
 const relayCorsAllowedHeaders = [
   "authorization",
   "b3",
@@ -156,6 +156,47 @@ export const relayDocsRedirectRoute = HttpRouter.add(
   HttpServerResponse.redirect("/docs"),
 );
 
+// Shorter than the mobile client's 10s request timeout on purpose: when a
+// request hangs (e.g. a stuck upstream query), the client would otherwise
+// abort first, the invocation would die with the request span still open, and
+// the batched spans would never export — leaving no server-side trace at all.
+// Failing server-side first turns the hang into a completed 504 whose trace
+// contains the exact child span that stalled, and the response still carries
+// the traceparent back to the client.
+export const RELAY_REQUEST_DEADLINE_MS = 9_000;
+
+const relayRequestDeadline = <E, R>(
+  httpEffect: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    E,
+    HttpServerRequest.HttpServerRequest | R
+  >,
+) =>
+  httpEffect.pipe(
+    Effect.timeoutOption(Duration.millis(RELAY_REQUEST_DEADLINE_MS)),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            yield* Effect.logError("relay request exceeded deadline", {
+              "http.method": request.method,
+              "http.url": request.url,
+              "relay.request.deadline_ms": RELAY_REQUEST_DEADLINE_MS,
+            });
+            yield* Effect.annotateCurrentSpan({
+              "relay.request.deadline_exceeded": true,
+            });
+            return HttpServerResponse.jsonUnsafe(
+              { error: "relay_request_deadline_exceeded" },
+              { status: 504 },
+            );
+          }),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+
 export const traceRelayHttpRequest = <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
@@ -165,7 +206,7 @@ export const traceRelayHttpRequest = <E, R>(
 ) =>
   // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
   HttpMiddleware.tracer(
-    appendRelayTraceContextResponseHeader.pipe(Effect.andThen(httpEffect)),
+    appendRelayTraceContextResponseHeader.pipe(Effect.andThen(relayRequestDeadline(httpEffect))),
   ).pipe(Effect.ensuring(Effect.yieldNow));
 
 export const traceRelayHttpRequestWith = <E, R, LayerError, LayerRequirements>(
@@ -239,13 +280,12 @@ export const relayEnvironmentAuthLayer = Layer.effect(
         { credential },
       ) {
         const token = readHttpAuthorizationCredential(credential);
-        const principal = yield* credentials
-          .authenticate(token)
-          .pipe(
-            Effect.catchTag("EnvironmentCredentialAuthenticatePersistenceError", () =>
+        const principal = yield* credentials.authenticate(token).pipe(
+          Effect.catchTags({
+            EnvironmentCredentialAuthenticatePersistenceError: () =>
               relayInternalErrorResponse("persistence_failed"),
-            ),
-          );
+          }),
+        );
         if (principal._tag === "None") {
           return yield* relayAuthInvalidError("not_authorized");
         }
@@ -348,7 +388,7 @@ export const healthApi = HttpApiBuilder.group(
   RelayApi,
   "health",
   Effect.fnUntraced(function* (handlers) {
-    const db = yield* RelayDb;
+    const db = yield* RelayDb.RelayDb;
     return handlers.handle(
       "health",
       Effect.fn("relay.api.health")(
@@ -391,6 +431,17 @@ export const mobileApi = HttpApiBuilder.group(
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
           return yield* registrations.registerLiveActivity({ userId, payload });
+        }, mapRelayCommonApiErrors("invalid_dpop")),
+      )
+      .handle(
+        "getAgentActivitySnapshot",
+        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* () {
+          const { userId, token } = yield* RelayClientPrincipal;
+          const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
+          yield* requireDpopThumbprint(proofKeyThumbprint, {
+            expectedAccessToken: token,
+          }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
+          return yield* registrations.getAgentActivitySnapshot({ userId });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
       .handle(
@@ -599,7 +650,7 @@ export const tokenApi = HttpApiBuilder.group(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
         const now = yield* DateTime.now;
-        const expiresAt = DateTime.addDuration(now, RELAY_DPOP_ACCESS_TOKEN_TTL);
+        const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
         const jti = yield* crypto.randomUUIDv4.pipe(
           Effect.catch(() => relayInternalErrorResponse("internal_error")),
         );
@@ -617,7 +668,7 @@ export const tokenApi = HttpApiBuilder.group(
             .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
           issued_token_type: RelayAccessTokenType,
           token_type: "DPoP" as const,
-          expires_in: Duration.toSeconds(RELAY_DPOP_ACCESS_TOKEN_TTL),
+          expires_in: Duration.toSeconds(RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL),
           scope: encodeOAuthScope(requestedScopes),
         };
       }, mapRelayCommonApiErrors("invalid_dpop")),
@@ -778,7 +829,61 @@ export const serverApi = HttpApiBuilder.group(
               reason: "persistence_failed",
               traceId,
             }),
-          ApnsDeliveryJobInvalid: (_error, traceId) =>
+          ApnsDeliveryJobQueuePayloadInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobLiveActivityAggregateMissing: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobLiveActivityNotificationUnexpected: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobPushNotificationMissing: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobPushNotificationAggregateUnexpected: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobCreatedAtInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobExpiresAtInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobTimeWindowInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobTimeWindowTooLong: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          ApnsDeliveryJobSignatureInvalid: (_error, traceId) =>
             new RelayInternalError({
               code: "internal_error",
               reason: "internal_error",
@@ -986,7 +1091,10 @@ function hasExpectedClerkAudience(audience: unknown, expectedAudience: string): 
         audience.some((entry) => typeof entry === "string" && entry === expectedAudience);
 }
 
-function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationShape, token: string) {
+function verifyClerkBearerToken(
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  token: string,
+) {
   return Effect.tryPromise({
     try: () =>
       verifyToken(token, {
@@ -1002,7 +1110,7 @@ function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationSha
 }
 
 function verifyClerkOAuthBearerToken(
-  config: RelayConfiguration.RelayConfigurationShape,
+  config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return Effect.tryPromise({
@@ -1028,7 +1136,7 @@ function verifyClerkOAuthBearerToken(
 }
 
 export function verifyRelayClientBearerToken(
-  config: RelayConfiguration.RelayConfigurationShape,
+  config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return verifyClerkBearerToken(config, token).pipe(

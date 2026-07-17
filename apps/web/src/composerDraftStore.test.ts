@@ -3,7 +3,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
@@ -59,6 +59,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  clearComposerDraftsEnvironment,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -696,6 +697,40 @@ describe("composerDraftStore project draft thread mapping", () => {
     resetComposerDraftStore();
   });
 
+  it("clears composer data for one environment without touching another", () => {
+    const store = useComposerDraftStore.getState();
+    const localThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const remoteThreadRef = scopeThreadRef(OTHER_TEST_ENVIRONMENT_ID, otherThreadId);
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setProjectDraftThreadId(projectRef, localDraftId, { threadId });
+      store.setProjectDraftThreadId(remoteProjectRef, remoteDraftId, {
+        threadId: otherThreadId,
+      });
+      store.setPrompt(localDraftId, "local draft");
+      store.setPrompt(remoteDraftId, "remote draft");
+      store.addImage(localDraftId, makeImage({ id: "img-local", previewUrl: "blob:local-draft" }));
+      store.setPrompt(localThreadRef, "local thread draft");
+      store.setPrompt(remoteThreadRef, "remote thread draft");
+
+      clearComposerDraftsEnvironment(TEST_ENVIRONMENT_ID);
+
+      const next = useComposerDraftStore.getState();
+      expect(next.getDraftThreadByProjectRef(projectRef)).toBeNull();
+      expect(next.getDraftThreadByProjectRef(remoteProjectRef)).not.toBeNull();
+      expect(next.getComposerDraft(localDraftId)).toBeNull();
+      expect(next.getComposerDraft(remoteDraftId)?.prompt).toBe("remote thread draft");
+      expect(next.getComposerDraft(localThreadRef)).toBeNull();
+      expect(next.getComposerDraft(remoteThreadRef)?.prompt).toBe("remote thread draft");
+      expect(revokeSpy).toHaveBeenCalledWith("blob:local-draft");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
   it("stores and reads project draft thread ids via actions", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftThreadByProjectRef(projectRef)).toBeNull();
@@ -965,6 +1000,18 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("finalizes a matching materialized draft even when promotion was not pre-marked", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "promote me");
+
+    finalizePromotedDraftThreadByRef(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId));
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(draftByKey(draftId)).toBeUndefined();
+  });
+
   it("updates branch context on an existing draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
@@ -986,6 +1033,21 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/feature-next",
       envMode: "worktree",
     });
+  });
+
+  it("stores the start-from-origin choice with the draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOrigin).toBe(true);
+
+    store.setDraftThreadContext(draftId, { startFromOrigin: false });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOrigin).toBe(false);
   });
 
   it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {

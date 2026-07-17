@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 
 import { ServerConfig } from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+import { detailFromCause, firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 interface DiscoveryProbe {
@@ -57,91 +57,86 @@ const VCS_PROBES: ReadonlyArray<VcsProbe> = [
   },
 ];
 
-export interface SourceControlDiscoveryShape {
-  readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
-}
-
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
-  SourceControlDiscoveryShape
+  {
+    readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
+  }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
-export const layer = Layer.effect(
-  SourceControlDiscovery,
-  Effect.gen(function* () {
-    const config = yield* ServerConfig;
-    const process = yield* VcsProcess.VcsProcess;
-    const sourceControlProviders =
-      yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+export const make = Effect.gen(function* () {
+  const config = yield* ServerConfig;
+  const process = yield* VcsProcess.VcsProcess;
+  const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
 
-    const probe = <Kind extends VcsDriverKind>(
-      input: DiscoveryProbe & { readonly kind: Kind },
-    ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
-      const executable = input.executable;
-      const versionArgs = input.versionArgs;
+  const probe = <Kind extends VcsDriverKind>(
+    input: DiscoveryProbe & { readonly kind: Kind },
+  ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
+    const executable = input.executable;
+    const versionArgs = input.versionArgs;
 
-      if (!executable || !versionArgs) {
-        return Effect.succeed({
-          kind: input.kind,
-          label: input.label,
-          implemented: input.implemented,
-          status: "missing" as const,
-          version: Option.none<string>(),
-          installHint: input.installHint,
-          detail: Option.some(input.installHint),
-        } satisfies DiscoveryProbeResult<Kind>);
-      }
+    if (!executable || !versionArgs) {
+      return Effect.succeed({
+        kind: input.kind,
+        label: input.label,
+        implemented: input.implemented,
+        status: "missing" as const,
+        version: Option.none<string>(),
+        installHint: input.installHint,
+        detail: Option.some(input.installHint),
+      } satisfies DiscoveryProbeResult<Kind>);
+    }
 
-      return process
-        .run({
-          operation: "source-control.discovery.probe",
-          command: executable,
-          args: versionArgs,
-          cwd: config.cwd,
-          timeoutMs: 5_000,
-          maxOutputBytes: 8_000,
-          appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map(
-            (result) =>
-              ({
-                kind: input.kind,
-                label: input.label,
-                executable,
-                implemented: input.implemented,
-                status: "available" as const,
-                version: Option.orElse(
-                  SourceControlProviderDiscovery.firstNonEmptyLine(result.stdout),
-                  () => SourceControlProviderDiscovery.firstNonEmptyLine(result.stderr),
-                ),
-                installHint: input.installHint,
-                detail: Option.none<string>(),
-              }) satisfies DiscoveryProbeResult<Kind>,
-          ),
-          Effect.catch((cause) =>
-            Effect.succeed({
+    return process
+      .run({
+        operation: "source-control.discovery.probe",
+        command: executable,
+        args: versionArgs,
+        cwd: config.cwd,
+        timeoutMs: 5_000,
+        maxOutputBytes: 8_000,
+        appendTruncationMarker: true,
+      })
+      .pipe(
+        Effect.map(
+          (result) =>
+            ({
               kind: input.kind,
               label: input.label,
               executable,
               implemented: input.implemented,
-              status: "missing" as const,
-              version: Option.none<string>(),
+              status: "available" as const,
+              version: Option.orElse(firstNonEmptyLine(result.stdout), () =>
+                firstNonEmptyLine(result.stderr),
+              ),
               installHint: input.installHint,
-              detail: SourceControlProviderDiscovery.detailFromCause(cause),
-            } satisfies DiscoveryProbeResult<Kind>),
-          ),
-        );
-    };
-
-    return SourceControlDiscovery.of({
-      discover: Effect.all({
-        versionControlSystems: Effect.all(
-          VCS_PROBES.map((entry) => probe(entry)) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
-          { concurrency: "unbounded" },
+              detail: Option.none<string>(),
+            }) satisfies DiscoveryProbeResult<Kind>,
         ),
-        sourceControlProviders: sourceControlProviders.discover,
-      }),
-    });
-  }),
-);
+        Effect.catch((cause) =>
+          Effect.succeed({
+            kind: input.kind,
+            label: input.label,
+            executable,
+            implemented: input.implemented,
+            status: "missing" as const,
+            version: Option.none<string>(),
+            installHint: input.installHint,
+            detail: detailFromCause(cause),
+          } satisfies DiscoveryProbeResult<Kind>),
+        ),
+      );
+  };
+
+  return SourceControlDiscovery.of({
+    discover: Effect.all({
+      versionControlSystems: Effect.all(
+        VCS_PROBES.map((entry) => probe(entry)) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
+        { concurrency: "unbounded" },
+      ),
+      sourceControlProviders: sourceControlProviders.discover,
+    }),
+  });
+});
+
+export const layer = Layer.effect(SourceControlDiscovery, make);
