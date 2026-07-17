@@ -10,6 +10,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     autoInstallOnAppQuit: true,
     channel: "latest",
     disableDifferentialDownload: false,
+    fullChangelog: false,
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
     on: vi.fn(),
@@ -33,6 +34,7 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.autoInstallOnAppQuit = true;
     autoUpdaterMock.channel = "latest";
     autoUpdaterMock.disableDifferentialDownload = false;
+    autoUpdaterMock.fullChangelog = false;
     autoUpdaterMock.checkForUpdates.mockClear();
     autoUpdaterMock.checkForUpdates.mockImplementation(() => Promise.resolve(null));
     autoUpdaterMock.downloadUpdate.mockClear();
@@ -95,6 +97,18 @@ describe("ElectronUpdater", () => {
         "Electron updater failed to download the update on channel nightly.",
       );
       assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("sets full changelog mode", () =>
+    Effect.gen(function* () {
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+
+      yield* updater.setFullChangelog(true);
+      assert.equal(autoUpdaterMock.fullChangelog, true);
+
+      yield* updater.setFullChangelog(false);
+      assert.equal(autoUpdaterMock.fullChangelog, false);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 

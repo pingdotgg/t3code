@@ -57,14 +57,20 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
 
 function makeGroup(key: string, threadCount: number): HomeThreadGroup {
   const project = makeProject(key, key);
+  const threads = Array.from({ length: threadCount }, (_, index) =>
+    makeThread(`${key}-thread-${index}`, project.id),
+  );
   return {
     key,
     title: key,
     representative: project,
     projects: [project],
-    threads: Array.from({ length: threadCount }, (_, index) =>
-      makeThread(`${key}-thread-${index}`, project.id),
-    ),
+    pendingTasks: [],
+    threads,
+    // All threads inside the recency window, so the baseline stays at the
+    // initial page size and the pagination expectations below hold.
+    recentThreads: threads,
+    newThreadTarget: project,
   };
 }
 
@@ -150,6 +156,48 @@ describe("buildHomeListLayout", () => {
       "show-less",
     );
     expect(reset.visibleCount).toBe(HOME_INITIAL_VISIBLE_THREADS);
+  });
+
+  it("offers show-less after expanding a stale group whose baseline is below the page size", () => {
+    // Stale project: 10 threads total but only 3 within the recency window.
+    const project = makeProject("stale", "stale");
+    const threads = Array.from({ length: 10 }, (_, index) =>
+      makeThread(`stale-thread-${index}`, project.id),
+    );
+    const group: HomeThreadGroup = {
+      key: "stale",
+      title: "stale",
+      representative: project,
+      projects: [project],
+      pendingTasks: [],
+      threads,
+      recentThreads: threads.slice(0, 3),
+      newThreadTarget: project,
+    };
+
+    const collapsedToRecent = buildHomeListLayout({
+      groups: [group],
+      displayStates: displayStates({}),
+    });
+    expect(collapsedToRecent.items.filter((item) => item.type === "thread")).toHaveLength(3);
+    expect(collapsedToRecent.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 7,
+      canShowLess: false,
+    });
+
+    const expanded = buildHomeListLayout({
+      groups: [group],
+      displayStates: displayStates({
+        stale: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
+      }),
+    });
+    expect(expanded.items.filter((item) => item.type === "thread")).toHaveLength(10);
+    expect(expanded.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 0,
+      canShowLess: true,
+    });
   });
 
   it("hides threads and the show-more row for collapsed groups", () => {
