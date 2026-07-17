@@ -1,0 +1,95 @@
+import type { PluginId, PluginManifest } from "@t3tools/contracts/plugin";
+import type { PluginRegistration, PluginSettingsDescriptor } from "@t3tools/plugin-sdk";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+
+export interface ActivePluginRuntime {
+  readonly manifest: PluginManifest;
+  readonly registration: PluginRegistration;
+  /**
+   * Declared on the plugin's DEFINITION (not its registration), so it is carried
+   * here rather than read off `registration`. The settings RPC resolves the schema
+   * from the live runtime, which is also what makes settings unreadable for a
+   * disabled plugin and impossible to reach across plugins: the host keys off the
+   * runtime it looked up, never a client-supplied id.
+   */
+  readonly settings: PluginSettingsDescriptor | undefined;
+  readonly readiness: Deferred.Deferred<void>;
+  readonly scope: Scope.Scope;
+}
+
+export type PluginRuntimeChange =
+  | {
+      readonly _tag: "put";
+      readonly pluginId: PluginId;
+      readonly runtime: ActivePluginRuntime;
+    }
+  | {
+      readonly _tag: "remove";
+      readonly pluginId: PluginId;
+    };
+
+export class PluginRuntimeRegistry extends Context.Service<
+  PluginRuntimeRegistry,
+  {
+    readonly put: (pluginId: PluginId, runtime: ActivePluginRuntime) => Effect.Effect<void>;
+    readonly remove: (pluginId: PluginId) => Effect.Effect<void>;
+    readonly list: Effect.Effect<ReadonlyArray<ActivePluginRuntime>>;
+    readonly get: (pluginId: PluginId) => Effect.Effect<Option.Option<ActivePluginRuntime>>;
+    /**
+     * Scoped PubSub subscription that is active as soon as this effect succeeds.
+     * Prefer this over `changes` when you must subscribe-before-snapshot.
+     */
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<PluginRuntimeChange>,
+      never,
+      Scope.Scope
+    >;
+    /** Process-lifetime stream of put/remove events (subscribes when the stream runs). */
+    readonly changes: Stream.Stream<PluginRuntimeChange>;
+  }
+>()("t3/plugins/PluginRuntimeRegistry") {}
+
+export const make = Effect.fn("PluginRuntimeRegistry.make")(function* () {
+  const runtimes = yield* Ref.make(new Map<PluginId, ActivePluginRuntime>());
+  const changesPubSub = yield* PubSub.unbounded<PluginRuntimeChange>();
+
+  return PluginRuntimeRegistry.of({
+    put: (pluginId, runtime) =>
+      Ref.update(runtimes, (current) => {
+        const next = new Map(current);
+        next.set(pluginId, runtime);
+        return next;
+      }).pipe(
+        Effect.andThen(
+          PubSub.publish(changesPubSub, { _tag: "put", pluginId, runtime }).pipe(Effect.asVoid),
+        ),
+      ),
+    remove: (pluginId) =>
+      Ref.update(runtimes, (current) => {
+        const next = new Map(current);
+        next.delete(pluginId);
+        return next;
+      }).pipe(
+        Effect.andThen(
+          PubSub.publish(changesPubSub, { _tag: "remove", pluginId }).pipe(Effect.asVoid),
+        ),
+      ),
+    list: Ref.get(runtimes).pipe(Effect.map((current) => Array.from(current.values()))),
+    get: (pluginId) =>
+      Ref.get(runtimes).pipe(
+        Effect.map((current) => Option.fromUndefinedOr(current.get(pluginId))),
+      ),
+    subscribeChanges: PubSub.subscribe(changesPubSub),
+    changes: Stream.fromPubSub(changesPubSub),
+  });
+});
+
+export const layer = Layer.effect(PluginRuntimeRegistry, make());

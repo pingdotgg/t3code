@@ -35,6 +35,7 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import * as PluginContextComposer from "../../plugins/PluginContextComposer.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -79,6 +80,10 @@ export type CodexDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
+  // Declared, not smuggled: plugin instructions reach the agent only through the
+  // composer, so a driver that wants them must say so in its env. That is what stops
+  // a new driver silently dropping plugin context by not knowing plugins exist.
+  | PluginContextComposer.PluginContextComposer
   | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;

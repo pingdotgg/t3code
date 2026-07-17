@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  PluginId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -23,6 +24,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
+  isPluginStateChangedLifecycleEvent,
   makeEnvironmentServerConfigState,
   projectServerWelcome,
   resolveServerConfigValue,
@@ -92,7 +94,7 @@ describe("server state projection", () => {
     });
     const [afterReady, emitted] = projectServerWelcome(afterWelcome, {
       type: "ready",
-      payload: {},
+      payload: {} as never,
     });
 
     expect(Option.getOrThrow(afterReady)).toBe(welcome);
@@ -224,4 +226,23 @@ describe("server state projection", () => {
       expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
     }),
   );
+  it("detects plugin state change lifecycle events without disturbing welcome projection", () => {
+    const pluginId = PluginId.make("fixture-plugin");
+    const event = {
+      version: 1 as const,
+      sequence: 1,
+      type: "plugins" as const,
+      payload: {
+        kind: "plugin-state-changed" as const,
+        pluginId,
+        state: "active" as const,
+      },
+    };
+
+    const [next, emitted] = projectServerWelcome(Option.none(), event);
+
+    expect(isPluginStateChangedLifecycleEvent(event)).toBe(true);
+    expect(Option.isNone(next)).toBe(true);
+    expect(emitted).toEqual([]);
+  });
 });

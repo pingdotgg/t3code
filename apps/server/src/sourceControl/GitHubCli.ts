@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -18,6 +19,18 @@ import {
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+// `owner/name` as accepted by the GitHub REST path `repos/{owner}/{name}`:
+// owner is alphanumeric-with-inner-hyphens, name allows dots/underscores/
+// hyphens. Validated before interpolation into a `gh api` path so a
+// caller-supplied repo string cannot smuggle extra path segments or query
+// syntax into the request.
+const GITHUB_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
+
+// `gh pr checks` reports "no checks" as exit 1 with this message on stderr
+// (and nothing on stdout). Match it so a genuine empty check list is not
+// misread as a command failure — and vice versa.
+const GH_NO_CHECKS_STDERR_PATTERN = /no checks reported/i;
 
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
@@ -135,6 +148,58 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
   }
 }
 
+export class GitHubPullRequestDetailDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestDetailDecodeError>()(
+  "GitHubPullRequestDetailDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid pull request detail JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in getPullRequestDetail: ${this.detail}`;
+  }
+}
+
+export class GitHubPullRequestChecksDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestChecksDecodeError>()(
+  "GitHubPullRequestChecksDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid pull request checks JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in listPullRequestChecks: ${this.detail}`;
+  }
+}
+
+export class GitHubPullRequestReviewsDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestReviewsDecodeError>()(
+  "GitHubPullRequestReviewsDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid pull request reviews JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in listPullRequestReviews: ${this.detail}`;
+  }
+}
+
+export class GitHubPullRequestReviewCommentsDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestReviewCommentsDecodeError>()(
+  "GitHubPullRequestReviewCommentsDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid pull request review comments JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in listPullRequestReviewComments: ${this.detail}`;
+  }
+}
+
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
@@ -144,6 +209,10 @@ export const GitHubCliError = Schema.Union([
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
   GitHubRepositoryDecodeError,
+  GitHubPullRequestDetailDecodeError,
+  GitHubPullRequestChecksDecodeError,
+  GitHubPullRequestReviewsDecodeError,
+  GitHubPullRequestReviewCommentsDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
 
@@ -196,6 +265,39 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+export type GitHubMergeStrategy = "squash" | "merge" | "rebase";
+
+export interface GitHubPullRequestDetail {
+  readonly state: string;
+  readonly mergedAt: string | null;
+  readonly reviewDecision: string | null;
+  readonly headRefOid: string;
+  readonly url: string;
+}
+
+export interface GitHubPullRequestCheck {
+  readonly name: string;
+  readonly state: string;
+  readonly bucket: string;
+  readonly link: string;
+}
+
+export interface GitHubPullRequestReview {
+  readonly id: string;
+  readonly author: string;
+  readonly state: string;
+  readonly body: string;
+  readonly submittedAt: string;
+}
+
+export interface GitHubPullRequestReviewComment {
+  readonly id: number;
+  readonly user: string;
+  readonly body: string;
+  readonly path: string | null;
+  readonly createdAt: string;
+}
+
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
@@ -233,7 +335,35 @@ export class GitHubCli extends Context.Service<
       readonly headSelector: string;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
+
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly strategy: GitHubMergeStrategy;
+    }) => Effect.Effect<void, GitHubCliError>;
+
+    readonly getPullRequestDetail: (input: {
+      readonly cwd: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubPullRequestDetail, GitHubCliError>;
+
+    readonly listPullRequestChecks: (input: {
+      readonly cwd: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestCheck>, GitHubCliError>;
+
+    readonly listPullRequestReviews: (input: {
+      readonly cwd: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestReview>, GitHubCliError>;
+
+    readonly listPullRequestReviewComments: (input: {
+      readonly cwd: string;
+      readonly repo: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestReviewComment>, GitHubCliError>;
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
@@ -254,6 +384,59 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
 });
 const decodeRawGitHubRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubRepositoryCloneUrlsSchema),
+);
+
+const RawGitHubPullRequestDetailSchema = Schema.Struct({
+  state: Schema.String,
+  mergedAt: Schema.NullOr(Schema.String),
+  reviewDecision: Schema.NullOr(Schema.String),
+  headRefOid: Schema.String,
+  url: Schema.String,
+});
+const decodeRawGitHubPullRequestDetail = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubPullRequestDetailSchema),
+);
+
+const RawGitHubPullRequestCheckSchema = Schema.Struct({
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  bucket: Schema.optional(Schema.NullOr(Schema.String)),
+  link: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawGitHubPullRequestChecksSchema = Schema.Array(RawGitHubPullRequestCheckSchema);
+const decodeRawGitHubPullRequestChecks = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubPullRequestChecksSchema),
+);
+
+const RawGitHubPullRequestReviewsSchema = Schema.Struct({
+  reviews: Schema.Array(
+    Schema.Struct({
+      id: Schema.optional(Schema.NullOr(Schema.String)),
+      author: Schema.optional(
+        Schema.NullOr(Schema.Struct({ login: Schema.optional(Schema.String) })),
+      ),
+      state: Schema.optional(Schema.NullOr(Schema.String)),
+      body: Schema.optional(Schema.NullOr(Schema.String)),
+      submittedAt: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+});
+const decodeRawGitHubPullRequestReviews = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubPullRequestReviewsSchema),
+);
+
+const RawGitHubPullRequestReviewCommentsSchema = Schema.Array(
+  Schema.Struct({
+    id: Schema.Number,
+    user: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.optional(Schema.String) }))),
+    body: Schema.optional(Schema.NullOr(Schema.String)),
+    path: Schema.optional(Schema.NullOr(Schema.String)),
+    created_at: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+);
+const decodeRawGitHubPullRequestReviewComments = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubPullRequestReviewCommentsSchema),
 );
 
 function normalizeRepositoryCloneUrls(
@@ -364,9 +547,10 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "view",
-          input.reference,
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "--",
+          input.reference,
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -393,7 +577,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        args: ["repo", "view", "--json", "nameWithOwner,url,sshUrl", "--", input.repository],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -413,7 +597,7 @@ export const make = Effect.gen(function* () {
     createRepository: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "create", input.repository, `--${input.visibility}`],
+        args: ["repo", "create", `--${input.visibility}`, "--", input.repository],
       }).pipe(
         Effect.map((result) =>
           deriveRepositoryCloneUrlsFromCreateOutput(result.stdout, input.repository),
@@ -433,8 +617,204 @@ export const make = Effect.gen(function* () {
           input.title,
           "--body-file",
           input.bodyFile,
+          ...(input.draft ? ["--draft"] : []),
         ],
       }).pipe(Effect.asVoid),
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        // `--` end-of-options BEFORE the user-controlled number: without it a value
+        // like "--admin" is parsed as a flag (pflag interspersed parsing), turning
+        // `gh pr merge --admin --squash` into a branch-protection-bypass merge. All
+        // flags go before `--`; the selector after it is always positional.
+        args: [
+          "pr",
+          "merge",
+          input.strategy === "merge"
+            ? "--merge"
+            : input.strategy === "rebase"
+              ? "--rebase"
+              : "--squash",
+          "--",
+          String(input.number),
+        ],
+      }).pipe(Effect.asVoid),
+    getPullRequestDetail: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          "--json",
+          "state,mergedAt,reviewDecision,headRefOid,url",
+          "--",
+          String(input.number),
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeRawGitHubPullRequestDetail(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitHubPullRequestDetailDecodeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.map((raw) => ({
+          state: raw.state,
+          mergedAt: raw.mergedAt,
+          reviewDecision: raw.reviewDecision,
+          headRefOid: raw.headRefOid,
+          url: raw.url,
+        })),
+      ),
+    listPullRequestChecks: (input) => {
+      const args = ["pr", "checks", "--json", "name,state,bucket,link", "--", String(input.number)];
+      // Build a failure whose raw stderr stays a server-side-only property
+      // (VcsProcessExitError keeps it off the wire) with a stable message.
+      const checksFailure = (result: VcsProcess.VcsProcessOutput) =>
+        fromVcsError(
+          { command: "gh", cwd: input.cwd },
+          VcsProcessExitError.fromProcessExit(
+            {
+              operation: "GitHubCli.listPullRequestChecks",
+              command: "gh",
+              cwd: input.cwd,
+              argumentCount: args.length,
+            },
+            {
+              exitCode: result.exitCode as number,
+              stderr: result.stderr,
+              stderrTruncated: result.stderrTruncated,
+            },
+            "command-failed",
+          ),
+        );
+      // `gh pr checks` exit codes: 0 = all passing, 8 = checks pending, and
+      // 1 for THREE distinct situations: some checks failing (stdout still
+      // carries valid JSON), no checks configured ("no checks reported…" on
+      // stderr, empty stdout), or a real error (auth failure, missing PR,
+      // API error — empty stdout, other stderr). Tolerate the first two;
+      // fail loudly on the error case so downstream merge-readiness logic
+      // never mistakes a failure for "no checks".
+      return process
+        .run({
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args,
+          cwd: input.cwd,
+          timeoutMs: DEFAULT_TIMEOUT_MS,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)),
+          Effect.flatMap(
+            (result): Effect.Effect<ReadonlyArray<GitHubPullRequestCheck>, GitHubCliError> => {
+              const exitCode = result.exitCode as number;
+              if (exitCode !== 0 && exitCode !== 1 && exitCode !== 8) {
+                return Effect.fail(checksFailure(result));
+              }
+              const raw = result.stdout.trim();
+              if (raw.length === 0) {
+                if (exitCode === 1 && !GH_NO_CHECKS_STDERR_PATTERN.test(result.stderr)) {
+                  return Effect.fail(checksFailure(result));
+                }
+                return Effect.succeed([] as ReadonlyArray<GitHubPullRequestCheck>);
+              }
+              return decodeRawGitHubPullRequestChecks(raw).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new GitHubPullRequestChecksDecodeError({
+                      command: "gh",
+                      cwd: input.cwd,
+                      cause,
+                    }),
+                ),
+                Effect.map((checks) =>
+                  checks.map((check) => ({
+                    name: check.name ?? "",
+                    state: check.state ?? "",
+                    bucket: check.bucket ?? "",
+                    link: check.link ?? "",
+                  })),
+                ),
+              );
+            },
+          ),
+        );
+    },
+    listPullRequestReviews: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "view", "--json", "reviews", "--", String(input.number)],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeRawGitHubPullRequestReviews(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitHubPullRequestReviewsDecodeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.map((decoded) =>
+          decoded.reviews.map((review) => ({
+            id: review.id ?? "",
+            author: review.author?.login ?? "",
+            state: review.state ?? "",
+            body: review.body ?? "",
+            submittedAt: review.submittedAt ?? "",
+          })),
+        ),
+      ),
+    listPullRequestReviewComments: (input) =>
+      Effect.gen(function* () {
+        if (!GITHUB_REPO_PATTERN.test(input.repo)) {
+          return yield* new GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error("Invalid repository identifier; expected owner/name."),
+          });
+        }
+        return yield* execute({
+          cwd: input.cwd,
+          // --paginate: without it gh returns only the first page (30 comments), so a
+          // PR with more review comments is silently truncated. gh merges the array
+          // pages into a single JSON array the decoder below still parses.
+          args: ["api", "--paginate", `repos/${input.repo}/pulls/${input.number}/comments`],
+        });
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeRawGitHubPullRequestReviewComments(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitHubPullRequestReviewCommentsDecodeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.map((decoded) =>
+          decoded.map((comment) => ({
+            id: comment.id,
+            user: comment.user?.login ?? "",
+            body: comment.body ?? "",
+            path: comment.path ?? null,
+            createdAt: comment.created_at ?? "",
+          })),
+        ),
+      ),
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
@@ -448,7 +828,7 @@ export const make = Effect.gen(function* () {
     checkoutPullRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
+        args: ["pr", "checkout", ...(input.force ? ["--force"] : []), "--", input.reference],
       }).pipe(Effect.asVoid),
   });
 });

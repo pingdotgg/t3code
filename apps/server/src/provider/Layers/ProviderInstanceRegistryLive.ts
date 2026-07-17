@@ -210,12 +210,25 @@ const buildEntry = <R>(input: {
  */
 const makeReconcile = <R>(input: {
   readonly state: RegistryState;
-  readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
+  /**
+   * Resolved PER RECONCILE, not captured once.
+   *
+   * A static map is only correct while the driver set is fixed at layer-build time.
+   * Plugins activate after that, so a plugin-contributed driver could never appear in
+   * a map captured at build. Resolving here — and reconciling again when a plugin
+   * activates — is what lets one exist at all.
+   */
+  readonly resolveDrivers: Effect.Effect<
+    ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
+    never,
+    R
+  >;
   readonly parentScope: Scope.Scope;
 }): ((configMap: ProviderInstanceConfigMap) => Effect.Effect<void, never, R>) => {
-  const { state, driversById, parentScope } = input;
+  const { state, resolveDrivers, parentScope } = input;
   return (configMap: ProviderInstanceConfigMap) =>
     Effect.gen(function* () {
+      const driversById = yield* resolveDrivers;
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
       const nextRaw = Object.entries(configMap);
@@ -234,7 +247,14 @@ const makeReconcile = <R>(input: {
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        // Also rebuild when the driver is no longer registered (e.g. a plugin
+        // provider was disabled/uninstalled): entryEqual alone would keep a
+        // live instance whose driver code is gone instead of an unavailable
+        // snapshot.
+        if (
+          nextEntry !== undefined &&
+          (!entryEqual(live.entry, nextEntry) || !driversById.has(live.entry.driver))
+        ) {
           replacedIds.add(instanceId);
         }
       }
@@ -329,6 +349,11 @@ const makeReconcile = <R>(input: {
  */
 export const makeProviderInstanceRegistry = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
+  /**
+   * Drivers resolved on EVERY reconcile — plugin-contributed ones. Optional so every
+   * existing caller is unaffected. Built-ins always win a kind collision.
+   */
+  readonly dynamicDrivers?: Effect.Effect<ReadonlyArray<AnyProviderDriver<R>>, never, R>;
   readonly configMap: ProviderInstanceConfigMap;
 }): Effect.Effect<
   {
@@ -339,9 +364,21 @@ export const makeProviderInstanceRegistry = <R>(input: {
   R | Scope.Scope
 > =>
   Effect.gen(function* () {
-    const driversById = new Map<ProviderDriverKind, AnyProviderDriver<R>>(
-      input.drivers.map((driver) => [driver.driverKind, driver]),
-    );
+    // Built-ins are fixed; `dynamicDrivers` (when supplied) is consulted on every
+    // reconcile so a plugin driver registered after boot can be resolved. A plugin
+    // must not shadow a built-in, so built-ins are applied LAST.
+    const resolveDrivers: Effect.Effect<
+      ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
+      never,
+      R
+    > = Effect.gen(function* () {
+      const dynamic = input.dynamicDrivers === undefined ? [] : yield* input.dynamicDrivers;
+      const merged = new Map<ProviderDriverKind, AnyProviderDriver<R>>(
+        dynamic.map((driver) => [driver.driverKind, driver]),
+      );
+      for (const driver of input.drivers) merged.set(driver.driverKind, driver);
+      return merged;
+    });
 
     // Capture the enclosing scope so per-instance child scopes can be
     // attached to it at `reconcile` time. Without this, `reconcile`
@@ -361,7 +398,7 @@ export const makeProviderInstanceRegistry = <R>(input: {
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
 
     const state: RegistryState = { entries, unavailable, changes };
-    const reconcileWithR = makeReconcile({ state, driversById, parentScope });
+    const reconcileWithR = makeReconcile({ state, resolveDrivers, parentScope });
     const reconcile: ProviderInstanceRegistryMutatorShape["reconcile"] = (configMap) =>
       reconcileWithR(configMap).pipe(Effect.provideContext(driverContext));
 

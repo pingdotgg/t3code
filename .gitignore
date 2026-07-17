@@ -35,3 +35,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Local pnpm store; machine-local cache, never part of a change.
+.pnpm-store/

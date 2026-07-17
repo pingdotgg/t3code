@@ -1,6 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
+import { injectPluginHostHeadHtml } from "@t3tools/shared/pluginHostWeb";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
@@ -87,9 +88,19 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
+function pluginHostIndexHtmlPlugin() {
+  return {
+    name: "t3-plugin-host-index-html",
+    transformIndexHtml(html: string) {
+      return injectPluginHostHeadHtml(html);
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     plugins: [
+      pluginHostIndexHtmlPlugin(),
       tanstackRouter(),
       react(),
       babel({
@@ -153,6 +164,15 @@ export default defineConfig(() => {
                 changeOrigin: true,
               },
               "/attachments": {
+                target: devProxyTarget,
+                changeOrigin: true,
+              },
+              // Dev uses the backend as the single source for plugin shims and same-origin bundles.
+              "/plugin-host": {
+                target: devProxyTarget,
+                changeOrigin: true,
+              },
+              "/plugins": {
                 target: devProxyTarget,
                 changeOrigin: true,
               },

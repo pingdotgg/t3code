@@ -17,6 +17,7 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadShell,
   ProjectId,
+  ThreadOwner,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -128,6 +129,13 @@ export interface ProjectionSnapshotQueryShape {
   readonly getFirstActiveThreadIdByProjectId: (
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<ThreadId>, ProjectionRepositoryError>;
+
+  /**
+   * Read a thread owner by id without applying user-facing visibility filters.
+   */
+  readonly getThreadOwnerById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ThreadOwner>, ProjectionRepositoryError>;
 
   /**
    * Read the checkpoint context needed to resolve a single thread diff.

@@ -3,14 +3,15 @@ import {
   AuthAccessWriteScope,
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
+  satisfiesScope,
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
-  type AuthEnvironmentScope,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
+  type AuthScope,
   type AuthSessionId,
   type AuthSessionState,
   type ServerAuthDescriptor,
@@ -41,7 +42,7 @@ export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstr
 export interface IssuedPairingLink {
   readonly id: string;
   readonly credential: string;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: DateTime.Utc;
@@ -52,7 +53,7 @@ export interface IssuedBearerSession {
   readonly sessionId: AuthSessionId;
   readonly token: string;
   readonly method: "bearer-access-token";
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly subject: string;
   readonly client: AuthClientMetadata;
   readonly expiresAt: DateTime.Utc;
@@ -62,7 +63,7 @@ export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
 }
@@ -423,7 +424,7 @@ export class EnvironmentAuth extends Context.Service<
     >;
     readonly exchangeBootstrapCredentialForAccessToken: (
       credential: string,
-      requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
+      requestedScopes: ReadonlyArray<AuthScope> | undefined,
       requestMetadata: AuthClientMetadata,
       input?: {
         readonly proofKeyThumbprint?: string;
@@ -435,7 +436,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly createPairingLink: (input?: {
       readonly ttl?: Duration.Duration;
       readonly label?: string;
-      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly scopes?: ReadonlyArray<AuthScope>;
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
     }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
@@ -453,7 +454,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly issueSession: (input?: {
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
-      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly scopes?: ReadonlyArray<AuthScope>;
       readonly label?: string;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     readonly listSessions: () => Effect.Effect<
@@ -694,7 +695,12 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
             const grantedScopes = requestedScopes ?? grant.scopes;
-            if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
+            // Downscope by implicit satisfaction, not verbatim membership: a
+            // full standard-client grant implicitly holds every plugin scope
+            // (and plugins:manage) via the standard-client marker, so requesting
+            // e.g. `plugin:<id>:read` against such a grant must succeed even
+            // though it is not listed literally in grant.scopes.
+            if (!grantedScopes.every((scope) => satisfiesScope(scope, grant.scopes))) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
             return yield* sessions
@@ -743,7 +749,7 @@ export const make = Effect.gen(function* () {
       );
 
   const issuePairingCredentialForSubject = (input: {
-    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly scopes: ReadonlyArray<AuthScope>;
     readonly subject: string;
     readonly label?: string;
   }) =>

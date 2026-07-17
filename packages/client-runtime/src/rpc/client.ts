@@ -1,4 +1,20 @@
-import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_WS_METHODS,
+  PLUGINS_WS_METHODS,
+  WS_METHODS,
+  type PluginCatalogInput,
+  type PluginInstallBeginInput,
+  type PluginInstallConfirmInput,
+  type PluginId,
+  type PluginSetEnabledInput,
+  type PluginSettingsGetInput,
+  type PluginSettingsSetInput,
+  type PluginSourcesAddInput,
+  type PluginSourcesRemoveInput,
+  type PluginUninstallInput,
+  type PluginUpgradeBeginInput,
+  type PluginUpgradeConfirmInput,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -50,6 +66,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.previewAutomationConnect
   | typeof WS_METHODS.subscribeVcsStatus
+  | typeof PLUGINS_WS_METHODS.subscribe
   | typeof WS_METHODS.terminalAttach;
 
 export type EnvironmentStreamCommandRpcTag =
@@ -240,3 +257,115 @@ export const config = Effect.gen(function* () {
   const session = yield* currentSession();
   return yield* session.initialConfig;
 }).pipe(Effect.withSpan("EnvironmentRpc.config"));
+
+export const listPlugins = Effect.fn("EnvironmentRpc.listPlugins")(function* () {
+  return yield* request(PLUGINS_WS_METHODS.list, {});
+});
+
+export const listPluginSources = Effect.fn("EnvironmentRpc.listPluginSources")(function* () {
+  return yield* request(PLUGINS_WS_METHODS.sourcesList, {});
+});
+
+export const addPluginSource = Effect.fn("EnvironmentRpc.addPluginSource")(function* (
+  input: PluginSourcesAddInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.sourcesAdd, input);
+});
+
+export const removePluginSource = Effect.fn("EnvironmentRpc.removePluginSource")(function* (
+  input: PluginSourcesRemoveInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.sourcesRemove, input);
+});
+
+export const getPluginCatalog = Effect.fn("EnvironmentRpc.getPluginCatalog")(function* (
+  input: PluginCatalogInput = {},
+) {
+  return yield* request(PLUGINS_WS_METHODS.catalog, input);
+});
+
+export const beginPluginInstall = Effect.fn("EnvironmentRpc.beginPluginInstall")(function* (
+  input: PluginInstallBeginInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.installBegin, input);
+});
+
+export const confirmPluginInstall = Effect.fn("EnvironmentRpc.confirmPluginInstall")(function* (
+  input: PluginInstallConfirmInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.installConfirm, input);
+});
+
+export const abortPluginInstall = Effect.fn("EnvironmentRpc.abortPluginInstall")(function* (
+  input: PluginInstallConfirmInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.installAbort, input);
+});
+
+export const setPluginEnabled = Effect.fn("EnvironmentRpc.setPluginEnabled")(function* (
+  input: PluginSetEnabledInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.setEnabled, input);
+});
+
+export const getPluginSettings = Effect.fn("EnvironmentRpc.getPluginSettings")(function* (
+  input: PluginSettingsGetInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.settingsGet, input);
+});
+
+export const setPluginSettings = Effect.fn("EnvironmentRpc.setPluginSettings")(function* (
+  input: PluginSettingsSetInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.settingsSet, input);
+});
+
+export const uninstallPlugin = Effect.fn("EnvironmentRpc.uninstallPlugin")(function* (
+  input: PluginUninstallInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.uninstall, input);
+});
+
+export const beginPluginUpgrade = Effect.fn("EnvironmentRpc.beginPluginUpgrade")(function* (
+  input: PluginUpgradeBeginInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.upgradeBegin, input);
+});
+
+export const confirmPluginUpgrade = Effect.fn("EnvironmentRpc.confirmPluginUpgrade")(function* (
+  input: PluginUpgradeConfirmInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.upgradeConfirm, input);
+});
+
+export const checkPluginUpdates = Effect.fn("EnvironmentRpc.checkPluginUpdates")(function* () {
+  return yield* request(PLUGINS_WS_METHODS.checkUpdates, {});
+});
+
+export const callPlugin = Effect.fn("EnvironmentRpc.callPlugin")(function* (
+  pluginId: PluginId,
+  method: string,
+  payload?: unknown,
+) {
+  return yield* request(PLUGINS_WS_METHODS.call, {
+    pluginId,
+    method,
+    ...(payload === undefined ? {} : { payload }),
+  });
+});
+
+export function subscribePlugin(
+  pluginId: PluginId,
+  method: string,
+  payload?: unknown,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<typeof PLUGINS_WS_METHODS.subscribe>,
+  EnvironmentRpcStreamFailure<typeof PLUGINS_WS_METHODS.subscribe>,
+  EnvironmentSupervisor
+> {
+  return subscribe(PLUGINS_WS_METHODS.subscribe, {
+    pluginId,
+    method,
+    ...(payload === undefined ? {} : { payload }),
+  });
+}

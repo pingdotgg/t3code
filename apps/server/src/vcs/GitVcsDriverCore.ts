@@ -738,13 +738,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
-          return yield* new GitCommandError({
-            ...gitCommandContext(commandInput),
-            detail: "Git command exited with a non-zero status.",
-            exitCode,
-            stdoutLength: stdout.text.length,
-            stderrLength: stderr.text.length,
-          });
+          // Raw stderr rides along as a server-side-only property (never
+          // serialized to the RPC wire); the wire carries only its length.
+          return yield* GitCommandError.withStderr(
+            {
+              ...gitCommandContext(commandInput),
+              detail: "Git command exited with a non-zero status.",
+              exitCode,
+              stdoutLength: stdout.text.length,
+            },
+            stderr.text,
+          );
         }
 
         return {
@@ -819,13 +823,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return Effect.succeed(result);
         }
         return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
+          GitCommandError.withStderr(
+            {
+              ...gitCommandContext({ operation, cwd, args }),
+              detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+              ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+              stdoutLength: result.stdout.length,
+            },
+            result.stderr,
+          ),
         );
       }),
     );
@@ -1579,7 +1585,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
-    const args = ["commit", "-m", subject];
+    const args = ["commit", ...(options?.noVerify ? ["--no-verify"] : []), "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);

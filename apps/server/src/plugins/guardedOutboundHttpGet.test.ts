@@ -1,0 +1,325 @@
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+
+import type {
+  PluginHttpClientTransport,
+  PluginPinnedHttpRequest,
+} from "./capabilities/HttpClientCapability.ts";
+import { guardedOutboundHttpGet } from "./guardedOutboundHttpGet.ts";
+import { OutboundUrlError, type UrlValidatorDeps } from "./OutboundUrlValidator.ts";
+
+const lookupFor =
+  (hosts: Record<string, string>): UrlValidatorDeps["lookup"] =>
+  (host) => {
+    const address = hosts[host];
+    return address === undefined
+      ? Effect.fail(new OutboundUrlError({ reason: `unexpected lookup ${host}` }))
+      : Effect.succeed([{ address, family: 4 as const }]);
+  };
+
+const transportFor = (input: {
+  readonly responses: Record<string, () => Response>;
+  readonly requests?: Array<PluginPinnedHttpRequest>;
+}): PluginHttpClientTransport => {
+  return (request) => {
+    input.requests?.push(request);
+    const url = request.url.toString();
+    const respond = input.responses[url] ?? (() => new Response("", { status: 404 }));
+    return Effect.succeed(HttpClientResponse.fromWeb(HttpClientRequest.get(url), respond()));
+  };
+};
+
+it.effect("guardedOutboundHttpGet pins requests to the resolved address", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    const response = yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34" }),
+      transport: transportFor({
+        responses: { "https://public.test/file": () => new Response("ok") },
+        requests,
+      }),
+      timeoutMs: 1000,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(requests[0]?.addresses[0]?.address, "93.184.216.34");
+  }),
+);
+
+it.effect("guardedOutboundHttpGet rejects URLs that resolve to blocked addresses", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    const result = yield* Effect.result(
+      guardedOutboundHttpGet({
+        url: "https://internal.test/admin",
+        lookup: lookupFor({ "internal.test": "169.254.169.254" }),
+        transport: transportFor({ responses: {}, requests }),
+        timeoutMs: 1000,
+      }),
+    );
+
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) assert.equal(result.failure._tag, "OutboundUrlError");
+    // Rejected during validation: no request may reach the transport.
+    assert.deepEqual(requests, []);
+  }),
+);
+
+it.effect("guardedOutboundHttpGet follows redirects only through validated hosts", () =>
+  Effect.gen(function* () {
+    const response = yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "cdn.test": "203.0.114.9" }),
+      transport: transportFor({
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://cdn.test/file" } }),
+          "https://cdn.test/file": () => new Response("real bytes"),
+        },
+      }),
+      timeoutMs: 1000,
+    });
+
+    assert.equal(response.status, 200);
+  }),
+);
+
+it.effect("guardedOutboundHttpGet does not forward credentials across an origin", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "cdn.test": "203.0.114.9" }),
+      transport: transportFor({
+        requests,
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://cdn.test/file" } }),
+          "https://cdn.test/file": () => new Response("real bytes"),
+        },
+      }),
+      // An origin-scoped credential. The first server chooses where we go next, so
+      // forwarding this would let it name any https host and be handed the token.
+      headers: { authorization: "Bearer super-secret", accept: "application/json" },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(requests.length, 2);
+    assert.equal(
+      requests[0]?.headers["authorization"],
+      "Bearer super-secret",
+      "the origin the caller addressed still gets it",
+    );
+    assert.isUndefined(
+      requests[1]?.headers["authorization"],
+      "a redirect must not hand the caller's credential to a host it chose",
+    );
+    // Content negotiation is not identity, so it survives — otherwise a redirect to a
+    // CDN would silently change what we asked for.
+    assert.equal(requests[1]?.headers["accept"], "application/json");
+  }),
+);
+
+it.effect("guardedOutboundHttpGet keeps credentials stripped once the chain is hijacked", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "evil.test": "203.0.114.9" }),
+      transport: transportFor({
+        requests,
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://evil.test/hop" } }),
+          // evil.test now redirects WITHIN its own origin. Judging each hop by whether
+          // it changed origin calls this one "same-origin" and hands the credential
+          // over — to a host that already hijacked the chain. Taint has to be sticky.
+          "https://evil.test/hop": () =>
+            new Response(null, { status: 302, headers: { location: "https://evil.test/final" } }),
+          "https://evil.test/final": () => new Response("bytes"),
+        },
+      }),
+      headers: { authorization: "Bearer super-secret" },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(requests.length, 3);
+    assert.isUndefined(requests[1]?.headers["authorization"]);
+    assert.isUndefined(
+      requests[2]?.headers["authorization"],
+      "a same-origin hop does not un-hijack a chain that already left the caller's origin",
+    );
+  }),
+);
+
+it.effect("guardedOutboundHttpGet does not resurrect credentials on a redirect back", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "evil.test": "203.0.114.9" }),
+      transport: transportFor({
+        requests,
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://evil.test/hop" } }),
+          // A -> B -> A. Comparing each hop against the PREVIOUS one would call this
+          // same-origin and hand the credential back — after evil.test chose the URL.
+          "https://evil.test/hop": () =>
+            new Response(null, { status: 302, headers: { location: "https://public.test/final" } }),
+          "https://public.test/final": () => new Response("bytes"),
+        },
+      }),
+      headers: { authorization: "Bearer super-secret" },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(requests.length, 3);
+    assert.isUndefined(requests[1]?.headers["authorization"]);
+    assert.isUndefined(
+      requests[2]?.headers["authorization"],
+      "the hop back is still a URL another server chose",
+    );
+  }),
+);
+
+it.effect(
+  "guardedOutboundHttpGet rejects redirects to blocked addresses without fetching them",
+  () =>
+    Effect.gen(function* () {
+      const requests: Array<PluginPinnedHttpRequest> = [];
+      const result = yield* Effect.result(
+        guardedOutboundHttpGet({
+          url: "https://public.test/file",
+          lookup: lookupFor({ "public.test": "93.184.216.34", "metadata.test": "169.254.169.254" }),
+          transport: transportFor({
+            responses: {
+              "https://public.test/file": () =>
+                new Response(null, {
+                  status: 302,
+                  headers: { location: "https://metadata.test/latest/meta-data" },
+                }),
+            },
+            requests,
+          }),
+          timeoutMs: 1000,
+        }),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure._tag, "OutboundUrlError");
+      assert.deepEqual(
+        requests.map((request) => request.url.hostname),
+        ["public.test"],
+      );
+    }),
+);
+
+it.effect("guardedOutboundHttpGet rejects redirects that downgrade to http", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.result(
+      guardedOutboundHttpGet({
+        url: "https://public.test/file",
+        lookup: lookupFor({ "public.test": "93.184.216.34", localhost: "127.0.0.1" }),
+        transport: transportFor({
+          responses: {
+            "https://public.test/file": () =>
+              new Response(null, {
+                status: 302,
+                headers: { location: "http://localhost:8080/steal" },
+              }),
+          },
+        }),
+        timeoutMs: 1000,
+      }),
+    );
+
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.equal(result.failure._tag, "OutboundUrlError");
+      assert.include(result.failure.reason, "https");
+    }
+  }),
+);
+
+it.effect("guardedOutboundHttpGet gives up after too many redirects", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.result(
+      guardedOutboundHttpGet({
+        url: "https://public.test/loop",
+        lookup: lookupFor({ "public.test": "93.184.216.34" }),
+        transport: transportFor({
+          responses: {
+            "https://public.test/loop": () =>
+              new Response(null, {
+                status: 302,
+                headers: { location: "https://public.test/loop" },
+              }),
+          },
+        }),
+        timeoutMs: 1000,
+      }),
+    );
+
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.equal(result.failure._tag, "OutboundUrlError");
+      assert.include(result.failure.reason, "redirects");
+    }
+  }),
+);
+
+it.live(
+  "guardedOutboundHttpGet bounds the drain of a redirect body that never ends",
+  () =>
+    Effect.gen(function* () {
+      const requests: Array<PluginPinnedHttpRequest> = [];
+      // The redirect's body is a stream that never closes. Draining it inline would
+      // hang ingestion forever; the bounded drain must give up and still follow the
+      // redirect to completion.
+      const response = yield* guardedOutboundHttpGet({
+        url: "https://public.test/file",
+        lookup: lookupFor({ "public.test": "93.184.216.34", "cdn.test": "203.0.114.9" }),
+        transport: transportFor({
+          requests,
+          responses: {
+            "https://public.test/file": () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  // Never enqueue, never close: runDrain would block here without the bound.
+                  start() {},
+                }),
+                { status: 302, headers: { location: "https://cdn.test/file" } },
+              ),
+            "https://cdn.test/file": () => new Response("real bytes"),
+          },
+        }),
+        timeoutMs: 1000,
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(requests.length, 2);
+    }),
+  10_000,
+);
+
+it.effect("guardedOutboundHttpGet returns redirect responses without a Location as-is", () =>
+  Effect.gen(function* () {
+    const response = yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34" }),
+      transport: transportFor({
+        responses: {
+          "https://public.test/file": () => new Response(null, { status: 302 }),
+        },
+      }),
+      timeoutMs: 1000,
+    });
+
+    // The caller's status filter is responsible for rejecting it.
+    assert.equal(response.status, 302);
+  }),
+);

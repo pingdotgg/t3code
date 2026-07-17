@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { defineWebPlugin, hostCompat, pluginSdkWebExternalDependencies } from "./index";
+// The host UI lives behind `/ui` now: it re-exports live apps/web modules, so it is
+// monorepo-only. Anything importable from `./index` is portable by construction.
+import { Button, ChatMarkdown, ProviderModelPicker, TraitsPicker, createPluginAtoms } from "./ui";
+
+describe("plugin-sdk-web", () => {
+  it("re-exports the host web surface", () => {
+    expect(typeof Button).toBe("function");
+    expect(typeof ChatMarkdown).toBe("object");
+    expect(typeof ProviderModelPicker).toBe("object");
+    expect(typeof TraitsPicker).toBe("object");
+    expect(typeof createPluginAtoms).toBe("function");
+    expect(hostCompat.hostApiVersion).toBe("1.0.0");
+  });
+
+  it("keeps host singleton dependencies external for plugin builds", () => {
+    expect(pluginSdkWebExternalDependencies).toEqual(
+      expect.arrayContaining([
+        "@effect/atom-react",
+        "@t3tools/contracts",
+        "@t3tools/plugin-sdk-web",
+        "effect",
+        "react",
+        "react-dom",
+      ]),
+    );
+  });
+
+  it("returns defineWebPlugin definitions unchanged", () => {
+    const definition = defineWebPlugin({
+      register(ctx) {
+        ctx.registerRoute({
+          path: "overview",
+          component: () => null,
+        });
+        ctx.registerSidebarSection({
+          id: "main",
+          title: "Main",
+          render: () => null,
+        });
+        ctx.registerSettingsPage({
+          id: "settings",
+          title: "Settings",
+          component: () => null,
+        });
+        ctx.registerCommand({
+          id: "refresh",
+          title: "Refresh",
+          run: () => undefined,
+        });
+      },
+    });
+
+    expect(typeof definition.register).toBe("function");
+  });
+});

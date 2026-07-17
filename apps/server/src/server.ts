@@ -32,6 +32,25 @@ import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as PluginHost from "./plugins/PluginHost.ts";
+import { PluginHttpClientTransportLive } from "./plugins/capabilities/HttpClientCapability.ts";
+import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
+import { pluginHttpRouteLayer } from "./plugins/PluginHttpRoutes.ts";
+import { pluginWebRouteLayer } from "./plugins/PluginWebRoutes.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginInstaller from "./plugins/PluginInstaller.ts";
+import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
+import * as PluginManagementRpcHandlers from "./plugins/PluginManagementRpcHandlers.ts";
+import * as PluginMarketplace from "./plugins/PluginMarketplace.ts";
+import * as PluginMigrator from "./plugins/PluginMigrator.ts";
+import * as PluginModuleLoader from "./plugins/PluginModuleLoader.ts";
+import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
+import * as PluginRuntimeRegistry from "./plugins/PluginRuntimeRegistry.ts";
+import * as PluginContextComposerLayer from "./plugins/PluginContextComposer.ts";
+import * as PluginPolicyRegistry from "./plugins/PluginPolicyRegistry.ts";
+import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
+import * as PluginToolCatalog from "./plugins/PluginToolCatalog.ts";
+import { OutboundUrlLookupLive } from "./plugins/OutboundUrlValidator.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
@@ -44,6 +63,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
@@ -83,6 +103,9 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { ProjectionThreadActivityRepositoryLive } from "./persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
+import { ProjectionTurnRepositoryLive } from "./persistence/Layers/ProjectionTurns.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -237,6 +260,13 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
+const PluginProjectionReadLayerLive = Layer.mergeAll(
+  OrchestrationProjectionSnapshotQueryLive,
+  ProjectionTurnRepositoryLive,
+  ProjectionThreadMessageRepositoryLive,
+  ProjectionThreadActivityRepositoryLive,
+).pipe(Layer.provide(RepositoryIdentityResolver.layer));
+
 const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
@@ -284,7 +314,83 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
+const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
+// Lockfile is optional at catalog construction (serviceOption) but must be in
+// scope here so call-time can require enabled+active lifecycle state.
+const PluginToolCatalogLayerLive = PluginToolCatalog.layer.pipe(
+  Layer.provide(PluginRuntimeRegistryLayerLive),
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+);
+const PluginHttpRegistryLayerLive = PluginHttpRegistry.layer;
+const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
+  OrchestrationLayerLive,
+  PluginProjectionReadLayerLive,
+  SourceControlProviderRegistryLayerLive,
+  GitVcsDriver.layer,
+  CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive)),
+  GitHubCli.layer,
+  TextGeneration.layer,
+  TerminalLayerLive,
+  ServerSecretStore.layer,
+  ServerEnvironment.layer,
+  OutboundUrlLookupLive,
+  PluginHttpClientTransportLive,
+);
+const PluginHostLayerLive = PluginHost.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginModuleLoader.layer),
+  Layer.provideMerge(PluginMigrator.layer),
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+  Layer.provideMerge(PluginToolCatalogLayerLive),
+  Layer.provideMerge(PluginSettingsStore.layer),
+  Layer.provideMerge(PluginContextComposerLayer.layer),
+  Layer.provideMerge(PluginPolicyRegistry.layer),
+  Layer.provideMerge(PluginHttpRegistryLayerLive),
+  Layer.provideMerge(PluginHostCapabilityDepsLayerLive),
+);
+const PluginRpcDispatcherLayerLive = PluginRpcDispatcher.layer.pipe(
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+const PluginCatalogLayerLive = PluginCatalog.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+// Marketplace + installer ingest untrusted URLs (marketplace.json, tarball)
+// and must fetch them through the same SSRF guard the httpClient capability
+// uses: OutboundUrlLookup validation plus the DNS-pinned transport.
+const PluginOutboundHttpDepsLive = Layer.mergeAll(
+  OutboundUrlLookupLive,
+  PluginHttpClientTransportLive,
+);
+const PluginMarketplaceLayerLive = PluginMarketplace.layer.pipe(
+  Layer.provide(PluginOutboundHttpDepsLive),
+);
+const PluginInstallerLayerLive = PluginInstaller.layer.pipe(
+  Layer.provide(PluginOutboundHttpDepsLive),
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginMarketplaceLayerLive),
+  Layer.provideMerge(PluginHostLayerLive),
+  Layer.provideMerge(PluginCatalogLayerLive),
+);
+const PluginManagementRpcHandlersLayerLive = PluginManagementRpcHandlers.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginMarketplaceLayerLive),
+  Layer.provideMerge(PluginInstallerLayerLive),
+);
+const PluginLayerLive = Layer.mergeAll(
+  PluginHostLayerLive,
+  PluginRpcDispatcherLayerLive,
+  PluginCatalogLayerLive,
+  PluginMarketplaceLayerLive,
+  PluginInstallerLayerLive,
+  PluginManagementRpcHandlersLayerLive,
+  PluginHttpRegistryLayerLive,
+  PluginLockfileStoreLayerLive,
+  PluginToolCatalogLayerLive,
+);
+
+const RuntimeCoreBaseDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
@@ -293,6 +399,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
+  Layer.provideMerge(PluginLayerLive),
+);
+
+const RuntimeCoreDependenciesLive = RuntimeCoreBaseDependenciesLive.pipe(
   Layer.provideMerge(Keybindings.layer),
   Layer.provideMerge(ProviderRegistryLive),
   // The instance registry is the new routing keystone — text generation,
@@ -301,6 +411,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // A driver that wants plugin instructions declares PluginContextComposer in its env
+  // (see CodexDriverEnv), so the registry stack satisfies it here. The requirement IS
+  // the point: plugin text reaches the agent only through the composer.
+  Layer.provideMerge(PluginContextComposerLayer.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
@@ -354,10 +468,19 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    pluginHttpRouteLayer,
+    pluginWebRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  // Plugin tool toolkit pulls leaf services (no PluginHost). Same layer refs as
+  // PluginLayerLive so Effect memoizes a single registry/catalog instance when
+  // RuntimeServicesLive is also provided (MCP server still built once).
+  McpHttpServer.layer.pipe(
+    Layer.provide(McpSessionRegistry.layer),
+    Layer.provide(PluginToolCatalogLayerLive),
+    Layer.provide(PluginRuntimeRegistryLayerLive),
+  ),
 ).pipe(Layer.provide(PreviewAutomationBroker.layer), Layer.provide(browserApiCorsLayer));
 
 export const makeServerLayer = Layer.unwrap(

@@ -1,9 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  AuthAdministrativeScopes,
+  AuthOrchestrationReadScope,
+  AuthStandardClientScopes,
+  pluginReadScope,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -74,13 +82,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
 
       expect(first.method).toBe("one-time-token");
-      expect(first.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-      ]);
+      expect(first.scopes).toEqual(AuthStandardClientScopes);
       expect(first.subject).toBe("one-time-token");
       expect(first.label).toBe("Julius iPhone");
       expect(issued.label).toBe("Julius iPhone");
@@ -145,16 +147,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       const third = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
 
       expect(first.method).toBe("desktop-bootstrap");
-      expect(first.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      expect(first.scopes).toEqual(AuthAdministrativeScopes);
       expect(first.subject).toBe("desktop-bootstrap");
       expect(second.method).toBe("desktop-bootstrap");
       expect(third.method).toBe("desktop-bootstrap");
@@ -216,6 +209,38 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(revokedConsume.message).toContain("no longer available");
       expect(revokedConsume._tag).toBe("UnavailableBootstrapCredentialError");
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
+  );
+
+  it.effect("surfaces plugin scopes on listActive and the pairingLinkUpserted change event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+        const grantedScopes = [AuthOrchestrationReadScope, pluginReadScope("acme-notes")] as const;
+
+        const changesFiber = yield* Stream.take(bootstrapCredentials.streamChanges, 1).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        const issued = yield* bootstrapCredentials.issueOneTimeToken({ scopes: grantedScopes });
+
+        // The active-link list carries the full granted scope set, not just
+        // the environment scopes.
+        const active = yield* bootstrapCredentials.listActive();
+        const listed = active.find((entry) => entry.id === issued.id);
+        expect(listed?.scopes).toEqual(grantedScopes);
+
+        // The change event mirrors it.
+        const changes = Array.from(yield* Fiber.join(changesFiber));
+        expect(changes).toHaveLength(1);
+        const change = changes[0]!;
+        expect(change.type).toBe("pairingLinkUpserted");
+        if (change.type === "pairingLinkUpserted") {
+          expect(change.pairingLink.scopes).toEqual(grantedScopes);
+        }
+      }),
+    ).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
 
   it.effect("identifies consume-available failures and preserves their cause", () => {

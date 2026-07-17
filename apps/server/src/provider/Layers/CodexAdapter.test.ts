@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PluginContextComposerLayer from "../../plugins/PluginContextComposer.ts";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -233,6 +234,7 @@ const validationLayer = it.layer(
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(PluginContextComposerLayer.layer),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -302,6 +304,7 @@ const sessionErrorLayer = it.layer(
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(PluginContextComposerLayer.layer),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -374,6 +377,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(PluginContextComposerLayer.layer),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -428,6 +432,7 @@ const lifecycleLayer = it.layer(
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(PluginContextComposerLayer.layer),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1101,6 +1106,7 @@ const scopedLifecycleLayer = it.layer(
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(PluginContextComposerLayer.layer),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1145,6 +1151,7 @@ const scopedFailureLayer = it.layer(
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(PluginContextComposerLayer.layer),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1197,6 +1204,7 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
       ).pipe(
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
         Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(PluginContextComposerLayer.layer),
         Layer.provideMerge(providerSessionDirectoryTestLayer),
         Layer.provideMerge(NodeServices.layer),
       );

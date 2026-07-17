@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   DEFAULT_MODEL,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   ProviderDriverKind,
   ProviderItemId,
@@ -25,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as PluginContextComposer from "../../plugins/PluginContextComposer.ts";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -326,20 +328,43 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  /** Already composed AND budgeted by PluginContextComposer. Never raw plugin text. */
+  readonly pluginContext?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
-  if (input.interactionMode === undefined) {
+  const hasPluginContext = input.pluginContext !== undefined && input.pluginContext !== "";
+  // When no mode is explicitly supplied AND there is no plugin context to carry,
+  // send no collaboration mode so the provider applies its implicit default —
+  // preserving prior behavior for ordinary turns. But an absent mode must NOT
+  // discard composed plugin context: `interactionMode` is optional throughout the
+  // send-turn path, so a turn relying on the implicit default would otherwise
+  // never receive any plugin instructions. Fall back to the effective default
+  // mode so the context still rides along.
+  if (input.interactionMode === undefined && !hasPluginContext) {
     return undefined;
   }
+  const effectiveMode = input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
+  const base =
+    effectiveMode === "plan"
+      ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+      : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
   return {
-    mode: input.interactionMode,
+    mode: effectiveMode,
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
+      // Append AFTER the branch, not inside it, so plan and default get plugin
+      // context from one code path. Wiring only the default mode is the predictable
+      // bug: plan mode would ignore every plugin's instructions and nobody would
+      // notice until a user asked why their rule only works sometimes.
+      //
+      // Plugin text goes after the host's. That is a weak heuristic, NOT a guarantee
+      // the host's rules win — a plugin can simply say "ignore the above". The
+      // capability gate and consent copy are the actual controls.
       developer_instructions:
-        input.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        input.pluginContext === undefined || input.pluginContext === ""
+          ? base
+          : `${base}\n\n${input.pluginContext}`,
     },
   };
 }
@@ -356,6 +381,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly pluginContext?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -376,6 +402,7 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.pluginContext ? { pluginContext: input.pluginContext } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -697,10 +724,16 @@ export const makeCodexSessionRuntime = (
 ): Effect.Effect<
   CodexSessionRuntimeShape,
   CodexErrors.CodexAppServerError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | Scope.Scope
+  | PluginContextComposer.PluginContextComposer
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // The ONLY route from a plugin to the agent's instructions. The runtime asks the
+    // composer; it never sees raw plugin text.
+    const contextComposer = yield* PluginContextComposer.PluginContextComposer;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
@@ -1277,9 +1310,24 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          // Compose for THIS turn. The composer owns the budget, the timeouts and the
+          // failure isolation, so from here the worst a plugin can do is contribute
+          // nothing — it cannot fail or stall the user's turn.
+          //
+          // Resolve the effective mode once: `interactionMode` is optional, and a
+          // contributor scoping its output by mode must see the mode the turn
+          // actually runs in (the implicit default), not `undefined`.
+          const effectiveInteractionMode =
+            input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
+          const pluginContext = yield* contextComposer.compose({
+            threadId: options.threadId,
+            projectId: null,
+            interactionMode: effectiveInteractionMode,
+          });
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            ...(pluginContext.text === "" ? {} : { pluginContext: pluginContext.text }),
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),

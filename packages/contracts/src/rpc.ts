@@ -143,6 +143,33 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  PLUGINS_WS_METHODS,
+  PluginCatalogInput,
+  PluginCatalogResult,
+  PluginCheckUpdatesResult,
+  PluginInstallBeginInput,
+  PluginInstallConfirmInput,
+  PluginInstallConfirmResult,
+  PluginInstallStaged,
+  PluginListResult,
+  PluginManagementError,
+  PluginMethodInput,
+  PluginRpcError,
+  PluginSetEnabledInput,
+  PluginSettingsGetInput,
+  PluginSettingsGetResult,
+  PluginSettingsSetInput,
+  PluginSettingsSetResult,
+  PluginSourcesAddInput,
+  PluginSourcesAddResult,
+  PluginSourcesListResult,
+  PluginSourcesRemoveInput,
+  PluginUninstallInput,
+  PluginUpgradeBeginInput,
+  PluginUpgradeConfirmInput,
+  PluginUpgradeConfirmResult,
+} from "./plugin.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -217,6 +244,23 @@ export const WS_METHODS = {
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+
+  // Plugin methods
+  pluginsList: PLUGINS_WS_METHODS.list,
+  pluginsCall: PLUGINS_WS_METHODS.call,
+  pluginsSubscribe: PLUGINS_WS_METHODS.subscribe,
+  pluginsSourcesList: PLUGINS_WS_METHODS.sourcesList,
+  pluginsSourcesAdd: PLUGINS_WS_METHODS.sourcesAdd,
+  pluginsSourcesRemove: PLUGINS_WS_METHODS.sourcesRemove,
+  pluginsCatalog: PLUGINS_WS_METHODS.catalog,
+  pluginsInstallBegin: PLUGINS_WS_METHODS.installBegin,
+  pluginsInstallConfirm: PLUGINS_WS_METHODS.installConfirm,
+  pluginsInstallAbort: PLUGINS_WS_METHODS.installAbort,
+  pluginsSetEnabled: PLUGINS_WS_METHODS.setEnabled,
+  pluginsUninstall: PLUGINS_WS_METHODS.uninstall,
+  pluginsUpgradeBegin: PLUGINS_WS_METHODS.upgradeBegin,
+  pluginsUpgradeConfirm: PLUGINS_WS_METHODS.upgradeConfirm,
+  pluginsCheckUpdates: PLUGINS_WS_METHODS.checkUpdates,
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -681,6 +725,109 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsPluginsListRpc = Rpc.make(PLUGINS_WS_METHODS.list, {
+  payload: Schema.Struct({}),
+  success: PluginListResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsPluginsCallRpc = Rpc.make(PLUGINS_WS_METHODS.call, {
+  payload: PluginMethodInput,
+  success: Schema.Unknown,
+  error: Schema.Union([PluginRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSubscribeRpc = Rpc.make(PLUGINS_WS_METHODS.subscribe, {
+  payload: PluginMethodInput,
+  success: Schema.Unknown,
+  error: Schema.Union([PluginRpcError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsPluginsSourcesListRpc = Rpc.make(PLUGINS_WS_METHODS.sourcesList, {
+  payload: Schema.Struct({}),
+  success: PluginSourcesListResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSourcesAddRpc = Rpc.make(PLUGINS_WS_METHODS.sourcesAdd, {
+  payload: PluginSourcesAddInput,
+  success: PluginSourcesAddResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSourcesRemoveRpc = Rpc.make(PLUGINS_WS_METHODS.sourcesRemove, {
+  payload: PluginSourcesRemoveInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsCatalogRpc = Rpc.make(PLUGINS_WS_METHODS.catalog, {
+  payload: PluginCatalogInput,
+  success: PluginCatalogResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsInstallBeginRpc = Rpc.make(PLUGINS_WS_METHODS.installBegin, {
+  payload: PluginInstallBeginInput,
+  success: PluginInstallStaged,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsInstallConfirmRpc = Rpc.make(PLUGINS_WS_METHODS.installConfirm, {
+  payload: PluginInstallConfirmInput,
+  success: PluginInstallConfirmResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsInstallAbortRpc = Rpc.make(PLUGINS_WS_METHODS.installAbort, {
+  payload: PluginInstallConfirmInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSetEnabledRpc = Rpc.make(PLUGINS_WS_METHODS.setEnabled, {
+  payload: PluginSetEnabledInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSettingsGetRpc = Rpc.make(PLUGINS_WS_METHODS.settingsGet, {
+  payload: PluginSettingsGetInput,
+  success: PluginSettingsGetResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSettingsSetRpc = Rpc.make(PLUGINS_WS_METHODS.settingsSet, {
+  payload: PluginSettingsSetInput,
+  success: PluginSettingsSetResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsUninstallRpc = Rpc.make(PLUGINS_WS_METHODS.uninstall, {
+  payload: PluginUninstallInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsUpgradeBeginRpc = Rpc.make(PLUGINS_WS_METHODS.upgradeBegin, {
+  payload: PluginUpgradeBeginInput,
+  success: PluginInstallStaged,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsUpgradeConfirmRpc = Rpc.make(PLUGINS_WS_METHODS.upgradeConfirm, {
+  payload: PluginUpgradeConfirmInput,
+  success: PluginUpgradeConfirmResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsCheckUpdatesRpc = Rpc.make(PLUGINS_WS_METHODS.checkUpdates, {
+  payload: Schema.Struct({}),
+  success: PluginCheckUpdatesResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -743,6 +890,23 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsPluginsListRpc,
+  WsPluginsCallRpc,
+  WsPluginsSubscribeRpc,
+  WsPluginsSourcesListRpc,
+  WsPluginsSourcesAddRpc,
+  WsPluginsSourcesRemoveRpc,
+  WsPluginsCatalogRpc,
+  WsPluginsInstallBeginRpc,
+  WsPluginsInstallConfirmRpc,
+  WsPluginsInstallAbortRpc,
+  WsPluginsSetEnabledRpc,
+  WsPluginsSettingsGetRpc,
+  WsPluginsSettingsSetRpc,
+  WsPluginsUninstallRpc,
+  WsPluginsUpgradeBeginRpc,
+  WsPluginsUpgradeConfirmRpc,
+  WsPluginsCheckUpdatesRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

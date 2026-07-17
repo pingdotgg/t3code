@@ -1,0 +1,1705 @@
+import type {
+  ChangeRequestState,
+  ChatAttachment,
+  CheckpointRef,
+  CommandId,
+  EnvironmentId,
+  ExecutionEnvironmentDescriptor,
+  MessageId,
+  ModelSelection,
+  OrchestrationCheckpointFile,
+  OrchestrationCheckpointStatus,
+  OrchestrationMessage,
+  OrchestrationProject,
+  OrchestrationProjectShell,
+  OrchestrationThread,
+  OrchestrationThreadActivity,
+  OrchestrationThreadStreamItem,
+  OrchestrationThreadShell,
+  ProviderApprovalDecision,
+  ProviderInteractionMode,
+  ProviderUserInputAnswers,
+  ProjectId,
+  RuntimeMode,
+  ServerProvider,
+  OrchestrationEvent,
+  SourceControlProviderDiscoveryItem,
+  SourceControlProviderInfo,
+  TerminalAttachStreamEvent,
+  TerminalSessionSnapshot,
+  ThreadId,
+  TurnId,
+  VcsCreateRefResult,
+  VcsCreateWorktreeResult,
+  VcsStatusResult,
+  VcsSwitchRefResult,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
+import type * as Schema from "effect/Schema";
+import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as Stream from "effect/Stream";
+
+export type {
+  PluginCapability,
+  PluginId,
+  PluginLockfile,
+  PluginLockfilePlugin,
+  PluginLockfileSource,
+  PluginManifest,
+  PluginManifestEntries,
+  PluginState,
+} from "@t3tools/contracts/plugin";
+export { HOST_API_VERSION, hostApiSatisfies } from "@t3tools/contracts/plugin";
+
+export type PluginRpcScope = "read" | "operate";
+export type PluginReadiness = "requires-ready" | "always";
+
+export interface PluginLogger {
+  readonly debug: (message: string, attributes?: Record<string, unknown>) => Effect.Effect<void>;
+  readonly info: (message: string, attributes?: Record<string, unknown>) => Effect.Effect<void>;
+  readonly warn: (message: string, attributes?: Record<string, unknown>) => Effect.Effect<void>;
+  readonly error: (message: string, attributes?: Record<string, unknown>) => Effect.Effect<void>;
+}
+
+export interface PluginHostConfig {
+  readonly appVersion: string;
+  readonly hostApiVersion: string;
+  readonly dataDir: string;
+  readonly logger: PluginLogger;
+}
+
+export interface PluginCapabilityUnavailable {
+  readonly _tag: "PluginCapabilityUnavailable";
+  readonly capability: string;
+  readonly message: string;
+}
+
+export interface AgentsCapability {
+  /**
+   * List configured provider instances visible to orchestration. Available
+   * instances are returned as their public provider snapshots; unavailable
+   * entries describe settings that this host cannot materialize.
+   */
+  readonly listInstances: () => Effect.Effect<AgentsListInstancesResult, Error>;
+
+  /**
+   * Create a plugin-owned orchestration thread. The host injects
+   * `owner: "plugin:<id>"`; plugin input cannot choose or override owner.
+   */
+  readonly createThread: (
+    input: AgentsCreateThreadInput,
+  ) => Effect.Effect<AgentsCreateThreadResult, Error>;
+
+  /**
+   * Start a turn on a plugin-owned thread through the orchestration command
+   * plane. `bootstrap.createThread`, when present, is owner-injected by the
+   * host before dispatch.
+   *
+   * NOTE: the returned `turnId` is a SESSION-LOCAL handle for `awaitTurn`
+   * within this server process's lifetime — it is not the durable projection
+   * turn id and does not survive a server restart. Persist your own
+   * correlation (the returned `messageId`, or observe the thread) if you need
+   * to resolve a turn's outcome across restarts.
+   */
+  readonly startTurn: (input: AgentsStartTurnInput) => Effect.Effect<AgentsStartTurnResult, Error>;
+
+  /**
+   * Observe a plugin-owned thread using the same snapshot + thread-detail
+   * event stream shape as `orchestration.subscribeThread`.
+   */
+  readonly observeThread: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationThreadStreamItem, Error>;
+
+  /**
+   * Wait for a projected turn row to reach `completed`, `error`, or
+   * `interrupted`, then return the final assistant text if one was projected.
+   * Timeout only fails this wait; it does not interrupt the provider turn.
+   *
+   * Accepts only a `turnId` returned by `startTurn` in the SAME server
+   * lifetime (see the session-local note there). A `turnId` from a prior
+   * process will not resolve and will time out.
+   */
+  readonly awaitTurn: (input: AgentsAwaitTurnInput) => Effect.Effect<AgentsAwaitTurnResult, Error>;
+
+  /**
+   * Convenience read for the approval and user-input requests in
+   * `thread.activities[]` that are STILL open: requests with a matching
+   * `approval.resolved` / `user-input.resolved` (or a stale/unknown respond
+   * failure) are filtered out, so an already-answered request is never
+   * re-surfaced for a double submit. The same requests are also visible via
+   * `observeThread` snapshots and events.
+   */
+  readonly listPendingRequests: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<AgentsPendingRequest>, Error>;
+
+  /**
+   * Respond to a provider approval request on a plugin-owned thread.
+   */
+  readonly respondToApproval: (input: AgentsRespondToApprovalInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Respond to a provider user-input request on a plugin-owned thread.
+   */
+  readonly respondToUserInput: (input: AgentsRespondToUserInputInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Request interruption of the active turn for a plugin-owned thread.
+   */
+  readonly interruptTurn: (input: AgentsInterruptTurnInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Stop the provider session for a plugin-owned thread.
+   */
+  readonly stopSession: (input: AgentsThreadInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Delete a plugin-owned thread.
+   */
+  readonly deleteThread: (input: AgentsThreadInput) => Effect.Effect<void, Error>;
+}
+
+export interface VcsCapability {
+  /**
+   * Read Git status for an absolute repository or worktree path.
+   *
+   * Every `worktreePath` / `repoRoot` must resolve (real-path, symlink-safe)
+   * inside the plugin's granted workspace roots: the projected project
+   * workspace roots plus worktrees this plugin created via `createWorktree`.
+   * Sub-paths (`removePath` / `clean` / `commit.filePaths`) must stay inside
+   * the worktree, and ref/branch/remote names are validated against git
+   * option injection (a ref may never begin with `-`).
+   */
+  readonly status: (input: VcsWorktreeInput) => Effect.Effect<VcsStatusResult, Error>;
+
+  /**
+   * List Git worktrees for an absolute repository root.
+   */
+  readonly listWorktrees: (input: VcsRepoInput) => Effect.Effect<VcsListWorktreesResult, Error>;
+
+  /**
+   * Create a Git worktree for a ref. No lease concept is exposed because the
+   * backing VCS layer does not implement leases.
+   *
+   * `repoRoot` must be a granted root; the new worktree `path` must live
+   * inside a granted root or inside the server-managed worktrees directory.
+   * On success the worktree path is granted, admitting every later vcs (and
+   * filesystem) operation on it.
+   */
+  readonly createWorktree: (
+    input: VcsCreateWorktreeFacadeInput,
+  ) => Effect.Effect<VcsCreateWorktreeResult, Error>;
+
+  /**
+   * Remove a Git worktree by absolute path and revoke its grant.
+   */
+  readonly removeWorktree: (input: VcsRemoveWorktreeFacadeInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Create a local branch and optionally switch to it.
+   */
+  readonly createBranch: (input: VcsCreateBranchInput) => Effect.Effect<VcsCreateRefResult, Error>;
+
+  /**
+   * Switch the current worktree to a local or remote ref.
+   */
+  readonly switchRef: (input: VcsSwitchRefFacadeInput) => Effect.Effect<VcsSwitchRefResult, Error>;
+
+  /**
+   * Remove a tracked path from the index and working tree. Missing paths are
+   * ignored by the backing Git command.
+   */
+  readonly removePath: (input: VcsPathInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Remove untracked files and directories at a path.
+   */
+  readonly clean: (input: VcsPathInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Read the current branch name, or "HEAD" when detached.
+   */
+  readonly currentBranch: (input: VcsWorktreeInput) => Effect.Effect<string, Error>;
+
+  /**
+   * Count commits reachable from `head` but not `base`.
+   */
+  readonly aheadCount: (input: VcsAheadCountInput) => Effect.Effect<number, Error>;
+
+  /**
+   * List local and remote refs for a repository root.
+   */
+  readonly listRefs: (input: VcsRepoInput) => Effect.Effect<ReadonlyArray<VcsRef>, Error>;
+
+  /**
+   * Stage selected paths, or all changes when `filePaths` is omitted, then
+   * create a commit. No-change commits are surfaced as a skipped value.
+   */
+  readonly commit: (input: VcsCommitInput) => Effect.Effect<VcsCommitResult, Error>;
+
+  /**
+   * Merge a ref into the current worktree. Merge conflicts are returned as
+   * `{ status: "conflict" }` instead of being thrown.
+   */
+  readonly merge: (input: VcsMergeInput) => Effect.Effect<VcsMergeResult, Error>;
+
+  /**
+   * Push the current branch when the Git driver can resolve a remote.
+   */
+  readonly push: (input: VcsPushInput) => Effect.Effect<VcsPushResult, Error>;
+
+  /**
+   * Read the working-tree patch for an absolute worktree path.
+   */
+  readonly workingTreeDiff: (input: VcsWorkingTreeDiffInput) => Effect.Effect<VcsDiffResult, Error>;
+
+  /**
+   * Read a patch between two refs.
+   */
+  readonly diffRefs: (input: VcsDiffRefsInput) => Effect.Effect<VcsDiffResult, Error>;
+
+  /**
+   * Read the patch between an arbitrary base ref and the current working tree
+   * (tracked, uncommitted), optionally including untracked files as add-diffs.
+   * Unlike `diffRefs` (ref..ref) and `workingTreeDiff` (against HEAD), this
+   * diffs a caller-supplied base commit against the live working tree — needed
+   * when the base is an out-of-band ref that never moved HEAD.
+   */
+  readonly diffRefToWorkingTree: (
+    input: VcsDiffRefToWorkingTreeInput,
+  ) => Effect.Effect<VcsDiffRefToWorkingTreeResult, Error>;
+
+  /**
+   * Capture a filesystem checkpoint at a caller-provided Git ref.
+   */
+  readonly createCheckpoint: (input: VcsCheckpointInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Check whether a checkpoint ref exists. The backing CheckpointStore has no
+   * list operation, so the SDK intentionally exposes existence checks instead
+   * of inventing checkpoint listing.
+   */
+  readonly hasCheckpoint: (input: VcsCheckpointInput) => Effect.Effect<boolean, Error>;
+
+  /**
+   * Restore workspace and staging state from a checkpoint ref.
+   */
+  readonly restoreCheckpoint: (
+    input: VcsRestoreCheckpointInput,
+  ) => Effect.Effect<VcsRestoreCheckpointResult, Error>;
+
+  /**
+   * Delete checkpoint refs. Missing refs are tolerated by the backing store.
+   */
+  readonly deleteCheckpoints: (input: VcsDeleteCheckpointsInput) => Effect.Effect<void, Error>;
+}
+
+export interface TerminalsCapability {
+  /**
+   * Open a plugin-owned shell terminal and write the requested command line.
+   *
+   * The server terminal manager exposes PTY shell sessions, not raw process
+   * handles, so command execution is shell-backed. `env` is passed to the shell
+   * session and `args` are shell-quoted before the first write.
+   */
+  readonly spawn: (input: TerminalSpawnInput) => Effect.Effect<TerminalSpawnResult, Error>;
+
+  /**
+   * Attach to a plugin terminal and receive its initial snapshot plus live
+   * output/lifecycle events. The returned function unsubscribes the listener.
+   */
+  readonly observe: (
+    input: TerminalSessionHandle,
+    listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+  ) => Effect.Effect<() => void, Error>;
+
+  /**
+   * Write raw input to a running plugin terminal session.
+   */
+  readonly sendInput: (
+    input: TerminalSessionHandle & { readonly data: string },
+  ) => Effect.Effect<void, Error>;
+
+  /**
+   * Close a plugin terminal session. This maps to the server terminal close
+   * operation and does not expose UI resize/clear metadata controls.
+   */
+  readonly kill: (
+    input: TerminalSessionHandle & { readonly deleteHistory?: boolean },
+  ) => Effect.Effect<void, Error>;
+}
+
+export interface DatabaseCapability {
+  /**
+   * The raw Effect SqlClient bound to the shared database. Full-trust: runtime
+   * SQL is unpoliced (the p_<id>_ namespace gate is migration-time only), so
+   * this grants no power beyond `execute`. Provided for plugins whose ported
+   * code uses tagged-template SQL / composable fragments / withTransaction.
+   */
+  readonly client: SqlClient.SqlClient;
+
+  /**
+   * Execute trusted plugin SQL and return decoded row objects.
+   *
+   * Plugin tables are namespaced by convention as `p_<plugin_id>_*`. Runtime
+   * queries are not policed: plugins run with full SQL trust. The migration
+   * gate is the only enforcement point for database namespace rules.
+   */
+  readonly execute: (
+    sql: string,
+    params?: ReadonlyArray<unknown>,
+  ) => Effect.Effect<ReadonlyArray<Record<string, unknown>>, Error>;
+
+  /**
+   * Run an Effect inside the shared SQL client's transaction boundary.
+   */
+  readonly withTransaction: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | Error, R>;
+}
+
+export interface ProjectionsReadCapability {
+  /**
+   * Read a single active thread shell by id. The lookup is intentionally
+   * id-keyed and not owner-filtered.
+   */
+  readonly getThreadShellById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationThreadShell | null, Error>;
+
+  /**
+   * Read a single active thread detail snapshot by id. The lookup is
+   * intentionally id-keyed and not owner-filtered.
+   */
+  readonly getThreadDetailById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationThread | null, Error>;
+
+  /**
+   * List projected turn rows for a thread, including pending placeholders.
+   */
+  readonly listTurnsByThreadId: (input: {
+    readonly threadId: ThreadId;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<ProjectionTurnRecord>, Error>;
+
+  /**
+   * List projected thread messages in creation order with a bounded result cap.
+   */
+  readonly listMessagesByThreadId: (input: {
+    readonly threadId: ThreadId;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationMessage>, Error>;
+
+  /**
+   * Read a projected thread message directly by message id.
+   */
+  readonly getMessageById: (
+    messageId: MessageId,
+  ) => Effect.Effect<OrchestrationMessage | null, Error>;
+
+  /**
+   * List projected thread activities in runtime sequence order with a bounded
+   * result cap.
+   */
+  readonly listActivitiesByThreadId: (input: {
+    readonly threadId: ThreadId;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationThreadActivity>, Error>;
+}
+
+export interface EnvironmentsReadCapability {
+  /**
+   * Read the stable server environment id.
+   */
+  readonly getEnvironmentId: Effect.Effect<EnvironmentId, Error>;
+
+  /**
+   * Read the current execution environment descriptor.
+   */
+  readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor, Error>;
+
+  /**
+   * List active project shells from the orchestration projection.
+   */
+  readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, Error>;
+
+  /**
+   * Read a single active project shell by id.
+   */
+  readonly getProjectById: (
+    projectId: ProjectId,
+  ) => Effect.Effect<OrchestrationProjectShell | null, Error>;
+
+  /**
+   * Resolve an active project by exact workspace root.
+   */
+  readonly resolveProjectByWorkspaceRoot: (
+    workspaceRoot: string,
+  ) => Effect.Effect<OrchestrationProject | null, Error>;
+}
+
+export interface SecretsCapability {
+  /**
+   * Read a plugin-scoped secret. The host prepends `plugin:<id>:` and strips it
+   * from returned names, so plugins cannot address keys outside their prefix.
+   */
+  readonly get: (name: string) => Effect.Effect<Uint8Array | null, Error>;
+
+  /**
+   * Set a plugin-scoped secret under the enforced `plugin:<id>:` key prefix.
+   */
+  readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, Error>;
+
+  /**
+   * Delete a plugin-scoped secret. Missing keys are treated as already deleted.
+   */
+  readonly delete: (name: string) => Effect.Effect<void, Error>;
+
+  /**
+   * List plugin-scoped secret names with the enforced prefix stripped.
+   */
+  readonly list: Effect.Effect<ReadonlyArray<string>, Error>;
+}
+
+export interface HttpCapability {
+  /**
+   * Base path for this plugin's registered HTTP hooks.
+   *
+   * Routes are mounted under `/hooks/plugins/<pluginId>/...` and are only
+   * registered when the plugin declares the `http` capability.
+   */
+  readonly basePath: string;
+}
+
+export interface FilesystemPathInput {
+  readonly root: string;
+  readonly relativePath: string;
+}
+
+export interface FilesystemRenameInput {
+  readonly root: string;
+  readonly fromRelativePath: string;
+  readonly toRelativePath: string;
+  /**
+   * Permit atomically replacing an existing destination. Defaults to `false`, in
+   * which case a rename onto an existing path is rejected. Set `true` for
+   * atomic-replace flows such as {@link writeFileAtomic}, where a temp file must
+   * be renamed over the (possibly already-present) target on every update.
+   */
+  readonly overwrite?: boolean | undefined;
+}
+
+export interface FileStat {
+  readonly type: "file" | "directory" | "other";
+  readonly size: number;
+  readonly mtime: number;
+  readonly realPath?: string;
+}
+
+export interface DirEntry {
+  readonly name: string;
+  readonly relativePath: string;
+  readonly type: "file" | "directory" | "other";
+}
+
+export interface FilesystemCapability {
+  /**
+   * List currently granted absolute roots. This includes active project
+   * workspaces plus worktrees this plugin created through the VCS capability.
+   */
+  readonly listRoots: () => Effect.Effect<ReadonlyArray<string>, Error>;
+
+  /**
+   * Read a file as bytes. The host enforces a 16 MiB hard cap.
+   */
+  readonly readFile: (input: FilesystemPathInput) => Effect.Effect<Uint8Array, Error>;
+
+  /**
+   * Read a UTF-8 file as a string. The host enforces a 16 MiB hard cap.
+   */
+  readonly readFileString: (input: FilesystemPathInput) => Effect.Effect<string, Error>;
+
+  /**
+   * Read at most maxBytes from a UTF-8 file as a string.
+   */
+  readonly readFileStringCapped: (
+    input: FilesystemPathInput & { readonly maxBytes: number },
+  ) => Effect.Effect<string, Error>;
+
+  /**
+   * Write bytes to a file, creating missing parent directories after each
+   * parent has been validated inside the granted root.
+   */
+  readonly writeFile: (
+    input: FilesystemPathInput & { readonly contents: Uint8Array },
+  ) => Effect.Effect<void, Error>;
+
+  /**
+   * Write a UTF-8 string to a file.
+   */
+  readonly writeFileString: (
+    input: FilesystemPathInput & { readonly contents: string },
+  ) => Effect.Effect<void, Error>;
+
+  /**
+   * Create a file and fail if the final path already exists.
+   */
+  readonly createFileExclusive: (
+    input: FilesystemPathInput & { readonly contents: string | Uint8Array },
+  ) => Effect.Effect<void, Error>;
+
+  /**
+   * Test whether a path exists within a granted root.
+   */
+  readonly exists: (input: FilesystemPathInput) => Effect.Effect<boolean, Error>;
+
+  /**
+   * Read file metadata.
+   */
+  readonly stat: (input: FilesystemPathInput) => Effect.Effect<FileStat, Error>;
+
+  /**
+   * List direct directory children.
+   */
+  readonly listDir: (input: FilesystemPathInput) => Effect.Effect<ReadonlyArray<DirEntry>, Error>;
+
+  /**
+   * Recursively list directory children. The host caps results at 500 entries.
+   */
+  readonly listDirRecursive: (
+    input: FilesystemPathInput,
+  ) => Effect.Effect<ReadonlyArray<DirEntry>, Error>;
+
+  /**
+   * Create a directory path segment by segment after validating each parent.
+   */
+  readonly makeDirectory: (input: FilesystemPathInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Remove a file or directory. Missing paths are treated as already removed.
+   */
+  readonly remove: (input: FilesystemPathInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Rename within a granted root. Cross-root renames are rejected. Overwriting an
+   * existing destination is rejected unless `input.overwrite` is `true`.
+   */
+  readonly rename: (input: FilesystemRenameInput) => Effect.Effect<void, Error>;
+}
+
+export interface HttpClientRequestInput {
+  readonly method: string;
+  readonly url: string;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly body?: string | Uint8Array | undefined;
+  readonly maxResponseBytes?: number | undefined;
+  readonly timeoutMs?: number | undefined;
+}
+
+export interface HttpClientResponseResult {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: Uint8Array;
+}
+
+export interface HttpClientCapability {
+  /**
+   * Make an outbound request. The host allows public HTTPS targets by default,
+   * does not follow redirects, caps responses to 8 MiB by default / 32 MiB
+   * hard, and caps timeouts to 30s by default / 120s hard.
+   */
+  readonly request: (
+    input: HttpClientRequestInput,
+  ) => Effect.Effect<HttpClientResponseResult, Error>;
+
+  /**
+   * Request JSON and parse the response body.
+   */
+  readonly requestJson: <A = unknown>(
+    input: Omit<HttpClientRequestInput, "body"> & { readonly body?: unknown },
+  ) => Effect.Effect<A, Error>;
+
+  /**
+   * Convenience JSON GET wrapper.
+   */
+  readonly getJson: <A = unknown>(
+    url: string,
+    input?: Omit<HttpClientRequestInput, "method" | "url" | "body">,
+  ) => Effect.Effect<A, Error>;
+}
+
+export interface SourceControlCapability {
+  /**
+   * Detect the source-control provider context for a repository root.
+   */
+  readonly detectProvider: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<SourceControlProviderDetectionResult, Error>;
+
+  /**
+   * List configured source-control providers and auth availability.
+   */
+  readonly discoverProviders: Effect.Effect<
+    ReadonlyArray<SourceControlProviderDiscoveryItem>,
+    Error
+  >;
+
+  /**
+   * List open GitHub pull requests for a head selector.
+   */
+  readonly listOpenPullRequests: (input: {
+    readonly cwd: string;
+    readonly headSelector: string;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, Error>;
+
+  /**
+   * Read GitHub pull request details by number, URL, or branch reference.
+   */
+  readonly getPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<GitHubPullRequestSummary, Error>;
+
+  /**
+   * Read repository clone URLs from GitHub.
+   */
+  readonly getRepositoryCloneUrls: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+  }) => Effect.Effect<GitHubRepositoryCloneUrls, Error>;
+
+  /**
+   * Create a GitHub pull request using a body file already present on disk.
+   */
+  readonly createPullRequest: (input: {
+    readonly cwd: string;
+    readonly baseBranch: string;
+    readonly headSelector: string;
+    readonly title: string;
+    readonly bodyFile: string;
+    readonly draft?: boolean | undefined;
+  }) => Effect.Effect<void, Error>;
+
+  /**
+   * Merge a GitHub pull request with the selected strategy.
+   */
+  readonly mergePullRequest: (input: {
+    readonly cwd: string;
+    readonly number: number;
+    readonly strategy: GitHubMergeStrategy;
+  }) => Effect.Effect<void, Error>;
+
+  /**
+   * Read raw GitHub pull request detail fields.
+   */
+  readonly getPullRequestDetail: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<GitHubPullRequestDetail, Error>;
+
+  /**
+   * List raw GitHub pull request check rows.
+   */
+  readonly listPullRequestChecks: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestCheck>, Error>;
+
+  /**
+   * List raw GitHub pull request reviews.
+   */
+  readonly listPullRequestReviews: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestReview>, Error>;
+
+  /**
+   * List raw GitHub pull request review comments.
+   */
+  readonly listPullRequestReviewComments: (input: {
+    readonly cwd: string;
+    readonly repo: string;
+    readonly number: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestReviewComment>, Error>;
+
+  /**
+   * Read the default branch reported by the GitHub CLI for the current repo.
+   */
+  readonly getDefaultBranch: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<string | null, Error>;
+
+  /**
+   * Check out a GitHub pull request by number, URL, or branch reference.
+   */
+  readonly checkoutPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+    readonly force?: boolean;
+  }) => Effect.Effect<void, Error>;
+}
+
+export interface TextGenerationCapability {
+  /**
+   * Generate a commit message from staged change context.
+   */
+  readonly generateCommitMessage: (
+    input: CommitMessageGenerationInput,
+  ) => Effect.Effect<CommitMessageGenerationResult, Error>;
+
+  /**
+   * Generate pull request title/body content from branch and diff context.
+   */
+  readonly generatePrContent: (
+    input: PrContentGenerationInput,
+  ) => Effect.Effect<PrContentGenerationResult, Error>;
+
+  /**
+   * Generate a concise branch name from a user message and optional
+   * attachments.
+   */
+  readonly generateBranchName: (
+    input: BranchNameGenerationInput,
+  ) => Effect.Effect<BranchNameGenerationResult, Error>;
+
+  /**
+   * Generate a concise thread title from a user's first message.
+   */
+  readonly generateThreadTitle: (
+    input: ThreadTitleGenerationInput,
+  ) => Effect.Effect<ThreadTitleGenerationResult, Error>;
+
+  /**
+   * Generate a structured workflow-board proposal from an assembled prompt.
+   *
+   * The host runs this NO-TOOL / read-only so the model can only reason and
+   * emit a proposal — it physically cannot write a board definition. Providers
+   * that cannot be proven no-tool fail rather than shipping a tool-enabled
+   * meta-agent.
+   */
+  readonly generateBoardProposal: (
+    input: BoardProposalGenerationInput,
+  ) => Effect.Effect<BoardProposalGenerationResult, Error>;
+}
+
+export interface TerminalSessionHandle {
+  readonly threadId: string;
+  readonly terminalId: string;
+}
+
+export interface TerminalSpawnInput {
+  readonly cwd: string;
+  readonly command: string;
+  readonly args?: ReadonlyArray<string> | undefined;
+  readonly env?: Record<string, string> | undefined;
+  readonly terminalId?: string | undefined;
+  readonly cols?: number | undefined;
+  readonly rows?: number | undefined;
+}
+
+export interface TerminalSpawnResult {
+  readonly handle: TerminalSessionHandle;
+  readonly snapshot: TerminalSessionSnapshot;
+}
+
+export interface ProjectionTurnRecord {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | null;
+  readonly pendingMessageId: MessageId | null;
+  readonly sourceProposedPlanThreadId: ThreadId | null;
+  readonly sourceProposedPlanId: string | null;
+  readonly assistantMessageId: MessageId | null;
+  readonly state: "pending" | "running" | "interrupted" | "completed" | "error";
+  readonly requestedAt: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly checkpointTurnCount: number | null;
+  readonly checkpointRef: string | null;
+  readonly checkpointStatus: OrchestrationCheckpointStatus | null;
+  readonly checkpointFiles: ReadonlyArray<OrchestrationCheckpointFile>;
+}
+
+export interface AgentsListInstancesResult {
+  readonly available: ReadonlyArray<ServerProvider>;
+  readonly unavailable: ReadonlyArray<ServerProvider>;
+}
+
+export interface AgentsCreateThreadInput {
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
+  readonly branch?: string | null | undefined;
+  readonly worktreePath?: string | null | undefined;
+}
+
+export interface AgentsCreateThreadResult {
+  readonly threadId: ThreadId;
+}
+
+export interface AgentsBootstrapCreateThreadInput extends AgentsCreateThreadInput {
+  readonly createdAt?: string | undefined;
+}
+
+export interface AgentsStartTurnBootstrapInput {
+  readonly createThread?: AgentsBootstrapCreateThreadInput | undefined;
+  /**
+   * NOT supported on the plugin capability path — `startTurn` fails with a
+   * typed error when set. The atomic worktree-prep bootstrap lives only in the
+   * app's WS entrypoint; the engine command plane the plugin dispatches
+   * through ignores it, so honoring the field would be a silent no-op. Create
+   * the worktree via the `vcs` capability instead.
+   */
+  readonly prepareWorktree?:
+    | {
+        readonly projectCwd: string;
+        readonly baseBranch: string;
+        readonly branch?: string | undefined;
+        readonly startFromOrigin?: boolean | undefined;
+      }
+    | undefined;
+  /**
+   * NOT supported on the plugin capability path — `startTurn` fails with a
+   * typed error when `true` (see `prepareWorktree`). Run setup via the
+   * `terminals` capability instead.
+   */
+  readonly runSetupScript?: boolean | undefined;
+}
+
+export interface AgentsStartTurnInput {
+  readonly threadId: ThreadId;
+  readonly text: string;
+  readonly messageId?: MessageId | undefined;
+  readonly commandId?: CommandId | undefined;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
+  readonly bootstrap?: AgentsStartTurnBootstrapInput | undefined;
+}
+
+export interface AgentsStartTurnResult {
+  readonly turnId: TurnId;
+  readonly messageId: MessageId;
+}
+
+export interface AgentsAwaitTurnInput {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly timeout?: string | number | undefined;
+}
+
+export interface AgentsAwaitTurnResult {
+  readonly state: "completed" | "error" | "interrupted";
+  readonly assistantText: string | null;
+  readonly stopReason?: string | undefined;
+  readonly errorMessage?: string | undefined;
+}
+
+export interface AgentsPendingRequest {
+  readonly kind: "approval.requested" | "user-input.requested";
+  readonly requestId: string;
+  readonly activity: OrchestrationThreadActivity;
+}
+
+export interface AgentsThreadInput {
+  readonly threadId: ThreadId;
+}
+
+export interface AgentsInterruptTurnInput extends AgentsThreadInput {
+  readonly turnId?: TurnId | undefined;
+}
+
+export interface AgentsRespondToApprovalInput extends AgentsThreadInput {
+  readonly requestId: string;
+  readonly decision: ProviderApprovalDecision;
+}
+
+export interface AgentsRespondToUserInputInput extends AgentsThreadInput {
+  readonly requestId: string;
+  readonly answers: ProviderUserInputAnswers;
+}
+
+export interface VcsRepoInput {
+  readonly repoRoot: string;
+}
+
+export interface VcsWorktreeInput {
+  readonly worktreePath: string;
+}
+
+export interface VcsPathInput extends VcsWorktreeInput {
+  readonly path: string;
+}
+
+export interface VcsAheadCountInput extends VcsWorktreeInput {
+  readonly base: string;
+  readonly head: string;
+}
+
+export interface VcsWorktreeSummary {
+  readonly path: string;
+  readonly branch: string | null;
+  readonly head: string | null;
+  readonly detached: boolean;
+  readonly bare: boolean;
+}
+
+export interface VcsListWorktreesResult {
+  readonly worktrees: ReadonlyArray<VcsWorktreeSummary>;
+}
+
+export interface VcsCreateWorktreeFacadeInput extends VcsRepoInput {
+  readonly ref: string;
+  readonly path: string;
+  readonly newBranch?: string | undefined;
+  readonly baseRef?: string | undefined;
+}
+
+export interface VcsRemoveWorktreeFacadeInput extends VcsRepoInput {
+  readonly path: string;
+  readonly force?: boolean | undefined;
+}
+
+export interface VcsCreateBranchInput extends VcsWorktreeInput {
+  readonly branch: string;
+  readonly switch?: boolean | undefined;
+}
+
+export interface VcsSwitchRefFacadeInput extends VcsWorktreeInput {
+  readonly ref: string;
+}
+
+export interface VcsRef {
+  readonly name: string;
+  readonly isRemote: boolean;
+  readonly worktreePath: string | null;
+}
+
+export interface VcsCommitInput extends VcsWorktreeInput {
+  readonly subject: string;
+  readonly body?: string | undefined;
+  readonly filePaths?: ReadonlyArray<string> | undefined;
+  readonly noVerify?: boolean | undefined;
+}
+
+export type VcsCommitResult =
+  | {
+      readonly status: "created";
+      readonly commitSha: string;
+    }
+  | {
+      readonly status: "skipped_no_changes";
+    };
+
+export interface VcsMergeInput extends VcsWorktreeInput {
+  readonly ref: string;
+  readonly message?: string | undefined;
+  readonly noFf?: boolean | undefined;
+  readonly noVerify?: boolean | undefined;
+  readonly abortOnConflict?: boolean | undefined;
+}
+
+export type VcsMergeResult =
+  | {
+      readonly status: "merged";
+      readonly commitSha: string;
+      readonly stdout: string;
+      readonly stderr: string;
+    }
+  | {
+      readonly status: "conflict";
+      readonly conflictedFiles: ReadonlyArray<string>;
+      readonly stdout: string;
+      readonly stderr: string;
+    };
+
+export interface VcsPushInput extends VcsWorktreeInput {
+  readonly fallbackBranch?: string | null | undefined;
+  readonly remoteName?: string | null | undefined;
+}
+
+export interface VcsPushResult {
+  readonly status: "pushed" | "skipped_up_to_date";
+  readonly branch: string;
+  readonly upstreamBranch?: string | undefined;
+  readonly setUpstream?: boolean | undefined;
+}
+
+export interface VcsWorkingTreeDiffInput extends VcsWorktreeInput {
+  readonly staged?: boolean | undefined;
+  readonly ignoreWhitespace?: boolean | undefined;
+}
+
+export interface VcsDiffRefsInput extends VcsWorktreeInput {
+  readonly fromRef: string;
+  readonly toRef: string;
+  readonly ignoreWhitespace?: boolean | undefined;
+}
+
+export interface VcsDiffRefToWorkingTreeInput extends VcsWorktreeInput {
+  /** Base ref/commit to diff FROM; resolved as `${baseRef}^{commit}`. */
+  readonly baseRef: string;
+  /**
+   * Include untracked files as `/dev/null` → path add-diffs. Defaults to true
+   * (matches the workflow ticket-diff semantics).
+   */
+  readonly includeUntracked?: boolean | undefined;
+  readonly ignoreWhitespace?: boolean | undefined;
+}
+
+export interface VcsDiffResult {
+  readonly diff: string;
+}
+
+export interface VcsDiffRefToWorkingTreeResult {
+  readonly diff: string;
+  /** True when any diff segment was truncated at the output-size cap. */
+  readonly truncated: boolean;
+}
+
+export interface VcsCheckpointInput extends VcsWorktreeInput {
+  readonly checkpointRef: CheckpointRef;
+}
+
+export interface VcsRestoreCheckpointInput extends VcsCheckpointInput {
+  readonly fallbackToHead?: boolean | undefined;
+}
+
+export interface VcsRestoreCheckpointResult {
+  readonly restored: boolean;
+}
+
+export interface VcsDeleteCheckpointsInput extends VcsWorktreeInput {
+  readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
+}
+
+export interface SourceControlProviderDetectionResult {
+  readonly provider: SourceControlProviderInfo | null;
+  readonly remoteName: string | null;
+  readonly remoteUrl: string | null;
+}
+
+export interface GitHubPullRequestSummary {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly baseRefName: string;
+  readonly headRefName: string;
+  readonly state?: ChangeRequestState | undefined;
+  readonly isCrossRepository?: boolean | undefined;
+  readonly headRepositoryNameWithOwner?: string | null | undefined;
+  readonly headRepositoryOwnerLogin?: string | null | undefined;
+}
+
+export interface GitHubRepositoryCloneUrls {
+  readonly nameWithOwner: string;
+  readonly url: string;
+  readonly sshUrl: string;
+}
+
+export type GitHubMergeStrategy = "squash" | "merge" | "rebase";
+
+export interface GitHubPullRequestDetail {
+  readonly state: string;
+  readonly mergedAt: string | null;
+  readonly reviewDecision: string | null;
+  readonly headRefOid: string;
+  readonly url: string;
+}
+
+export interface GitHubPullRequestCheck {
+  readonly name: string;
+  readonly state: string;
+  readonly bucket: string;
+  readonly link: string;
+}
+
+export interface GitHubPullRequestReview {
+  readonly id: string;
+  readonly author: string;
+  readonly state: string;
+  readonly body: string;
+  readonly submittedAt: string;
+}
+
+export interface GitHubPullRequestReviewComment {
+  readonly id: number;
+  readonly user: string;
+  readonly body: string;
+  readonly path: string | null;
+  readonly createdAt: string;
+}
+
+export interface CommitMessageGenerationInput {
+  readonly cwd: string;
+  readonly branch: string | null;
+  readonly stagedSummary: string;
+  readonly stagedPatch: string;
+  readonly includeBranch?: boolean;
+  readonly modelSelection: ModelSelection;
+}
+
+export interface CommitMessageGenerationResult {
+  readonly subject: string;
+  readonly body: string;
+  readonly branch?: string | undefined;
+}
+
+export interface PrContentGenerationInput {
+  readonly cwd: string;
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly commitSummary: string;
+  readonly diffSummary: string;
+  readonly diffPatch: string;
+  readonly modelSelection: ModelSelection;
+}
+
+export interface PrContentGenerationResult {
+  readonly title: string;
+  readonly body: string;
+}
+
+export interface BranchNameGenerationInput {
+  readonly cwd: string;
+  readonly message: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly modelSelection: ModelSelection;
+}
+
+export interface BranchNameGenerationResult {
+  readonly branch: string;
+}
+
+export interface ThreadTitleGenerationInput {
+  readonly cwd: string;
+  readonly message: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly modelSelection: ModelSelection;
+}
+
+export interface ThreadTitleGenerationResult {
+  readonly title: string;
+}
+
+export interface BoardProposalGenerationInput {
+  /**
+   * Fully assembled prompt (metrics + current board definition + instructions).
+   * The caller builds this; the provider does NOT read any files — the
+   * underlying model invocation is no-tool / read-only.
+   */
+  readonly prompt: string;
+  readonly modelSelection: ModelSelection;
+}
+
+export interface BoardProposalGenerationResult {
+  /** The proposed workflow/board definition, decoded from the model's output. */
+  readonly proposedDefinition: unknown;
+  /** Human-readable explanation of why this proposal was made. */
+  readonly rationale: string;
+}
+
+/**
+ * Typed access to the plugin's own declarative settings.
+ *
+ * Deliberately distinct from the web read path: the browser gets the ENCODED
+ * draft (so the form can open and repair even data that will not decode), while
+ * plugin code gets decoded values or a typed failure. A plugin must never have
+ * to guess whether its config is valid.
+ */
+export interface SettingsCapability<S extends Schema.Struct<Schema.Struct.Fields>> {
+  /**
+   * Decoded settings. Fails with `PluginSettingsNotConfigured` when nothing is
+   * stored and the schema has required fields, and with
+   * `PluginSettingsInvalidStored` when stored values no longer match the schema
+   * (e.g. an upgrade changed it). Stored data is preserved in both cases so the
+   * settings form can repair it.
+   */
+  readonly get: Effect.Effect<S["Type"], PluginSettingsReadError>;
+  /** Emits the decoded settings on every successful write. */
+  readonly changes: Stream.Stream<S["Type"]>;
+}
+
+export interface PluginSettingsReadError {
+  readonly _tag: "PluginSettingsNotConfigured" | "PluginSettingsInvalidStored";
+  readonly pluginId: string;
+  readonly message: string;
+}
+
+/**
+ * Read-only delivery of host domain events.
+ *
+ * `subscribe` runs FOREVER: it only returns if the host's event stream ends. Run it
+ * from a plugin `service`, which the host forks into the plugin's scope and tears
+ * down on disable/uninstall/crash — calling it inline in `register()` would never
+ * return and activation would time out.
+ *
+ * The host owns the two properties a plugin cannot be trusted with: a handler that
+ * fails or hangs never ends the subscription, and a subscriber that falls behind
+ * loses its OLDEST events rather than stalling the host's stream for everyone.
+ */
+export interface EventsCapability {
+  readonly subscribe: (subscription: {
+    /** Only these event types are delivered; filtering happens host-side. */
+    readonly types: ReadonlyArray<OrchestrationEvent["type"]>;
+    readonly handler: (event: OrchestrationEvent) => Effect.Effect<void, Error>;
+  }) => Effect.Effect<void, Error>;
+}
+
+export interface PluginHostApi<
+  S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
+> {
+  readonly hostApiVersion: string;
+  readonly config: PluginHostConfig;
+  /**
+   * Available only when the plugin declares `settings` on its definition AND the
+   * `settings` capability in its manifest.
+   */
+  readonly settings: Effect.Effect<SettingsCapability<S>, PluginCapabilityUnavailable>;
+  readonly agents: Effect.Effect<AgentsCapability, PluginCapabilityUnavailable>;
+  readonly events: Effect.Effect<EventsCapability, PluginCapabilityUnavailable>;
+  readonly vcs: Effect.Effect<VcsCapability, PluginCapabilityUnavailable>;
+  readonly terminals: Effect.Effect<TerminalsCapability, PluginCapabilityUnavailable>;
+  readonly database: Effect.Effect<DatabaseCapability, PluginCapabilityUnavailable>;
+  readonly projectionsRead: Effect.Effect<ProjectionsReadCapability, PluginCapabilityUnavailable>;
+  readonly environmentsRead: Effect.Effect<EnvironmentsReadCapability, PluginCapabilityUnavailable>;
+  readonly secrets: Effect.Effect<SecretsCapability, PluginCapabilityUnavailable>;
+  readonly http: Effect.Effect<HttpCapability, PluginCapabilityUnavailable>;
+  readonly filesystem: Effect.Effect<FilesystemCapability, PluginCapabilityUnavailable>;
+  readonly httpClient: Effect.Effect<HttpClientCapability, PluginCapabilityUnavailable>;
+  readonly sourceControl: Effect.Effect<SourceControlCapability, PluginCapabilityUnavailable>;
+  readonly textGeneration: Effect.Effect<TextGenerationCapability, PluginCapabilityUnavailable>;
+}
+
+export interface PluginRpcContext {
+  readonly pluginId: string;
+  readonly logger: PluginLogger;
+}
+
+export interface PluginRpcDescriptor {
+  readonly method: string;
+  readonly scope: PluginRpcScope;
+  readonly readiness?: PluginReadiness | undefined;
+  readonly handler: (payload: unknown, ctx: PluginRpcContext) => Effect.Effect<unknown, Error>;
+}
+
+export interface PluginStreamDescriptor {
+  readonly method: string;
+  readonly scope: PluginRpcScope;
+  readonly readiness?: PluginReadiness | undefined;
+  readonly handler: (payload: unknown, ctx: PluginRpcContext) => Stream.Stream<unknown, Error>;
+}
+
+export interface PluginHttpDescriptor {
+  /** HTTP method to match, for example `GET` or `POST`. */
+  readonly method: string;
+  /** Plugin-local route path, with `:param` segments supported. */
+  readonly path: string;
+  /** Public routes skip auth; token routes require `plugin:<id>:operate`. */
+  readonly auth: "public" | "token";
+  /**
+   * Maximum request body size in bytes. Defaults to 1 MiB and is capped by the
+   * host at 8 MiB.
+   */
+  readonly maxBodyBytes?: number | undefined;
+  /** Handle a matched HTTP request and return a serializable response. */
+  readonly handler: (
+    request: PluginHttpRequest,
+    ctx: PluginRpcContext,
+  ) => Effect.Effect<PluginHttpResponse, Error>;
+}
+
+export interface PluginHttpRequest {
+  readonly method: string;
+  readonly params: Readonly<Record<string, string>>;
+  readonly query: Readonly<Record<string, string | ReadonlyArray<string>>>;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+  readonly body: Uint8Array;
+}
+
+export interface PluginHttpResponse {
+  readonly status: number;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly body?:
+    | string
+    | Uint8Array
+    | ReadonlyArray<unknown>
+    | Readonly<Record<string, unknown>>
+    | null;
+}
+
+export interface PluginServiceContext {
+  readonly pluginId: string;
+  readonly logger: PluginLogger;
+}
+
+export interface PluginServiceDescriptor {
+  readonly name: string;
+  readonly run: (ctx: PluginServiceContext) => Effect.Effect<void, Error>;
+}
+
+export interface PluginMigration {
+  readonly version: number;
+  readonly name: string;
+  readonly up: Effect.Effect<void, Error, SqlClient.SqlClient>;
+}
+
+/**
+ * Text content block returned by a plugin tool. This slice supports text only;
+ * image/audio contribution is a follow-up.
+ */
+export interface PluginToolTextContent {
+  readonly type: "text";
+  readonly text: string;
+}
+
+export type PluginToolContent = PluginToolTextContent;
+
+export interface PluginToolResult {
+  readonly content: ReadonlyArray<PluginToolContent>;
+  /**
+   * Optional JSON object (plain data only). Circular values, BigInt, functions,
+   * and non-object roots are rejected by the host before constructing the MCP
+   * result.
+   */
+  readonly structuredContent?: Readonly<Record<string, unknown>> | undefined;
+  readonly isError?: boolean | undefined;
+}
+
+/**
+ * Descriptor for a tool the host contributes to the model's MCP toolbox.
+ *
+ * Installation of the `"tools"` capability is an explicit **blanket grant** for
+ * invocation: `scope` and the hint flags only populate untrusted MCP annotation
+ * hints (`readOnlyHint` / `destructiveHint` / …). They are not an authorization
+ * boundary. The host namespaces tool names as
+ * `plugin_<pluginId_with_dashes_to_underscores>__<name>`.
+ *
+ * `inputSchema` is a service-free Effect Schema decoder. The host re-decodes
+ * arguments against it on every call before invoking `handle`. The `handle`
+ * input parameter is typed loosely at the registration boundary (dynamic plugin
+ * JS) so plugins can write `handle: (input) => ...` with schema-inferred types
+ * without fighting contravariance on `PluginRegistration.tools`.
+ */
+/**
+ * A provider driver contributed by a plugin — a new AI provider the app can talk to.
+ *
+ * Every provider today is compiled into the build (`BUILT_IN_DRIVERS`), so adding one
+ * means editing the app. This is how a plugin ships one instead.
+ *
+ * `driverKind` is the ROUTING KEY: every configured instance resolves through it. It
+ * must not collide with a built-in or another plugin's, and the host rejects a
+ * registration that tries — a plugin quietly claiming "codex" would see every request
+ * meant for the real one.
+ */
+export interface PluginProviderDescriptor {
+  /** Unique slug. Not a built-in's, not another plugin's. */
+  readonly driverKind: string;
+  /** What the user picks in settings. */
+  readonly displayName: string;
+  /**
+   * Service-free decoder for this provider's configuration. The host DECODES the
+   * stored config against this before calling `startSession`, so the driver receives
+   * a validated value — never a raw `unknown`.
+   */
+  readonly configSchema: Schema.Codec<unknown, unknown, never, never>;
+  readonly driver: PluginProviderDriver;
+}
+
+/** Streaming output from a plugin provider. One variant, deliberately. */
+export type PluginProviderEvent = { readonly type: "assistant-delta"; readonly text: string };
+
+/**
+ * What a plugin implements to BE an AI provider.
+ *
+ * Four methods, not the host's 13-member adapter. The host owns everything that is
+ * about routing or identity rather than about talking to a model: session
+ * bookkeeping, event stamping, the user's message, assistant message boundaries, and
+ * the provider snapshot. A plugin cannot be trusted with those and should not have to
+ * care about them.
+ *
+ * v1 NON-GOAL, so nobody builds against a promise that is not here: there is no
+ * tool-call loop. This is "a provider that streams text and stops" — a local model, a
+ * completion API. It is not enough for an agent-style driver.
+ */
+export interface PluginProviderDriver {
+  readonly startSession: (input: {
+    readonly threadId: ThreadId;
+    /** Already decoded against `configSchema`. */
+    readonly config: unknown;
+  }) => Effect.Effect<void, Error>;
+
+  /**
+   * Run one turn. The turn is over when this effect RETURNS (success) or FAILS —
+   * stream text with the `emit` passed HERE while it runs.
+   *
+   * There is deliberately no "turn finished" event: two ways to signal completion is
+   * how a thread ends up silently empty, with the host waiting for an event that
+   * already happened another way.
+   */
+  readonly sendTurn: (input: {
+    readonly threadId: ThreadId;
+    /** Host-stamped, so concurrent turns and interrupts correlate. */
+    readonly turnId: TurnId;
+    readonly prompt: string;
+    /**
+     * Emit streaming output for THIS turn. Bound by the host to this exact turn: the
+     * host stamps each event with `turnId`, and an emit made after this turn ends
+     * (e.g. from background work that outlived your `sendTurn`) is dropped rather than
+     * mis-attributed to a later turn. Emit only from within this call.
+     */
+    readonly emit: (event: PluginProviderEvent) => void;
+  }) => Effect.Effect<void, Error>;
+
+  readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, Error>;
+
+  /**
+   * Optional. If omitted — or if it ignores the interrupt — the HOST still ends the
+   * turn and stops accepting deltas, so an uncooperative driver cannot leave a turn
+   * running forever.
+   */
+  readonly interruptTurn?: (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }) => Effect.Effect<void, Error>;
+}
+
+/** The agent action a policy hook is being asked about. */
+export interface PluginPolicyRequest {
+  readonly threadId: ThreadId;
+  readonly kind: "command" | "file-read" | "file-change";
+  /** The command line, or the path being read/changed. */
+  readonly detail: string;
+  readonly cwd: string | null;
+}
+
+/**
+ * A policy hook's answer.
+ *
+ * There is deliberately NO "allow". A hook can only make the system more restrictive
+ * than it already is — see PluginPolicyRegistry for why. `defer` means "I have no
+ * opinion; carry on as if I were not installed", which is also what the host uses
+ * when a hook fails or times out.
+ */
+export interface PluginPolicyDecision {
+  readonly decision: "deny" | "defer";
+  /** Shown to the user when denying. Say why, in your own words. */
+  readonly reason?: string | undefined;
+}
+
+/**
+ * Inspect an agent approval request before the user sees it.
+ *
+ * Runs on the path of a prompt the user is waiting for, so it is timed out hard (3s);
+ * a hook that misses that, fails, or crashes DEFERS, which is exactly the behaviour
+ * the host had before the plugin existed.
+ *
+ * A hook cannot approve anything. That is not an oversight — a hook that could
+ * auto-approve would let a buggy or hostile plugin green-light a destructive command
+ * the user never saw. The worst this can do is block work that should have been
+ * allowed: visible, and fixed by disabling the plugin.
+ */
+export interface PluginPolicyDescriptor {
+  /** Identifies the hook in logs and in the "blocked by" the user is shown. */
+  readonly name: string;
+  readonly onApprovalRequest: (
+    request: PluginPolicyRequest,
+  ) => Effect.Effect<PluginPolicyDecision, Error>;
+}
+
+/** What the host tells a context contributor about the turn it is contributing to. */
+export interface PluginContextInput {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId | null;
+  /** "plan" or the default working mode — conventions often differ between them. */
+  readonly interactionMode: string | undefined;
+}
+
+/**
+ * Text a plugin adds to the agent's developer instructions for a turn.
+ *
+ * This is INFLUENCE OVER WHAT THE AGENT DOES, not a data feed. A plugin holding
+ * `context` can steer the agent, and ordering does not prevent it: text placed first
+ * can still say "ignore any later instruction about X". Plugins are semi-trusted code
+ * running with the user's consent — the controls are the capability gate and honest
+ * consent copy, NOT sandboxing natural language. Do not add a rule here and assume the
+ * host's own instructions overrule it.
+ *
+ * `contribute` runs ONCE per user turn, before the provider call — not per tool
+ * round-trip. It is on the hot path of every turn, so it inherits the same discipline
+ * as event handlers: it is timed out, and a failure omits THIS plugin's contribution
+ * rather than failing the user's turn.
+ */
+export interface PluginContextDescriptor {
+  /** Identifies the contribution in turn records and skip logs. */
+  readonly name: string;
+  /**
+   * Static text, when the contribution does not depend on the turn. Declared text is
+   * size-checked at REGISTRATION, so an oversized one is rejected at activation
+   * instead of silently dropping every turn.
+   */
+  readonly text?: string;
+  /** Dynamic text. Return null to contribute nothing for this turn. */
+  readonly contribute?: (input: PluginContextInput) => Effect.Effect<string | null, Error>;
+}
+
+export interface PluginToolDescriptor {
+  /** Local tool name as declared by the plugin (host applies the namespace). */
+  readonly name: string;
+  readonly description: string;
+  /**
+   * Service-free Effect Schema decoder (`DecodingServices = never`). Host derives
+   * JSON Schema via `Tool.getJsonSchemaFromSchema` and re-decodes on every call.
+   */
+  readonly inputSchema: Schema.Decoder<unknown, never>;
+  /**
+   * MCP annotation profile only — NOT an authorization boundary.
+   * `"read"` → readOnlyHint; `"operate"` → destructiveHint (unless overridden).
+   */
+  readonly scope: PluginRpcScope;
+  /** Override destructiveHint. Default: `scope === "operate"`. */
+  readonly destructive?: boolean | undefined;
+  /** Default: false. */
+  readonly idempotent?: boolean | undefined;
+  /** Default: false. */
+  readonly openWorld?: boolean | undefined;
+  readonly title?: string | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly handle: (input: any, ctx: PluginRpcContext) => Effect.Effect<PluginToolResult, Error>;
+}
+
+export interface PluginRegistration {
+  readonly migrations?: ReadonlyArray<PluginMigration> | undefined;
+  readonly recover?: (() => Effect.Effect<void, Error>) | undefined;
+  readonly rpc?: ReadonlyArray<PluginRpcDescriptor> | undefined;
+  readonly streams?: ReadonlyArray<PluginStreamDescriptor> | undefined;
+  readonly http?: ReadonlyArray<PluginHttpDescriptor> | undefined;
+  readonly services?: ReadonlyArray<PluginServiceDescriptor> | undefined;
+  readonly tools?: ReadonlyArray<PluginToolDescriptor> | undefined;
+  /** Requires the `context` capability. See PluginContextDescriptor. */
+  readonly context?: ReadonlyArray<PluginContextDescriptor> | undefined;
+  /** Requires the `policy` capability. See PluginPolicyDescriptor. */
+  readonly policy?: ReadonlyArray<PluginPolicyDescriptor> | undefined;
+  /** Requires the `providers` capability. See PluginProviderDescriptor. */
+  readonly providers?: ReadonlyArray<PluginProviderDescriptor> | undefined;
+}
+
+/**
+ * Declarative settings for a plugin.
+ *
+ * `schema` must be a `Schema.Struct` whose fields the host settings form can
+ * render — string-ish controls and boolean switches only, plus anything marked
+ * `hidden`. The host rejects a schema outside that vocabulary at registration
+ * rather than rendering it wrong; see `findPluginSettingsSchemaViolations`.
+ *
+ * The decoder must be service-free: the host decodes stored values with no
+ * plugin-supplied context, so a schema requiring Effect services cannot be run.
+ */
+export interface PluginSettingsDescriptor<
+  S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
+> {
+  /**
+   * Must be service-free in BOTH directions.
+   *
+   * The host decodes stored values to validate and re-encodes them to store, with
+   * no plugin-supplied context, so a schema requiring Effect services could not be
+   * run at all. `Schema.Decoder<T, RD>` is NOT sufficient here: it expands to
+   * `Codec<T, unknown, RD, unknown>`, pinning decoding services to never while
+   * leaving ENCODING services as `unknown` — which the host cannot provide.
+   * `Codec<unknown, unknown, never, never>` constrains both, making it a compile
+   * error in the plugin rather than a runtime failure in the host.
+   */
+  readonly schema: S & Schema.Codec<unknown, unknown, never, never>;
+}
+
+export interface PluginDefinition<
+  S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
+> {
+  /**
+   * Declared on the DEFINITION, not on the value returned by `register`.
+   *
+   * This is not a style choice. The host builds `hostApi`, passes it to
+   * `register`, and only then receives the `PluginRegistration`. A schema
+   * arriving in the registration therefore cannot bind the `hostApi.settings`
+   * handle that was already handed to the call producing it. Declaring settings
+   * on the definition lets the host validate the schema, decode stored values,
+   * and construct a typed handle BEFORE calling `register`.
+   *
+   * Requires a `server` manifest entry: the host skips plugins without one
+   * before loading any registration, so a web-only plugin has nothing to
+   * validate writes against. Declaring settings without a server entry is
+   * rejected at registration.
+   */
+  readonly settings?: PluginSettingsDescriptor<S>;
+  readonly register:
+    | ((hostApi: PluginHostApi<S>) => Effect.Effect<PluginRegistration, Error>)
+    | ((hostApi: PluginHostApi<S>) => Promise<PluginRegistration>)
+    | ((hostApi: PluginHostApi<S>) => PluginRegistration);
+}
+
+export function writeFileAtomic(
+  filesystem: Pick<FilesystemCapability, "writeFile" | "rename" | "remove">,
+  input: FilesystemPathInput & { readonly contents: string | Uint8Array },
+): Effect.Effect<void, Error> {
+  return Effect.gen(function* () {
+    const segments = input.relativePath.split("/");
+    const fileName = segments.pop() ?? "file";
+    const now = yield* Clock.currentTimeMillis;
+    const random = Math.abs(yield* Random.nextInt);
+    const tempName = `.${fileName}.${now.toString(36)}-${random.toString(36)}.tmp`;
+    const tempRelativePath = [...segments, tempName]
+      .filter((segment) => segment.length > 0)
+      .join("/");
+    const contents =
+      typeof input.contents === "string"
+        ? new TextEncoder().encode(input.contents)
+        : input.contents;
+
+    return yield* filesystem
+      .writeFile({
+        root: input.root,
+        relativePath: tempRelativePath,
+        contents,
+      })
+      .pipe(
+        Effect.andThen(
+          filesystem.rename({
+            root: input.root,
+            fromRelativePath: tempRelativePath,
+            toRelativePath: input.relativePath,
+            // Atomic replace: the destination usually already exists on the
+            // second and later writes to the same path. Without this the rename
+            // would be rejected ("destination already exists") and every atomic
+            // *update* after the first create would fail.
+            overwrite: true,
+          }),
+        ),
+        Effect.catch((error) =>
+          filesystem
+            .remove({ root: input.root, relativePath: tempRelativePath })
+            .pipe(Effect.ignore, Effect.andThen(Effect.fail(error))),
+        ),
+      );
+  });
+}
+
+/**
+ * Identity helper that binds the settings schema type through to `register`.
+ *
+ * The generic must be `S` (the schema), NOT the whole definition. Constraining a
+ * single `Definition extends PluginDefinition` leaves `PluginDefinition`'s own `S`
+ * at its default, so `hostApi.settings.get` resolves to the BROAD struct type and a
+ * plugin sees `unknown` for every field — which defeats the entire point of
+ * declaring a schema. Inferring `S` from `definition.settings.schema` is what makes
+ * `settings.get` return the plugin's own field types.
+ */
+export function definePlugin<S extends Schema.Struct<Schema.Struct.Fields>>(
+  definition: PluginDefinition<S>,
+): PluginDefinition<S> {
+  return definition;
+}

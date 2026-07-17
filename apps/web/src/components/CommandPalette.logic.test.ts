@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildRootGroups,
   buildThreadActionItems,
+  executeCommandPaletteActionItem,
   filterCommandPaletteGroups,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
@@ -161,5 +163,75 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("plugin command palette group", () => {
+  it("omits the Plugins group when no plugin commands are registered", () => {
+    const actionItems = [
+      {
+        kind: "action" as const,
+        value: "action:settings",
+        searchTerms: ["settings"],
+        title: "Open settings",
+        icon: null,
+        run: async () => undefined,
+      },
+    ];
+
+    expect(buildRootGroups({ actionItems, recentThreadItems: [] })).toEqual(
+      buildRootGroups({ actionItems, recentThreadItems: [], pluginCommandItems: [] }),
+    );
+  });
+
+  it("adds registered plugin commands as a searchable Plugins group", () => {
+    const run = vi.fn(async () => undefined);
+    const groups = buildRootGroups({
+      actionItems: [],
+      recentThreadItems: [],
+      pluginCommandItems: [
+        {
+          kind: "action",
+          value: "plugin:hello-board:refresh",
+          searchTerms: ["Refresh board", "hello-board", "refresh"],
+          title: "Refresh board",
+          description: "Reload plugin notes",
+          icon: null,
+          run,
+        },
+      ],
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.label).toBe("Plugins");
+    const filtered = filterCommandPaletteGroups({
+      activeGroups: groups,
+      query: "refresh",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+    expect(filtered[0]?.items[0]?.value).toBe("plugin:hello-board:refresh");
+  });
+
+  it("contains throwing command actions through the shared executor", async () => {
+    const onError = vi.fn();
+    executeCommandPaletteActionItem(
+      {
+        kind: "action",
+        value: "plugin:hello-board:boom",
+        searchTerms: ["boom"],
+        title: "Boom",
+        icon: null,
+        run: async () => {
+          throw new Error("boom");
+        },
+      },
+      onError,
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 });

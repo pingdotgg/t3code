@@ -136,6 +136,21 @@ declare module "effect/Schema" {
   }
 }
 
+/**
+ * Reads the `providerSettingsForm` annotation off a settings field.
+ *
+ * `resolveAnnotationsKey` is tried first: fields declared with `optionalKey`
+ * carry their annotations on the key, not the value, so resolving only the
+ * value silently loses `control`/`placeholder` and the field falls back to a
+ * text box. Shared so the host form renderer and the plugin settings schema
+ * validator cannot disagree about what a field's control is.
+ */
+export const readSettingsFormAnnotation = (
+  fieldSchema: Schema.Top,
+): ProviderSettingsFormAnnotation =>
+  (Schema.resolveAnnotationsKey(fieldSchema) ?? Schema.resolveAnnotations(fieldSchema))
+    ?.providerSettingsForm ?? {};
+
 export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonly Extract<
   keyof Fields,
   string

@@ -19,6 +19,10 @@ const runtimeMock = {
     startCalls: [] as string[],
     promptUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
+    /** The `directory` argument passed to createOpenCodeSdkClient for each call. */
+    promptDirectories: [] as Array<string | undefined>,
+    /** The args passed to session.create for each call (captures the `permission` posture). */
+    sessionCreateArgs: [] as Array<unknown>,
     closeCalls: [] as string[],
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
@@ -31,6 +35,8 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
     this.state.authHeaders.length = 0;
+    this.state.promptDirectories.length = 0;
+    this.state.sessionCreateArgs.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
@@ -64,10 +70,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       external: Boolean(serverUrl),
     }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword, directory }) =>
     ({
       session: {
-        create: async () => {
+        create: async (args: unknown) => {
+          runtimeMock.state.sessionCreateArgs.push(args);
           if (runtimeMock.state.sessionCreateError !== undefined) {
             throw runtimeMock.state.sessionCreateError;
           }
@@ -78,6 +85,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
+          runtimeMock.state.promptDirectories.push(directory);
           if (runtimeMock.state.promptRequestError !== undefined) {
             throw runtimeMock.state.promptRequestError;
           }
@@ -404,6 +412,115 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         expect(error.cause).not.toHaveProperty("cause");
       }),
     ),
+  );
+
+  // ── Prompt-only egress: generateBoardProposal cwd isolation ──────────────
+
+  it.effect("generateBoardProposal passes an empty temp dir as directory (not the repo cwd)", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                text: JSON.stringify({
+                  // proposedDefinition is a JSON STRING on the wire (provider
+                  // schema types it as a string); the op decodes it to an object.
+                  // @effect-diagnostics-next-line preferSchemaOverJson:off
+                  proposedDefinition: JSON.stringify({
+                    lanes: [],
+                    name: "Test Board",
+                    description: "",
+                    triggers: [],
+                  }),
+                  rationale: "test rationale",
+                }),
+              },
+            ],
+          },
+        };
+
+        yield* textGeneration.generateBoardProposal({
+          prompt: "Create a simple kanban board.",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(runtimeMock.state.promptDirectories).toHaveLength(1);
+        const boardProposalDir = runtimeMock.state.promptDirectories[0];
+        // Must NOT be the repo root.
+        expect(boardProposalDir).not.toBe(process.cwd());
+        // Must be inside the OS temp dir hierarchy (carries the well-known prefix).
+        expect(boardProposalDir).toContain("t3code-board-proposal-");
+      }),
+    ),
+  );
+
+  // ── No-tool guarantee: the session denies every tool permission ──────────
+  it.effect(
+    "generateBoardProposal opens a session that denies EVERY tool permission (no-tool)",
+    () =>
+      withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.promptResult = {
+            data: {
+              parts: [
+                {
+                  type: "text",
+                  // @effect-diagnostics-next-line preferSchemaOverJson:off
+                  text: JSON.stringify({
+                    // @effect-diagnostics-next-line preferSchemaOverJson:off
+                    proposedDefinition: JSON.stringify({ lanes: [], name: "X" }),
+                    rationale: "r",
+                  }),
+                },
+              ],
+            },
+          };
+
+          yield* textGeneration.generateBoardProposal({
+            prompt: "Create a simple kanban board.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(runtimeMock.state.sessionCreateArgs).toHaveLength(1);
+          const createArgs = runtimeMock.state.sessionCreateArgs[0] as {
+            readonly permission?: ReadonlyArray<{
+              permission?: string;
+              pattern?: string;
+              action?: string;
+            }>;
+          };
+          // The no-tool guarantee: a single deny-all rule, so the meta-agent
+          // cannot invoke ANY tool (built-in or MCP) — even if an external
+          // server had MCP servers connected.
+          expect(createArgs.permission).toEqual([
+            { permission: "*", pattern: "*", action: "deny" },
+          ]);
+        }),
+      ),
+  );
+
+  it.effect(
+    "generateCommitMessage (git op) passes the caller-supplied repo cwd, not a temp dir",
+    () =>
+      withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          const repoCwd = process.cwd();
+          yield* textGeneration.generateCommitMessage({
+            cwd: repoCwd,
+            branch: "feature/opencode-cwd-check",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(runtimeMock.state.promptDirectories).toHaveLength(1);
+          // Git ops must use the repo cwd passed by the caller.
+          expect(runtimeMock.state.promptDirectories[0]).toBe(repoCwd);
+        }),
+      ),
   );
 });
 

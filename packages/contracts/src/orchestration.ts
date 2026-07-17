@@ -6,6 +6,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
+import { PLUGIN_ID_PATTERN_SOURCE } from "./plugin.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -124,6 +125,17 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+// A plugin owner is `plugin:<manifest-id>`; the id grammar is shared with the
+// canonical plugin manifest id so widening it there cannot desync this decode
+// boundary. The pattern also bounds length, so no separate max-length check is
+// needed.
+const THREAD_PLUGIN_OWNER_PATTERN = new RegExp(`^plugin:${PLUGIN_ID_PATTERN_SOURCE}$`);
+export const ThreadOwner = Schema.Union([
+  Schema.Literal("user"),
+  TrimmedNonEmptyString.check(Schema.isPattern(THREAD_PLUGIN_OWNER_PATTERN)),
+]);
+export type ThreadOwner = typeof ThreadOwner.Type;
+export const DEFAULT_THREAD_OWNER: ThreadOwner = "user";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -345,6 +357,9 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  owner: Schema.optionalKey(
+    ThreadOwner.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_OWNER))),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -512,6 +527,29 @@ const ProjectDeleteCommand = Schema.Struct({
 });
 
 const ThreadCreateCommand = Schema.Struct({
+  type: Schema.Literal("thread.create"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  owner: Schema.optional(ThreadOwner),
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+
+// Client-facing variant of thread.create: clients must NOT set `owner`. Thread
+// ownership is server-injected by the agents capability (`plugin:<id>`) so that
+// plugin-created threads are hidden from user-facing views. Omitting the field
+// from the client dispatch surface prevents a normal client (even one holding
+// orchestration:operate) from forging a plugin-owned, hidden thread. Decoded
+// commands carry no owner and the decider defaults them to "user".
+const ClientThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -704,7 +742,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
-  ThreadCreateCommand,
+  ClientThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -862,6 +900,9 @@ export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  owner: Schema.optionalKey(
+    ThreadOwner.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_OWNER))),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(

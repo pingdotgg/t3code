@@ -18,9 +18,11 @@ import {
   AuthRelayWriteScope,
   AuthReviewWriteScope,
   AuthStandardClientScopes,
+  AuthStandardClientMarkerScopes,
   AuthTerminalOperateScope,
   type AuthClientSession,
   type AuthEnvironmentScope,
+  type AuthScope,
   type AuthPairingLink,
   type AdvertisedEndpoint,
   type DesktopDiscoveredSshHost,
@@ -206,10 +208,19 @@ function AccessScopeSummary({
   scopes,
   label,
 }: {
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  // Accepts full AuthScopes so plugin scopes on a pairing link (e.g.
+  // `plugin:<id>:read`) render alongside environment scopes. Each scope
+  // is shown verbatim as a monospace code line in the popover.
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly label: string;
 }) {
   const scopeCountLabel = `${scopes.length} ${scopes.length === 1 ? "scope" : "scopes"}`;
+  // A full standard client (holding the marker bundle) implicitly satisfies
+  // every plugin scope plus `plugins:manage` even when those are not listed
+  // verbatim — surface that so the listed scopes aren't read as the whole story.
+  const holdsStandardClientMarker = AuthStandardClientMarkerScopes.every((markerScope) =>
+    scopes.includes(markerScope),
+  );
 
   return (
     <Popover>
@@ -241,6 +252,12 @@ function AccessScopeSummary({
             </code>
           ))}
         </div>
+        {holdsStandardClientMarker ? (
+          <p className="mt-1.5 text-foreground/60">
+            Full standard client — implicitly includes plugin access and{" "}
+            <code className="font-mono">plugins:manage</code>.
+          </p>
+        ) : null}
       </PopoverPopup>
     </Popover>
   );

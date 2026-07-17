@@ -362,6 +362,13 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateBoardProposal: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateBoardProposal",
+          detail: "generateBoardProposal not configured for git tests",
+        }),
+      ),
   };
 }
 
@@ -551,8 +558,49 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             input.title,
             "--body-file",
             input.bodyFile,
+            ...(input.draft ? ["--draft"] : []),
           ],
         }).pipe(Effect.asVoid),
+      mergePullRequest: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "merge",
+            String(input.number),
+            input.strategy === "merge"
+              ? "--merge"
+              : input.strategy === "rebase"
+                ? "--rebase"
+                : "--squash",
+          ],
+        }).pipe(Effect.asVoid),
+      getPullRequestDetail: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "view",
+            String(input.number),
+            "--json",
+            "state,mergedAt,reviewDecision,headRefOid,url",
+          ],
+        }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      listPullRequestChecks: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "checks", String(input.number), "--json", "name,state,bucket,link"],
+        }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      listPullRequestReviews: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "view", String(input.number), "--json", "reviews"],
+        }).pipe(Effect.map((result) => JSON.parse(result.stdout).reviews)),
+      listPullRequestReviewComments: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["api", `repos/${input.repo}/pulls/${input.number}/comments`],
+        }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
       getDefaultBranch: (input) =>
         execute({
           cwd: input.cwd,

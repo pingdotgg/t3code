@@ -1,6 +1,7 @@
 import {
   ChatAttachment,
   CheckpointRef,
+  DEFAULT_THREAD_OWNER,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -120,6 +121,9 @@ const ThreadIdLookupInput = Schema.Struct({
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
   threadId: ThreadId,
+});
+const ProjectionThreadOwnerLookupRowSchema = Schema.Struct({
+  owner: ProjectionThread.fields.owner,
 });
 const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   threadId: ThreadId,
@@ -325,6 +329,41 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           title,
+          owner,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          latest_turn_id AS "latestTurnId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE owner = ${DEFAULT_THREAD_OWNER}
+        ORDER BY created_at ASC, thread_id ASC
+      `,
+  });
+
+  // The command read model must see EVERY thread regardless of owner: the
+  // decider validates commands against it, and events for a thread missing
+  // from it are rejected. Non-user (plugin-owned) threads are hidden from
+  // user-facing views only.
+  const listAllThreadRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          owner,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -353,6 +392,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           title,
+          owner,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -370,6 +410,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
+          AND owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY project_id ASC, created_at ASC, thread_id ASC
       `,
   });
@@ -383,6 +424,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           title,
+          owner,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -400,6 +442,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
+          AND owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY project_id ASC, archived_at DESC, thread_id DESC
       `,
   });
@@ -509,6 +552,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON threads.thread_id = sessions.thread_id
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
+          AND threads.owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY sessions.thread_id ASC
       `,
   });
@@ -534,6 +578,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON threads.thread_id = sessions.thread_id
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NOT NULL
+          AND threads.owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY sessions.thread_id ASC
       `,
   });
@@ -559,6 +604,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listLatestTurnRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionLatestTurnDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          turns.thread_id AS "threadId",
+          turns.turn_id AS "turnId",
+          turns.state,
+          turns.requested_at AS "requestedAt",
+          turns.started_at AS "startedAt",
+          turns.completed_at AS "completedAt",
+          turns.assistant_message_id AS "assistantMessageId",
+          turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          turns.source_proposed_plan_id AS "sourceProposedPlanId"
+        FROM projection_threads threads
+        JOIN projection_turns turns
+          ON turns.thread_id = threads.thread_id
+          AND turns.turn_id = threads.latest_turn_id
+        WHERE threads.latest_turn_id IS NOT NULL
+          AND threads.owner = ${DEFAULT_THREAD_OWNER}
+        ORDER BY turns.thread_id ASC
+      `,
+  });
+
+  // The command read model must see EVERY thread's latest turn regardless of
+  // owner (mirroring listAllThreadRows): the decider replays commands/events
+  // against it, and rehydrating a plugin-owned thread with latestTurn = null
+  // would diverge from the live in-memory projector, which tracks latest turns
+  // for all owners. Non-user threads are filtered from user-facing views only.
+  const listAllLatestTurnRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionLatestTurnDbRowSchema,
     execute: () =>
@@ -604,6 +679,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
           AND threads.latest_turn_id IS NOT NULL
+          AND threads.owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY turns.thread_id ASC
       `,
   });
@@ -630,6 +706,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NOT NULL
           AND threads.latest_turn_id IS NOT NULL
+          AND threads.owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY turns.thread_id ASC
       `,
   });
@@ -654,7 +731,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
-          (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
+          (SELECT COUNT(*) FROM projection_threads WHERE owner = ${DEFAULT_THREAD_OWNER}) AS "threadCount"
       `,
   });
 
@@ -712,7 +789,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE project_id = ${projectId}
           AND deleted_at IS NULL
           AND archived_at IS NULL
+          AND owner = ${DEFAULT_THREAD_OWNER}
         ORDER BY created_at ASC, thread_id ASC
+        LIMIT 1
+      `,
+  });
+
+  const getThreadOwnerRowById = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadOwnerLookupRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT owner
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
         LIMIT 1
       `,
   });
@@ -745,6 +835,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           title,
+          owner,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
@@ -1177,6 +1268,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 id: row.threadId,
                 projectId: row.projectId,
                 title: row.title,
+                owner: row.owner,
                 modelSelection: row.modelSelection,
                 runtimeMode: row.runtimeMode,
                 interactionMode: row.interactionMode,
@@ -1228,7 +1320,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listThreadRows(undefined).pipe(
+          listAllThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreads:query",
@@ -1252,7 +1344,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listLatestTurnRows(undefined).pipe(
+          listAllLatestTurnRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listLatestTurns:query",
@@ -1375,6 +1467,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   id: row.threadId,
                   projectId: row.projectId,
                   title: row.title,
+                  owner: row.owner,
                   modelSelection: row.modelSelection,
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
@@ -1768,6 +1861,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.map(Option.map((row) => row.threadId)),
       );
 
+  const getThreadOwnerById: ProjectionSnapshotQueryShape["getThreadOwnerById"] = (threadId) =>
+    getThreadOwnerRowById({ threadId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadOwnerById:query",
+          "ProjectionSnapshotQuery.getThreadOwnerById:decodeRow",
+        ),
+      ),
+      Effect.map(Option.map((row) => row.owner)),
+    );
+
   const getThreadCheckpointContext: ProjectionSnapshotQueryShape["getThreadCheckpointContext"] = (
     threadId,
   ) =>
@@ -1972,6 +2076,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
+        owner: threadRow.value.owner,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,
@@ -2073,6 +2178,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
+    getThreadOwnerById,
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,

@@ -14,7 +14,7 @@ describe("ProviderSettingsForm helpers", () => {
     const codex = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("codex")];
 
     expect(codex).toBeDefined();
-    expect(deriveProviderSettingsFields(codex!).map((field) => field.key)).toEqual([
+    expect(deriveProviderSettingsFields(codex!.settingsSchema).map((field) => field.key)).toEqual([
       "binaryPath",
       "homePath",
       "shadowHomePath",
@@ -25,7 +25,7 @@ describe("ProviderSettingsForm helpers", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
 
-    const serverPassword = deriveProviderSettingsFields(opencode!).find(
+    const serverPassword = deriveProviderSettingsFields(opencode!.settingsSchema).find(
       (field) => field.key === "serverPassword",
     );
 
@@ -40,7 +40,7 @@ describe("ProviderSettingsForm helpers", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
 
-    const serverUrl = deriveProviderSettingsFields(opencode!).find(
+    const serverUrl = deriveProviderSettingsFields(opencode!.settingsSchema).find(
       (field) => field.key === "serverUrl",
     );
     expect(serverUrl).toBeDefined();

@@ -1,0 +1,16 @@
+{
+  "extends": "../../apps/web/tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "erasableSyntaxOnly": false,
+    "verbatimModuleSyntax": false,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "~/*": ["../../apps/web/src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts", "../../apps/web/src/*.d.ts"]
+}

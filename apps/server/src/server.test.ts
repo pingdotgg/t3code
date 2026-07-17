@@ -3,9 +3,11 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { PLUGIN_HOST_IMPORT_MAP_MARKER } from "@t3tools/shared/pluginHostWeb";
 
 import {
   AuthAccessTokenType,
+  AuthAdministrativeScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
@@ -69,6 +71,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const ADMIN_SCOPE_STRING = AuthAdministrativeScopes.join(" ");
 
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
@@ -112,6 +115,11 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
+import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
+import * as PluginManagementRpcHandlers from "./plugins/PluginManagementRpcHandlers.ts";
+import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -706,6 +714,7 @@ const buildAppUnderTest = (options?: {
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadOwnerById: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           ...options?.layers?.projectionSnapshotQuery,
         }),
@@ -732,6 +741,48 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          PluginCatalog.PluginCatalog,
+          PluginCatalog.PluginCatalog.of({
+            list: Effect.succeed([]),
+          }),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          PluginRpcDispatcher.PluginRpcDispatcher,
+          PluginRpcDispatcher.PluginRpcDispatcher.of({
+            call: () => Effect.die("PluginRpcDispatcher not stubbed in this test"),
+            subscribe: () => Stream.die("PluginRpcDispatcher not stubbed in this test"),
+          }),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          PluginManagementRpcHandlers.PluginManagementRpcHandlers,
+          PluginManagementRpcHandlers.PluginManagementRpcHandlers.of({
+            listSources: Effect.succeed({ sources: [] }),
+            addSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            removeSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            catalog: () => Effect.succeed({ entries: [], errors: [] }),
+            beginInstall: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            confirmInstall: () =>
+              Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            abortInstall: () => Effect.void,
+            setEnabled: () => Effect.void,
+            uninstall: () => Effect.void,
+            beginUpgrade: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            confirmUpgrade: () =>
+              Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            checkUpdates: Effect.succeed({ updates: [] }),
+            settingsGet: () => Effect.die("not used"),
+            settingsSet: () => Effect.die("not used"),
+          }),
+        ),
+      ),
+      Layer.provideMerge(PluginHttpRegistry.layer),
+      Layer.provide(PluginLockfileStore.layer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,
@@ -920,9 +971,7 @@ const exchangeAccessToken = (
         subject_token: credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
-        scope:
-          options?.scope ??
-          "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+        scope: options?.scope ?? ADMIN_SCOPE_STRING,
         ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
         ...(options?.clientMetadata?.deviceType
           ? { client_device_type: options.clientMetadata.deviceType }
@@ -1248,6 +1297,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("injects plugin host import map into index responses only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "index.html"),
+        "<html><head><title>T3</title></head><body>shell</body></html>",
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "app.js"), "console.log('asset');");
+
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const root = yield* HttpClient.get("/");
+      const rootHtml = yield* root.text;
+      assert.equal(root.status, 200);
+      assert.include(rootHtml, PLUGIN_HOST_IMPORT_MAP_MARKER);
+      assert.equal(rootHtml.match(new RegExp(PLUGIN_HOST_IMPORT_MAP_MARKER, "g"))?.length, 1);
+
+      const fallback = yield* HttpClient.get("/deep/link");
+      const fallbackHtml = yield* fallback.text;
+      assert.equal(fallback.status, 200);
+      assert.include(fallbackHtml, PLUGIN_HOST_IMPORT_MAP_MARKER);
+      assert.equal(fallbackHtml.match(new RegExp(PLUGIN_HOST_IMPORT_MAP_MARKER, "g"))?.length, 1);
+
+      const asset = yield* HttpClient.get("/app.js");
+      assert.equal(asset.status, 200);
+      assert.equal(yield* asset.text, "console.log('asset');");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("redirects to dev URL when configured", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -1364,10 +1444,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(tokenResponse.status, 200);
       assert.equal(tokenBody.issued_token_type, AuthAccessTokenType);
       assert.equal(tokenBody.token_type, "Bearer");
-      assert.equal(
-        tokenBody.scope,
-        "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
-      );
+      assert.equal(tokenBody.scope, ADMIN_SCOPE_STRING);
       assert.equal(typeof tokenBody.access_token, "string");
 
       const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
@@ -1385,16 +1462,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "bearer-access-token");
-      assert.deepEqual(sessionBody.scopes, [
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      assert.deepEqual(sessionBody.scopes, AuthAdministrativeScopes);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
