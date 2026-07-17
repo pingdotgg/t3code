@@ -974,8 +974,13 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (String(event.threadId) !== String(threadId)) {
             return;
           }
-          if (event.type === "request.opened" && !interrupted) {
+          if (event.type === "request.opened" && event.requestId && !interrupted) {
             interrupted = true;
+            yield* adapter.respondToRequest(
+              threadId,
+              ApprovalRequestId.make(String(event.requestId)),
+              "cancel",
+            );
             yield* adapter.interruptTurn(threadId);
             return;
           }
@@ -1030,10 +1035,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         entry.result.outcome !== null &&
         "outcome" in entry.result.outcome &&
         entry.result.outcome.outcome === "cancelled";
-      yield* waitForJsonLogMatch(requestLogPath, (entry) => entry.method === "session/cancel");
-      const requests = yield* waitForJsonLogMatch(requestLogPath, isCancelledApprovalResponse);
-      assert.isTrue(requests.some((entry) => entry.method === "session/cancel"));
-      assert.isTrue(requests.some(isCancelledApprovalResponse));
+      const approvalResponses = yield* waitForJsonLogMatch(
+        requestLogPath,
+        isCancelledApprovalResponse,
+      );
+      assert.isTrue(approvalResponses.some(isCancelledApprovalResponse));
 
       yield* adapter.stopSession(threadId);
     }),

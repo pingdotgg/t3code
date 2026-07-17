@@ -8,6 +8,7 @@ import {
 import { RefreshControl, ScrollView, Text as NativeText, View } from "react-native";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { useFontFamily } from "../../lib/useFontFamily";
 import {
   resolveMarkdownFontSizes,
   resolveNativeMarkdownTypography,
@@ -45,11 +46,15 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = String(useThemeColor("--color-md-code-bg"));
   const codeText = String(useThemeColor("--color-md-code-text"));
   const horizontalRule = String(useThemeColor("--color-md-hr"));
+  const regularFontFamily = useFontFamily("regular");
+  const mediumFontFamily = useFontFamily("medium");
+  const boldFontFamily = useFontFamily("bold");
 
   return useMemo(() => {
     const renderers: CustomRenderers = {
       link: ({ href, children }) => (
         <NativeText
+          className="font-t3-medium"
           onPress={() => {
             if (href) {
               void tryOpenExternalUrl(href, "markdown-link");
@@ -57,7 +62,6 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
           }}
           style={{
             color: link,
-            fontFamily: "DMSans_500Medium",
             textDecorationLine: "none",
           }}
         >
@@ -74,11 +78,14 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
           link,
           blockquote: blockquoteBorder,
           border: horizontalRule,
+          surface: "transparent",
           surfaceLight: blockquoteBackground,
           accent: link,
           tableBorder: horizontalRule,
           tableHeader: blockquoteBackground,
           tableHeaderText: strong,
+          tableRowOdd: blockquoteBackground,
+          tableRowEven: "transparent",
           code: codeText,
           codeBackground,
         },
@@ -86,21 +93,21 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       styles: {
         text: {
           color: body,
-          fontFamily: "DMSans_400Regular",
+          fontFamily: regularFontFamily,
           fontSize: markdownFontSizes.m,
           lineHeight: markdownFontSizes.bodyLineHeight,
         },
         heading: {
           color: strong,
-          fontFamily: "DMSans_700Bold",
+          fontFamily: boldFontFamily,
         },
         strong: {
           color: strong,
-          fontFamily: "DMSans_700Bold",
+          fontFamily: boldFontFamily,
         },
         link: {
           color: link,
-          fontFamily: "DMSans_500Medium",
+          fontFamily: mediumFontFamily,
         },
         blockquote: {
           backgroundColor: blockquoteBackground,
@@ -141,9 +148,9 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
         fontSize: nativeMarkdownTypography.fontSize,
         lineHeight: nativeMarkdownTypography.lineHeight,
         headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-        fontFamily: "DMSans_400Regular",
-        headingFontFamily: "DMSans_700Bold",
-        boldFontFamily: "DMSans_700Bold",
+        fontFamily: regularFontFamily,
+        headingFontFamily: boldFontFamily,
+        boldFontFamily,
       },
     };
   }, [
@@ -155,8 +162,11 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
     horizontalRule,
     link,
     markdownFontSizes,
+    mediumFontFamily,
     nativeMarkdownTypography,
+    regularFontFamily,
     strong,
+    boldFontFamily,
   ]);
 }
 
