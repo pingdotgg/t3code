@@ -99,7 +99,11 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
  * deliberately do NOT match free text (`message`/`detail`): those can carry a
  * serialized non-404 body or an unrelated "not found" phrase (e.g. a 500 whose
  * message says "upstream X not found"), which would misclassify a real failure
- * as a missing session and silently drop context. Exported for unit testing.
+ * as a missing session and silently drop context. A node carrying an explicit
+ * non-404 numeric status seals its entire subtree: a 500 whose serialized body
+ * happens to be named `NotFoundError` (or that is itself named
+ * `UpstreamNotFoundError`) is a real failure, and neither its `name` nor
+ * anything it wraps may reclassify it as a miss. Exported for unit testing.
  */
 export function isOpenCodeNotFound(cause: unknown): boolean {
   const seen = new Set<unknown>();
@@ -112,16 +116,19 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
     seen.add(node);
     const record = node as Record<string, unknown>;
 
-    if (record.status === 404 || record.statusCode === 404) {
+    const response = record.response;
+    const statuses = [
+      record.status,
+      record.statusCode,
+      response !== null && typeof response === "object"
+        ? (response as { readonly status?: unknown }).status
+        : undefined,
+    ].filter((status): status is number => typeof status === "number");
+    if (statuses.includes(404)) {
       return true;
     }
-    const response = record.response;
-    if (
-      response !== null &&
-      typeof response === "object" &&
-      (response as { readonly status?: unknown }).status === 404
-    ) {
-      return true;
+    if (statuses.length > 0) {
+      continue;
     }
 
     const name = record.name;
