@@ -118,6 +118,12 @@ describe("updateMachine", () => {
   });
 
   it("tracks available, download start, and progress cleanly", () => {
+    const releaseNotes = [
+      {
+        version: "1.1.0",
+        items: ["feat: add update release notes"],
+      },
+    ];
     const available = reduceDesktopUpdateStateOnUpdateAvailable(
       {
         ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
@@ -126,15 +132,33 @@ describe("updateMachine", () => {
       },
       "1.1.0",
       "2026-03-04T00:00:00.000Z",
+      releaseNotes,
     );
     const downloading = reduceDesktopUpdateStateOnDownloadStart(available);
     const progress = reduceDesktopUpdateStateOnDownloadProgress(downloading, 55.5);
 
     expect(available.status).toBe("available");
     expect(available.channel).toBe("latest");
+    expect(available.releaseNotes).toBe(releaseNotes);
+    expect(downloading.releaseNotes).toBe(releaseNotes);
     expect(downloading.status).toBe("downloading");
     expect(downloading.downloadPercent).toBe(0);
     expect(progress.downloadPercent).toBe(55.5);
     expect(progress.errorContext).toBeNull();
+  });
+
+  it("clears release notes when checking again", () => {
+    const state = reduceDesktopUpdateStateOnCheckStart(
+      {
+        ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "nightly"),
+        enabled: true,
+        status: "available",
+        availableVersion: "1.1.0-nightly.1",
+        releaseNotes: [{ version: "1.1.0-nightly.1", items: ["feat: old note"] }],
+      },
+      "2026-03-04T00:00:00.000Z",
+    );
+
+    expect(state.releaseNotes).toEqual([]);
   });
 });
