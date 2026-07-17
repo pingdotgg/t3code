@@ -55,7 +55,7 @@ let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
-const cancelledSessions = new Set<string>();
+const cancelledSessions = new Map<string, number>();
 
 function promptIdFromRequestMeta(
   request: Pick<AcpSchema.PromptRequest, "_meta">,
@@ -436,7 +436,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleCancel(({ sessionId }) =>
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
-      cancelledSessions.add(cancelledSessionId);
+      cancelledSessions.set(cancelledSessionId, promptCount);
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -456,6 +456,7 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+      const currentPromptCount = promptCount;
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
@@ -684,9 +685,13 @@ const program = Effect.gen(function* () {
           ],
         });
 
-        const cancelled =
-          cancelledSessions.delete(requestedSessionId) ||
-          permission.outcome.outcome === "cancelled";
+        const cancelledPromptCount = cancelledSessions.get(requestedSessionId);
+        const cancelledBySessionState = cancelledPromptCount === currentPromptCount;
+        if (cancelledPromptCount !== undefined && cancelledPromptCount <= currentPromptCount) {
+          cancelledSessions.delete(requestedSessionId);
+        }
+        const cancelledByPermission = permission.outcome.outcome === "cancelled";
+        const cancelled = cancelledBySessionState || cancelledByPermission;
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,

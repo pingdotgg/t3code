@@ -71,7 +71,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
-const PROVIDER = ProviderDriverKind.make("grok");
+const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_RESUME_VERSION = 1 as const;
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
@@ -84,6 +84,14 @@ export interface GrokAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  /**
+   * Standard ACP providers can reuse the hardened Grok lifecycle adapter by
+   * supplying their identity, runtime factory, and model normalization.
+   */
+  readonly provider?: ProviderDriverKind;
+  readonly providerDisplayName?: string;
+  readonly makeAcpRuntime?: typeof makeGrokAcpRuntime;
+  readonly resolveModelId?: (model: string | null | undefined) => string | undefined;
 }
 
 interface PendingApproval {
@@ -226,7 +234,11 @@ export function grokPromptSettlementBelongsToContext(input: {
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
   return Effect.gen(function* () {
-    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("grok");
+    const PROVIDER = options?.provider ?? GROK_PROVIDER;
+    const providerDisplayName = options?.providerDisplayName ?? "Grok";
+    const makeAcpRuntime = options?.makeAcpRuntime ?? makeGrokAcpRuntime;
+    const resolveModelId = options?.resolveModelId ?? resolveGrokAcpBaseModelId;
+    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make(PROVIDER);
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -252,7 +264,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "crypto/randomUUIDv4",
-            detail: "Failed to generate Grok runtime identifier.",
+            detail: `Failed to generate ${providerDisplayName} runtime identifier.`,
             cause,
           }),
       ),
@@ -264,7 +276,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         Effect.mapError(
           (cause) =>
             new EffectAcpErrors.AcpTransportError({
-              detail: "Failed to process Grok ACP callback.",
+              detail: `Failed to process ${providerDisplayName} ACP callback.`,
               cause,
             }),
         ),
@@ -453,7 +465,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to write native Grok notification log.", {
+          Effect.logWarning(`Failed to write native ${providerDisplayName} notification log.`, {
             cause,
             threadId,
             method,
@@ -547,7 +559,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           }
 
           const cwd = path.resolve(input.cwd.trim());
-          const grokModelSelection =
+          const providerModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const existing = sessions.get(input.threadId);
           if (existing && !existing.stopped) {
@@ -570,7 +582,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeGrokAcpRuntime({
+          const acp = yield* makeAcpRuntime({
             grokSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
@@ -734,8 +746,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ),
           );
 
-          const requestedStartModelId = grokModelSelection?.model
-            ? resolveGrokAcpBaseModelId(grokModelSelection.model)
+          const requestedStartModelId = providerModelSelection?.model
+            ? resolveModelId(providerModelSelection.model)
             : undefined;
           const boundModelId = yield* applyGrokAcpModelSelection({
             runtime: acp,
@@ -744,6 +756,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          const displayBoundModel = resolveModelId(boundModelId);
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -752,7 +765,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
-            ...(boundModelId ? { model: resolveGrokAcpBaseModelId(boundModelId) } : {}),
+            ...(displayBoundModel ? { model: displayBoundModel } : {}),
             threadId: input.threadId,
             resumeCursor: {
               schemaVersion: GROK_RESUME_VERSION,
@@ -873,7 +886,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ),
           ).pipe(
             Effect.catch((cause) =>
-              Effect.logError("Failed to process Grok runtime notification.", { cause }),
+              Effect.logError(`Failed to process ${providerDisplayName} runtime notification.`, {
+                cause,
+              }),
             ),
             Effect.forkChild,
           );
@@ -894,7 +909,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ...(yield* makeEventStamp()),
             provider: PROVIDER,
             threadId: input.threadId,
-            payload: { state: "ready", reason: "Grok ACP session ready" },
+            payload: {
+              state: "ready",
+              reason: `${providerDisplayName} ACP session ready`,
+            },
           });
           yield* offerRuntimeEvent({
             type: "thread.started",
@@ -939,7 +957,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   ? input.modelSelection
                   : undefined;
               const requestedTurnModelId = turnModelSelection?.model
-                ? resolveGrokAcpBaseModelId(turnModelSelection.model)
+                ? resolveModelId(turnModelSelection.model)
                 : undefined;
               const currentModelId = yield* applyGrokAcpModelSelection({
                 runtime: ctx.acp,
@@ -997,9 +1015,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
 
               ctx.currentModelId = currentModelId;
-              const displayModel = currentModelId
-                ? resolveGrokAcpBaseModelId(currentModelId)
-                : undefined;
+              const displayModel = currentModelId ? resolveModelId(currentModelId) : undefined;
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;
               }
@@ -1012,7 +1028,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 return yield* new ProviderAdapterRequestError({
                   provider: PROVIDER,
                   method: "session/prompt",
-                  detail: "Grok prompt was interrupted during preparation.",
+                  detail: `${providerDisplayName} prompt was interrupted during preparation.`,
                 });
               }
               if (steeringTurnId === undefined) {
@@ -1052,7 +1068,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     return;
                   }
                   yield* settlePromptInFlight(input.threadId, turnId, liveCtx.acpSessionId, {
-                    errorMessage: "Grok prompt preparation failed.",
+                    errorMessage: `${providerDisplayName} prompt preparation failed.`,
                     emitTurnCompletion: false,
                   });
                 }),
@@ -1101,7 +1117,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   prepared.turnId,
                   prepared.acpSessionId,
                   {
-                    errorMessage: "Grok session changed before the turn completed.",
+                    errorMessage: `${providerDisplayName} session changed before the turn completed.`,
                     settleAllPrompts: true,
                   },
                 );
@@ -1109,7 +1125,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 return yield* new ProviderAdapterRequestError({
                   provider: PROVIDER,
                   method: "session/prompt",
-                  detail: "Grok session changed before the turn completed.",
+                  detail: `${providerDisplayName} session changed before the turn completed.`,
                 });
               }
               // Keep prompt settlement atomic with respect to Stop and steering.
@@ -1224,7 +1240,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         prepared.turnId,
                         prepared.acpSessionId,
                         {
-                          errorMessage: "Grok session changed before the turn completed.",
+                          errorMessage: `${providerDisplayName} session changed before the turn completed.`,
                           settleAllPrompts: true,
                         },
                       );
@@ -1263,7 +1279,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               yield* withThreadLock(
                 input.threadId,
                 settlePromptInFlight(input.threadId, prepared.turnId, prepared.acpSessionId, {
-                  errorMessage: errorMessage ?? "Grok prompt request failed.",
+                  errorMessage: errorMessage ?? `${providerDisplayName} prompt request failed.`,
                 }),
               );
             }).pipe(Effect.catch(() => Effect.void)),
@@ -1409,7 +1425,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "thread/rollback",
-          detail: "Grok ACP sessions do not support provider-side rollback yet.",
+          detail: `${providerDisplayName} ACP sessions do not support provider-side rollback yet.`,
         });
       });
 

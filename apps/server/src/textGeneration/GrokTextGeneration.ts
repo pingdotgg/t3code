@@ -33,11 +33,21 @@ const GROK_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
+export interface GrokTextGenerationOptions {
+  readonly providerDisplayName?: string;
+  readonly makeAcpRuntime?: typeof makeGrokAcpRuntime;
+  readonly resolveModelId?: (model: string | null | undefined) => string | undefined;
+}
+
 export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  options?: GrokTextGenerationOptions,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const providerDisplayName = options?.providerDisplayName ?? "Grok";
+  const makeAcpRuntime = options?.makeAcpRuntime ?? makeGrokAcpRuntime;
+  const resolveModelId = options?.resolveModelId ?? resolveGrokAcpBaseModelId;
 
   const runGrokJson = <S extends Schema.Top>({
     operation,
@@ -57,9 +67,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
+      const resolvedModel = resolveModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
-      const runtime = yield* makeGrokAcpRuntime({
+      const runtime = yield* makeAcpRuntime({
         grokSettings,
         environment,
         childProcessSpawner: commandSpawner,
@@ -88,7 +98,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           mapError: (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to set Grok ACP base model for text generation.",
+              detail: `Failed to set ${providerDisplayName} ACP base model for text generation.`,
               cause,
             }),
         });
@@ -102,7 +112,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           Option.match({
             onNone: () =>
               Effect.fail(
-                new TextGenerationError({ operation, detail: "Grok ACP request timed out." }),
+                new TextGenerationError({
+                  operation,
+                  detail: `${providerDisplayName} ACP request timed out.`,
+                }),
               ),
             onSome: (value) => Effect.succeed(value),
           }),
@@ -112,7 +125,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: "Grok ACP request failed.",
+                detail: `${providerDisplayName} ACP request failed.`,
                 cause,
               }),
         ),
@@ -124,8 +137,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           operation,
           detail:
             promptResult.stopReason === "cancelled"
-              ? "Grok ACP request was cancelled."
-              : "Grok Agent returned empty output.",
+              ? `${providerDisplayName} ACP request was cancelled.`
+              : `${providerDisplayName} returned empty output.`,
         });
       }
 
@@ -136,7 +149,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             Effect.fail(
               new TextGenerationError({
                 operation,
-                detail: "Grok Agent returned invalid structured output.",
+                detail: `${providerDisplayName} returned invalid structured output.`,
                 cause,
               }),
             ),
@@ -148,7 +161,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           ? cause
           : new TextGenerationError({
               operation,
-              detail: "Grok ACP text generation failed.",
+              detail: `${providerDisplayName} ACP text generation failed.`,
               cause,
             }),
       ),
