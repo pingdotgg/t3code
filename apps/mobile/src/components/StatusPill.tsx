@@ -26,7 +26,7 @@ export function StatusPill(
       <Text
         className={cn(
           "font-t3-bold",
-          size === "compact" ? "text-[11px]" : "text-xs",
+          size === "compact" ? "text-2xs" : "text-xs",
           props.textClassName,
         )}
       >
