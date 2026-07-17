@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -38,6 +39,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
 ) {
+  const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const resolvedEnvironment = environment ?? process.env;
 
@@ -66,7 +68,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      });
+      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
