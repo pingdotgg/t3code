@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
 import {
-  cycleBranch,
   resolveInitialBranch,
   resolveNewThreadContext,
   validateNewThread,
@@ -48,10 +47,8 @@ describe("new-thread parity with the web UI", () => {
     ).toBe("new-worktree");
   });
 
-  it("Given refs are loaded, then the current branch wins and branch navigation wraps", () => {
+  it("Given refs are loaded, then the current branch is selected for a new-worktree draft", () => {
     expect(resolveInitialBranch(refs, null)).toBe("feature/tui");
-    expect(cycleBranch(refs, "feature/tui", -1)).toBe("main");
-    expect(cycleBranch(refs, "main", 1)).toBe("feature/tui");
   });
 
   it("Given New worktree has no base branch, when validating, then creation is blocked", () => {
@@ -66,7 +63,7 @@ describe("new-thread parity with the web UI", () => {
     ).toBe("missing-base-branch");
   });
 
-  it("Given an empty task, when validating, then the dialog remains invalid", () => {
+  it("Given an empty task, when validating, then the local draft remains invalid", () => {
     expect(
       validateNewThread({
         hasProject: true,

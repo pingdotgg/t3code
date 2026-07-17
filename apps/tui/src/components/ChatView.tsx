@@ -12,7 +12,6 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderInteractionMode,
   type RuntimeMode,
-  type VcsRef,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
@@ -35,8 +34,6 @@ import {
 import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
 import type { TuiClient } from "../connection.ts";
 import {
-  cycleBranch,
-  type NewThreadField,
   type NewThreadWorkspaceMode,
   newThreadValidationMessage,
   resolveInitialBranch,
@@ -233,6 +230,9 @@ export function ChatView({
   const [composerImages, setComposerImages] = React.useState<
     ReadonlyArray<ComposerImageAttachment>
   >([]);
+  const [newComposerImages, setNewComposerImages] = React.useState<
+    ReadonlyArray<ComposerImageAttachment>
+  >([]);
   const clipboardImageSequenceRef = React.useRef(0);
   const clipboardImageLoadsRef = React.useRef(0);
   // These refs close the same-event gap before React can paint a pending state:
@@ -253,19 +253,16 @@ export function ChatView({
     null,
   );
   const [projectIndex, setProjectIndex] = React.useState(0);
-  // Options for the new-thread dialog (^O cycles runtime, ^B toggles plan/build).
+  // Composer options for the local new-thread draft. The draft uses the same
+  // prompt surface as an existing thread and is created atomically on first send.
   const [newRuntimeMode, setNewRuntimeMode] = React.useState<RuntimeMode>("full-access");
   const [newInteractionMode, setNewInteractionMode] =
     React.useState<ProviderInteractionMode>("default");
   const [newWorkspaceMode, setNewWorkspaceMode] = React.useState<NewThreadWorkspaceMode>("current");
   const [newBranch, setNewBranch] = React.useState<string | null>(null);
   const [newContextWorktreePath, setNewContextWorktreePath] = React.useState<string | null>(null);
-  const [newRefs, setNewRefs] = React.useState<ReadonlyArray<VcsRef>>([]);
-  const [newBranchStatus, setNewBranchStatus] = React.useState<
-    "loading" | "ready" | "empty" | "error"
-  >("empty");
-  const [newField, setNewField] = React.useState<NewThreadField>("message");
   const newSubmissionPendingRef = React.useRef(false);
+  const newDraftOriginSelectionRef = React.useRef<string | null>(null);
   const [newSubmissionPending, setNewSubmissionPending] = React.useState(false);
   const [newThreadSettings, setNewThreadSettings] = React.useState(DEFAULT_SERVER_SETTINGS);
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
@@ -307,6 +304,7 @@ export function ChatView({
   // list can't leave it pointing past the end (projects[projectIndex] = undefined).
   const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
+  const selectionKey = state.selection ? `${state.selection.kind}:${state.selection.id}` : "none";
   const rows = React.useMemo(
     () =>
       buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter),
@@ -335,26 +333,35 @@ export function ChatView({
   );
 
   React.useEffect(() => {
+    if (
+      focus !== "new" ||
+      newDraftOriginSelectionRef.current === null ||
+      newDraftOriginSelectionRef.current === selectionKey
+    ) {
+      return;
+    }
+    newDraftOriginSelectionRef.current = null;
+    setDraft("");
+    setNewComposerImages([]);
+    setNewBranch(null);
+    setNewContextWorktreePath(null);
+    setComposerEpoch((epoch) => epoch + 1);
+    setFocus("compose");
+  }, [focus, selectionKey]);
+
+  React.useEffect(() => {
     if (focus !== "new") return;
     const project = projects[activeProjectIndex];
     if (!project) {
-      setNewRefs([]);
-      setNewBranchStatus("empty");
       return;
     }
     let cancelled = false;
-    setNewRefs([]);
-    setNewBranchStatus("loading");
     void client.listRefs(project.workspaceRoot).then(
       (result) => {
         if (cancelled) return;
-        setNewRefs(result.refs);
         setNewBranch((branch) => resolveInitialBranch(result.refs, branch));
-        setNewBranchStatus(result.refs.length > 0 ? "ready" : "empty");
       },
-      () => {
-        if (!cancelled) setNewBranchStatus("error");
-      },
+      () => {},
     );
     return () => {
       cancelled = true;
@@ -367,6 +374,10 @@ export function ChatView({
       projects.find((p) => p.id === detail.projectId)?.workspaceRoot ??
       process.cwd())
     : process.cwd();
+  const composerCwd =
+    focus === "new"
+      ? (newContextWorktreePath ?? projects[activeProjectIndex]?.workspaceRoot ?? process.cwd())
+      : terminalCwd;
   const detailTabs = detail ? (terminalTabs.get(detail.id) ?? null) : null;
   const activeTerminal: TerminalInfo | null =
     terminalOpen && detail && detailTabs
@@ -378,17 +389,26 @@ export function ChatView({
           worktreePath: detail.worktreePath,
         }
       : null;
-  const controls = {
-    ...composerControls(detail, threadModelSelection, threadReasoning?.selectedId),
-    interactionMode: threadInteractionMode,
-  };
   const newReasoning = React.useMemo(
     () => reasoningChoicesForSelection(modelOptions, resolvedNewModelSelection),
     [modelOptions, resolvedNewModelSelection],
   );
+  const controls =
+    focus === "new"
+      ? {
+          interactionMode: newInteractionMode,
+          runtimeMode: newRuntimeMode,
+          model: resolvedNewModelSelection?.model ?? null,
+          reasoning: newReasoning?.selectedId ?? null,
+        }
+      : {
+          ...composerControls(detail, threadModelSelection, threadReasoning?.selectedId),
+          interactionMode: threadInteractionMode,
+        };
   // The agent is actively running a turn — show the red stop affordance (mirrors
   // the web composer swapping its send button for a stop button while running).
   const working = !!detail && isWorking(detail);
+  const composerWorking = focus !== "new" && working;
 
   const detailId = detail?.id ?? null;
   const openExpandedImage = React.useCallback((preview: ExpandedImagePreview) => {
@@ -492,6 +512,14 @@ export function ChatView({
   };
 
   const togglePlanMode = () => {
+    if (focus === "new") {
+      setNewInteractionMode((mode) => {
+        const next = mode === "plan" ? "default" : "plan";
+        store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+        return next;
+      });
+      return;
+    }
     if (!detail) return;
     const threadId = detail.id;
     const next = threadInteractionMode === "plan" ? "default" : "plan";
@@ -573,6 +601,8 @@ export function ChatView({
   };
 
   const openNewThread = () => {
+    if (focus === "new") return;
+    newDraftOriginSelectionRef.current = selectionKey;
     const context = resolveNewThreadContext({
       projects,
       thread: detail,
@@ -590,9 +620,9 @@ export function ChatView({
     setNewWorkspaceMode(context.workspaceMode);
     setNewBranch(context.branch);
     setNewContextWorktreePath(context.worktreePath);
-    setNewRefs([]);
-    setNewBranchStatus("loading");
-    setNewField("message");
+    setDraft("");
+    setNewComposerImages([]);
+    setComposerEpoch((epoch) => epoch + 1);
     setFocus("new");
   };
 
@@ -612,10 +642,12 @@ export function ChatView({
   };
 
   const openRuntimePicker = () => {
-    if (!detail) return;
+    const target = focus === "new" ? "new" : "thread";
+    if (target === "thread" && !detail) return;
+    const runtimeMode = target === "new" ? newRuntimeMode : (detail?.runtimeMode ?? "full-access");
     setPicker({
       kind: "runtime",
-      target: "thread",
+      target,
       title: "access",
       status: "ready",
       options: RUNTIME_MODES.map((mode) => ({
@@ -623,7 +655,7 @@ export function ChatView({
         description: RUNTIME_MODE_META[mode].description,
         value: mode,
       })),
-      selectedIndex: Math.max(0, RUNTIME_MODES.indexOf(detail.runtimeMode)),
+      selectedIndex: Math.max(0, RUNTIME_MODES.indexOf(runtimeMode)),
     });
   };
 
@@ -726,12 +758,16 @@ export function ChatView({
     const kind = current.kind;
     if (!value) return;
     if (kind === "runtime") {
-      if (!detail) return;
       const mode = value as RuntimeMode;
-      void client
-        .setRuntimeMode(detail.id, mode)
-        .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error"));
-      store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
+      if (current.target === "new") {
+        setNewRuntimeMode(mode);
+        store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
+      } else if (detail) {
+        void client
+          .setRuntimeMode(detail.id, mode)
+          .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error"));
+        store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
+      }
     } else if (kind === "model") {
       const parsed = JSON.parse(value) as { instanceId?: string; model?: string };
       const model = modelOptions.find(
@@ -789,6 +825,7 @@ export function ChatView({
     setCustomAnswer("");
   }, [pendingRequestId]);
   const userInputActive = pendingUserInput !== null && !userInputDeferred;
+  const composerUserInputActive = focus !== "new" && userInputActive;
   const uiQuestion = pendingUserInput?.questions[uiQuestionIndex] ?? null;
   const uiSelectedLabels = uiQuestion ? (uiSelections[uiQuestion.id] ?? []) : [];
   const approvals = React.useMemo(
@@ -809,19 +846,31 @@ export function ChatView({
   const chatWidth = Math.max(20, width - listWidth - rightWidth);
   const composerSurfaceWidth = Math.max(20, Math.min(COMPOSER_MAX_WIDTH, chatWidth - 2));
   const composerContext: ComposerDockContext | null =
-    detail && state.vcsStatus?.isRepo
+    focus === "new"
       ? {
-          workspace: detail.worktreePath ? "Worktree checkout" : "Local checkout",
-          branch: state.vcsStatus.refName ?? detail.branch ?? "(detached)",
+          workspace:
+            newWorkspaceMode === "new-worktree"
+              ? "New worktree"
+              : newContextWorktreePath
+                ? "Current worktree"
+                : "Project workspace",
+          branch: newBranch ?? "(current)",
         }
-      : null;
+      : detail && state.vcsStatus?.isRepo
+        ? {
+            workspace: detail.worktreePath ? "Worktree checkout" : "Local checkout",
+            branch: state.vcsStatus.refName ?? detail.branch ?? "(detached)",
+          }
+        : null;
 
   // Deterministic viewport heights. The terminal drawer (when open) and the
   // composer are both shown, so the top panes shrink to fit both. The reply editor
   // auto-grows with its line count (up to a cap), or uses a height the user set
   // with ^↑/^↓; content beyond that scrolls within the editor.
   const maxPromptLines = Math.max(3, Math.floor(height * 0.6));
-  const autoPromptLines = Math.min(Math.max(reply.split("\n").length, 1), 8);
+  const composerText = focus === "new" ? draft : reply;
+  const activeComposerImages = focus === "new" ? newComposerImages : composerImages;
+  const autoPromptLines = Math.min(Math.max(composerText.split("\n").length, 1), 8);
   const promptLines = Math.min(promptHeight ?? autoPromptLines, maxPromptLines);
   // A popover (picker / palette / revert / confirm) floats ABOVE the composer,
   // which stays visible (unfocused, compact) below — mirroring the web, where a
@@ -842,31 +891,28 @@ export function ChatView({
     focus !== "filter";
 
   React.useEffect(() => {
-    if (!composerInputFocused || focus !== "compose" || userInputActive || !composerThreadId)
-      return;
+    const acceptsAttachments =
+      focus === "new" || (focus === "compose" && composerThreadId !== null);
+    if (!composerInputFocused || !acceptsAttachments || composerUserInputActive) return;
     return getKittyClipboardManager(renderer).activate({
       maxBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
       onError: (error) => store.setStatus(error.message, "error"),
     });
-  }, [composerInputFocused, composerThreadId, focus, renderer, store, userInputActive]);
+  }, [composerInputFocused, composerThreadId, composerUserInputActive, focus, renderer, store]);
   // A pending question renders a panel inside the composer (header + question +
   // options + hint + spacer), so the composer grows to fit it.
-  const pendingPanelHeight = userInputActive && uiQuestion ? uiQuestion.options.length + 4 : 0;
-  const attachmentPreviewHeight = composerImages.length === 0 ? 0 : inlineImagesSupported ? 4 : 1;
+  const pendingPanelHeight =
+    composerUserInputActive && uiQuestion ? uiQuestion.options.length + 4 : 0;
+  const attachmentPreviewHeight =
+    activeComposerImages.length === 0 ? 0 : inlineImagesSupported ? 4 : 1;
   const compactComposerFooter =
-    focus !== "new" &&
-    focus !== "rename" &&
-    focus !== "filter" &&
-    focus !== "commit" &&
-    composerSurfaceWidth < 64;
+    focus !== "rename" && focus !== "filter" && focus !== "commit" && composerSurfaceWidth < 64;
   const composerHeight =
-    focus === "new"
-      ? 10
-      : focus === "rename" || focus === "filter" || focus === "commit"
-        ? 5
-        : popoverOpen
-          ? 5 + attachmentPreviewHeight // compact input + attachments + footer
-          : promptLines + 4 + pendingPanelHeight + attachmentPreviewHeight;
+    focus === "rename" || focus === "filter" || focus === "commit"
+      ? 5
+      : popoverOpen
+        ? 5 + attachmentPreviewHeight // compact input + attachments + footer
+        : promptLines + 4 + pendingPanelHeight + attachmentPreviewHeight;
   const composerDockHeight =
     composerHeight + (compactComposerFooter ? 1 : 0) + (composerContext ? 1 : 0);
   const defaultTerminalHeight = Math.floor(height * 0.4);
@@ -1026,7 +1072,13 @@ export function ChatView({
   const submitNewThread = () => {
     if (newSubmissionPendingRef.current) return;
     const project = projects[activeProjectIndex];
-    const message = draft.trim();
+    const typedMessage = draft.trim();
+    const message =
+      typedMessage.length > 0
+        ? typedMessage
+        : newComposerImages.length > 0
+          ? IMAGE_ONLY_PROMPT
+          : "";
     const validationError = validateNewThread({
       hasProject: !!project,
       message,
@@ -1035,13 +1087,6 @@ export function ChatView({
       branch: newBranch,
     });
     if (validationError) {
-      setNewField(
-        validationError === "missing-base-branch"
-          ? "branch"
-          : validationError === "missing-project"
-            ? "project"
-            : "message",
-      );
       store.setStatus(newThreadValidationMessage(validationError), "error");
       return;
     }
@@ -1055,9 +1100,10 @@ export function ChatView({
       .createThread({
         projectId: project.id,
         projectCwd: project.workspaceRoot,
-        title: truncate(message),
+        title: typedMessage.length > 0 ? truncate(typedMessage) : "Image attachment",
         modelSelection: resolvedNewModelSelection,
         firstMessage: message,
+        attachments: newComposerImages.map((image) => image.upload),
         runtimeMode: newRuntimeMode,
         interactionMode: newInteractionMode,
         branch: newBranch,
@@ -1068,9 +1114,11 @@ export function ChatView({
       .then(
         (threadId) => {
           setDraft("");
+          setNewComposerImages([]);
           setNewBranch(null);
           setNewContextWorktreePath(null);
-          setNewField("message");
+          newDraftOriginSelectionRef.current = null;
+          setComposerEpoch((epoch) => epoch + 1);
           setFocus("compose");
           if (!store.getState().expanded.has(project.id)) store.toggleProject(project.id);
           store.select({ kind: "thread", id: threadId });
@@ -1237,7 +1285,7 @@ export function ChatView({
     setFilesStatus("loading");
     setFileEntries([]);
     void client
-      .listEntries(terminalCwd)
+      .listEntries(composerCwd)
       .then((entries) => {
         setFileEntries(entries);
         setFilesStatus(entries.length === 0 ? "empty" : "ready");
@@ -1259,6 +1307,14 @@ export function ChatView({
       Math.min(Math.max(0, index + delta), Math.max(0, fileRows.length - 1)),
     );
   };
+  const updateActiveComposerImages = (
+    update: (
+      current: ReadonlyArray<ComposerImageAttachment>,
+    ) => ReadonlyArray<ComposerImageAttachment>,
+  ) => {
+    if (focus === "new") setNewComposerImages(update);
+    else setComposerImages(update);
+  };
   const filesActivate = () => {
     if (viewingFile) return;
     const row = fileRows[filesIndex];
@@ -1273,12 +1329,12 @@ export function ChatView({
       return;
     }
     if (filesPurpose === "attach-image") {
-      if (composerImages.some((image) => image.relativePath === row.path)) {
+      if (activeComposerImages.some((image) => image.relativePath === row.path)) {
         store.setStatus(`${row.name} is already attached.`, "info");
         closeFiles();
         return;
       }
-      if (composerImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      if (activeComposerImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         store.setStatus(
           `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
           "error",
@@ -1288,13 +1344,13 @@ export function ChatView({
       }
       setFilesStatus("loading");
       void client
-        .readFileBase64(terminalCwd, row.path)
+        .readFileBase64(composerCwd, row.path)
         .then((file) => {
           if (!file) throw new Error("Could not read the image.");
           return prepareComposerImage(row.path, file);
         })
         .then((image) => {
-          setComposerImages((current) => [...current, image]);
+          updateActiveComposerImages((current) => [...current, image]);
           closeFiles();
           store.setStatus(`Attached ${image.upload.name}.`, "success");
         })
@@ -1309,7 +1365,7 @@ export function ChatView({
     }
     setViewingFile({ path: row.path, status: "loading", content: "" });
     void client
-      .readFile(terminalCwd, row.path)
+      .readFile(composerCwd, row.path)
       .then((content) =>
         setViewingFile(
           content === null
@@ -1324,11 +1380,11 @@ export function ChatView({
     else closeFiles();
   };
   const removeStagedComposerImage = (relativePath: string) => {
-    setComposerImages((current) => removeComposerImage(current, relativePath));
+    updateActiveComposerImages((current) => removeComposerImage(current, relativePath));
   };
 
   const pasteComposerImage = (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => {
-    if (!detail) {
+    if (!detail && focus !== "new") {
       store.setStatus("Select a thread before pasting an image.", "error");
       return;
     }
@@ -1337,7 +1393,7 @@ export function ChatView({
       return;
     }
     if (
-      composerImages.length + clipboardImageLoadsRef.current >=
+      activeComposerImages.length + clipboardImageLoadsRef.current >=
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
       store.setStatus(
@@ -1358,7 +1414,7 @@ export function ChatView({
     store.setStatus("Adding pasted image…", "busy");
     void prepareComposerImageBytes(name, paste.mimeType, paste.bytes)
       .then((image) => {
-        setComposerImages((current) =>
+        updateActiveComposerImages((current) =>
           current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ? current : [...current, image],
         );
         store.setStatus(`Attached ${image.upload.name}.`, "success");
@@ -1395,7 +1451,7 @@ export function ChatView({
   // editor on a temp file, then read it back into the prompt and re-take the screen.
   const editInEditor = () => {
     if (terminalFocused) return;
-    const draftText = reply;
+    const draftText = composerText;
     void (async () => {
       let dir: string | null = null;
       try {
@@ -1419,7 +1475,8 @@ export function ChatView({
           renderer.requestRender();
         }
         const edited = normalizeEditedPrompt(await NodeFSP.readFile(file, "utf8"));
-        setReply(edited);
+        if (focus === "new") setDraft(edited);
+        else setReply(edited);
         setComposerEpoch((epoch) => epoch + 1);
         store.setStatus("Prompt updated from $EDITOR.", "success");
       } catch {
@@ -1443,7 +1500,7 @@ export function ChatView({
   const paletteCommands = React.useMemo<Command[]>(() => {
     const list: Command[] = [];
     list.push({ id: "new", title: "New thread", hint: "^N", run: () => runCommand(openNewThread) });
-    if (detail) {
+    if (detail && focus !== "new") {
       list.push({
         id: "plan",
         title: threadInteractionMode === "plan" ? "Switch to build mode" : "Switch to plan mode",
@@ -1529,6 +1586,26 @@ export function ChatView({
         });
       }
     }
+    if (focus === "new") {
+      list.push(
+        {
+          id: "model",
+          title: "Change model",
+          run: () => runCommand(openModelPicker),
+        },
+        {
+          id: "reasoning",
+          title: "Change reasoning effort",
+          run: () => runCommand(openReasoningPicker),
+        },
+        {
+          id: "runtime",
+          title: "Change runtime access",
+          hint: "^O",
+          run: () => runCommand(openRuntimePicker),
+        },
+      );
+    }
     list.push({
       id: "terminal",
       title: activeTerminal ? "Hide terminal" : "Show terminal",
@@ -1591,14 +1668,17 @@ export function ChatView({
       keywords: "search",
       run: () => runCommand(() => setFocus("filter")),
     });
-    if (detail) {
+    if (detail || focus === "new") {
       list.push({
         id: "files",
         title: "Browse files",
         keywords: "workspace open file",
         run: () => runCommand(openFiles),
       });
-      if (!pendingUserInput && composerImages.length < PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      if (
+        (focus === "new" || !pendingUserInput) &&
+        activeComposerImages.length < PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ) {
         list.push({
           id: "attach-image",
           title: "Attach image",
@@ -1606,14 +1686,14 @@ export function ChatView({
           run: () => runCommand(() => openFiles("attach-image")),
         });
       }
-      if (composerImages.length > 0) {
+      if (activeComposerImages.length > 0) {
         list.push({
           id: "remove-attachment",
           title: "Remove last attachment",
           keywords: "image clear",
           run: () =>
             runCommand(() => {
-              setComposerImages((current) => current.slice(0, -1));
+              updateActiveComposerImages((current) => current.slice(0, -1));
             }),
         });
       }
@@ -1634,7 +1714,8 @@ export function ChatView({
     terminalOpen,
     rightPanelOpen,
     actionablePlan,
-    composerImages,
+    activeComposerImages,
+    focus,
     pendingUserInput,
     threadModelSelection,
     threadInteractionMode,
@@ -1667,45 +1748,17 @@ export function ChatView({
                   ? "confirmDelete"
                   : overlay === "revert"
                     ? "revert"
-                    : focus === "new"
-                      ? "new"
-                      : focus === "rename"
-                        ? "rename"
-                        : focus === "filter"
-                          ? "filter"
-                          : focus === "commit"
-                            ? "commit"
-                            : rightPanelVisible && rightPanelFocused
-                              ? "panel"
-                              : userInputActive
-                                ? "userInput"
-                                : "compose";
-
-  const navigateNewThreadControl = (field: NewThreadField, delta: 1 | -1) => {
-    if (field === "project") {
-      setProjectIndex((index) => {
-        const count = Math.max(projects.length, 1);
-        const nextIndex = (index + delta + count) % count;
-        const project = projects[nextIndex];
-        setNewModelSelection(
-          resolveModelSelection(modelOptions, project?.defaultModelSelection) ??
-            project?.defaultModelSelection ??
-            null,
-        );
-        return nextIndex;
-      });
-      setNewContextWorktreePath(null);
-      setNewBranch(null);
-      return;
-    }
-    if (field === "workspace") {
-      setNewWorkspaceMode((mode) => (mode === "current" ? "new-worktree" : "current"));
-      return;
-    }
-    if (field === "branch") {
-      setNewBranch((branch) => cycleBranch(newRefs, branch, delta));
-    }
-  };
+                    : focus === "rename"
+                      ? "rename"
+                      : focus === "filter"
+                        ? "filter"
+                        : focus === "commit"
+                          ? "commit"
+                          : rightPanelVisible && rightPanelFocused
+                            ? "panel"
+                            : composerUserInputActive
+                              ? "userInput"
+                              : "compose";
 
   useKeyBindings({
     mode: keyMode,
@@ -1720,31 +1773,9 @@ export function ChatView({
     onTerminalScroll: (action) => terminalScrollRef.current?.(action),
     onImagePreviewClose: closeExpandedImage,
     onToggleFocus: toggleFocus,
-    onCancelNew: () => {
-      if (newSubmissionPendingRef.current) return;
-      setDraft("");
-      setNewBranch(null);
-      setNewContextWorktreePath(null);
-      setNewField("message");
-      setFocus("compose");
-    },
-    newNavigation: newField !== "message",
-    onNewPrev: () => navigateNewThreadControl(newField, -1),
-    onNewNext: () => navigateNewThreadControl(newField, 1),
-    onNewCycleRuntime: () =>
-      setNewRuntimeMode((mode) => {
-        const current = RUNTIME_MODES.indexOf(mode);
-        return RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
-      }),
-    onNewTogglePlan: () => setNewInteractionMode((mode) => (mode === "plan" ? "default" : "plan")),
-    onNewCycleField: () => {
-      const fields: ReadonlyArray<NewThreadField> = ["message", "project", "workspace", "branch"];
-      setNewField((field) => fields[(fields.indexOf(field) + 1) % fields.length] ?? "message");
-    },
-    onSubmitNew: submitNewThread,
     // Plain arrows stay with the composer except while choosing between multiple
     // pending approvals. Threads use the explicit Alt+↑/↓ shortcuts or mouse.
-    approvalNavigation: approvals.length > 1 && reply.length === 0,
+    approvalNavigation: focus !== "new" && approvals.length > 1 && reply.length === 0,
     onApprovalPrev: () =>
       setApprovalIndex((index) => (index <= 0 ? approvals.length - 1 : index - 1)),
     onApprovalNext: () => setApprovalIndex((index) => (index + 1) % approvals.length),
@@ -1946,8 +1977,19 @@ export function ChatView({
       void client.approve(detail.id, approval.requestId, "decline").catch(() => {});
       store.setStatus("Declined.", "success");
     },
-    onSend: sendReply,
+    onSend: focus === "new" ? submitNewThread : sendReply,
     onEscape: () => {
+      if (focus === "new") {
+        if (newSubmissionPendingRef.current) return;
+        setDraft("");
+        setNewComposerImages([]);
+        setNewBranch(null);
+        setNewContextWorktreePath(null);
+        newDraftOriginSelectionRef.current = null;
+        setComposerEpoch((epoch) => epoch + 1);
+        setFocus("compose");
+        return;
+      }
       if (reply.length > 0) {
         clearReply();
         return;
@@ -1956,11 +1998,14 @@ export function ChatView({
     },
   });
 
-  const placeholder = detail
-    ? "Ask anything, @tag files/folders, $use skills, or / for commands"
-    : state.selection?.kind === "project"
-      ? "Enter to expand · Alt+↑/↓ to pick a thread"
-      : "Select a thread with Alt+↑/↓ or click";
+  const placeholder =
+    focus === "new"
+      ? "Ask anything, @tag files/folders, $use skills, or / for commands"
+      : detail
+        ? "Ask anything, @tag files/folders, $use skills, or / for commands"
+        : state.selection?.kind === "project"
+          ? "Enter to expand · Alt+↑/↓ to pick a thread"
+          : "Select a thread with Alt+↑/↓ or click";
 
   // Contextual footer: only show keys that apply now (^Y with a plan, ^A/^R with
   // approvals). The persistent state (^B/^O/model/reasoning) lives in the controls
@@ -1972,19 +2017,19 @@ export function ChatView({
     "^↑/^↓ size",
     "^N new",
     "^E term",
-    ...(actionablePlan ? ["^Y implement"] : []),
-    ...(approvals.length > 0
+    ...(focus !== "new" && actionablePlan ? ["^Y implement"] : []),
+    ...(focus !== "new" && approvals.length > 0
       ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"]
       : []),
     "^K commands",
     "^F find",
     `^L panel ${rightPanelOpen ? "▾" : "▸"}`,
-    ...(working ? ["Esc stop"] : []),
+    ...(composerWorking ? ["Esc stop"] : focus === "new" ? ["Esc cancel"] : []),
     "^C quit",
   ].join(" · ");
   const hint = expandedImage
     ? "image preview · Esc or click to close · ^C quit"
-    : pendingUserInput && userInputDeferred
+    : focus !== "new" && pendingUserInput && userInputDeferred
       ? "⚠ question pending — ^U to answer · ^C quit"
       : activeTerminal
         ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
@@ -2036,7 +2081,7 @@ export function ChatView({
             />
           ) : filesOpen ? (
             <FilesView
-              cwdLabel={terminalCwd}
+              cwdLabel={composerCwd}
               status={filesStatus}
               rows={fileRows}
               selectedIndex={filesIndex}
@@ -2065,12 +2110,17 @@ export function ChatView({
               height={panesHeight}
               onClose={closeExpandedImage}
             />
-          ) : (
-            <MessagesTimeline
-              detail={detail}
-              approvals={approvals}
-              approvalIndex={activeApprovalIndex}
+            ) : (
+              <MessagesTimeline
+                detail={focus === "new" ? null : detail}
+                approvals={focus === "new" ? [] : approvals}
+                approvalIndex={activeApprovalIndex}
               projectHint={selectedProjectTitle}
+              {...(focus === "new"
+                ? {
+                    emptyHint: `${projects[activeProjectIndex]?.title ?? "New thread"} — describe the task below.`,
+                  }
+                : {})}
               width={chatWidth}
               height={panesHeight}
               syntaxStyle={syntaxStyle}
@@ -2131,55 +2181,33 @@ export function ChatView({
       >
         <ChatComposer
           // Search/filter now lives in the sidebar; the composer never owns it.
-          mode={focus === "filter" ? "compose" : focus}
-          reply={reply}
-          draft={draft}
+          mode={focus === "filter" || focus === "new" ? "compose" : focus}
+          reply={composerText}
           auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
           placeholder={placeholder}
-          projectName={projects[activeProjectIndex]?.title ?? "(none)"}
-          interactionMode={focus === "new" ? newInteractionMode : threadInteractionMode}
-          newRuntimeMode={newRuntimeMode}
-          newModel={resolvedNewModelSelection?.model ?? null}
-          newReasoning={newReasoning?.selectedId ?? null}
-          newBranch={newBranch}
-          newWorkspaceMode={newWorkspaceMode}
-          newWorkspaceLabel={
-            newWorkspaceMode === "new-worktree"
-              ? "New worktree"
-              : newContextWorktreePath
-                ? "Current worktree"
-                : "Project workspace"
-          }
-          newBranchStatus={newBranchStatus}
-          newField={newField}
           editorRows={promptLines}
           inputFocused={composerInputFocused}
           composerEpoch={composerEpoch}
           controls={controls}
-          working={working}
-          attachments={composerImages}
+          working={composerWorking}
+          attachments={activeComposerImages}
           inlineImagesSupported={inlineImagesSupported}
           width={composerSurfaceWidth}
-          pendingUserInput={userInputActive ? pendingUserInput : null}
+          pendingUserInput={composerUserInputActive ? pendingUserInput : null}
           uiQuestionIndex={uiQuestionIndex}
           uiOptionIndex={uiOptionIndex}
           uiSelectedLabels={uiSelectedLabels}
           answerDraft={customAnswer}
           onAnswerInput={setCustomAnswer}
-          onReplyInput={setReply}
-          onReplySubmit={sendReply}
-          onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
-          onNewFieldActivate={(field) => {
-            setNewField(field);
-            if (field !== "message") navigateNewThreadControl(field, 1);
-          }}
+          onReplyInput={focus === "new" ? setDraft : setReply}
+          onReplySubmit={focus === "new" ? submitNewThread : sendReply}
           onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
           onTogglePlan={togglePlanMode}
           onOpenAccess={openRuntimePicker}
           onOpenModel={openModelPicker}
           onOpenReasoning={openReasoningPicker}
           onStop={stopTurn}
-          onSend={sendReply}
+          onSend={focus === "new" ? submitNewThread : sendReply}
           onSubmitAnswer={submitUserInput}
           onRemoveAttachment={removeStagedComposerImage}
           onPasteImage={pasteComposerImage}

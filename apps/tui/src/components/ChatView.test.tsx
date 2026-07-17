@@ -929,7 +929,7 @@ describe("ChatView acknowledged submissions", () => {
 });
 
 describe("ChatView new-thread parity", () => {
-  it("Given creation is in flight, when Enter repeats and creation fails, then one request is made and the task remains", async () => {
+  it("Given a local new-thread draft, when Enter repeats and creation fails, then the shared prompt keeps one request and preserves the task", async () => {
     const request = deferred<Awaited<ReturnType<TuiClient["createThread"]>>>();
     const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
     const fake = fakeClient({
@@ -969,8 +969,12 @@ describe("ChatView new-thread parity", () => {
       await setup.renderOnce();
     });
     await setup.waitForFrame(
-      (frame) => frame.includes("new thread") && frame.includes("effort ▸ medium"),
+      (frame) =>
+        frame.includes("Project one — describe the task below.") &&
+        frame.includes("effort medium") &&
+        frame.includes("▸ Send"),
     );
+    expect(setup.captureCharFrame()).not.toContain("new thread");
     await React.act(async () => {
       await setup.mockInput.typeText("preserve this new task");
       await setup.renderOnce();
@@ -985,17 +989,19 @@ describe("ChatView new-thread parity", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.modelSelection.options).toEqual([{ id: "reasoningEffort", value: "medium" }]);
+    expect(calls[0]?.attachments).toEqual([]);
     await React.act(async () => {
       request.reject(new Error("offline"));
       await Promise.resolve();
     });
     const frame = await setup.waitForFrame((next) => next.includes("create failed"));
-    expect(frame).toContain("new thread");
+    expect(frame).toContain("Project one — describe the task below.");
+    expect(frame).not.toContain("new thread");
     expect(frame).toContain("preserve this new task");
     setup.renderer.destroy();
   });
 
-  it("Given an empty task, when Enter is pressed, then the new-thread dialog stays open", async () => {
+  it("Given an empty task, when Enter is pressed, then the local draft stays in the shared prompt", async () => {
     let calls = 0;
     const fake = fakeClient({
       detail: thread(),
@@ -1015,13 +1021,14 @@ describe("ChatView new-thread parity", () => {
       setup.mockInput.pressEnter();
       await setup.renderOnce();
     });
-    const frame = await setup.waitForFrame((next) => next.includes("Describe the task"));
-    expect(frame).toContain("new thread");
+    const frame = await setup.waitForFrame((next) => next.includes("describe the task below"));
+    expect(frame).toContain("▸ Send");
+    expect(frame).not.toContain("new thread");
     expect(calls).toBe(0);
     setup.renderer.destroy();
   });
 
-  it("Given New worktree is selected, when creation succeeds, then the atomic request contains its base branch and the returned thread is selected", async () => {
+  it("Given a thread is active, when its new-thread draft is sent, then the inherited checkout is used and the returned thread is selected", async () => {
     const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
     const fake = fakeClient({
       detail: thread(),
@@ -1040,24 +1047,23 @@ describe("ChatView new-thread parity", () => {
       setup.mockInput.pressKey("n", { ctrl: true });
       await setup.renderOnce();
     });
-    await setup.waitForFrame((frame) => frame.includes("main"));
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("Project one — describe the task below.") &&
+        frame.includes("main") &&
+        frame.includes("^B Build"),
+    );
+    await React.act(async () => {
+      setup.mockInput.pressKey("\t", { shift: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("^B Plan"));
     await React.act(async () => {
       await setup.mockInput.typeText("create in isolation");
       await setup.renderOnce();
     });
     await setup.waitForFrame((frame) => frame.includes("create in isolation"));
     await React.act(async () => {
-      setup.mockInput.pressKey("\t");
-      setup.mockInput.pressKey("\t");
-      await setup.renderOnce();
-    });
-    await React.act(async () => {
-      setup.mockInput.pressArrow("down");
-      await setup.renderOnce();
-    });
-    await setup.waitForFrame((frame) => frame.includes("New worktree"));
-    await React.act(async () => {
-      setup.mockInput.pressKey("\t");
       setup.mockInput.pressEnter();
       await setup.renderOnce();
       await Promise.resolve();
@@ -1071,7 +1077,8 @@ describe("ChatView new-thread parity", () => {
       firstMessage: "create in isolation",
       branch: "main",
       worktreePath: null,
-      createWorktree: true,
+      createWorktree: false,
+      interactionMode: "plan",
     });
     expect(fake.subscribedThreadIds.at(-1)).toBe("t-created");
     expect(frame).not.toContain("new thread");

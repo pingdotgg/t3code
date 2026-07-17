@@ -6,25 +6,14 @@ import { ChatComposer } from "./ChatComposer.tsx";
 
 // Component specs for the composer, exercised through OpenTUI's real (headless)
 // renderer under bun:test. They lock in the double-input fix (no <input> while the
-// terminal holds focus) and the rename/filter/new surfaces.
+// terminal holds focus) and the auxiliary rename/filter/commit surfaces.
 
 const noop = () => {};
 
 const base = {
   reply: "",
-  draft: "",
   auxValue: "",
   placeholder: "Type a reply, Enter to send",
-  projectName: "Acme",
-  interactionMode: "default",
-  newRuntimeMode: "full-access",
-  newModel: "gpt-5",
-  newReasoning: "high",
-  newBranch: null,
-  newWorkspaceMode: "current",
-  newWorkspaceLabel: "Project workspace",
-  newBranchStatus: "empty",
-  newField: "message",
   editorRows: 3,
   composerEpoch: 0,
   controls: {
@@ -45,8 +34,6 @@ const base = {
   onAnswerInput: noop,
   onReplyInput: noop,
   onReplySubmit: noop,
-  onDraftInput: noop,
-  onNewFieldActivate: noop,
   onAuxInput: noop,
   onTogglePlan: noop,
   onOpenAccess: noop,
@@ -179,45 +166,6 @@ describe("ChatComposer", () => {
     expect(frame).toContain("commit");
     expect(frame).toContain("fix the bug");
     expect(frame).toContain("Enter commit");
-  });
-
-  it("Given new-thread mode, when rendered, then it shows the dialog, project, and options", async () => {
-    const frame = await frameOf(
-      <ChatComposer
-        {...base}
-        mode="new"
-        newRuntimeMode="approval-required"
-        interactionMode="plan"
-        inputFocused
-      />,
-    );
-    expect(frame).toContain("new thread");
-    expect(frame).toContain("Acme");
-    expect(frame).toContain("approval-required");
-    expect(frame).toContain("plan");
-    expect(frame).toContain("model ▸ gpt-5");
-    expect(frame).toContain("effort ▸ high");
-    expect(frame).toContain("branch");
-    expect(frame).toContain("Project workspace");
-  });
-
-  it("Given New worktree mode, then it shows the selected base branch without a raw path field", async () => {
-    const frame = await frameOf(
-      <ChatComposer
-        {...base}
-        mode="new"
-        newField="branch"
-        newWorkspaceMode="new-worktree"
-        newWorkspaceLabel="New worktree"
-        newBranch="feature/x"
-        newBranchStatus="ready"
-        inputFocused
-      />,
-    );
-    expect(frame).toContain("New worktree");
-    expect(frame).toContain("base branch");
-    expect(frame).toContain("feature/x");
-    expect(frame).not.toContain("worktree ▸ /");
   });
 
   it("Given a focused multiline reply editor, when text is typed, then it renders the content", async () => {

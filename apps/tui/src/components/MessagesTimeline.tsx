@@ -494,6 +494,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   approvals,
   approvalIndex,
   projectHint,
+  emptyHint,
   width,
   height,
   syntaxStyle,
@@ -509,6 +510,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly approvals: ReadonlyArray<PendingApproval>;
   readonly approvalIndex: number;
   readonly projectHint: string | null;
+  /** Overrides the no-thread guidance for local surfaces such as a new draft. */
+  readonly emptyHint?: string;
   readonly width: number;
   readonly height: number;
   readonly syntaxStyle: SyntaxStyle;
@@ -595,9 +598,10 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         paddingRight={1}
       >
         <text fg={palette.dim}>
-          {projectHint
-            ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
-            : "Select a thread to view its conversation."}
+          {emptyHint ??
+            (projectHint
+              ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
+              : "Select a thread to view its conversation.")}
         </text>
       </box>
     );

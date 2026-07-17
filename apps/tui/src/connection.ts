@@ -133,6 +133,7 @@ export interface TuiCreateThreadInput {
   readonly title: string;
   readonly modelSelection: ModelSelection;
   readonly firstMessage: string;
+  readonly attachments: ReadonlyArray<UploadChatImageAttachment>;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly branch: string | null;
@@ -761,7 +762,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
             : null;
           yield* startThreadTurn({
             threadId,
-            message: { messageId, role: "user", text: input.firstMessage, attachments: [] },
+            message: {
+              messageId,
+              role: "user",
+              text: input.firstMessage,
+              attachments: [...input.attachments],
+            },
             modelSelection: input.modelSelection,
             titleSeed: TrimmedNonEmptyString.make(input.title),
             runtimeMode: input.runtimeMode,

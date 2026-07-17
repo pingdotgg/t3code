@@ -63,6 +63,7 @@ describe("new-thread bootstrap", () => {
     title: "Create safely",
     modelSelection: { instanceId: "codex", model: "gpt-5" },
     firstMessage: "Create safely",
+    attachments: [],
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",

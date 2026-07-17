@@ -1,6 +1,5 @@
 import type { OrchestrationProjectShell, OrchestrationThread, VcsRef } from "@t3tools/contracts";
 
-export type NewThreadField = "message" | "project" | "workspace" | "branch";
 export type NewThreadWorkspaceMode = "current" | "new-worktree";
 
 export interface NewThreadContext {
@@ -56,18 +55,6 @@ export function resolveInitialBranch(
     refs[0]?.name ??
     preferredBranch
   );
-}
-
-export function cycleBranch(
-  refs: ReadonlyArray<VcsRef>,
-  selected: string | null,
-  delta: 1 | -1,
-): string | null {
-  if (refs.length === 0) return selected;
-  const currentIndex = refs.findIndex((ref) => ref.name === selected);
-  const startIndex = currentIndex >= 0 ? currentIndex : delta > 0 ? -1 : 0;
-  const nextIndex = (startIndex + delta + refs.length) % refs.length;
-  return refs[nextIndex]?.name ?? selected;
 }
 
 export type NewThreadValidationError =

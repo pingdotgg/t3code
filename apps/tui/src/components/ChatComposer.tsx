@@ -9,7 +9,6 @@ import * as React from "react";
 import type { ComposerImageAttachment } from "../composerAttachments.ts";
 import type { ComposerControls } from "../controls.ts";
 import { clip } from "../format.ts";
-import type { NewThreadField, NewThreadWorkspaceMode } from "../newThread.logic.ts";
 import { usePalette } from "../theme.ts";
 import type { PendingUserInput } from "../userInput.ts";
 import { ComposerFooter } from "./ComposerFooter.tsx";
@@ -37,89 +36,15 @@ const replyKeyBindings: typeof defaultTextareaKeyBindings = [
   { name: "kpenter", action: "submit" },
 ];
 
-// The prompt composer (mirrors apps/web/src/components/chat/ChatComposer.tsx). Two
-// modes: the always-ready reply field, and the new-thread dialog (project chosen
-// with ↑/↓ in ChatView, message typed here). Purely presentational.
+// The prompt composer (mirrors apps/web/src/components/chat/ChatComposer.tsx).
+// New threads use this same always-ready prompt; ChatView swaps the local draft
+// and submit action without introducing a second form or keyboard mode.
 //
 // When `inputFocused` is false (the terminal pane holds focus) we render the
 // field as STATIC text instead of an <input> — OpenTUI doesn't reliably blur an
 // input when nothing else takes focus, so a mounted input would keep consuming
 // keystrokes that are meant for the terminal. Not mounting it guarantees a single
 // consumer.
-
-// One labelled field in the new-thread dialog. Only the active field mounts a
-// focused <input>; the others render static text (so a single input consumes
-// keystrokes — the same guard the reply composer uses).
-function NewThreadTextField({
-  label,
-  value,
-  active,
-  inputFocused,
-  placeholder,
-  onInput,
-  onActivate,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly active: boolean;
-  readonly inputFocused: boolean;
-  readonly placeholder: string;
-  readonly onInput: (value: string) => void;
-  readonly onActivate: () => void;
-}): React.ReactNode {
-  const palette = usePalette();
-  return (
-    <box flexDirection="row" onMouseDown={onActivate}>
-      <text>
-        <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
-        <span fg={active ? palette.accent : palette.dim}>{`${label} ▸ `}</span>
-      </text>
-      {active && inputFocused ? (
-        <input
-          value={value}
-          onInput={onInput}
-          focused
-          placeholder={placeholder}
-          flexGrow={1}
-          textColor={palette.text}
-          cursorColor={palette.accent}
-          placeholderColor={palette.dim}
-        />
-      ) : (
-        <text>
-          {value.length > 0 ? (
-            <span fg={palette.text}>{value}</span>
-          ) : (
-            <span fg={palette.dim}>{placeholder}</span>
-          )}
-        </text>
-      )}
-    </box>
-  );
-}
-
-function NewThreadOption({
-  label,
-  value,
-  active,
-  onActivate,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly active: boolean;
-  readonly onActivate: () => void;
-}): React.ReactNode {
-  const palette = usePalette();
-  return (
-    <box flexDirection="row" onMouseDown={onActivate}>
-      <text>
-        <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
-        <span fg={active ? palette.accent : palette.dim}>{`${label} ▸ `}</span>
-        <span fg={palette.text}>{value}</span>
-      </text>
-    </box>
-  );
-}
 
 function ComposerImageAttachments({
   attachments,
@@ -172,19 +97,8 @@ function ComposerImageAttachments({
 export const ChatComposer = React.memo(function ChatComposer({
   mode,
   reply,
-  draft,
   auxValue,
   placeholder,
-  projectName,
-  interactionMode,
-  newRuntimeMode,
-  newModel,
-  newReasoning,
-  newBranch,
-  newWorkspaceMode,
-  newWorkspaceLabel,
-  newBranchStatus,
-  newField,
   editorRows,
   inputFocused,
   composerEpoch,
@@ -201,8 +115,6 @@ export const ChatComposer = React.memo(function ChatComposer({
   onAnswerInput,
   onReplyInput,
   onReplySubmit,
-  onDraftInput,
-  onNewFieldActivate,
   onAuxInput,
   onTogglePlan,
   onOpenAccess,
@@ -214,25 +126,11 @@ export const ChatComposer = React.memo(function ChatComposer({
   onRemoveAttachment,
   onPasteImage,
 }: {
-  readonly mode: "compose" | "new" | "rename" | "filter" | "commit";
+  readonly mode: "compose" | "rename" | "filter" | "commit";
   readonly reply: string;
-  readonly draft: string;
   /** Value for the single-line rename/filter inputs. */
   readonly auxValue: string;
   readonly placeholder: string;
-  readonly projectName: string;
-  /** Plan/build mode: the new-thread option in "new" mode, else the active thread. */
-  readonly interactionMode: "default" | "plan";
-  /** Runtime mode the new thread will start in (shown in the new-thread dialog). */
-  readonly newRuntimeMode: string;
-  readonly newModel: string | null;
-  readonly newReasoning: string | null;
-  readonly newBranch: string | null;
-  readonly newWorkspaceMode: NewThreadWorkspaceMode;
-  readonly newWorkspaceLabel: string;
-  readonly newBranchStatus: "loading" | "ready" | "empty" | "error";
-  /** Which new-thread control is active (Tab cycles). */
-  readonly newField: NewThreadField;
   /** Fixed height (rows) of the reply editor; content beyond it scrolls. */
   readonly editorRows: number;
   /** False when the terminal pane holds focus — render static text, not an input. */
@@ -256,8 +154,6 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onAnswerInput: (value: string) => void;
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
-  readonly onDraftInput: (value: string) => void;
-  readonly onNewFieldActivate: (field: NewThreadField) => void;
   readonly onAuxInput: (value: string) => void;
   readonly onTogglePlan: () => void;
   readonly onOpenAccess: () => void;
@@ -320,84 +216,6 @@ export const ChatComposer = React.memo(function ChatComposer({
           />
         </box>
         <text fg={palette.dim}>{hint}</text>
-      </box>
-    );
-  }
-
-  if (mode === "new") {
-    return (
-      <box
-        flexDirection="column"
-        width={width}
-        border
-        borderStyle="rounded"
-        borderColor={palette.accent}
-        paddingLeft={1}
-        paddingRight={1}
-        flexShrink={0}
-      >
-        <text>
-          <span fg={palette.accent}>new thread</span>
-          <span fg={palette.dim}>{"  Tab field · ↑/↓ change · Enter create · Esc cancel"}</span>
-        </text>
-        <text>
-          <span fg={palette.accent}>options ▸ </span>
-          <span fg={palette.text}>{newRuntimeMode}</span>
-          <span fg={palette.dim}>{" (^O) · "}</span>
-          <span fg={interactionMode === "plan" ? palette.accent : palette.text}>
-            {interactionMode === "plan" ? "plan" : "build"}
-          </span>
-          <span fg={palette.dim}>{" (^B)"}</span>
-        </text>
-        <box flexDirection="row">
-          <box onMouseDown={onOpenModel}>
-            <text>
-              <span fg={palette.accent}>model ▸ </span>
-              <span fg={palette.text}>{newModel ?? "select model"}</span>
-            </text>
-          </box>
-          <text fg={palette.dim}>{" · "}</text>
-          <box onMouseDown={onOpenReasoning}>
-            <text>
-              <span fg={palette.accent}>effort ▸ </span>
-              <span fg={palette.text}>{newReasoning ?? "—"}</span>
-            </text>
-          </box>
-        </box>
-        <NewThreadTextField
-          label="message"
-          value={draft}
-          active={newField === "message"}
-          inputFocused={inputFocused}
-          placeholder="Describe the task…"
-          onInput={onDraftInput}
-          onActivate={() => onNewFieldActivate("message")}
-        />
-        <NewThreadOption
-          label="project"
-          value={projectName}
-          active={newField === "project"}
-          onActivate={() => onNewFieldActivate("project")}
-        />
-        <NewThreadOption
-          label="workspace"
-          value={newWorkspaceLabel}
-          active={newField === "workspace"}
-          onActivate={() => onNewFieldActivate("workspace")}
-        />
-        <NewThreadOption
-          label={newWorkspaceMode === "new-worktree" ? "base branch" : "branch"}
-          value={
-            newBranch ??
-            (newBranchStatus === "loading"
-              ? "Loading branches…"
-              : newBranchStatus === "error"
-                ? "Branches unavailable"
-                : "No Git branches")
-          }
-          active={newField === "branch"}
-          onActivate={() => onNewFieldActivate("branch")}
-        />
       </box>
     );
   }

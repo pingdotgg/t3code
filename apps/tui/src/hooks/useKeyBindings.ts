@@ -24,7 +24,6 @@ export type KeyBindingMode =
   | "diff"
   | "select"
   | "userInput"
-  | "new"
   | "rename"
   | "filter"
   | "commit"
@@ -104,16 +103,6 @@ export interface KeyBindingActions {
   readonly onCancelFilter: () => void;
   readonly onSubmitCommit: () => void;
   readonly onCancelCommit: () => void;
-  // New-thread mode
-  readonly onCancelNew: () => void;
-  /** Whether ↑/↓ own the selected non-text new-thread control. */
-  readonly newNavigation: boolean;
-  readonly onNewPrev: () => void;
-  readonly onNewNext: () => void;
-  readonly onNewCycleRuntime: () => void;
-  readonly onNewTogglePlan: () => void;
-  readonly onNewCycleField: () => void;
-  readonly onSubmitNew: () => void;
   // Compose mode
   /** True when unmodified ↑/↓ should choose between multiple pending approvals. */
   readonly approvalNavigation: boolean;
@@ -242,34 +231,6 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "return" || key.name === "enter") return actions.onPanelActivate();
       if (key.name === "escape") return actions.onPanelClose();
       if (key.ctrl && key.name === "l") return actions.onToggleRightPanel();
-      return;
-    }
-
-    // ── New-thread dialog ───────────────────────────────────────────────────
-    if (actions.mode === "new") {
-      if (key.name === "escape") return actions.onCancelNew();
-      if (key.ctrl && key.shift && key.name.toLowerCase() === "m") return actions.onOpenModel();
-      if (key.ctrl && key.shift && key.name.toLowerCase() === "e") {
-        return actions.onOpenReasoning();
-      }
-      if (actions.newNavigation && key.name === "up") {
-        key.preventDefault();
-        return actions.onNewPrev();
-      }
-      if (actions.newNavigation && key.name === "down") {
-        key.preventDefault();
-        return actions.onNewNext();
-      }
-      if (key.ctrl && key.name === "o") return actions.onNewCycleRuntime();
-      if (key.ctrl && key.name === "b") return actions.onNewTogglePlan();
-      if (key.name === "tab") {
-        key.preventDefault();
-        return actions.onNewCycleField();
-      }
-      if (key.name === "return" || key.name === "enter") {
-        key.preventDefault();
-        return actions.onSubmitNew();
-      }
       return;
     }
 
