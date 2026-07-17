@@ -392,17 +392,24 @@ const makeKiloRuntime = Effect.gen(function* () {
 
       const stdoutRef = yield* Ref.make("");
       const stderrRef = yield* Ref.make("");
+      // Capture output only until ready/failure diagnostics are resolved; after
+      // that keep draining pipes without retaining unbounded log buffers.
+      const captureOutputRef = yield* Ref.make(true);
       const readyDeferred = yield* Deferred.make<string, KiloRuntimeError>();
 
       const setReadyFromStdoutChunk = (chunk: string) =>
-        Ref.updateAndGet(stdoutRef, (stdout) => `${stdout}${chunk}`).pipe(
-          Effect.flatMap((nextStdout) => {
-            const parsed = parseServerUrlFromOutput(nextStdout);
-            return parsed
-              ? Deferred.succeed(readyDeferred, parsed).pipe(Effect.ignore)
-              : Effect.void;
-          }),
-        );
+        Effect.gen(function* () {
+          const capture = yield* Ref.get(captureOutputRef);
+          if (!capture) {
+            return;
+          }
+          const nextStdout = yield* Ref.updateAndGet(stdoutRef, (stdout) => `${stdout}${chunk}`);
+          const parsed = parseServerUrlFromOutput(nextStdout);
+          if (parsed) {
+            yield* Ref.set(captureOutputRef, false);
+            yield* Deferred.succeed(readyDeferred, parsed).pipe(Effect.ignore);
+          }
+        });
 
       const stdoutFiber = yield* child.stdout.pipe(
         Stream.decodeText(),
@@ -412,7 +419,14 @@ const makeKiloRuntime = Effect.gen(function* () {
       );
       const stderrFiber = yield* child.stderr.pipe(
         Stream.decodeText(),
-        Stream.runForEach((chunk) => Ref.update(stderrRef, (stderr) => `${stderr}${chunk}`)),
+        Stream.runForEach((chunk) =>
+          Effect.gen(function* () {
+            if (!(yield* Ref.get(captureOutputRef))) {
+              return;
+            }
+            yield* Ref.update(stderrRef, (stderr) => `${stderr}${chunk}`);
+          }),
+        ),
         Effect.ignore,
         Effect.forkIn(runtimeScope),
       );
@@ -475,7 +489,10 @@ const makeKiloRuntime = Effect.gen(function* () {
       }
 
       // Keep stdout/stderr drain fibers alive for the server lifetime so the
-      // OS pipe buffers cannot fill and block the child process.
+      // OS pipe buffers cannot fill and block the child process. Stop
+      // retaining captured output once ready so long-lived sessions do not
+      // accumulate unbounded log buffers.
+      yield* Ref.set(captureOutputRef, false);
       return {
         url: readyOption.value,
         password,

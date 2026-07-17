@@ -993,7 +993,11 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
             }
             if (Exit.isFailure(exit)) {
               yield* emitUnexpectedExit(context, kiloRuntimeErrorDetail(Cause.squash(exit.cause)));
+              return;
             }
+            // Clean remote close still ends the event stream — tear the
+            // session down so it cannot stay "running" without events.
+            yield* emitUnexpectedExit(context, "Kilo event stream closed unexpectedly.");
           }),
         ),
         Effect.forkIn(context.sessionScope),
