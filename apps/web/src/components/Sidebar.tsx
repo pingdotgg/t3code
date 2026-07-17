@@ -2990,6 +2990,7 @@ function ProjectRailTile({
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }}>
       <Tooltip>
         <TooltipTrigger
+          delay={200}
           render={
             <button
               ref={setActivatorNodeRef}
