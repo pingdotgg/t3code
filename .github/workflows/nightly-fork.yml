@@ -1,0 +1,114 @@
+# Fork-local nightly for jetblk/t3code.
+#
+# Upstream's release.yml is unusable here: it needs pingdotgg's self-hosted
+# `blacksmith-*` runners, their Clerk/Cloudflare/Apple/Azure secrets, and it
+# publishes the `t3` npm package we don't own. This builds the one artifact our
+# nodes actually consume — the self-contained `vp pack` server bundle — and
+# publishes it as a rolling `nightly` GitHub Release.
+#
+# Nodes pull that asset on service restart (restart == update), mirroring the
+# `npx t3@nightly` behaviour we replaced. The repo is public, so nodes need no
+# auth to download it.
+name: Fork nightly
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only the built-in token is needed — releases are published to this repo.
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and publish server bundle
+    # GitHub-hosted: the fork has no access to upstream's blacksmith runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          # package.json pins Node ^24.13.1 — required by the TS build scripts.
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - id: version
+        name: Resolve fork version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Track upstream's stable base from package.json (nightly versions are
+          # never committed upstream, so main always carries the last stable),
+          # then mark it as ours so it is obvious which build a node is running.
+          base="$(node -p "require('./apps/server/package.json').version")"
+          version="${base}-jetblk.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+
+      - name: Stamp version into releasable packages
+        run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+
+      # Gate on typecheck + the provider-usage tests only. The full server suite
+      # has pre-existing ACP-transport failures unrelated to this fork; gating on
+      # it would block every release.
+      - name: Typecheck
+        run: vp run --filter t3 --filter @t3tools/contracts typecheck
+
+      # `vp test` is vitest; run it from each package so its own config applies.
+      - name: Test contracts (provider usage)
+        working-directory: packages/contracts
+        run: vp test run src/providerUsage.test.ts
+
+      - name: Test server (provider usage)
+        working-directory: apps/server
+        run: |
+          vp test run \
+            src/provider/Layers/ClaudeUsage.test.ts \
+            src/provider/Layers/CodexUsage.test.ts \
+            src/provider/Layers/ProviderUsageService.test.ts
+
+      - name: Build server bundle
+        run: vp run --filter t3 build:bundle
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ steps.version.outputs.version }}" > apps/server/dist/VERSION
+          tar -czf t3-server.tgz -C apps/server dist
+          ls -lh t3-server.tgz
+
+      - name: Publish rolling nightly release
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Recreate the rolling tag so it always points at the built commit.
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly t3-server.tgz \
+            --title "Fork nightly ${{ steps.version.outputs.version }}" \
+            --notes "Server bundle built from \`${GITHUB_SHA}\`.
+
+          Version: \`${{ steps.version.outputs.version }}\`
+
+          Install/update on a node:
+          \`\`\`bash
+          curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly/t3-server.tgz \\
+            | tar xz -C ~/.local/share/t3-nightly
+          \`\`\`
+          Then run: \`node ~/.local/share/t3-nightly/dist/bin.mjs serve --host \"\$(tailscale ip -4 | head -1)\" --port 3773\`" \
+            --prerelease \
+            --target "${GITHUB_SHA}"

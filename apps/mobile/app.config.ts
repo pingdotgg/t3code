@@ -94,6 +94,12 @@ const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : (repoEnv.T3CODE_IOS_BUNDLE_ID ?? variant.iosBundleIdentifier);
 
+// Fork identity, deliberately user-visible only: the internal `@t3tools/*`
+// package names stay upstream's, which is what keeps upstream merges cheap
+// (renaming them would touch ~1000 files and conflict on every sync). Set
+// T3CODE_APP_NAME to override, or to `variant.appName` for an unbranded build.
+const appName = repoEnv.T3CODE_APP_NAME ?? `${variant.appName} (JetBlk)`;
+
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
   medium: "@expo-google-fonts/dm-sans/500Medium/DMSans_500Medium.ttf",
@@ -149,7 +155,7 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 // family names without waiting for runtime font loading.
 
 const config: ExpoConfig = {
-  name: variant.appName,
+  name: appName,
   slug: "t3-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
