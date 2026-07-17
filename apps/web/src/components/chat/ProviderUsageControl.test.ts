@@ -44,15 +44,25 @@ describe("shouldShowProviderUsageAlert", () => {
     expect(shouldShowProviderUsageAlert(makeUsage({ status: "error" }), null)).toBe(true);
   });
 
-  it("shows an alert when credits are more constrained than the time window", () => {
-    const usage = makeUsage({
+  it("alerts on nearly consumed credits only after the limits are exhausted", () => {
+    const healthySession = makeUsage({
       windows: [{ id: "session", label: "Session", kind: "session", usedPercent: 50 }],
       credits: { label: "Credits", usedCredits: 95, monthlyLimit: 100 },
     });
-    const usageHeadline = deriveProviderUsageHeadline(usage);
+    const healthyHeadline = deriveProviderUsageHeadline(healthySession);
+    expect(healthyHeadline).toEqual({ label: "50% left", usedPercent: 50 });
+    expect(shouldShowProviderUsageAlert(healthySession, healthyHeadline)).toBe(false);
 
-    expect(usageHeadline).toEqual({ label: "$5.00 left", usedPercent: 95 });
-    expect(shouldShowProviderUsageAlert(usage, usageHeadline)).toBe(true);
+    const exhaustedLimits = makeUsage({
+      windows: [
+        { id: "session", label: "Session", kind: "session", usedPercent: 100 },
+        { id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 100 },
+      ],
+      credits: { label: "Credits", usedCredits: 95, monthlyLimit: 100 },
+    });
+    const exhaustedHeadline = deriveProviderUsageHeadline(exhaustedLimits);
+    expect(exhaustedHeadline).toEqual({ label: "$5.00 left", usedPercent: 95 });
+    expect(shouldShowProviderUsageAlert(exhaustedLimits, exhaustedHeadline)).toBe(true);
   });
 
   it("does not alert for unsupported providers", () => {

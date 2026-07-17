@@ -52,22 +52,29 @@ export interface ProviderUsageHeadline {
   readonly usedPercent: number | null;
 }
 
-/** Pick the account limit with the least capacity remaining for compact UI. */
+/**
+ * Pick the compact headline in strict priority order: the session limit while
+ * it has capacity, then the weekly limit, and only once both are exhausted
+ * the overflow credits ("extra usage") — and only while spend is actually
+ * flowing there. Model/other windows and credit balances never pre-empt a
+ * session/weekly limit that still has room.
+ */
 export function deriveProviderUsageHeadline(
   usage: ProviderUsagePresentation,
 ): ProviderUsageHeadline | null {
   if (usage.status !== "ok") return null;
-  const mostConstrainedWindow = usage.windows.reduce<(typeof usage.windows)[number] | null>(
-    (current, window) =>
-      current === null || window.usedPercent > current.usedPercent ? window : current,
-    null,
-  );
-  const windowHeadline = mostConstrainedWindow
-    ? {
-        label: `${Math.round(providerUsagePercentLeft(mostConstrainedWindow.usedPercent))}% left`,
-        usedPercent: mostConstrainedWindow.usedPercent,
-      }
-    : null;
+
+  const toHeadline = (window: (typeof usage.windows)[number]): ProviderUsageHeadline => ({
+    label: `${Math.round(providerUsagePercentLeft(window.usedPercent))}% left`,
+    usedPercent: window.usedPercent,
+  });
+  const isExhausted = (window: (typeof usage.windows)[number]) => window.usedPercent >= 100;
+
+  const session = usage.windows.find((window) => window.kind === "session");
+  const weekly = usage.windows.find((window) => window.kind === "weekly");
+  if (session && !isExhausted(session)) return toHeadline(session);
+  if (weekly && !isExhausted(weekly)) return toHeadline(weekly);
+
   const credits = usage.credits;
   const creditLabel = credits
     ? (formatProviderUsageCredits(credits)?.split(" · ")[0] ?? null)
@@ -82,15 +89,26 @@ export function deriveProviderUsageHeadline(
         }
       : null;
 
-  if (!windowHeadline) return creditHeadline;
-  if (
-    creditHeadline?.usedPercent === null ||
-    creditHeadline?.usedPercent === undefined ||
-    windowHeadline.usedPercent >= creditHeadline.usedPercent
-  ) {
-    return windowHeadline;
+  const exhaustedLimit = session ?? weekly;
+  if (exhaustedLimit) {
+    // A metered credit balance with zero spend means overflow is not being
+    // consumed yet — keep showing the exhausted limit. An unmetered balance
+    // (e.g. Codex's opaque credits) cannot prove consumption, so surface it
+    // once the limits are dry.
+    const consumingCredits =
+      credits !== undefined &&
+      (!providerUsageCreditsHaveMeter(credits) || providerUsageCreditsUsedPercent(credits) > 0);
+    return consumingCredits && creditHeadline ? creditHeadline : toHeadline(exhaustedLimit);
   }
-  return creditHeadline;
+
+  // No session/weekly limits reported: fall back to the most constrained
+  // remaining window, then the credit balance.
+  const mostConstrainedWindow = usage.windows.reduce<(typeof usage.windows)[number] | null>(
+    (current, window) =>
+      current === null || window.usedPercent > current.usedPercent ? window : current,
+    null,
+  );
+  return mostConstrainedWindow ? toHeadline(mostConstrainedWindow) : creditHeadline;
 }
 
 export function ProviderUsageIdentity({

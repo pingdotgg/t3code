@@ -27,17 +27,82 @@ const makeUsage = (
 });
 
 describe("deriveProviderUsageHeadline", () => {
-  it("uses the limit with the least remaining capacity", () => {
+  it("headlines the session limit while it has capacity, even when weekly is tighter", () => {
     const headline = deriveProviderUsageHeadline(
       makeUsage({
         windows: [
-          { id: "session", label: "Session", kind: "session", usedPercent: 20 },
           { id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 85 },
+          { id: "session", label: "Session", kind: "session", usedPercent: 20 },
         ],
       }),
     );
 
-    expect(headline).toEqual({ label: "15% left", usedPercent: 85 });
+    expect(headline).toEqual({ label: "80% left", usedPercent: 20 });
+  });
+
+  it("moves to the weekly limit once the session limit is exhausted", () => {
+    const headline = deriveProviderUsageHeadline(
+      makeUsage({
+        windows: [
+          { id: "session", label: "Session", kind: "session", usedPercent: 100 },
+          { id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 60 },
+        ],
+      }),
+    );
+
+    expect(headline).toEqual({ label: "40% left", usedPercent: 60 });
+  });
+
+  it("never lets credits pre-empt an unexhausted session limit", () => {
+    const headline = deriveProviderUsageHeadline(
+      makeUsage({
+        windows: [{ id: "session", label: "Session", kind: "session", usedPercent: 50 }],
+        credits: { label: "Extra usage", usedCredits: 95, monthlyLimit: 100 },
+      }),
+    );
+
+    expect(headline).toEqual({ label: "50% left", usedPercent: 50 });
+  });
+
+  it("never lets model windows pre-empt the session limit", () => {
+    const headline = deriveProviderUsageHeadline(
+      makeUsage({
+        windows: [
+          { id: "session", label: "Session", kind: "session", usedPercent: 10 },
+          { id: "model:opus", label: "Opus", kind: "model", usedPercent: 90 },
+        ],
+      }),
+    );
+
+    expect(headline).toEqual({ label: "90% left", usedPercent: 10 });
+  });
+
+  it("headlines consumed credits once session and weekly are exhausted", () => {
+    const headline = deriveProviderUsageHeadline(
+      makeUsage({
+        windows: [
+          { id: "session", label: "Session", kind: "session", usedPercent: 100 },
+          { id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 100 },
+        ],
+        credits: { label: "Extra usage", usedCredits: 12, monthlyLimit: 100 },
+      }),
+    );
+
+    expect(headline).toEqual({ label: "$88.00 left", usedPercent: 12 });
+  });
+
+  it("keeps showing the exhausted limit while metered credits are untouched", () => {
+    const headline = deriveProviderUsageHeadline(
+      makeUsage({
+        windows: [
+          { id: "session", label: "Session", kind: "session", usedPercent: 100 },
+          { id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 100 },
+        ],
+        credits: { label: "Extra usage", usedCredits: 0, monthlyLimit: 100 },
+      }),
+    );
+
+    expect(headline).toEqual({ label: "0% left", usedPercent: 100 });
   });
 
   it("falls back to a credit balance when no windows exist", () => {
@@ -48,15 +113,17 @@ describe("deriveProviderUsageHeadline", () => {
     expect(headline).toEqual({ label: "$88.00 left", usedPercent: 12 });
   });
 
-  it("uses numeric credits when they are more constrained than a time window", () => {
+  it("falls back to the most constrained remaining window without session/weekly limits", () => {
     const headline = deriveProviderUsageHeadline(
       makeUsage({
-        windows: [{ id: "session", label: "Session", kind: "session", usedPercent: 50 }],
-        credits: { label: "Credits", usedCredits: 95, monthlyLimit: 100 },
+        windows: [
+          { id: "model:opus", label: "Opus", kind: "model", usedPercent: 30 },
+          { id: "spend", label: "Spend limit", kind: "other", usedPercent: 70 },
+        ],
       }),
     );
 
-    expect(headline).toEqual({ label: "$5.00 left", usedPercent: 95 });
+    expect(headline).toEqual({ label: "30% left", usedPercent: 70 });
   });
 
   it("does not summarize non-success states", () => {
