@@ -2,10 +2,17 @@ import type { DesktopUpdateReleaseNote } from "@t3tools/contracts";
 
 interface ElectronReleaseNoteInfo {
   readonly version: string;
-  readonly note: string | null;
+  readonly note: string | null | undefined;
 }
 
-type ElectronReleaseNotes = string | ReadonlyArray<ElectronReleaseNoteInfo> | null | undefined;
+function isElectronReleaseNoteInfo(value: unknown): value is ElectronReleaseNoteInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { readonly version?: unknown; readonly note?: unknown };
+  return (
+    typeof candidate.version === "string" &&
+    (typeof candidate.note === "string" || candidate.note === null || candidate.note === undefined)
+  );
+}
 
 const MAX_RELEASE_NOTE_GROUPS = 6;
 const MAX_RELEASE_NOTE_ITEMS_PER_GROUP = 8;
@@ -80,7 +87,7 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
   );
 }
 
-function extractReleaseNoteItems(note: string | null): ReadonlyArray<string> {
+function extractReleaseNoteItems(note: string | null | undefined): ReadonlyArray<string> {
   if (!note) return [];
 
   const items: string[] = [];
@@ -98,21 +105,21 @@ function extractReleaseNoteItems(note: string | null): ReadonlyArray<string> {
 }
 
 export function normalizeDesktopUpdateReleaseNotes(
-  releaseNotes: ElectronReleaseNotes,
+  releaseNotes: unknown,
   fallbackVersion: string,
 ): ReadonlyArray<DesktopUpdateReleaseNote> {
   const rawNotes =
     typeof releaseNotes === "string"
       ? [{ version: fallbackVersion, note: releaseNotes }]
       : Array.isArray(releaseNotes)
-        ? releaseNotes
+        ? releaseNotes.filter(isElectronReleaseNoteInfo)
         : [];
 
   return rawNotes
-    .slice(0, MAX_RELEASE_NOTE_GROUPS)
     .map((entry) => ({
       version: entry.version,
       items: extractReleaseNoteItems(entry.note),
     }))
-    .filter((entry) => entry.items.length > 0);
+    .filter((entry) => entry.items.length > 0)
+    .slice(0, MAX_RELEASE_NOTE_GROUPS);
 }

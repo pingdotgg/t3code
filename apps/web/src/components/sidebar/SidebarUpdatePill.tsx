@@ -43,8 +43,8 @@ function SidebarUpdateReleaseNotesTooltip({
                 {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
               </h3>
               <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                {releaseNote.items.map((item) => (
-                  <li className="list-disc break-words" key={`${releaseNote.version}-${item}`}>
+                {releaseNote.items.map((item, itemIndex) => (
+                  <li className="list-disc break-words" key={`${releaseNote.version}-${itemIndex}`}>
                     {item}
                   </li>
                 ))}

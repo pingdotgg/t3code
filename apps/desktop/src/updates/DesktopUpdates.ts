@@ -48,16 +48,12 @@ const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
-const UpdateReleaseNoteInfo = Schema.Struct({
-  version: Schema.String,
-  note: Schema.NullOr(Schema.String),
-});
-
 const UpdateInfo = Schema.Struct({
   version: Schema.String,
-  releaseNotes: Schema.optional(
-    Schema.NullOr(Schema.Union([Schema.String, Schema.Array(UpdateReleaseNoteInfo)])),
-  ),
+  // Left unvalidated on purpose: a malformed release-notes payload must never
+  // fail the decode and block the update state transition. The shape is
+  // validated defensively in normalizeDesktopUpdateReleaseNotes.
+  releaseNotes: Schema.optional(Schema.Unknown),
 });
 
 const DownloadProgressInfo = Schema.Struct({

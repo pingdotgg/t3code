@@ -31,6 +31,32 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(notes).toEqual([{ version: "1.0.0", items: ["Fix & polish 😀"] }]);
   });
 
+  it("ignores malformed entries instead of throwing", () => {
+    const notes = normalizeDesktopUpdateReleaseNotes(
+      [
+        { version: "1.2.3", note: "- Valid change" },
+        { version: 42, note: "- Bad version type" },
+        { version: "1.2.1", note: { html: "<p>object note</p>" } },
+        "not an object",
+        null,
+      ],
+      "1.2.3",
+    );
+    expect(notes).toEqual([{ version: "1.2.3", items: ["Valid change"] }]);
+  });
+
+  it("returns non-empty groups even when preceded by many boilerplate-only groups", () => {
+    const boilerplate = Array.from({ length: 7 }, (_, index) => ({
+      version: `1.3.${9 - index}`,
+      note: "Full changelog: https://example.com/compare/x...y",
+    }));
+    const notes = normalizeDesktopUpdateReleaseNotes(
+      [...boilerplate, { version: "1.3.2", note: "- Older but real change" }],
+      "1.3.9",
+    );
+    expect(notes).toEqual([{ version: "1.3.2", items: ["Older but real change"] }]);
+  });
+
   it("does not throw on out-of-range numeric entities and keeps the literal", () => {
     expect(() =>
       normalizeDesktopUpdateReleaseNotes("- Broken entity &#9999999999;", "1.0.0"),
