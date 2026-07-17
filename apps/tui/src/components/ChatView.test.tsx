@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { CliRenderEvents, type Renderable, ScrollBoxRenderable } from "@opentui/core";
+import { setRendererCapabilities } from "@opentui/core/testing";
 import { testRender } from "@opentui/react/test-utils";
+import { installKittyImageExtension, type RgbaImage } from "@t3tools/opentui-image";
 import * as React from "react";
 
 import { DEFAULT_SERVER_SETTINGS, type VcsStatusResult } from "@t3tools/contracts";
@@ -24,6 +27,17 @@ function deferred<T>(): Deferred<T> {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function findScrollBox(root: Renderable): ScrollBoxRenderable | null {
+  const queue = [root];
+  while (queue.length > 0) {
+    const renderable = queue.shift();
+    if (!renderable) continue;
+    if (renderable instanceof ScrollBoxRenderable) return renderable;
+    queue.push(...renderable.getChildren());
+  }
+  return null;
 }
 
 const project = {
@@ -84,6 +98,8 @@ function fakeClient({
   setInteractionMode = async () => {},
   vcsStatus,
   runGitPull = async () => {},
+  getAttachmentUrl = async () => null,
+  getAttachmentImage = async () => null,
   listModels = async () =>
     [
       {
@@ -105,6 +121,8 @@ function fakeClient({
   readonly setInteractionMode?: TuiClient["setInteractionMode"];
   readonly vcsStatus?: VcsStatusResult;
   readonly runGitPull?: TuiClient["runGitPull"];
+  readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
+  readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
   readonly listModels?: TuiClient["listModels"];
 }): {
   readonly client: TuiClient;
@@ -158,8 +176,8 @@ function fakeClient({
         totalCount: 1,
       }) as never,
     getThreadActivities: async () => ({ activities: [], hasMore: false }),
-    getAttachmentUrl: async () => null,
-    getAttachmentImage: async () => null,
+    getAttachmentUrl,
+    getAttachmentImage,
     runGitStackedAction: async () => {},
     runGitPull,
   } as unknown as TuiClient;
@@ -328,6 +346,123 @@ describe("ChatView tmux scrolling", () => {
     });
 
     expect(fake.subscribedThreadIds).toEqual(["t1"]);
+    setup.renderer.destroy();
+  });
+});
+
+describe("ChatView image lightbox", () => {
+  it("Given a scrolled conversation, when an image is expanded and closed, then the conversation keeps its scroll position", async () => {
+    const image = {
+      data: new Uint8Array([255, 0, 0, 255]),
+      imageWidth: 1,
+      imageHeight: 1,
+    } satisfies RgbaImage;
+    const history = Array.from({ length: 24 }, (_, index) => ({
+      id: `history-${index}`,
+      role: "assistant",
+      text: `history marker ${index}`,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+      streaming: false,
+      attachments: [],
+    }));
+    const detail = {
+      ...thread(),
+      messages: [
+        ...history,
+        {
+          id: "image-message",
+          role: "user",
+          text: "inspect the image",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          streaming: false,
+          attachments: [
+            {
+              type: "image",
+              id: "att1",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 1024,
+            },
+          ],
+        },
+        {
+          id: "tail-1",
+          role: "assistant",
+          text: "tail marker one",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          streaming: false,
+          attachments: [],
+        },
+        {
+          id: "tail-2",
+          role: "assistant",
+          text: "tail marker two",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          streaming: false,
+          attachments: [],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const fake = fakeClient({
+      detail,
+      getAttachmentUrl: async () => "https://img.test/1",
+      getAttachmentImage: async () => image,
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    const manager = installKittyImageExtension(setup.renderer, {
+      writer: { write: () => {} },
+    });
+    const capabilities = setRendererCapabilities(setup.renderer, { kitty_graphics: true });
+    setup.renderer.emit(CliRenderEvents.CAPABILITIES, capabilities);
+
+    await selectThread(setup, fake.connect);
+    for (let index = 0; index < 8; index += 1) {
+      await setup.renderOnce();
+      await setup.flush();
+    }
+    const initialFrame = await setup.waitForFrame((frame) => frame.includes("diagram.png"));
+    const initialDiagramRow = initialFrame
+      .split("\n")
+      .findIndex((line) => line.includes("diagram.png"));
+    expect(initialDiagramRow).toBeGreaterThanOrEqual(0);
+
+    await setup.mockMouse.scroll(40, initialDiagramRow, "up");
+    await setup.renderOnce();
+    manager.resumeAfterScroll();
+    for (let index = 0; index < 8; index += 1) {
+      await setup.renderOnce();
+      await setup.flush();
+    }
+    const before = await setup.waitForFrame((frame) => frame.includes("diagram.png"));
+    expect(before).not.toBe(initialFrame);
+    const beforeScrollTop = findScrollBox(setup.renderer.root)?.scrollTop;
+    expect(beforeScrollTop).toBeGreaterThan(0);
+    const diagramRow = before.split("\n").findIndex((line) => line.includes("diagram.png"));
+    const diagramColumn = (before.split("\n")[diagramRow] ?? "").indexOf("diagram.png");
+    expect(diagramRow).toBeGreaterThanOrEqual(0);
+    expect(diagramColumn).toBeGreaterThanOrEqual(0);
+
+    await React.act(async () => {
+      await setup.mockMouse.click(diagramColumn - 2, diagramRow + 1);
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Esc / click to close"));
+
+    await React.act(async () => {
+      await setup.mockMouse.click(40, 3);
+      await setup.flush();
+    });
+    await setup.waitFor(() => findScrollBox(setup.renderer.root)?.scrollTop === beforeScrollTop);
+    const afterScrollTop = findScrollBox(setup.renderer.root)?.scrollTop;
+
+    expect(afterScrollTop).toBe(beforeScrollTop);
     setup.renderer.destroy();
   });
 });

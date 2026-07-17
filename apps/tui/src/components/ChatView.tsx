@@ -1,4 +1,9 @@
-import { type ScrollBoxRenderable, type SelectOption, SyntaxStyle } from "@opentui/core";
+import {
+  CliRenderEvents,
+  type ScrollBoxRenderable,
+  type SelectOption,
+  SyntaxStyle,
+} from "@opentui/core";
 import {
   DEFAULT_SERVER_SETTINGS,
   type GitStackedAction,
@@ -236,6 +241,8 @@ export function ChatView({
   const [replySubmissionPending, setReplySubmissionPending] = React.useState(false);
   const userInputSubmissionRequestRef = React.useRef<string | null>(null);
   const [expandedImage, setExpandedImage] = React.useState<ExpandedImagePreview | null>(null);
+  const expandedImageScrollTopRef = React.useRef<number | null>(null);
+  const pendingImageScrollRestoreRef = React.useRef<number | null>(null);
   // Bumped to remount (clear) the uncontrolled multiline reply editor.
   const [composerEpoch, setComposerEpoch] = React.useState(0);
   const [draft, setDraft] = React.useState("");
@@ -384,11 +391,37 @@ export function ChatView({
   const working = !!detail && isWorking(detail);
 
   const detailId = detail?.id ?? null;
+  const openExpandedImage = React.useCallback((preview: ExpandedImagePreview) => {
+    expandedImageScrollTopRef.current = scrollRef.current?.scrollTop ?? null;
+    setTerminalFocused(false);
+    setExpandedImage(preview);
+  }, []);
+  const closeExpandedImage = React.useCallback(() => {
+    pendingImageScrollRestoreRef.current = expandedImageScrollTopRef.current;
+    expandedImageScrollTopRef.current = null;
+    setExpandedImage(null);
+  }, []);
+  React.useEffect(() => {
+    const scrollTop = pendingImageScrollRestoreRef.current;
+    if (expandedImage || scrollTop === null) return;
+    const restoreScrollTop = () => {
+      renderer.off(CliRenderEvents.FRAME, restoreScrollTop);
+      pendingImageScrollRestoreRef.current = null;
+      scrollRef.current?.scrollTo(scrollTop);
+    };
+    renderer.on(CliRenderEvents.FRAME, restoreScrollTop);
+    renderer.requestRender();
+    return () => {
+      renderer.off(CliRenderEvents.FRAME, restoreScrollTop);
+    };
+  }, [expandedImage, renderer]);
   React.useEffect(() => {
     // Terminal focus is global but tabs are per-thread: dropping focus on a
     // thread switch stops keystrokes routing to whichever shell the new thread
     // happens to have, until the user re-focuses it (^P) explicitly.
     setTerminalFocused(false);
+    expandedImageScrollTopRef.current = null;
+    pendingImageScrollRestoreRef.current = null;
     setExpandedImage(null);
   }, [detailId]);
   React.useEffect(() => {
@@ -1685,7 +1718,7 @@ export function ChatView({
       }
     },
     onTerminalScroll: (action) => terminalScrollRef.current?.(action),
-    onImagePreviewClose: () => setExpandedImage(null),
+    onImagePreviewClose: closeExpandedImage,
     onToggleFocus: toggleFocus,
     onCancelNew: () => {
       if (newSubmissionPendingRef.current) return;
@@ -2030,7 +2063,7 @@ export function ChatView({
               preview={expandedImage}
               width={chatWidth}
               height={panesHeight}
-              onClose={() => setExpandedImage(null)}
+              onClose={closeExpandedImage}
             />
           ) : (
             <MessagesTimeline
@@ -2046,10 +2079,7 @@ export function ChatView({
               getAttachmentUrl={client.getAttachmentUrl}
               getAttachmentImage={client.getAttachmentImage}
               onOpenUrl={(url) => store.setStatus(url, "info")}
-              onOpenImage={(preview) => {
-                setTerminalFocused(false);
-                setExpandedImage(preview);
-              }}
+              onOpenImage={openExpandedImage}
             />
           )}
         </box>
