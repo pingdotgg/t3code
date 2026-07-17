@@ -26,10 +26,12 @@ const KNOWN_SHARED_DIRECTORIES = [
   "plugins",
   "cache",
   "logs",
+  "mcp-oauth-locks",
 ] as const;
 
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
+const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
 
 function resolveHomePath(path: Path.Path, value: string | undefined): string {
   const expanded =
@@ -225,16 +227,6 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
     linkPath: link,
   });
 
-  if (state._tag === "NotSymlink") {
-    return yield* new CodexShadowHomeEntryConflictError({
-      sharedHomePath: input.sharedHomePath,
-      effectiveHomePath: input.effectiveHomePath,
-      entryName: input.entryName,
-      linkPath: link,
-      targetPath: target,
-    });
-  }
-
   const createLink = input.fileSystem.symlink(target, link).pipe(
     Effect.catchTags({
       PlatformError: (cause) =>
@@ -249,6 +241,33 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
         }),
     }),
   );
+
+  if (state._tag === "NotSymlink") {
+    if (!REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
+      return yield* new CodexShadowHomeEntryConflictError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        entryName: input.entryName,
+        linkPath: link,
+        targetPath: target,
+      });
+    }
+
+    yield* input.fileSystem.remove(link, { recursive: true }).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: input.sharedHomePath,
+            effectiveHomePath: input.effectiveHomePath,
+            operation: "remove",
+            path: link,
+            entryName: input.entryName,
+            cause,
+          }),
+      }),
+    );
+    return yield* createLink;
+  }
 
   if (state._tag === "Missing") {
     return yield* createLink;
