@@ -1,11 +1,5 @@
-import {
-  type NavigationProp,
-  type ParamListBase,
-  type RouteProp,
-  useNavigation,
-  useRoute,
-} from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
+import { useCallback, useLayoutEffect, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
@@ -14,10 +8,6 @@ import { LoadingStrip } from "../../../components/LoadingStrip";
 import { SymbolView } from "../../../components/AppSymbol";
 import { useThemeColor } from "../../../lib/useThemeColor";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
-
-type SettingsLegalRouteParams = {
-  SettingsLegal: { readonly externalUrl?: string } | undefined;
-};
 
 export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
@@ -42,20 +32,20 @@ export function SettingsLegalDocumentCloseHeaderButton() {
   );
 }
 
-export function SettingsLegalDocumentExternalHeaderButton() {
+export function SettingsLegalDocumentExternalHeaderButton({
+  externalUrl = LEGAL_URL,
+}: {
+  readonly externalUrl?: string;
+}) {
   const iconColor = useThemeColor("--color-icon");
-  const route = useRoute<RouteProp<SettingsLegalRouteParams, "SettingsLegal">>();
-  const externalUrl =
-    route.params?.externalUrl && isLegalDocumentUrl(route.params.externalUrl)
-      ? route.params.externalUrl
-      : LEGAL_URL;
+  const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
 
   return (
     <Pressable
       accessibilityLabel="Open legal documents in external browser"
       accessibilityRole="button"
       hitSlop={12}
-      onPress={() => void Linking.openURL(externalUrl).catch(() => undefined)}
+      onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
       className="p-2 active:opacity-60"
     >
       <SymbolView
@@ -83,6 +73,17 @@ export function SettingsLegalDocumentRouteScreen({
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [externalUrl, setExternalUrl] = useState(documentUrl);
+  const renderExternalHeaderButton = useCallback(
+    () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />,
+    [externalUrl],
+  );
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: renderExternalHeaderButton,
+    });
+  }, [navigation, renderExternalHeaderButton]);
 
   const openExternalUrl = useCallback((url: string) => {
     void Linking.openURL(url).catch(() => undefined);
@@ -160,7 +161,7 @@ export function SettingsLegalDocumentRouteScreen({
         }}
         onLoadEnd={(event) => {
           if (isLegalDocumentUrl(event.nativeEvent.url)) {
-            navigation.setParams({ externalUrl: event.nativeEvent.url });
+            setExternalUrl(event.nativeEvent.url);
           }
           setLoadProgress(0);
         }}
