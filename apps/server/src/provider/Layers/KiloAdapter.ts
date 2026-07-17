@@ -1086,6 +1086,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
         // Guard against a concurrent startSession call that may have raced
         // and already inserted a session while we were awaiting async work.
+        // Compare-and-set: only the first writer owns the map entry.
         const raceWinner = sessions.get(input.threadId);
         if (raceWinner) {
           // Another call won the race – clean up the session we just created
@@ -1131,6 +1132,18 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
+        // Re-check immediately before insert so two post-await winners cannot
+        // both `set` and leak a managed server.
+        const lateRaceWinner = sessions.get(input.threadId);
+        if (lateRaceWinner) {
+          yield* runKiloSdk("session.abort", () =>
+            started.client.session.abort({
+              sessionID: started.kiloSession.id,
+            }),
+          ).pipe(Effect.ignore);
+          yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
+          return lateRaceWinner.session;
+        }
         sessions.set(input.threadId, context);
         yield* startEventPump(context);
 
@@ -1255,14 +1268,17 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
                   },
                   { clearActiveTurnId: true },
                 );
+                // Emit turn.completed(failed) so orchestration ingestion clears
+                // the running turn (turn.aborted alone is not applied there).
                 yield* emit({
                   ...(yield* buildEventBase({
                     threadId: input.threadId,
                     turnId,
                   })),
-                  type: "turn.aborted",
+                  type: "turn.completed",
                   payload: {
-                    reason: requestError.detail,
+                    state: "failed",
+                    errorMessage: requestError.detail,
                   },
                 });
               }),
@@ -1278,18 +1294,39 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
     const interruptTurn: KiloAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = ensureSessionContext(sessions, threadId);
+        const interruptedTurnId = turnId ?? context.activeTurnId;
         yield* runKiloSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.kiloSessionId }),
         ).pipe(Effect.mapError(toRequestError));
-        if (turnId ?? context.activeTurnId) {
+        context.activeTurnId = undefined;
+        context.activeAgent = undefined;
+        context.activeVariant = undefined;
+        yield* updateProviderSession(
+          context,
+          {
+            status: "ready",
+          },
+          { clearActiveTurnId: true },
+        );
+        if (interruptedTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: turnId ?? context.activeTurnId,
+              turnId: interruptedTurnId,
             })),
             type: "turn.aborted",
             payload: {
               reason: "Interrupted by user.",
+            },
+          });
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId,
+              turnId: interruptedTurnId,
+            })),
+            type: "turn.completed",
+            payload: {
+              state: "interrupted",
             },
           });
         }

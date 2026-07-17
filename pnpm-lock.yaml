@@ -538,9 +538,6 @@ importers:
       '@formkit/auto-animate':
         specifier: ^0.9.0
         version: 0.9.0
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       '@legendapp/list':
         specifier: 3.2.0
         version: 3.2.0(patch_hash=45e4cbcbeeca1b628b8480869374d7cbc77e3fbfa97ee0107a0d72c3c4a5d7f3)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -739,9 +736,6 @@ importers:
 
   packages/client-runtime:
     dependencies:
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -761,9 +755,6 @@ importers:
 
   packages/contracts:
     dependencies:
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5)
@@ -777,9 +768,6 @@ importers:
 
   packages/effect-acp:
     dependencies:
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5)
@@ -802,9 +790,6 @@ importers:
 
   packages/effect-codex-app-server:
     dependencies:
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5)
@@ -827,9 +812,6 @@ importers:
 
   packages/shared:
     dependencies:
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       '@noble/curves':
         specifier: 'catalog:'
         version: 1.9.1
@@ -892,9 +874,6 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(bufferutil@4.1.0)(effect@4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5))(ioredis@5.11.0)(utf-8-validate@6.0.6)
-      '@kilocode/sdk':
-        specifier: ^7.4.11
-        version: 7.4.11
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared

@@ -154,7 +154,10 @@ function parseServerUrlFromOutput(output: string): string | null {
       continue;
     }
     const match = trimmed.match(/on\s+(https?:\/\/[^\s]+)/i);
-    return match?.[1] ?? null;
+    // Keep scanning: a log line may mention the ready phrase without a URL.
+    if (match?.[1]) {
+      return match[1];
+    }
   }
   return null;
 }
@@ -444,11 +447,13 @@ const makeKiloRuntime = Effect.gen(function* () {
         Deferred.await(readyDeferred).pipe(Effect.timeoutOption(timeoutMs)),
       );
 
-      yield* Fiber.interrupt(stdoutFiber).pipe(Effect.ignore);
-      yield* Fiber.interrupt(stderrFiber).pipe(Effect.ignore);
-
       if (Exit.isFailure(readyExit)) {
+        // Stop draining + kill the child immediately so a failed start does not
+        // leave a half-started server holding the port until the outer scope ends.
+        yield* Fiber.interrupt(stdoutFiber).pipe(Effect.ignore);
+        yield* Fiber.interrupt(stderrFiber).pipe(Effect.ignore);
         yield* Fiber.interrupt(exitFiber).pipe(Effect.ignore);
+        yield* terminateChild;
         const squashed = Cause.squash(readyExit.cause);
         return yield* ensureRuntimeError(
           "startKiloServerProcess",
@@ -459,13 +464,18 @@ const makeKiloRuntime = Effect.gen(function* () {
 
       const readyOption = readyExit.value;
       if (Option.isNone(readyOption)) {
+        yield* Fiber.interrupt(stdoutFiber).pipe(Effect.ignore);
+        yield* Fiber.interrupt(stderrFiber).pipe(Effect.ignore);
         yield* Fiber.interrupt(exitFiber).pipe(Effect.ignore);
+        yield* terminateChild;
         return yield* new KiloRuntimeError({
           operation: "startKiloServerProcess",
           detail: `Timed out waiting for Kilo server start after ${timeoutMs}ms.`,
         });
       }
 
+      // Keep stdout/stderr drain fibers alive for the server lifetime so the
+      // OS pipe buffers cannot fill and block the child process.
       return {
         url: readyOption.value,
         password,

@@ -271,6 +271,9 @@ it.layer(KiloAdapterTestLayer)("KiloAdapter", (it) => {
 
       yield* adapter.interruptTurn(threadId, turn.turnId);
       NodeAssert.ok(runtimeMock.state.abortCalls.includes("http://127.0.0.1:4301/session"));
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions[0]?.status, "ready");
+      NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
     }),
   );
 
