@@ -1,10 +1,9 @@
-import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { type DiffRouteSearch, parseDiffRouteSearch } from "../diffRouteSearch";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
@@ -74,9 +73,5 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
-  validateSearch: (search) => parseDiffRouteSearch(search),
-  search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
-  },
   component: ChatThreadRouteView,
 });

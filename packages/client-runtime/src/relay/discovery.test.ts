@@ -13,17 +13,12 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import {
-  ManagedRelayClient,
-  ManagedRelayClientError,
-  ManagedRelayRequestTimeoutError,
-  type ManagedRelayClientShape,
-} from "./managedRelay.ts";
-import { CloudSession } from "../platform/capabilities.ts";
-import { Connectivity } from "../connection/connectivity.ts";
+import * as ManagedRelay from "./managedRelay.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Connectivity from "../connection/connectivity.ts";
 import { ConnectionBlockedError, type NetworkStatus } from "../connection/model.ts";
-import { ConnectionWakeups } from "../connection/wakeups.ts";
-import { RelayEnvironmentDiscovery, relayEnvironmentDiscoveryLayer } from "./discovery.ts";
+import * as ConnectionWakeups from "../connection/wakeups.ts";
+import * as RelayEnvironmentDiscovery from "./discovery.ts";
 
 const environments = [
   {
@@ -63,7 +58,7 @@ function status(
 const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
-  const listFailure = yield* Ref.make<ManagedRelayClientError | null>(null);
+  const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
   const clerkToken = yield* Ref.make<string | null>("clerk-token");
   const wakeups = yield* SubscriptionRef.make<{
@@ -74,10 +69,16 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     reason: "application-active",
   });
   const statusRequests = yield* Ref.make(
-    new Map<string, Deferred.Deferred<RelayEnvironmentStatusResponse, ManagedRelayClientError>>(),
+    new Map<
+      string,
+      Deferred.Deferred<RelayEnvironmentStatusResponse, ManagedRelay.ManagedRelayClientError>
+    >(),
   );
   for (const environment of environments) {
-    const request = yield* Deferred.make<RelayEnvironmentStatusResponse, ManagedRelayClientError>();
+    const request = yield* Deferred.make<
+      RelayEnvironmentStatusResponse,
+      ManagedRelay.ManagedRelayClientError
+    >();
     yield* Ref.update(statusRequests, (current) => {
       const next = new Map(current);
       next.set(environment.environmentId, request);
@@ -85,7 +86,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     });
   }
 
-  const client = ManagedRelayClient.of({
+  const client = ManagedRelay.ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
     listEnvironments: () =>
       Effect.gen(function* () {
@@ -111,26 +112,27 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     registerDevice: () => Effect.die("unused"),
     unregisterDevice: () => Effect.die("unused"),
     registerLiveActivity: () => Effect.die("unused"),
+    getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
-  } satisfies ManagedRelayClientShape);
-  const connectivity = Connectivity.of({
+  } satisfies ManagedRelay.ManagedRelayClient["Service"]);
+  const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
     changes: SubscriptionRef.changes(networkStatus),
   });
-  const layer = relayEnvironmentDiscoveryLayer.pipe(
+  const layer = RelayEnvironmentDiscovery.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(ManagedRelayClient, client),
+        Layer.succeed(ManagedRelay.ManagedRelayClient, client),
         Layer.succeed(
-          CloudSession,
-          CloudSession.of({
+          ClientCapabilities.CloudSession,
+          ClientCapabilities.CloudSession.of({
             clerkToken: Ref.get(clerkToken).pipe(
               Effect.flatMap((token) =>
                 token === null
                   ? Effect.fail(
                       new ConnectionBlockedError({
                         reason: "authentication",
-                        message: "Signed out.",
+                        detail: "Signed out.",
                       }),
                     )
                   : Effect.succeed(token),
@@ -138,10 +140,10 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
             ),
           }),
         ),
-        Layer.succeed(Connectivity, connectivity),
+        Layer.succeed(Connectivity.Connectivity, connectivity),
         Layer.succeed(
-          ConnectionWakeups,
-          ConnectionWakeups.of({
+          ConnectionWakeups.ConnectionWakeups,
+          ConnectionWakeups.ConnectionWakeups.of({
             changes: SubscriptionRef.changes(wakeups).pipe(
               Stream.drop(1),
               Stream.map((event) => event.reason),
@@ -173,7 +175,7 @@ describe("RelayEnvironmentDiscovery", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery;
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
         const refreshFiber = yield* Effect.forkChild(discovery.refresh);
 
         const checking = yield* SubscriptionRef.changes(discovery.state).pipe(
@@ -224,7 +226,7 @@ describe("RelayEnvironmentDiscovery", () => {
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         yield* Effect.gen(function* () {
-          const discovery = yield* RelayEnvironmentDiscovery;
+          const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
           const requests = yield* Ref.get(harness.statusRequests);
           for (const environment of environments) {
             yield* Deferred.succeed(
@@ -253,15 +255,14 @@ describe("RelayEnvironmentDiscovery", () => {
   it.effect("publishes listing failures without rejecting the refresh command", () =>
     Effect.gen(function* () {
       const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
-      const client = ManagedRelayClient.of({
+      const client = ManagedRelay.ManagedRelayClient.of({
         relayUrl: "https://relay.example.test",
         listEnvironments: () =>
           Effect.fail(
-            new ManagedRelayClientError({
-              message: "Relay environment listing timed out.",
-              cause: new ManagedRelayRequestTimeoutError({
-                message: "Relay environment listing timed out.",
-              }),
+            new ManagedRelay.ManagedRelayRequestTimeoutError({
+              activity: "Relay environment listing",
+              timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+              traceId: null,
             }),
           ),
         getEnvironmentStatus: () => Effect.die("unused"),
@@ -273,26 +274,30 @@ describe("RelayEnvironmentDiscovery", () => {
         registerDevice: () => Effect.die("unused"),
         unregisterDevice: () => Effect.die("unused"),
         registerLiveActivity: () => Effect.die("unused"),
+        getAgentActivitySnapshot: () => Effect.die("unused"),
         resetTokenCache: Effect.void,
-      } satisfies ManagedRelayClientShape);
-      const layer = relayEnvironmentDiscoveryLayer.pipe(
+      } satisfies ManagedRelay.ManagedRelayClient["Service"]);
+      const layer = RelayEnvironmentDiscovery.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(ManagedRelayClient, client),
-            Layer.succeed(CloudSession, {
+            Layer.succeed(ManagedRelay.ManagedRelayClient, client),
+            Layer.succeed(ClientCapabilities.CloudSession, {
               clerkToken: Effect.succeed("clerk-token"),
             }),
-            Layer.succeed(Connectivity, {
+            Layer.succeed(Connectivity.Connectivity, {
               status: SubscriptionRef.get(networkStatus),
               changes: SubscriptionRef.changes(networkStatus),
             }),
-            Layer.succeed(ConnectionWakeups, ConnectionWakeups.of({ changes: Stream.never })),
+            Layer.succeed(
+              ConnectionWakeups.ConnectionWakeups,
+              ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
+            ),
           ),
         ),
       );
 
       yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery;
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
         yield* discovery.refresh;
 
         const state = yield* SubscriptionRef.get(discovery.state);
@@ -310,7 +315,7 @@ describe("RelayEnvironmentDiscovery", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery;
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
         const requests = yield* Ref.get(harness.statusRequests);
         for (const environment of environments) {
           yield* Deferred.succeed(
@@ -323,8 +328,9 @@ describe("RelayEnvironmentDiscovery", () => {
 
         yield* Ref.set(
           harness.listFailure,
-          new ManagedRelayClientError({
-            message: "Relay environment listing failed.",
+          new ManagedRelay.ManagedRelayRequestFailedError({
+            action: "list relay-managed environments",
+            cause: new Error("Relay request failed."),
           }),
         );
         yield* discovery.refresh;
@@ -336,11 +342,60 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
+  it.effect("refreshes proactively when credentials change before any manual refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+
+        // Let the scoped wakeup subscription start before emitting, mirroring
+        // a real sign-in which always happens long after service start.
+        yield* Effect.yieldNow;
+
+        // Sign-in activates the session and emits credentials-changed; the
+        // list must populate without any screen having asked for a refresh.
+        yield* harness.wake("credentials-changed");
+        const populated = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter(
+            (state) => state.environments.size === environments.length && !state.refreshing,
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(Option.isNone(populated.error)).toBe(true);
+        expect(yield* Ref.get(harness.listCalls)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("settles to a clean empty state when refreshed while signed out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Ref.set(harness.clerkToken, null);
+        yield* discovery.refresh;
+
+        const state = yield* SubscriptionRef.get(discovery.state);
+        expect(state.environments.size).toBe(0);
+        expect(state.refreshing).toBe(false);
+        expect(Option.isNone(state.error)).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("does not republish stale rows after sign-out invalidates an in-flight refresh", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery;
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
         const refreshFiber = yield* Effect.forkChild(discovery.refresh);
         yield* SubscriptionRef.changes(discovery.state).pipe(
           Stream.filter((state) => state.environments.size === environments.length),

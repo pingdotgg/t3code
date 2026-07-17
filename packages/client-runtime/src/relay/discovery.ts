@@ -16,12 +16,12 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { ManagedRelayClient } from "./managedRelay.ts";
-import { CloudSession } from "../platform/capabilities.ts";
-import { Connectivity } from "../connection/connectivity.ts";
+import * as ManagedRelay from "./managedRelay.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Connectivity from "../connection/connectivity.ts";
 import { mapManagedRelayError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
-import { ConnectionWakeups } from "../connection/wakeups.ts";
+import * as ConnectionWakeups from "../connection/wakeups.ts";
 
 export type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
 
@@ -39,14 +39,12 @@ export interface RelayEnvironmentDiscoveryState {
   readonly error: Option.Option<ConnectionAttemptError>;
 }
 
-export interface RelayEnvironmentDiscoveryService {
-  readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
-  readonly refresh: Effect.Effect<void>;
-}
-
 export class RelayEnvironmentDiscovery extends Context.Service<
   RelayEnvironmentDiscovery,
-  RelayEnvironmentDiscoveryService
+  {
+    readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
+    readonly refresh: Effect.Effect<void>;
+  }
 >()("@t3tools/client-runtime/relay/discovery/RelayEnvironmentDiscovery") {}
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
@@ -64,7 +62,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        message: "Relay returned status for a different environment.",
+        detail: "Relay returned status for a different environment.",
       }),
     );
   }
@@ -76,7 +74,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        message: "Relay returned status for a different environment endpoint.",
+        detail: "Relay returned status for a different environment endpoint.",
       }),
     );
   }
@@ -87,7 +85,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        message: "Relay returned a descriptor for a different environment.",
+        detail: "Relay returned a descriptor for a different environment.",
       }),
     );
   }
@@ -104,11 +102,11 @@ function relayAccountId(clerkToken: string): Option.Option<string> {
   }
 }
 
-const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
-  const relay = yield* ManagedRelayClient;
-  const session = yield* CloudSession;
-  const connectivity = yield* Connectivity;
-  const wakeups = yield* ConnectionWakeups;
+export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  const session = yield* ClientCapabilities.CloudSession;
+  const connectivity = yield* Connectivity.Connectivity;
+  const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
   const hasRefreshed = yield* Ref.make(false);
@@ -224,7 +222,27 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
         error: Option.none(),
       });
 
-      const clerkToken = yield* session.clerkToken;
+      // Signed out is the idle state, not a failure: the proactive refresh on
+      // credentials-changed also runs on sign-out and must settle back to a
+      // clean empty list. Only the session-level "no credentials" error is
+      // benign — relay-side auth failures (expired/invalid tokens) happen
+      // after this point and must surface as errors.
+      const tokenResult = yield* Effect.result(session.clerkToken);
+      if (tokenResult._tag === "Failure") {
+        const failure = tokenResult.failure;
+        if (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication") {
+          if ((yield* Ref.get(accountGeneration)) !== generation) {
+            return;
+          }
+          yield* SubscriptionRef.update(state, (current) => ({
+            ...current,
+            refreshing: false,
+          }));
+          return;
+        }
+        return yield* Effect.fail(failure);
+      }
+      const clerkToken = tokenResult.success;
       if ((yield* Ref.get(accountGeneration)) !== generation) {
         return;
       }
@@ -313,11 +331,12 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
             yield* Ref.update(accountGeneration, (current) => current + 1);
             yield* Ref.set(activeAccountId, Option.none());
             yield* Ref.set(offlineReportFingerprints, new Map());
-            const shouldRefresh = yield* Ref.get(hasRefreshed);
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
-            if (shouldRefresh) {
-              yield* refresh.pipe(Effect.forkScoped);
-            }
+            // Refresh proactively — this wakeup fires when a session activates
+            // (sign-in or cold start), and the list should be populated before
+            // any screen asks for it. A signed-out refresh settles back to the
+            // clean empty state.
+            yield* refresh.pipe(Effect.forkScoped);
           })
         : Effect.void,
     ),
@@ -327,7 +346,4 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
   return RelayEnvironmentDiscovery.of({ state, refresh });
 });
 
-export const relayEnvironmentDiscoveryLayer = Layer.effect(
-  RelayEnvironmentDiscovery,
-  makeRelayEnvironmentDiscovery(),
-);
+export const layer = Layer.effect(RelayEnvironmentDiscovery, make());

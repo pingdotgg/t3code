@@ -41,7 +41,16 @@ export const withRelayClientTracing = <A, E, R>(
     ),
   );
 
-function traceSafeError(value: unknown): Error {
+function cleanTraceStack(error: Error): string {
+  const stack = error.stack ?? `${error.name}: ${error.message}`;
+  const lines = stack.split("\n");
+  const effectFrameIndex = lines.findIndex(
+    (line, index) => index > 0 && /(?:Generator\.next|~effect\/Effect)/.test(line),
+  );
+  return effectFrameIndex < 0 ? stack : lines.slice(0, effectFrameIndex).join("\n");
+}
+
+function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
   const message =
     value instanceof Error
       ? value.message
@@ -51,12 +60,19 @@ function traceSafeError(value: unknown): Error {
           typeof value.message === "string"
         ? value.message
         : String(value);
-  const error = new Error(message);
+
+  let cause: Error | undefined;
+  if (typeof value === "object" && value !== null && !seen.has(value)) {
+    seen.add(value);
+    if ("cause" in value && value.cause !== undefined) {
+      cause = traceSafeError(value.cause, seen);
+    }
+  }
+
+  const error = new Error(message, cause ? { cause } : undefined);
   if (value instanceof Error) {
     error.name = value.name;
-    if (value.stack !== undefined) {
-      error.stack = value.stack;
-    }
+    error.stack = cleanTraceStack(value);
   } else if (
     typeof value === "object" &&
     value !== null &&
@@ -64,6 +80,9 @@ function traceSafeError(value: unknown): Error {
     typeof value.name === "string"
   ) {
     error.name = value.name;
+  }
+  if (cause) {
+    error.stack = `${error.stack ?? `${error.name}: ${error.message}`}\nCaused by: ${cause.stack ?? `${cause.name}: ${cause.message}`}`;
   }
   return error;
 }

@@ -16,7 +16,7 @@ import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { findErrorTraceId } from "../errors/errorTrace.ts";
-import { ManagedRelayClient } from "./managedRelay.ts";
+import * as ManagedRelay from "./managedRelay.ts";
 
 const DEFAULT_STALE_TIME_MS = 15_000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
@@ -123,7 +123,7 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
         try: () => readCachedClerkToken(nowMillis),
         catch: (cause) =>
           new ManagedRelaySessionError({
-            message: "Could not obtain the T3 Cloud session token.",
+            message: "Could not obtain the T3 Connect session token.",
             cause,
           }),
       });
@@ -181,7 +181,7 @@ function readSessionClerkToken(
         ? Effect.succeed(token)
         : Effect.fail(
             new ManagedRelaySessionError({
-              message: "The T3 Cloud session token is unavailable.",
+              message: "The T3 Connect session token is unavailable.",
             }),
           ),
     ),
@@ -226,7 +226,7 @@ function requireClerkToken(
   if (!session || session.accountId !== accountId) {
     return Effect.fail(
       new ManagedRelaySessionError({
-        message: "Sign in to T3 Cloud before loading relay data.",
+        message: "Sign in to T3 Connect before loading relay data.",
       }),
     );
   }
@@ -296,7 +296,7 @@ export function readManagedRelaySnapshotState<A>(
   let errorTraceId: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
-    error = cause instanceof Error ? cause.message : "Could not load T3 Cloud data.";
+    error = cause instanceof Error ? cause.message : "Could not load T3 Connect data.";
     errorTraceId = findErrorTraceId(cause);
   }
   return {
@@ -308,7 +308,7 @@ export function readManagedRelaySnapshotState<A>(
 }
 
 export function createManagedRelayQueryManager(
-  runtime: Atom.AtomRuntime<ManagedRelayClient>,
+  runtime: Atom.AtomRuntime<ManagedRelay.ManagedRelayClient>,
   options?: {
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
@@ -351,7 +351,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
-          const relay = yield* ManagedRelayClient;
+          const relay = yield* ManagedRelay.ManagedRelayClient;
           return yield* observe(
             { ...base, stage: "relay-request" },
             relay.listEnvironments({ clerkToken }),
@@ -374,7 +374,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
-          const relay = yield* ManagedRelayClient;
+          const relay = yield* ManagedRelay.ManagedRelayClient;
           return yield* observe(
             { ...base, stage: "relay-request" },
             relay.listDevices({ clerkToken }),
@@ -402,7 +402,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
-          const relay = yield* ManagedRelayClient;
+          const relay = yield* ManagedRelay.ManagedRelayClient;
           const status = yield* observe(
             { ...base, stage: "relay-request" },
             relay.getEnvironmentStatus({

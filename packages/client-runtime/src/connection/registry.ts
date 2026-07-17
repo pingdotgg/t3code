@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -12,120 +12,130 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { SshEnvironmentGateway } from "../platform/capabilities.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
-  ConnectionProfileStore,
+  type PlatformConnectionRegistration,
   type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
-import { Connectivity } from "./connectivity.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
+import * as ConnectionProfileStore from "./profileStore.ts";
+import * as Connectivity from "./connectivity.ts";
 import type {
   ConnectionAttemptError,
   ConnectionTarget,
   NetworkStatus,
   SupervisorConnectionState,
 } from "./model.ts";
-import {
-  type ConnectionPersistenceError,
-  ConnectionRegistrationStore,
-  ConnectionTargetStore,
-  EnvironmentCacheStore,
-  EnvironmentOwnedDataCleanup,
-} from "../platform/persistence.ts";
-import {
-  EnvironmentSupervisor,
-  type EnvironmentSupervisorService,
-  makeEnvironmentSupervisor,
-} from "./supervisor.ts";
-import { ConnectionDriver } from "./driver.ts";
-import { ConnectionWakeups } from "./wakeups.ts";
+import * as Persistence from "../platform/persistence.ts";
+import * as EnvironmentSupervisor from "./supervisor.ts";
+import * as ConnectionDriver from "./driver.ts";
+import * as ConnectionWakeups from "./wakeups.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
 export class EnvironmentNotRegisteredError extends Schema.TaggedErrorClass<EnvironmentNotRegisteredError>()(
   "EnvironmentNotRegisteredError",
   {
-    environmentId: Schema.String,
-    message: Schema.String,
+    environmentId: EnvironmentId,
   },
-) {}
+) {
+  override get message(): string {
+    return `Environment ${this.environmentId} is not registered.`;
+  }
+}
 
 export class PlatformEnvironmentRemovalError extends Schema.TaggedErrorClass<PlatformEnvironmentRemovalError>()(
   "PlatformEnvironmentRemovalError",
   {
-    environmentId: Schema.String,
-    message: Schema.String,
+    environmentId: EnvironmentId,
   },
-) {}
-
-export interface EnvironmentRegistryService {
-  readonly entries: SubscriptionRef.SubscriptionRef<
-    ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
-  >;
-  readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
-  readonly start: Effect.Effect<void>;
-  readonly register: (
-    registration: ConnectionRegistration,
-  ) => Effect.Effect<void, ConnectionPersistenceError>;
-  readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
-  readonly remove: (
-    environmentId: EnvironmentId,
-  ) => Effect.Effect<
-    void,
-    | ConnectionPersistenceError
-    | ConnectionAttemptError
-    | EnvironmentNotRegisteredError
-    | PlatformEnvironmentRemovalError
-  >;
-  readonly removeRelayEnvironments: () => Effect.Effect<
-    void,
-    ConnectionPersistenceError | ConnectionAttemptError | PlatformEnvironmentRemovalError
-  >;
-  readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
-  readonly state: (
-    environmentId: EnvironmentId,
-  ) => Effect.Effect<SupervisorConnectionState, EnvironmentNotRegisteredError>;
-  readonly stateChanges: (
-    environmentId: EnvironmentId,
-  ) => Stream.Stream<SupervisorConnectionState, EnvironmentNotRegisteredError>;
-  readonly run: <A, E, R>(
-    environmentId: EnvironmentId,
-    effect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | EnvironmentNotRegisteredError, Exclude<R, EnvironmentSupervisor>>;
-  readonly runStream: <A, E, R>(
-    environmentId: EnvironmentId,
-    stream: Stream.Stream<A, E, R>,
-  ) => Stream.Stream<A, E | EnvironmentNotRegisteredError, Exclude<R, EnvironmentSupervisor>>;
-  readonly followStream: <A, E, R>(
-    environmentId: EnvironmentId,
-    stream: Stream.Stream<A, E, R>,
-  ) => Stream.Stream<A, E, Exclude<R, EnvironmentSupervisor>>;
+) {
+  override get message(): string {
+    return `Platform-managed environment ${this.environmentId} cannot be removed.`;
+  }
 }
 
 export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
-  EnvironmentRegistryService
+  {
+    readonly entries: SubscriptionRef.SubscriptionRef<
+      ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
+    >;
+    readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
+    readonly start: Effect.Effect<void>;
+    readonly register: (
+      registration: ConnectionRegistration,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
+    readonly reconcilePlatform: (
+      registrations: ReadonlyArray<PlatformConnectionRegistration>,
+    ) => Effect.Effect<void>;
+    readonly remove: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | ConnectionAttemptError
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
+    >;
+    readonly removeRelayEnvironments: () => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | ConnectionAttemptError
+      | PlatformEnvironmentRemovalError
+    >;
+    readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly state: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<SupervisorConnectionState, EnvironmentNotRegisteredError>;
+    readonly stateChanges: (
+      environmentId: EnvironmentId,
+    ) => Stream.Stream<SupervisorConnectionState, EnvironmentNotRegisteredError>;
+    readonly run: <A, E, R>(
+      environmentId: EnvironmentId,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<
+      A,
+      E | EnvironmentNotRegisteredError,
+      Exclude<R, EnvironmentSupervisor.EnvironmentSupervisor>
+    >;
+    readonly runStream: <A, E, R>(
+      environmentId: EnvironmentId,
+      stream: Stream.Stream<A, E, R>,
+    ) => Stream.Stream<
+      A,
+      E | EnvironmentNotRegisteredError,
+      Exclude<R, EnvironmentSupervisor.EnvironmentSupervisor>
+    >;
+    readonly followStream: <A, E, R>(
+      environmentId: EnvironmentId,
+      stream: Stream.Stream<A, E, R>,
+    ) => Stream.Stream<A, E, Exclude<R, EnvironmentSupervisor.EnvironmentSupervisor>>;
+  }
 >()("@t3tools/client-runtime/connection/registry/EnvironmentRegistry") {}
 
 interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
-  readonly supervisor: EnvironmentSupervisorService;
+  readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   readonly scope: Scope.Closeable;
 }
 
-const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* () {
-  const storage = yield* ConnectionTargetStore;
-  const registrations = yield* ConnectionRegistrationStore;
-  const cache = yield* EnvironmentCacheStore;
-  const ownedDataCleanup = yield* EnvironmentOwnedDataCleanup;
-  const profiles = yield* ConnectionProfileStore;
-  const connectivity = yield* Connectivity;
-  const driver = yield* ConnectionDriver;
-  const wakeups = yield* ConnectionWakeups;
-  const ssh = yield* SshEnvironmentGateway;
+export const make = Effect.gen(function* () {
+  const storage = yield* Persistence.ConnectionTargetStore;
+  const registrations = yield* Persistence.ConnectionRegistrationStore;
+  const cache = yield* Persistence.EnvironmentCacheStore;
+  const ownedDataCleanup = yield* Persistence.EnvironmentOwnedDataCleanup;
+  const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const connectivity = yield* Connectivity.Connectivity;
+  const driver = yield* ConnectionDriver.ConnectionDriver;
+  const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
@@ -215,7 +225,6 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     if (entry === undefined) {
       return yield* new EnvironmentNotRegisteredError({
         environmentId,
-        message: `Environment ${environmentId} is not registered.`,
       });
     }
     return entry;
@@ -241,12 +250,12 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
         Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
           const scope = yield* Scope.make();
-          const supervisor = yield* makeEnvironmentSupervisor(entry, {
+          const supervisor = yield* EnvironmentSupervisor.make(entry, {
             initiallyDesired: false,
           }).pipe(
-            Effect.provideService(Connectivity, connectivity),
-            Effect.provideService(ConnectionDriver, driver),
-            Effect.provideService(ConnectionWakeups, wakeups),
+            Effect.provideService(Connectivity.Connectivity, connectivity),
+            Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
+            Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
           );
@@ -280,28 +289,30 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     );
   });
 
-  const run: EnvironmentRegistryService["run"] = Effect.fn("EnvironmentRegistry.run")(function* <
-    A,
-    E,
-    R,
-  >(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) {
-    const supervisor = yield* acquireSupervisor(environmentId);
-    return yield* Effect.provideService(effect, EnvironmentSupervisor, supervisor);
-  });
+  const run: EnvironmentRegistry["Service"]["run"] = Effect.fn("EnvironmentRegistry.run")(
+    function* <A, E, R>(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) {
+      const supervisor = yield* acquireSupervisor(environmentId);
+      return yield* Effect.provideService(
+        effect,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisor,
+      );
+    },
+  );
 
-  const runStream: EnvironmentRegistryService["runStream"] = <A, E, R>(
+  const runStream: EnvironmentRegistry["Service"]["runStream"] = <A, E, R>(
     environmentId: EnvironmentId,
     stream: Stream.Stream<A, E, R>,
   ) =>
     Stream.unwrap(
       acquireSupervisor(environmentId).pipe(
         Effect.map((supervisor) =>
-          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         ),
       ),
     );
 
-  const followStream: EnvironmentRegistryService["followStream"] = <A, E, R>(
+  const followStream: EnvironmentRegistry["Service"]["followStream"] = <A, E, R>(
     environmentId: EnvironmentId,
     stream: Stream.Stream<A, E, R>,
   ) =>
@@ -320,7 +331,11 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
                 Effect.match({
                   onFailure: () => Stream.empty,
                   onSuccess: (supervisor) =>
-                    Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+                    Stream.provideService(
+                      stream,
+                      EnvironmentSupervisor.EnvironmentSupervisor,
+                      supervisor,
+                    ),
                 }),
               ),
             ),
@@ -393,47 +408,137 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     );
   });
 
+  const installPlatformRegistration = Effect.fn("EnvironmentRegistry.installPlatformRegistration")(
+    function* (registration: PlatformConnectionRegistration) {
+      const entry = connectionRegistrationCatalogEntry(registration);
+      const target = entry.target;
+      yield* withLeaseLock(
+        target.environmentId,
+        Effect.gen(function* () {
+          yield* Ref.update(platformEnvironmentIds, (current) => {
+            const next = new Set(current);
+            next.add(target.environmentId);
+            return next;
+          });
+
+          // Secondary desktop-local backends (e.g. a parallel WSL backend) live
+          // on their own loopback origin, so they authenticate with a bearer
+          // token instead of the primary's same-origin cookie. Stash it where
+          // the resolver's bearer broker looks it up.
+          if (registration._tag === "BearerConnectionRegistration") {
+            yield* credentials.put(registration.target.connectionId, registration.credential).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not store the platform bearer credential.", {
+                  environmentId: target.environmentId,
+                  error,
+                }),
+              ),
+            );
+          }
+
+          const persistedTarget = (yield* Ref.get(persistedTargetsByEnvironment)).get(
+            target.environmentId,
+          );
+          if (persistedTarget !== undefined) {
+            yield* registrations.remove(persistedTarget).pipe(
+              Effect.tap(() =>
+                Ref.update(persistedTargetsByEnvironment, (current) => {
+                  const next = new Map(current);
+                  next.delete(target.environmentId);
+                  return next;
+                }),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  "Could not remove a persisted registration shadowed by a platform environment.",
+                  {
+                    environmentId: target.environmentId,
+                    error,
+                  },
+                ),
+              ),
+            );
+          }
+
+          yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+        }),
+      );
+    },
+  );
+
+  // Tear down a platform-managed environment that the host no longer reports
+  // (e.g. the user turned the parallel WSL backend off). Platform environments
+  // bypass the user-facing `remove` guard since they are reconciled from the
+  // bootstrap rather than removed by hand.
+  const removePlatformEnvironment = Effect.fn("EnvironmentRegistry.removePlatformEnvironment")(
+    function* (environmentId: EnvironmentId) {
+      yield* withLeaseLock(
+        environmentId,
+        Effect.gen(function* () {
+          const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+          yield* Ref.update(platformEnvironmentIds, (current) => {
+            const next = new Set(current);
+            next.delete(environmentId);
+            return next;
+          });
+          yield* closeServiceScope(environmentId);
+          yield* SubscriptionRef.update(entries, (current) => {
+            const next = new Map(current);
+            next.delete(environmentId);
+            return next;
+          });
+          if (entry !== undefined && entry.target._tag === "BearerConnectionTarget") {
+            yield* credentials.remove(entry.target.connectionId).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not clear the platform bearer credential.", {
+                  environmentId,
+                  error,
+                }),
+              ),
+            );
+          }
+          yield* Effect.all(
+            [
+              cache.clear(environmentId).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not clear cached environment data after removal.", {
+                    environmentId,
+                    error,
+                  }),
+                ),
+              ),
+              ownedDataCleanup.clear(environmentId),
+            ],
+            { concurrency: "unbounded", discard: true },
+          );
+        }),
+      );
+    },
+  );
+
   const registerPlatform = Effect.fn("EnvironmentRegistry.registerPlatform")(function* (
     registration: PrimaryConnectionRegistration,
   ) {
-    const entry = connectionRegistrationCatalogEntry(registration);
-    const target = entry.target;
-    yield* withLeaseLock(
-      target.environmentId,
-      Effect.gen(function* () {
-        yield* Ref.update(platformEnvironmentIds, (current) => {
-          const next = new Set(current);
-          next.add(target.environmentId);
-          return next;
-        });
+    yield* installPlatformRegistration(registration);
+  });
 
-        const persistedTarget = (yield* Ref.get(persistedTargetsByEnvironment)).get(
-          target.environmentId,
-        );
-        if (persistedTarget !== undefined) {
-          yield* registrations.remove(persistedTarget).pipe(
-            Effect.tap(() =>
-              Ref.update(persistedTargetsByEnvironment, (current) => {
-                const next = new Map(current);
-                next.delete(target.environmentId);
-                return next;
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning(
-                "Could not remove a persisted registration shadowed by the primary environment.",
-                {
-                  environmentId: target.environmentId,
-                  error,
-                },
-              ),
-            ),
-          );
-        }
-
-        yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
-      }),
+  // Reconcile the full set of platform-managed environments against what the
+  // host currently reports: add/refresh the desired ones and tear down any
+  // platform environment that disappeared (WSL toggled off, distro switched).
+  const reconcilePlatform = Effect.fn("EnvironmentRegistry.reconcilePlatform")(function* (
+    platformRegistrations: ReadonlyArray<PlatformConnectionRegistration>,
+  ) {
+    const desiredIds = new Set(
+      platformRegistrations.map((registration) => registration.target.environmentId),
     );
+    const currentPlatformIds = yield* Ref.get(platformEnvironmentIds);
+    yield* Effect.forEach(
+      currentPlatformIds,
+      (environmentId) =>
+        desiredIds.has(environmentId) ? Effect.void : removePlatformEnvironment(environmentId),
+      { discard: true },
+    );
+    yield* Effect.forEach(platformRegistrations, installPlatformRegistration, { discard: true });
   });
 
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
@@ -443,7 +548,6 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return yield* new PlatformEnvironmentRemovalError({
             environmentId,
-            message: "Platform-managed environments cannot be removed.",
           });
         }
         const target = (yield* getEntry(environmentId)).target;
@@ -532,7 +636,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     followStream(
       environmentId,
       Stream.unwrap(
-        EnvironmentSupervisor.pipe(
+        EnvironmentSupervisor.EnvironmentSupervisor.pipe(
           Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
         ),
       ),
@@ -559,6 +663,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     start,
     register,
     registerPlatform,
+    reconcilePlatform,
     remove,
     removeRelayEnvironments,
     retryNow,
@@ -570,7 +675,4 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   });
 });
 
-export const environmentRegistryLayer = Layer.effect(
-  EnvironmentRegistry,
-  makeEnvironmentRegistry(),
-);
+export const layer = Layer.effect(EnvironmentRegistry, make);

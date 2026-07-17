@@ -1,6 +1,5 @@
 import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
-import * as Cause from "effect/Cause";
 import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -60,11 +59,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
         }
 
         if (error === null && result._tag === "Failure") {
-          const cause = Cause.squash(result.cause);
-          error =
-            cause instanceof Error && cause.message.trim().length > 0
-              ? cause.message
-              : "Failed to load archived threads.";
+          error = "Failed to load archived threads.";
         }
       }
 

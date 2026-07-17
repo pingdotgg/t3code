@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
@@ -75,7 +75,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
   const crypto = yield* Crypto.Crypto;
-  const environment = yield* ServerEnvironment;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
@@ -191,11 +191,7 @@ const make = Effect.acquireRelease(
     }),
 );
 
-export const layer: Layer.Layer<
-  McpSessionRegistry,
-  never,
-  Crypto.Crypto | ServerEnvironment | HttpServer.HttpServer
-> = Layer.effect(McpSessionRegistry, make);
+export const layer = Layer.effect(McpSessionRegistry, make);
 
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,

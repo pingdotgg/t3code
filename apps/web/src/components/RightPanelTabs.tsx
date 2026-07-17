@@ -20,6 +20,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -330,6 +331,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     [props],
   );
+  const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
+    if (event.button !== 1) return;
+    event.preventDefault();
+  }, []);
+  const handleTabAuxClick = useCallback(
+    (event: ReactMouseEvent, surface: RightPanelSurface) => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      props.onCloseSurface(surface);
+    },
+    [props],
+  );
 
   useEffect(() => {
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
@@ -346,6 +360,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           "workspace-topbar gap-1 pl-2",
           props.mode === "inline" ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
       >
@@ -365,6 +380,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <div
                   key={surface.id}
                   data-active-tab={active}
+                  onMouseDown={handleTabMouseDown}
+                  onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
                     "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",

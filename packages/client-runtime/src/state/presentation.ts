@@ -26,7 +26,8 @@ export function createEnvironmentPresentationAtoms<E>(input: {
   readonly stateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, E>>;
-  readonly configValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
+  /** Authoritative live server config, including streamed provider/settings updates. */
+  readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
 }) {
   const presentationAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
@@ -41,7 +42,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
       return {
         entry,
         connection: presentEnvironmentConnection(state),
-        serverConfig: get(input.configValueAtom(environmentId)),
+        serverConfig: get(input.serverConfigValueAtom(environmentId)),
       } satisfies EnvironmentPresentation;
     }).pipe(Atom.withLabel(`environment-presentation:${environmentId}`)),
   );

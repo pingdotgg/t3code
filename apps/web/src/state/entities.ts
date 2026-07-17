@@ -12,12 +12,14 @@ import type {
   OrchestrationThreadActivity,
   ScopedProjectRef,
   ScopedThreadRef,
+  ServerConfig,
 } from "@t3tools/contracts";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
+import { environmentServerConfigsAtom } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_REFS: ReadonlyArray<ScopedProjectRef> = Object.freeze([]);
@@ -101,6 +103,10 @@ export function useEnvironmentThreadRefs(
 
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
+}
+
+export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
+  return useAtomValue(environmentServerConfigsAtom);
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {

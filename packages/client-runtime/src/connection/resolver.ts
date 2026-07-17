@@ -6,21 +6,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import { ManagedRelayClient } from "../relay/managedRelay.ts";
-import {
-  CloudSession,
-  RelayDeviceIdentity,
-  SshEnvironmentGateway,
-} from "../platform/capabilities.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
-  ConnectionCredentialStore,
-  ConnectionProfileStore,
   SshConnectionProfile,
 } from "./catalog.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   credentialMissingError,
   environmentMismatchError,
@@ -36,6 +31,7 @@ import type {
   SshConnectionTarget,
 } from "./model.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
+import * as ConnectionProfileStore from "./profileStore.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -58,21 +54,41 @@ function primarySocketUrl(target: PrimaryConnectionTarget): string {
   return url.toString();
 }
 
-const primaryBroker = Effect.fn("clientRuntime.connection.broker.primary")(
-  (target: PrimaryConnectionTarget) =>
-    Effect.succeed({
-      environmentId: target.environmentId,
-      label: target.label,
+const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary")(function* () {
+  const auth = yield* ClientCapabilities.PrimaryEnvironmentAuth;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.primary")(function* (
+    target: PrimaryConnectionTarget,
+  ) {
+    const bearerToken = yield* auth.bearerToken;
+    if (Option.isNone(bearerToken)) {
+      return {
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: target.httpBaseUrl,
+        socketUrl: primarySocketUrl(target),
+        httpAuthorization: null,
+        target,
+      } satisfies PreparedConnection;
+    }
+
+    const authorized = yield* remote.authorizeBearer({
+      expectedEnvironmentId: target.environmentId,
       httpBaseUrl: target.httpBaseUrl,
-      socketUrl: primarySocketUrl(target),
-      httpAuthorization: null,
+      wsBaseUrl: target.wsBaseUrl,
+      bearerToken: bearerToken.value,
+    });
+    return {
+      ...authorized,
       target,
-    } satisfies PreparedConnection),
-);
+    } satisfies PreparedConnection;
+  });
+});
 
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
-  const credentials = yield* ConnectionCredentialStore;
-  const remote = yield* RemoteEnvironmentAuthorization;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
@@ -85,7 +101,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        message: `Connection profile ${target.connectionId} is not a bearer connection.`,
+        detail: `Connection profile ${target.connectionId} is not a bearer connection.`,
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -123,10 +139,10 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
 });
 
 const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(function* () {
-  const relay = yield* ManagedRelayClient;
-  const session = yield* CloudSession;
-  const identity = yield* RelayDeviceIdentity;
-  const remote = yield* RemoteEnvironmentAuthorization;
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  const session = yield* ClientCapabilities.CloudSession;
+  const identity = yield* ClientCapabilities.RelayDeviceIdentity;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
   return Effect.fnUntraced(
     function* (target: RelayConnectionTarget) {
@@ -171,9 +187,9 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
 });
 
 const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(function* () {
-  const profiles = yield* ConnectionProfileStore;
-  const ssh = yield* SshEnvironmentGateway;
-  const remote = yield* RemoteEnvironmentAuthorization;
+  const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
+  const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.ssh")(function* (
     entry: ConnectionCatalogEntry & { readonly target: SshConnectionTarget },
@@ -186,7 +202,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        message: `Connection profile ${target.connectionId} is not an SSH connection.`,
+        detail: `Connection profile ${target.connectionId} is not an SSH connection.`,
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -225,33 +241,33 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   });
 });
 
-export const connectionResolverLayer = Layer.effect(
-  ConnectionResolver,
-  Effect.gen(function* () {
-    const bearer = yield* makeBearerBroker();
-    const relay = yield* makeRelayBroker();
-    const ssh = yield* makeSshBroker();
+export const make = Effect.gen(function* () {
+  const primary = yield* makePrimaryBroker();
+  const bearer = yield* makeBearerBroker();
+  const relay = yield* makeRelayBroker();
+  const ssh = yield* makeSshBroker();
 
-    const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
-      entry: ConnectionCatalogEntry,
-    ) {
-      const target: ConnectionTarget = entry.target;
-      yield* Effect.annotateCurrentSpan({
-        "connection.environment.id": target.environmentId,
-        "connection.target.kind": target._tag,
-      });
-      switch (target._tag) {
-        case "PrimaryConnectionTarget":
-          return yield* primaryBroker(target);
-        case "BearerConnectionTarget":
-          return yield* bearer({ ...entry, target });
-        case "RelayConnectionTarget":
-          return yield* relay(target);
-        case "SshConnectionTarget":
-          return yield* ssh({ ...entry, target });
-      }
+  const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
+    entry: ConnectionCatalogEntry,
+  ) {
+    const target: ConnectionTarget = entry.target;
+    yield* Effect.annotateCurrentSpan({
+      "connection.environment.id": target.environmentId,
+      "connection.target.kind": target._tag,
     });
+    switch (target._tag) {
+      case "PrimaryConnectionTarget":
+        return yield* primary(target);
+      case "BearerConnectionTarget":
+        return yield* bearer({ ...entry, target });
+      case "RelayConnectionTarget":
+        return yield* relay(target);
+      case "SshConnectionTarget":
+        return yield* ssh({ ...entry, target });
+    }
+  });
 
-    return ConnectionResolver.of({ prepare });
-  }),
-);
+  return ConnectionResolver.of({ prepare });
+});
+
+export const layer = Layer.effect(ConnectionResolver, make);

@@ -29,7 +29,7 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -64,17 +64,18 @@ function makeMemorySecretStore() {
   const values = new Map<string, Uint8Array>();
   const store = {
     get: ((name) =>
-      Effect.sync(
-        () => values.get(name) ?? null,
-      )) satisfies ServerSecretStore.ServerSecretStoreShape["get"],
+      Effect.sync(() => {
+        const value = values.get(name);
+        return value === undefined ? Option.none() : Option.some(Uint8Array.from(value));
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["get"],
     set: ((name, value) =>
       Effect.sync(() => {
         values.set(name, Uint8Array.from(value));
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["set"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["set"],
     create: ((name, value) =>
       Effect.sync(() => {
         values.set(name, Uint8Array.from(value));
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["create"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["create"],
     getOrCreateRandom: ((name, bytes) =>
       Effect.sync(() => {
         const existing = values.get(name);
@@ -84,12 +85,12 @@ function makeMemorySecretStore() {
         const generated = new Uint8Array(bytes);
         values.set(name, generated);
         return generated;
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["getOrCreateRandom"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["getOrCreateRandom"],
     remove: ((name) =>
       Effect.sync(() => {
         values.delete(name);
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["remove"],
-  } satisfies ServerSecretStore.ServerSecretStoreShape;
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["remove"],
+  } satisfies ServerSecretStore.ServerSecretStore["Service"];
   return {
     store,
     setString: (name: string, value: string) => store.set(name, encodeSecret(value)),
@@ -136,7 +137,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     expect(AgentAwarenessRelay.eventThreadId(event)).toBe(threadId);
   });
 
-  it("does not publish streaming content or non-awareness activity events", () => {
+  it("does not publish start intents, streaming content, or non-awareness activity events", () => {
     const now = "2026-05-25T00:00:00.000Z";
     const base = {
       sequence: 1,
@@ -190,7 +191,16 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           streaming: false,
         },
       } as unknown as OrchestrationEvent),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: "thread-1" as ThreadId,
+        },
+      } as unknown as OrchestrationEvent),
+    ).toBe(false);
   });
 
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {
@@ -493,7 +503,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
-          Layer.succeed(ServerEnvironment, {
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
           }),
@@ -625,7 +635,11 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies ExecutionEnvironmentDescriptor;
 
         globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
-          const url = new URL(input instanceof Request ? input.url : input.toString());
+          const url = new URL(
+            typeof input === "string" || input instanceof URL
+              ? input
+              : (input as unknown as { readonly url: string }).url,
+          );
           runFork(Deferred.succeed(fetchSeen, url));
           return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
         }) as unknown as typeof fetch;
@@ -637,7 +651,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
-          Layer.succeed(ServerEnvironment, {
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
           }),

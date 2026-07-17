@@ -51,4 +51,43 @@ describe("clientPersistenceStorage", () => {
 
     expect(readBrowserClientSettings()).toEqual(settings);
   });
+
+  it("reports structured decode failures while preserving the fallback", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem("t3code:client-settings:v1", "not-json");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Could not read persisted client settings.",
+      expect.objectContaining({
+        _tag: "LocalStorageOperationError",
+        operation: "decode",
+        storageKey: "t3code:client-settings:v1",
+        cause: expect.anything(),
+      }),
+    );
+  });
+
+  it("defaults word wrap on and discards obsolete wrapping preferences", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        chatWordWrap: false,
+        diffWordWrap: false,
+      }),
+    );
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+    const settings = readBrowserClientSettings();
+
+    expect(settings).toEqual(
+      expect.objectContaining({
+        wordWrap: true,
+      }),
+    );
+    expect(settings).not.toHaveProperty("chatWordWrap");
+    expect(settings).not.toHaveProperty("diffWordWrap");
+  });
 });

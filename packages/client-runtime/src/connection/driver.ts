@@ -9,8 +9,8 @@ import type {
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
-import { ConnectionResolver } from "./resolver.ts";
-import { RpcSessionFactory, type RpcSession } from "../rpc/session.ts";
+import * as ConnectionResolver from "./resolver.ts";
+import * as RpcSession from "../rpc/session.ts";
 
 export type ConnectionDriverProgress =
   | {
@@ -23,44 +23,42 @@ export type ConnectionDriverProgress =
 
 export interface EnvironmentConnectionLease {
   readonly prepared: PreparedConnection;
-  readonly session: RpcSession;
+  readonly session: RpcSession.RpcSession;
 }
 
-export interface ConnectionDriverService {
-  readonly connect: (
-    entry: ConnectionCatalogEntry,
-    reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
-  ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
-}
-
-export class ConnectionDriver extends Context.Service<ConnectionDriver, ConnectionDriverService>()(
-  "@t3tools/client-runtime/connection/driver/ConnectionDriver",
-) {}
-
-export const connectionDriverLayer = Layer.effect(
+export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
-  Effect.gen(function* () {
-    const resolver = yield* ConnectionResolver;
-    const sessions = yield* RpcSessionFactory;
-
-    const connect = Effect.fn("ConnectionDriver.connect")(function* (
+  {
+    readonly connect: (
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
-    ) {
-      const target = entry.target;
-      yield* Effect.annotateCurrentSpan({
-        "connection.environment.id": target.environmentId,
-        "connection.target.kind": target._tag,
-      });
-      yield* reportProgress({ stage: "preparing" });
-      const prepared = yield* resolver.prepare(entry);
-      yield* reportProgress({ stage: "opening", prepared });
-      const session = yield* sessions.connect(prepared);
-      yield* reportProgress({ stage: "synchronizing", prepared });
-      yield* session.ready;
-      return { prepared, session } satisfies EnvironmentConnectionLease;
-    });
+    ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
+  }
+>()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
-    return ConnectionDriver.of({ connect });
-  }),
-);
+export const make = Effect.gen(function* () {
+  const resolver = yield* ConnectionResolver.ConnectionResolver;
+  const sessions = yield* RpcSession.RpcSessionFactory;
+
+  const connect = Effect.fn("ConnectionDriver.connect")(function* (
+    entry: ConnectionCatalogEntry,
+    reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+  ) {
+    const target = entry.target;
+    yield* Effect.annotateCurrentSpan({
+      "connection.environment.id": target.environmentId,
+      "connection.target.kind": target._tag,
+    });
+    yield* reportProgress({ stage: "preparing" });
+    const prepared = yield* resolver.prepare(entry);
+    yield* reportProgress({ stage: "opening", prepared });
+    const session = yield* sessions.connect(prepared);
+    yield* reportProgress({ stage: "synchronizing", prepared });
+    yield* session.ready;
+    return { prepared, session } satisfies EnvironmentConnectionLease;
+  });
+
+  return ConnectionDriver.of({ connect });
+});
+
+export const layer = Layer.effect(ConnectionDriver, make);

@@ -75,7 +75,7 @@ function makeHarness() {
   });
   const serverConfigsAtom = createEnvironmentServerConfigsAtom({
     catalogValueAtom,
-    configValueAtom: configAtoms,
+    serverConfigValueAtom: configAtoms,
   });
 
   return {

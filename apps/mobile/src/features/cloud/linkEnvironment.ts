@@ -25,16 +25,13 @@ import {
 import { exchangeRemoteDpopAccessToken } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import {
-  ManagedRelayClient,
-  type ManagedRelayClientError,
-  ManagedRelayDpopSigner,
-} from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
 import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { loadOrCreateAgentAwarenessDeviceId, loadPreferences } from "../../lib/storage";
+import * as MobilePreferences from "../../persistence/mobile-preferences";
+import * as MobileStorage from "../../persistence/mobile-storage";
 import { resolveCloudPublicConfig } from "./publicConfig";
 
 const RELAY_STATUS_AND_CONNECT_SCOPES = [
@@ -156,13 +153,15 @@ function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
 }
 
 function decodedRelayClientError(message: string) {
-  return (cause: ManagedRelayClientError) => {
-    const relayError = cause.relayError;
+  return (cause: ManagedRelay.ManagedRelayClientError) => {
+    const relayError =
+      cause._tag === "ManagedRelayRequestFailedError" ? cause.relayError : undefined;
+    const traceId = cause._tag === "ManagedRelayRequestFailedError" ? cause.traceId : undefined;
     const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
       cause,
-      ...(cause.traceId ? { traceId: cause.traceId } : {}),
+      ...(traceId ? { traceId } : {}),
     });
   };
 }
@@ -258,10 +257,19 @@ function ensureConnectEndpointMatchesEnvironment(input: {
   return Effect.void;
 }
 
-export function linkEnvironmentToCloud(input: {
+interface LinkEnvironmentToCloudInput {
   readonly connection: SavedRemoteConnection;
   readonly clerkToken: string;
-}): Effect.Effect<void, CloudEnvironmentLinkError, HttpClient.HttpClient | ManagedRelayClient> {
+}
+
+type LinkEnvironmentToCloudRequirements =
+  | HttpClient.HttpClient
+  | ManagedRelay.ManagedRelayClient
+  | MobileStorage.MobileStorage;
+
+export function linkEnvironmentToCloudWithPreference(
+  input: LinkEnvironmentToCloudInput & { readonly liveActivitiesEnabled: boolean },
+): Effect.Effect<void, CloudEnvironmentLinkError, LinkEnvironmentToCloudRequirements> {
   return Effect.gen(function* () {
     if (!input.connection.bearerToken) {
       return yield* new CloudEnvironmentLinkError({
@@ -270,16 +278,12 @@ export function linkEnvironmentToCloud(input: {
     }
     const localBearerToken = input.connection.bearerToken;
     const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelayClient;
-    const deviceId = yield* Effect.tryPromise({
-      try: () => loadOrCreateAgentAwarenessDeviceId(),
-      catch: cloudEnvironmentLinkError("Could not load the mobile device id."),
-    });
-    const preferences = yield* Effect.tryPromise({
-      try: () => loadPreferences(),
-      catch: cloudEnvironmentLinkError("Could not load mobile notification preferences."),
-    });
-    const liveActivitiesEnabled = preferences.liveActivitiesEnabled !== false;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
+    const storage = yield* MobileStorage.MobileStorage;
+    const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
+      Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
+    );
+    const liveActivitiesEnabled = input.liveActivitiesEnabled;
     const challenge = yield* relayClient
       .createEnvironmentLinkChallenge({
         clerkToken: input.clerkToken,
@@ -348,16 +352,35 @@ export function linkEnvironmentToCloud(input: {
   });
 }
 
+export function linkEnvironmentToCloud(
+  input: LinkEnvironmentToCloudInput,
+): Effect.Effect<
+  void,
+  CloudEnvironmentLinkError,
+  LinkEnvironmentToCloudRequirements | MobilePreferences.MobilePreferencesStore
+> {
+  return MobilePreferences.MobilePreferencesStore.pipe(
+    Effect.flatMap((preferencesStore) => preferencesStore.load),
+    Effect.mapError(cloudEnvironmentLinkError("Could not load mobile notification preferences.")),
+    Effect.flatMap((preferences) =>
+      linkEnvironmentToCloudWithPreference({
+        ...input,
+        liveActivitiesEnabled: preferences.liveActivitiesEnabled !== false,
+      }),
+    ),
+  );
+}
+
 export function listCloudEnvironments(input: {
   readonly clerkToken: string;
 }): Effect.Effect<
   ReadonlyArray<RelayClientEnvironmentRecord>,
   CloudEnvironmentLinkError,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelayClient;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
 
     return yield* relayClient
       .listEnvironments({
@@ -374,11 +397,11 @@ export function getCloudEnvironmentStatus(input: {
 }): Effect.Effect<
   RelayEnvironmentStatusResponseType,
   CloudEnvironmentLinkError,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelayClient;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
     const status = yield* relayClient
       .getEnvironmentStatus({
         clerkToken: input.clerkToken,
@@ -413,7 +436,7 @@ export function loadCloudEnvironmentStatuses(input: {
 }): Effect.Effect<
   ReadonlyArray<CloudEnvironmentRecordWithStatus>,
   CloudEnvironmentLinkError,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.forEach(
     input.environments,
@@ -445,7 +468,7 @@ export function listCloudEnvironmentsWithStatus(input: {
 }): Effect.Effect<
   ReadonlyArray<CloudEnvironmentRecordWithStatus>,
   CloudEnvironmentLinkError,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const environments = yield* listCloudEnvironments(input);
@@ -458,10 +481,10 @@ export function listCloudEnvironmentsWithStatus(input: {
 
 const loadAgentAwarenessDeviceId = Effect.fn("mobile.cloud.loadAgentAwarenessDeviceId")(
   function* () {
-    return yield* Effect.tryPromise({
-      try: () => loadOrCreateAgentAwarenessDeviceId(),
-      catch: cloudEnvironmentLinkError("Could not load the mobile device id."),
-    });
+    const storage = yield* MobileStorage.MobileStorage;
+    return yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
+      Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
+    );
   },
 );
 
@@ -473,7 +496,7 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
   }) {
     yield* Effect.annotateCurrentSpan({ "environment.id": input.environmentId });
     const relayUrl = yield* requireRelayUrl();
-    const relayClient = yield* ManagedRelayClient;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
 
     const deviceId = yield* loadAgentAwarenessDeviceId();
     const connect = yield* relayClient
@@ -514,7 +537,7 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
         message: "Connected endpoint descriptor does not match the selected environment.",
       });
     }
-    const signer = yield* ManagedRelayDpopSigner;
+    const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
     const bootstrapDpop = yield* signer
       .createProof({
         method: "POST",
@@ -555,7 +578,10 @@ export function connectCloudEnvironment(input: {
 }): Effect.Effect<
   SavedRemoteConnection,
   CloudEnvironmentLinkError,
-  HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner
+  | HttpClient.HttpClient
+  | ManagedRelay.ManagedRelayClient
+  | ManagedRelay.ManagedRelayDpopSigner
+  | MobileStorage.MobileStorage
 > {
   return connectRelayManagedEnvironment({
     clerkToken: input.clerkToken,
@@ -570,7 +596,10 @@ export function refreshCloudEnvironmentConnection(input: {
 }): Effect.Effect<
   SavedRemoteConnection,
   CloudEnvironmentLinkError,
-  HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner
+  | HttpClient.HttpClient
+  | ManagedRelay.ManagedRelayClient
+  | ManagedRelay.ManagedRelayDpopSigner
+  | MobileStorage.MobileStorage
 > {
   return connectRelayManagedEnvironment({
     clerkToken: input.clerkToken,

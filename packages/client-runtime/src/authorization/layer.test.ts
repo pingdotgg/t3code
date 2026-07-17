@@ -5,12 +5,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import { ManagedRelayDpopSigner, ManagedRelayDpopSignerError } from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { ClientPresentation } from "../platform/capabilities.ts";
-import { RemoteEnvironmentAuthorization, type RelayEnvironmentAuthorization } from "./service.ts";
-import { RemoteDpopAccessToken, RemoteDpopAccessTokenStore } from "./tokenStore.ts";
-import { remoteEnvironmentAuthorizationLayer } from "./layer.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as RemoteEnvironmentAuthorization from "./service.ts";
+import * as TokenStore from "./tokenStore.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const ENDPOINT = {
@@ -30,7 +29,7 @@ const DESCRIPTOR = {
     repositoryIdentity: true,
   },
 };
-const BOOTSTRAP: RelayEnvironmentAuthorization = {
+const BOOTSTRAP: RemoteEnvironmentAuthorization.RelayEnvironmentAuthorization = {
   environmentId: ENVIRONMENT_ID,
   endpoint: ENDPOINT,
   credential: "relay-bootstrap",
@@ -76,7 +75,7 @@ const authInvalid = () =>
   );
 
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
-  readonly initialToken?: RemoteDpopAccessToken;
+  readonly initialToken?: TokenStore.RemoteDpopAccessToken;
   readonly responses: ReadonlyArray<Response>;
 }) {
   const tokens = yield* Ref.make(
@@ -96,7 +95,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   >([]);
   const fetch = recordedFetch(input.responses);
 
-  const tokenStore = RemoteDpopAccessTokenStore.of({
+  const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
       Ref.get(tokens).pipe(
         Effect.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
@@ -114,23 +113,22 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
         return next;
       }),
   });
-  const signer = ManagedRelayDpopSigner.of({
+  const signer = ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("thumbprint-1"),
     createProof: (proofInput) =>
       Ref.update(proofInputs, (current) => [...current, proofInput]).pipe(
         Effect.as(`proof:${proofInput.url}`),
-        Effect.mapError((cause) => new ManagedRelayDpopSignerError({ cause })),
       ),
   });
-  const layer = remoteEnvironmentAuthorizationLayer.pipe(
+  const layer = RemoteEnvironmentAuthorization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         remoteHttpClientLayer(fetch.fetchFn),
-        Layer.succeed(ManagedRelayDpopSigner, signer),
-        Layer.succeed(RemoteDpopAccessTokenStore, tokenStore),
+        Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
+        Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
         Layer.succeed(
-          ClientPresentation,
-          ClientPresentation.of({
+          ClientCapabilities.ClientPresentation,
+          ClientCapabilities.ClientPresentation.of({
             metadata: {
               label: "T3 Code Test",
               deviceType: "mobile",
@@ -159,7 +157,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
 describe("RemoteEnvironmentAuthorization", () => {
   it.effect("reuses a valid persisted environment token without contacting the relay", () =>
     Effect.gen(function* () {
-      const cached = new RemoteDpopAccessToken({
+      const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
@@ -173,7 +171,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
 
       const authorized = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization;
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         return yield* remote.authorizeDpop({
           expectedEnvironmentId: ENVIRONMENT_ID,
           obtainBootstrap: harness.obtainBootstrap,
@@ -191,7 +189,7 @@ describe("RemoteEnvironmentAuthorization", () => {
 
   it.effect("refreshes and persists an expired environment token", () =>
     Effect.gen(function* () {
-      const expired = new RemoteDpopAccessToken({
+      const expired = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
@@ -209,7 +207,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
 
       const authorized = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization;
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         return yield* remote.authorizeDpop({
           expectedEnvironmentId: ENVIRONMENT_ID,
           obtainBootstrap: harness.obtainBootstrap,
@@ -230,7 +228,7 @@ describe("RemoteEnvironmentAuthorization", () => {
 
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>
     Effect.gen(function* () {
-      const cached = new RemoteDpopAccessToken({
+      const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
@@ -249,7 +247,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
 
       const authorized = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization;
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         return yield* remote.authorizeDpop({
           expectedEnvironmentId: ENVIRONMENT_ID,
           obtainBootstrap: harness.obtainBootstrap,
@@ -269,7 +267,7 @@ describe("RemoteEnvironmentAuthorization", () => {
 
   it.effect("refreshes a cached endpoint after consecutive transient failures", () =>
     Effect.gen(function* () {
-      const cached = new RemoteDpopAccessToken({
+      const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
         label: DESCRIPTOR.label,
         endpoint: ENDPOINT,
@@ -289,7 +287,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
 
       const authorized = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization;
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         const firstFailure = yield* remote
           .authorizeDpop({
             expectedEnvironmentId: ENVIRONMENT_ID,
@@ -329,7 +327,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
 
       yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization;
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         return yield* remote.authorizeDpop({
           expectedEnvironmentId: ENVIRONMENT_ID,
           obtainBootstrap: harness.obtainBootstrap,

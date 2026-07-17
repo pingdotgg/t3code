@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/react";
-import { ManagedRelayClient, setManagedRelaySession } from "@t3tools/client-runtime/relay";
+import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
   settleAsyncResult,
@@ -64,7 +64,9 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
           removeRelayEnvironments(),
           settleAsyncResult(() =>
             runtime.runPromiseExit(
-              ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+              ManagedRelay.ManagedRelayClient.pipe(
+                Effect.flatMap((client) => client.resetTokenCache),
+              ),
             ),
           ),
         ]);

@@ -1,6 +1,6 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
-import type { UnifiedSettings } from "@t3tools/contracts/settings";
+import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
 import { normalizeProjectPathForComparison } from "./projects.ts";
@@ -12,7 +12,7 @@ export interface ProjectGroupingSettings {
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
 
-export function selectProjectGroupingSettings(settings: UnifiedSettings): ProjectGroupingSettings {
+export function selectProjectGroupingSettings(settings: ClientSettings): ProjectGroupingSettings {
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,

@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { RemoteDpopAccessToken } from "../authorization/tokenStore.ts";
+import * as TokenStore from "../authorization/tokenStore.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -38,7 +38,7 @@ const BEARER_PROFILE = new BearerConnectionProfile({
 const BEARER_CREDENTIAL = new BearerConnectionCredential({
   token: "bearer-token",
 });
-const REMOTE_TOKEN = new RemoteDpopAccessToken({
+const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
   environmentId: ENVIRONMENT_ID,
   label: "Remote",
   endpoint: {

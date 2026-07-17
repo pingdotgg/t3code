@@ -1,5 +1,5 @@
-import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
@@ -35,12 +35,21 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
+export const RelayApnsEnvironment = Schema.Literals(["sandbox", "production"]);
+export type RelayApnsEnvironment = typeof RelayApnsEnvironment.Type;
+
 export const RelayDeviceRegistrationRequest = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
   label: TrimmedNonEmptyString,
   platform: RelayAgentAwarenessPlatform,
   iosMajorVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(18)),
   appVersion: Schema.optional(TrimmedNonEmptyString),
+  // APNs routing for this install: the topic must match the app's bundle id
+  // (dev/preview/prod variants differ) and development-signed builds receive
+  // sandbox tokens. Optional so older app builds keep registering; the relay
+  // falls back to its configured defaults.
+  bundleId: Schema.optional(TrimmedNonEmptyString),
+  apsEnvironment: Schema.optional(RelayApnsEnvironment),
   pushToken: Schema.optional(TrimmedNonEmptyString),
   pushToStartToken: Schema.optional(TrimmedNonEmptyString),
   preferences: RelayAgentAwarenessPreferences,
@@ -512,26 +521,22 @@ const RelayAgentActivityPublishErrors = [
   RelayInternalError,
 ] as const;
 
-export interface RelayClientPrincipalShape {
-  readonly userId: string;
-  readonly token: string;
-  readonly proofKeyThumbprint?: string;
-  readonly dpopScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
-}
-
 export class RelayClientPrincipal extends Context.Service<
   RelayClientPrincipal,
-  RelayClientPrincipalShape
+  {
+    readonly userId: string;
+    readonly token: string;
+    readonly proofKeyThumbprint?: string;
+    readonly dpopScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
+  }
 >()("@t3tools/contracts/relay/RelayClientPrincipal") {}
-
-export interface RelayEnvironmentPrincipalShape {
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-}
 
 export class RelayEnvironmentPrincipal extends Context.Service<
   RelayEnvironmentPrincipal,
-  RelayEnvironmentPrincipalShape
+  {
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+  }
 >()("@t3tools/contracts/relay/RelayEnvironmentPrincipal") {}
 
 const RelayClientBearerAuthorization = HttpApiSecurity.http({ scheme: "bearer" }).pipe(
@@ -868,6 +873,24 @@ export const RelayRegisterLiveActivityEndpoint = HttpApiEndpoint.post(
   },
 ).annotate(OpenApi.Summary, "Register a Live Activity push token");
 
+export const RelayAgentActivitySnapshotResponse = Schema.Struct({
+  aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
+});
+export type RelayAgentActivitySnapshotResponse = typeof RelayAgentActivitySnapshotResponse.Type;
+
+// Lets the app decide whether arming a Live Activity is worthwhile before
+// creating one (no empty lock-screen card when nothing is running) and seed
+// the card with the real aggregate instead of a placeholder.
+export const RelayAgentActivitySnapshotEndpoint = HttpApiEndpoint.get(
+  "getAgentActivitySnapshot",
+  "/v1/mobile/agent-activity",
+  {
+    headers: RelayDpopRequestHeaders,
+    success: RelayAgentActivitySnapshotResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Read the current Live Activity aggregate");
+
 export const RelayUnregisterDeviceEndpoint = HttpApiEndpoint.delete(
   "unregisterDevice",
   "/v1/mobile/devices/:deviceId",
@@ -883,6 +906,7 @@ export const RelayMobileGroup = HttpApiGroup.make("mobile")
   .add(
     RelayRegisterDeviceEndpoint,
     RelayRegisterLiveActivityEndpoint,
+    RelayAgentActivitySnapshotEndpoint,
     RelayUnregisterDeviceEndpoint,
   )
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")

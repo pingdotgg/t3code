@@ -5,12 +5,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
-import { environmentSession } from "./session";
+import { serverEnvironment } from "./server";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
-  configValueAtom: environmentSession.configValueAtom,
+  serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 
 const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | null>(null).pipe(

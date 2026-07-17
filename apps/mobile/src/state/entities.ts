@@ -12,8 +12,7 @@ import type {
 import { Atom } from "effect/unstable/reactivity";
 
 import { environmentProjects } from "./projects";
-import { environmentServerConfigsAtom } from "./server";
-import { environmentSession } from "./session";
+import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
@@ -50,7 +49,7 @@ export function useEnvironmentServerConfig(
   return useAtomValue(
     environmentId === null
       ? EMPTY_SERVER_CONFIG_ATOM
-      : environmentSession.configValueAtom(environmentId),
+      : serverEnvironment.configValueAtom(environmentId),
   );
 }
 

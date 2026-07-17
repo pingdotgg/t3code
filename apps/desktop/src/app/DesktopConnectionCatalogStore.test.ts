@@ -21,7 +21,6 @@ const textEncoder = new TextEncoder();
 const decodeConnectionCatalog = Schema.decodeEffect(
   Schema.fromJsonString(ConnectionCatalogDocument),
 );
-
 function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
@@ -40,7 +39,7 @@ function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> 
         return decoded.slice("encrypted:".length);
       });
     },
-  } satisfies ElectronSafeStorage.ElectronSafeStorageShape);
+  } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
 }
 
 function makeLayer(
@@ -236,8 +235,10 @@ describe("DesktopConnectionCatalogStore", () => {
         const error = yield* store.get.pipe(Effect.flip);
         assert.instanceOf(
           error,
-          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
         );
+        assert.equal(error.catalogPath, catalogPath);
+        assert.exists(error.cause);
         assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
       }),
     ),
@@ -253,7 +254,7 @@ describe("DesktopConnectionCatalogStore", () => {
         _tag: "PermissionDenied",
         module: "FileSystem",
         method: "readFileString",
-        pathOrDescriptor: `${baseDir}/connection-catalog.json`,
+        pathOrDescriptor: `${baseDir}/userdata/connection-catalog.json`,
       });
       const fileSystemLayer = Layer.succeed(
         FileSystem.FileSystem,
@@ -270,8 +271,111 @@ describe("DesktopConnectionCatalogStore", () => {
         error,
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
       );
-      assert.equal(error.cause, permissionError);
+      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
+      assert.strictEqual(error.cause, permissionError);
+      assert.equal(
+        error.message,
+        `Failed to read the desktop connection catalog at ${baseDir}/userdata/connection-catalog.json.`,
+      );
+      assert.notEqual(error.message, permissionError.message);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("reports the failed catalog write operation and path", () =>
+    Effect.gen(function* () {
+      const baseFileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const permissionError = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "makeDirectory",
+        pathOrDescriptor: `${baseDir}/userdata`,
+      });
+      const fileSystemLayer = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          makeDirectory: () => Effect.fail(permissionError),
+        }),
+      );
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer)),
+      );
+
+      const error = yield* store.set("{}").pipe(Effect.flip);
+      assert.instanceOf(
+        error,
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreWriteError,
+      );
+      assert.equal(error.operation, "create-directory");
+      assert.equal(error.path, `${baseDir}/userdata`);
+      assert.strictEqual(error.cause, permissionError);
+      assert.equal(
+        error.message,
+        `Desktop connection catalog write failed during create-directory at ${baseDir}/userdata.`,
+      );
+      assert.notEqual(error.message, permissionError.message);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("reports the legacy migration stage", () =>
+    withStore(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{not-json");
+
+        const error = yield* store.get.pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreMigrationError,
+        );
+        assert.equal(error.operation, "read-legacy-registry");
+        assert.equal(error.catalogPath, `${environment.stateDir}/connection-catalog.json`);
+        assert.instanceOf(
+          error.cause,
+          DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError,
+        );
+        const registryError =
+          error.cause as DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError;
+        assert.exists(registryError.cause);
+        assert.equal(
+          error.message,
+          `Legacy desktop saved-environment migration failed during read-legacy-registry into ${environment.stateDir}/connection-catalog.json.`,
+        );
+        assert.notEqual(error.message, registryError.message);
+      }),
+    ),
+  );
+
+  it.effect("reports invalid encrypted catalog data without exposing it", () =>
+    withStore(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const catalogPath = `${environment.stateDir}/connection-catalog.json`;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(catalogPath, '{"version":1,"encryptedCatalog":"%%%"}\n');
+
+        const error = yield* store.get.pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDecodeError,
+        );
+        assert.equal(error.resource, "encryptedCatalog");
+        assert.equal(error.catalogPath, catalogPath);
+        assert.exists(error.cause);
+        assert.equal(
+          error.message,
+          `Failed to decode encryptedCatalog for the desktop connection catalog at ${catalogPath}.`,
+        );
+        assert.notInclude(error.message, "%%%");
+      }),
+    ),
   );
 
   it.effect("surfaces a catalog that can no longer be decrypted without deleting it", () =>
@@ -289,7 +393,21 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
       yield* Ref.set(failDecrypt, true);
       const error = yield* store.get.pipe(Effect.flip);
-      assert.instanceOf(error, ElectronSafeStorage.ElectronSafeStorageDecryptError);
+      assert.instanceOf(
+        error,
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
+      );
+      assert.equal(error.operation, "decrypt-catalog");
+      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
+      assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
+      const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
+      assert.instanceOf(decryptError.cause, Error);
+      assert.equal(decryptError.cause.message, "invalid encrypted catalog");
+      assert.equal(
+        error.message,
+        `Desktop connection catalog protection failed during decrypt-catalog at ${baseDir}/userdata/connection-catalog.json.`,
+      );
+      assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

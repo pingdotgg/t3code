@@ -2,5 +2,5 @@ import { createRelayEnvironmentDiscoveryAtoms } from "@t3tools/client-runtime/st
 
 import { connectionAtomRuntime } from "../connection/runtime";
 
-export const relayEnvironmentDiscovery =
+export const relayEnvironmentDiscovery: ReturnType<typeof createRelayEnvironmentDiscoveryAtoms> =
   createRelayEnvironmentDiscoveryAtoms(connectionAtomRuntime);
