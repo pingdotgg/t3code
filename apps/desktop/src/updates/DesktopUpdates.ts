@@ -18,7 +18,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -27,6 +27,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
   createInitialDesktopUpdateState,
@@ -49,6 +50,10 @@ type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
 const UpdateInfo = Schema.Struct({
   version: Schema.String,
+  // Left unvalidated on purpose: a malformed release-notes payload must never
+  // fail the decode and block the update state transition. The shape is
+  // validated defensively in normalizeDesktopUpdateReleaseNotes.
+  releaseNotes: Schema.optional(Schema.Unknown),
 });
 
 const DownloadProgressInfo = Schema.Struct({
@@ -241,7 +246,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
-  const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -330,10 +335,12 @@ export const make = Effect.gen(function* () {
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
     yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
+    yield* electronUpdater.setFullChangelog(allowsPrerelease);
     yield* logUpdaterInfo("using update channel", {
       channel,
       allowPrerelease: allowsPrerelease,
       allowDowngrade: allowsPrerelease,
+      fullChangelog: allowsPrerelease,
     });
   });
 
@@ -458,7 +465,19 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(updateInstallInFlightRef, true);
 
     return yield* Effect.gen(function* () {
-      yield* backendManager.stop({ timeout: Duration.seconds(5) });
+      // Stop every backend in the pool, not just the primary. With
+      // parallel WSL + Windows backends, leaving the WSL instance up
+      // means quitAndInstall's app.quit() exits before the pool's
+      // scope cascade has a chance to run its stop finalizer, so the
+      // WSL child gets hard-killed by the OS instead of receiving
+      // SIGTERM + grace. Stops run concurrently with the same 5s
+      // budget the primary had on its own.
+      const instances = yield* pool.list;
+      yield* Effect.forEach(
+        instances,
+        (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+        { concurrency: "unbounded" },
+      );
       yield* electronWindow.destroyAll;
       yield* electronUpdater.quitAndInstall({
         isSilent: true,
@@ -555,11 +574,15 @@ export const make = Effect.gen(function* () {
           }
 
           const checkedAt = yield* currentIsoTimestamp;
+          const releaseNotes = normalizeDesktopUpdateReleaseNotes(info.releaseNotes, info.version);
           yield* setState(
-            reduceDesktopUpdateStateOnUpdateAvailable(state, info.version, checkedAt),
+            reduceDesktopUpdateStateOnUpdateAvailable(state, info.version, checkedAt, releaseNotes),
           );
           yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
-          yield* logUpdaterInfo("update available", { version: info.version });
+          yield* logUpdaterInfo("update available", {
+            version: info.version,
+            releaseNoteGroups: releaseNotes.length,
+          });
         }),
       ),
       Effect.catchCause((cause) => {
