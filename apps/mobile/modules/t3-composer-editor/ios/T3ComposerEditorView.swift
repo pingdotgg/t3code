@@ -63,6 +63,24 @@ private final class ComposerTextView: UITextView {
 
   var onPasteImages: (([String]) -> Void)?
   var onAttributedMutation: (() -> Void)?
+  var onSubmit: (() -> Void)?
+
+  override var keyCommands: [UIKeyCommand]? {
+    var commands = super.keyCommands ?? []
+    let submit = UIKeyCommand(
+      input: "\r",
+      modifierFlags: .command,
+      action: #selector(submitMessage(_:))
+    )
+    submit.discoverabilityTitle = "Send Message"
+    submit.wantsPriorityOverSystemBehavior = true
+    commands.append(submit)
+    return commands
+  }
+
+  @objc private func submitMessage(_ sender: UIKeyCommand) {
+    onSubmit?()
+  }
 
   override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
     if action == #selector(paste(_:)) {
@@ -282,7 +300,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     skillText: "#a21caf",
     fileTint: "#737373"
   )
-  private var fontFamily = "DMSans_400Regular"
+  private var fontFamily = "DMSans-Regular"
   private var fontSize: CGFloat = 14
   private var lineHeight: CGFloat = 20
   private var contentInsetVertical: CGFloat = 0
@@ -299,6 +317,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   let onComposerSelectionChange = EventDispatcher()
   let onComposerFocus = EventDispatcher()
   let onComposerBlur = EventDispatcher()
+  let onComposerSubmit = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
   let onComposerContentSizeChange = EventDispatcher()
 
@@ -319,6 +338,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     }
     textView.onAttributedMutation = { [weak self] in
       self?.emitTextChange()
+    }
+    textView.onSubmit = { [weak self] in
+      self?.onComposerSubmit([:])
     }
     addSubview(textView)
 
@@ -586,7 +608,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     iconImage: UIImage?,
     style: ComposerChipStyle
   ) -> UIImage {
-    let font = UIFont(name: "DMSans_500Medium", size: max(12, fontSize - 2))
+    let font = UIFont(name: "DMSans-Medium", size: max(12, fontSize - 2))
       ?? UIFont.systemFont(ofSize: max(12, fontSize - 2), weight: .medium)
     let fallbackIcon = UIImage(
       systemName: iconName,

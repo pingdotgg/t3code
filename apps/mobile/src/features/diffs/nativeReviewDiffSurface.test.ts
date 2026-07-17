@@ -33,11 +33,14 @@ describe("resolveNativeReviewDiffView", () => {
     expect(expoMocks.requireNativeView).not.toHaveBeenCalled();
   });
 
-  it("returns the native review diff view when the view config is installed", async () => {
+  it("returns the payload bridge when the native review diff view is installed", async () => {
     setExpoViewConfigAvailable();
     expoMocks.requireNativeView.mockReturnValue(nativeView);
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
-    expect(resolveNativeReviewDiffView()).toBe(nativeView);
+    const resolvedView = resolveNativeReviewDiffView();
+    expect(resolvedView).not.toBeNull();
+    expect(resolvedView).not.toBe(nativeView);
+    expect(resolveNativeReviewDiffView()).toBe(resolvedView);
     expect(expoMocks.requireNativeView).toHaveBeenCalledWith("T3ReviewDiffSurface");
   });
 
@@ -76,5 +79,39 @@ describe("resolveNativeReviewDiffView", () => {
       }),
     );
     expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isPendingNativeViewRegistration", () => {
+  it("recognizes registration races for the installed native view name", async () => {
+    const { isPendingNativeViewRegistration } = await import("./nativeReviewDiffSurface");
+
+    expect(
+      isPendingNativeViewRegistration(
+        new Error("Unable to find the 'T3ReviewDiffSurface' view for this native tag"),
+      ),
+    ).toBe(true);
+    expect(
+      isPendingNativeViewRegistration(
+        new Error("Unable to find the 'T3ReviewDiffView' view for this native tag"),
+      ),
+    ).toBe(false);
+    expect(
+      isPendingNativeViewRegistration(
+        new Error(
+          "Unable to find the class expo.modules.t3reviewdiff.T3ReviewDiffView view with tag 1150",
+        ),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("isNativeReviewDiffDrawEvent", () => {
+  it("accepts only native events emitted after diff rows draw", async () => {
+    const { isNativeReviewDiffDrawEvent } = await import("./nativeReviewDiffSurface");
+
+    expect(isNativeReviewDiffDrawEvent({ message: "draw-metrics" })).toBe(true);
+    expect(isNativeReviewDiffDrawEvent({ message: "visible-range" })).toBe(true);
+    expect(isNativeReviewDiffDrawEvent({ message: "rows-decoded" })).toBe(false);
   });
 });

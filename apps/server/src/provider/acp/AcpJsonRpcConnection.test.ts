@@ -116,6 +116,43 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("keeps assistant item IDs unique when a provider session restarts", () => {
+    const collectFirstAssistantItemId = Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start();
+      expect(started.sessionId).toBe("mock-session-1");
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      const events = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 4)));
+      const assistantStart = events.find((event) => event._tag === "AssistantItemStarted");
+      expect(assistantStart?._tag).toBe("AssistantItemStarted");
+      return assistantStart?._tag === "AssistantItemStarted" ? assistantStart.itemId : "";
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+    );
+
+    return Effect.gen(function* () {
+      const beforeRestart = yield* collectFirstAssistantItemId;
+      const afterRestart = yield* collectFirstAssistantItemId;
+
+      expect(afterRestart).not.toBe(beforeRestart);
+    }).pipe(Effect.provide(NodeServices.layer));
+  });
+
   it.effect("drops session updates emitted for a child ACP session", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
