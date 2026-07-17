@@ -23,6 +23,9 @@ import { ServerProviderAuthStatus, ServerProviderState } from "./server.ts";
  * caller is already at this depth, bounding recursive fan-out.
  */
 export const SUB_AGENT_MAX_SPAWN_DEPTH = 2;
+export const SUB_AGENT_MAX_RUNNING_CHILDREN_PER_AGENT = 5;
+export const SUB_AGENT_MAX_RUNNING_PER_ROOT = 10;
+export const SUB_AGENT_SPAWN_RATE_LIMIT = { max: 3, windowMillis: 60_000 } as const;
 
 export const SubAgentStatus = Schema.Literals(["running", "completed", "interrupted", "error"]);
 export type SubAgentStatus = typeof SubAgentStatus.Type;
@@ -129,6 +132,7 @@ export const SubAgentSpawnResult = Schema.Struct({
   title: TrimmedNonEmptyString,
   name: Schema.optional(SubAgentName),
   status: SubAgentStatus,
+  policyNotices: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type SubAgentSpawnResult = typeof SubAgentSpawnResult.Type;
 
@@ -182,6 +186,7 @@ export const SubAgentErrorReason = Schema.Literals([
   "caller-thread-not-found",
   "thread-not-found",
   "depth-limit-exceeded",
+  "rate-limit-exceeded",
   "dispatch-failed",
   /** Handle is not in a state that accepts the requested operation. */
   "invalid-status",

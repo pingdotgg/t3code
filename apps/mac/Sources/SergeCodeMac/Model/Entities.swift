@@ -313,6 +313,12 @@ public enum SubagentTaskState: String, Sendable {
     case running, paused, completed, failed, stopped
 }
 
+public enum SubagentTaskEntityKind: String, Hashable, Sendable {
+    case command
+    case subagent
+    case workflow
+}
+
 public struct SubagentTaskProgressEntry: Hashable, Sendable {
     public var at: Date
     public var toolName: String?
@@ -328,6 +334,7 @@ public struct SubagentTaskProgressEntry: Hashable, Sendable {
 public struct SubagentTaskItem: Hashable, Sendable {
     public var taskId: String
     public var taskType: String?
+    public var entityKind: SubagentTaskEntityKind
     public var description: String?
     public var subagentType: String?
     public var model: String?
@@ -353,6 +360,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
     public init(
         taskId: String,
         taskType: String?,
+        entityKind: SubagentTaskEntityKind = .subagent,
         description: String?,
         subagentType: String? = nil,
         model: String? = nil,
@@ -372,6 +380,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
     ) {
         self.taskId = taskId
         self.taskType = taskType
+        self.entityKind = entityKind
         self.description = description
         self.subagentType = subagentType
         self.model = model

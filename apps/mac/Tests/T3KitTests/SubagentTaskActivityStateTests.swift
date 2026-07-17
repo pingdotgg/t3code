@@ -695,4 +695,55 @@ struct SubagentTaskActivityStateTests {
         #expect(afterLate?.error == "stale stop race")
         #expect(afterLate?.completionSummary == "All good")
     }
+
+    @Test("explicit entity type maps command and workflow tasks")
+    func explicitEntityTypeMapping() throws {
+        let command = activity(
+            id: "act-command", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("command-1"),
+                "entityType": .string("command"),
+                "taskType": .string("local_bash"),
+            ]))
+        let workflow = activity(
+            id: "act-workflow", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:01.000Z",
+            payload: .object([
+                "taskId": .string("workflow-1"),
+                "entityType": .string("workflow"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let commandResult = state.apply(activity: command, at: WireDate.parse(command.createdAt)!)
+        let workflowResult = state.apply(
+            activity: workflow, at: WireDate.parse(workflow.createdAt)!)
+        let commandItem = try #require(commandResult)
+        let workflowItem = try #require(workflowResult)
+
+        #expect(commandItem.entityKind == .command)
+        #expect(workflowItem.entityKind == .workflow)
+    }
+
+    @Test("legacy task types infer command kind when entity type is absent")
+    func legacyCommandTaskTypeFallback() throws {
+        let commandTypes = ["local_bash", "bash", "command", "command_execution"]
+
+        for (index, taskType) in commandTypes.enumerated() {
+            let started = activity(
+                id: "act-legacy-\(index)", kind: ActivityKind.taskStarted,
+                at: "2026-07-04T10:00:0\(index).000Z",
+                payload: .object([
+                    "taskId": .string("legacy-\(index)"),
+                    "taskType": .string(taskType),
+                ]))
+            var state = T3SubagentTaskActivityState()
+            let result = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+            let item = try #require(result)
+            #expect(item.entityKind == .command)
+        }
+
+        #expect(T3SubagentTaskEntityKind(nil, taskType: "general-purpose") == .subagent)
+        #expect(T3SubagentTaskEntityKind(nil, taskType: nil) == .subagent)
+    }
 }

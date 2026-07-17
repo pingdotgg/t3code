@@ -18,7 +18,10 @@ import {
   MessageId,
   ProviderDriverKind,
   RuntimeTaskId,
+  SUB_AGENT_MAX_RUNNING_CHILDREN_PER_AGENT,
+  SUB_AGENT_MAX_RUNNING_PER_ROOT,
   SUB_AGENT_MAX_SPAWN_DEPTH,
+  SUB_AGENT_SPAWN_RATE_LIMIT,
   sanitizeSubAgentName,
   SubAgentError,
   ThreadId,
@@ -46,11 +49,16 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { enforceSubAgentStandardMode } from "../../../orchestration/subAgentModelPolicy.ts";
+import {
+  applySubAgentModelPolicy,
+  enforceSubAgentStandardMode,
+  resolveSubAgentModel,
+} from "../../../orchestration/subAgentModelPolicy.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
@@ -81,6 +89,7 @@ interface SubAgentRecord {
   readonly parentTurnId: TurnId | null;
   /** Last observed turn status; updated on spawn/send/wait and refreshed in list. */
   readonly status: SubAgentStatus;
+  readonly policyNotices: ReadonlyArray<string>;
 }
 
 export interface SubAgentCoordinatorShape {
@@ -301,6 +310,10 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const providerService = yield* ProviderService;
   const children = yield* SynchronizedRef.make<ReadonlyMap<ThreadId, SubAgentRecord>>(new Map());
+  const spawnTimestamps = yield* SynchronizedRef.make<Map<ThreadId, ReadonlyArray<number>>>(
+    new Map(),
+  );
+  const spawnGate = yield* Semaphore.make(1);
 
   const randomUuid = crypto.randomUUIDv4.pipe(Effect.orDie);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -408,6 +421,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       readonly title: string;
       readonly model: string;
       readonly effort?: string | undefined;
+      readonly policyNotices: ReadonlyArray<string>;
       readonly parentTurnId: TurnId | null;
       readonly createdAt: string;
     }) {
@@ -425,6 +439,9 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           subagentType: input.providerLabel,
           model: input.model,
           ...(input.effort ? { effort: input.effort } : {}),
+          ...(input.policyNotices.length > 0
+            ? { detail: `Policy: ${input.policyNotices.join("; ")}` }
+            : {}),
           workflowName: "agent_spawn",
           toolUseId: input.childThreadId,
         },
@@ -580,6 +597,94 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     return { thread, status } as const;
   });
 
+  const rootThreadId = (
+    threadId: ThreadId,
+    tracked: ReadonlyMap<ThreadId, SubAgentRecord>,
+  ): ThreadId => {
+    let current = threadId;
+    const visited = new Set<ThreadId>();
+    while (!visited.has(current)) {
+      visited.add(current);
+      const parent = tracked.get(current)?.parentThreadId;
+      if (parent === undefined) return current;
+      current = parent;
+    }
+    return current;
+  };
+
+  /**
+   * Refresh running records before enforcing in-memory concurrency limits.
+   * Scoped to the caller's sub-agent tree: both spawn caps are per-caller and
+   * per-root, so records under other roots never affect the decision and
+   * refreshing them would make spawn latency scale with every active
+   * sub-agent in the process.
+   */
+  const refreshTrackedStatuses = Effect.fn("SubAgentCoordinator.refreshTrackedStatuses")(function* (
+    callerThreadId: ThreadId,
+  ) {
+    const snapshot = yield* SynchronizedRef.get(children);
+    const root = rootThreadId(callerThreadId, snapshot);
+    for (const [threadId, record] of snapshot) {
+      if (isTerminalStatus(record.status)) continue;
+      if (rootThreadId(threadId, snapshot) !== root) continue;
+      const detail = yield* snapshotQuery
+        .getThreadDetailById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationThread>()));
+      if (Option.isNone(detail)) continue;
+      const status = turnStatus(detail.value, record.lastTurnRequestedAt);
+      if (status === record.status) continue;
+      if (isTerminalStatus(status)) {
+        yield* handleFirstTerminalTransition({
+          threadId,
+          record,
+          status,
+          thread: detail.value,
+          finalText: finalAssistantText(detail.value),
+        });
+      } else {
+        yield* writeStatus(threadId, status);
+      }
+    }
+    return yield* SynchronizedRef.get(children);
+  });
+
+  const checkSpawnRateLimit = Effect.fn("SubAgentCoordinator.checkSpawnRateLimit")(function* (
+    callerThreadId: ThreadId,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const timestamps = (yield* SynchronizedRef.get(spawnTimestamps)).get(callerThreadId) ?? [];
+    const retained = timestamps.filter(
+      (timestamp) => now - timestamp < SUB_AGENT_SPAWN_RATE_LIMIT.windowMillis,
+    );
+    if (retained.length >= SUB_AGENT_SPAWN_RATE_LIMIT.max) {
+      const retryAfterMillis =
+        SUB_AGENT_SPAWN_RATE_LIMIT.windowMillis - (now - (retained[0] ?? now));
+      const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMillis / 1_000));
+      return yield* new SubAgentError({
+        reason: "rate-limit-exceeded",
+        description: `This caller has reached the sub-agent spawn rate limit (${SUB_AGENT_SPAWN_RATE_LIMIT.max} per ${SUB_AGENT_SPAWN_RATE_LIMIT.windowMillis / 1_000}s). Wait about ${retryAfterSeconds}s, then consolidate work into fewer, larger sub-agent tasks.`,
+      });
+    }
+    return now;
+  });
+
+  const recordSpawnTimestamp = Effect.fn("SubAgentCoordinator.recordSpawnTimestamp")(function* (
+    callerThreadId: ThreadId,
+    timestamp: number,
+  ) {
+    yield* SynchronizedRef.update(spawnTimestamps, (current) => {
+      const next = new Map(current);
+      const previous = next.get(callerThreadId) ?? [];
+      next.set(
+        callerThreadId,
+        previous
+          .filter((value) => timestamp - value < SUB_AGENT_SPAWN_RATE_LIMIT.windowMillis)
+          .concat(timestamp),
+      );
+      return next;
+    });
+  });
+
   const startTurn = Effect.fn("SubAgentCoordinator.startTurn")(function* (
     threadId: ThreadId,
     prompt: string,
@@ -666,145 +771,199 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     },
   );
 
-  const spawn: SubAgentCoordinatorShape["spawn"] = Effect.fn("SubAgentCoordinator.spawn")(
-    function* (scope, input) {
-      const callerDepth = (yield* SynchronizedRef.get(children)).get(scope.threadId)?.depth ?? 0;
-      if (callerDepth >= SUB_AGENT_MAX_SPAWN_DEPTH) {
-        return yield* new SubAgentError({
-          reason: "depth-limit-exceeded",
-          description: `Sub-agents may only nest ${SUB_AGENT_MAX_SPAWN_DEPTH} levels deep; this session is already at depth ${callerDepth}. Do the work in this session instead.`,
-        });
-      }
-
-      const providers = yield* providerRegistry.getProviders;
-      const callerThread = yield* snapshotQuery
-        .getThreadShellById(scope.threadId)
-        .pipe(Effect.mapError(dispatchFailed("read calling thread")));
-      if (Option.isNone(callerThread)) {
-        return yield* new SubAgentError({
-          reason: "caller-thread-not-found",
-          description:
-            "The calling session's thread no longer exists; cannot place a sub-agent next to it.",
-        });
-      }
-      const parent = callerThread.value;
-      // Advisor/Planner with a configured executor model: run the child on that
-      // model. Sub-agents always inherit the parent thread's stored runtimeMode.
-      const executor =
-        parent.interactionMode === "advisor" ? (parent.executorModelSelection ?? null) : null;
-      const requestedInstanceId = executor?.instanceId ?? input.providerInstanceId;
-      const target = providers.find((provider) => provider.instanceId === requestedInstanceId);
-      if (!target) {
-        return yield* new SubAgentError({
-          reason: "provider-not-found",
-          description:
-            executor !== null
-              ? `Advisor/Planner executor provider instance "${requestedInstanceId}" is not configured. Set a different executor model or call agent_list for valid instance ids.`
-              : `No provider instance "${input.providerInstanceId}" is configured. Call agent_list for valid instance ids.`,
-        });
-      }
-      if (!isSpawnableProvider(target)) {
-        return yield* new SubAgentError({
-          reason: "provider-not-spawnable",
-          description:
-            executor !== null
-              ? `Advisor/Planner executor provider "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Choose a spawnable executor model, or clear the executor to advise only.`
-              : `Provider instance "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Call agent_list to pick a spawnable provider.`,
-        });
-      }
-      const inheritedModel =
-        parent.modelSelection.instanceId === target.instanceId &&
-        target.models.some((candidate) => candidate.slug === parent.modelSelection.model)
-          ? parent.modelSelection.model
-          : undefined;
-      // Executor selection is authoritative: pass the configured slug through
-      // even when the provider catalog does not currently list it. Catalogs are
-      // advisory; a stale slug surfaces as a provider session-start error.
-      const model =
-        executor !== null
-          ? executor.model
-          : (input.model ?? inheritedModel ?? target.models[0]?.slug);
-      if (model === undefined) {
-        return yield* new SubAgentError({
-          reason: "model-not-resolved",
-          description: `Provider instance "${target.instanceId}" reports no models; pass an explicit model slug.`,
-        });
-      }
-
-      const createdAt = yield* nowIso;
-      const commandUuid = yield* randomUuid;
-      const threadUuid = yield* randomUuid;
-      const childThreadId = ThreadId.make(threadUuid);
-      const activityTaskId = RuntimeTaskId.make(`agent:${threadUuid}`);
-      const name = resolveSpawnName(input);
-      const baseTitle = resolveSpawnTitle(input, name);
-      const title =
-        executor !== null
-          ? truncateTitle(`${baseTitle} [executor: ${target.instanceId}/${model}]`)
-          : baseTitle;
-      const modelSelection = resolveSpawnModelSelection(target, model);
-      const effort = resolveSpawnEffort(target, modelSelection);
-      const parentTurnId = yield* readParentTurnId(scope.threadId);
-
-      yield* engine
-        .dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(`server:sub-agent-spawn:${commandUuid}`),
-          threadId: childThreadId,
-          projectId: parent.projectId,
-          title,
-          modelSelection,
-          runtimeMode: parent.runtimeMode,
-          interactionMode: "default",
-          branch: parent.branch,
-          worktreePath: parent.worktreePath,
-          parentThreadId: scope.threadId,
-          createdAt,
-        })
-        .pipe(Effect.mapError(dispatchFailed("create sub-agent thread")));
-
-      const lastTurnRequestedAt = yield* startTurn(childThreadId, input.prompt, parent.runtimeMode);
-
-      yield* emitSpawnStartedActivity({
-        scope,
-        taskId: activityTaskId,
-        childThreadId,
-        providerLabel: target.displayName ?? target.driver,
-        title,
-        model,
-        ...(effort !== undefined ? { effort } : {}),
-        parentTurnId,
-        createdAt,
-      }).pipe(Effect.catch(() => Effect.void));
-
-      yield* SynchronizedRef.update(children, (current) => {
-        const next = new Map(current);
-        next.set(childThreadId, {
-          parentThreadId: scope.threadId,
-          depth: callerDepth + 1,
-          lastTurnRequestedAt,
-          ...(name !== undefined ? { name } : {}),
-          title,
-          providerInstanceId: target.instanceId,
-          model,
-          ...(effort !== undefined ? { effort } : {}),
-          activityTaskId,
-          parentTurnId,
-          status: "running",
-        });
-        return next;
+  const spawnLocked = Effect.fn("SubAgentCoordinator.spawn")(function* (
+    scope: McpInvocationScope,
+    input: SubAgentSpawnInput,
+  ) {
+    const callerDepth = (yield* SynchronizedRef.get(children)).get(scope.threadId)?.depth ?? 0;
+    if (callerDepth >= SUB_AGENT_MAX_SPAWN_DEPTH) {
+      return yield* new SubAgentError({
+        reason: "depth-limit-exceeded",
+        description: `Sub-agents may only nest ${SUB_AGENT_MAX_SPAWN_DEPTH} levels deep; this session is already at depth ${callerDepth}. Do the work in this session instead.`,
       });
+    }
 
-      return {
+    const spawnNow = yield* checkSpawnRateLimit(scope.threadId);
+    const tracked = yield* refreshTrackedStatuses(scope.threadId);
+    const runningChildren = [...tracked.values()].filter(
+      (record) => record.parentThreadId === scope.threadId && record.status === "running",
+    ).length;
+    if (runningChildren >= SUB_AGENT_MAX_RUNNING_CHILDREN_PER_AGENT) {
+      return yield* new SubAgentError({
+        reason: "concurrency-limit-exceeded",
+        description: `This caller already has ${runningChildren} running sub-agents, which reaches the per-caller cap of ${SUB_AGENT_MAX_RUNNING_CHILDREN_PER_AGENT}. Call agent_wait for running children first.`,
+      });
+    }
+    const root = rootThreadId(scope.threadId, tracked);
+    const runningRoot = [...tracked.entries()].filter(
+      ([threadId, record]) =>
+        record.status === "running" && rootThreadId(threadId, tracked) === root,
+    ).length;
+    if (runningRoot >= SUB_AGENT_MAX_RUNNING_PER_ROOT) {
+      return yield* new SubAgentError({
+        reason: "concurrency-limit-exceeded",
+        description: `This sub-agent tree already has ${runningRoot} running agents, which reaches the tree-wide cap of ${SUB_AGENT_MAX_RUNNING_PER_ROOT}. Call agent_wait for running children first.`,
+      });
+    }
+
+    const providers = yield* providerRegistry.getProviders;
+    const callerThread = yield* snapshotQuery
+      .getThreadShellById(scope.threadId)
+      .pipe(Effect.mapError(dispatchFailed("read calling thread")));
+    if (Option.isNone(callerThread)) {
+      return yield* new SubAgentError({
+        reason: "caller-thread-not-found",
+        description:
+          "The calling session's thread no longer exists; cannot place a sub-agent next to it.",
+      });
+    }
+    const parent = callerThread.value;
+    // Advisor/Planner with a configured executor model: run the child on that
+    // model. Sub-agents always inherit the parent thread's stored runtimeMode.
+    const executor =
+      parent.interactionMode === "advisor" ? (parent.executorModelSelection ?? null) : null;
+    const requestedInstanceId = executor?.instanceId ?? input.providerInstanceId;
+    const target = providers.find((provider) => provider.instanceId === requestedInstanceId);
+    if (!target) {
+      return yield* new SubAgentError({
+        reason: "provider-not-found",
+        description:
+          executor !== null
+            ? `Advisor/Planner executor provider instance "${requestedInstanceId}" is not configured. Set a different executor model or call agent_list for valid instance ids.`
+            : `No provider instance "${input.providerInstanceId}" is configured. Call agent_list for valid instance ids.`,
+      });
+    }
+    if (!isSpawnableProvider(target)) {
+      return yield* new SubAgentError({
+        reason: "provider-not-spawnable",
+        description:
+          executor !== null
+            ? `Advisor/Planner executor provider "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Choose a spawnable executor model, or clear the executor to advise only.`
+            : `Provider instance "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Call agent_list to pick a spawnable provider.`,
+      });
+    }
+    const inheritedModel =
+      parent.modelSelection.instanceId === target.instanceId &&
+      target.models.some((candidate) => candidate.slug === parent.modelSelection.model)
+        ? parent.modelSelection.model
+        : undefined;
+    // Executor selection is authoritative: pass the configured slug through
+    // even when the provider catalog does not currently list it. Catalogs are
+    // advisory; a stale slug surfaces as a provider session-start error.
+    const model =
+      executor !== null
+        ? executor.model
+        : (input.model ?? inheritedModel ?? target.models[0]?.slug);
+    if (model === undefined) {
+      return yield* new SubAgentError({
+        reason: "model-not-resolved",
+        description: `Provider instance "${target.instanceId}" reports no models; pass an explicit model slug.`,
+      });
+    }
+
+    const createdAt = yield* nowIso;
+    const commandUuid = yield* randomUuid;
+    const threadUuid = yield* randomUuid;
+    const childThreadId = ThreadId.make(threadUuid);
+    const activityTaskId = RuntimeTaskId.make(`agent:${threadUuid}`);
+    const name = resolveSpawnName(input);
+    const baseTitle = resolveSpawnTitle(input, name);
+    const modelResolution = resolveSubAgentModel({
+      driver: target.driver,
+      model,
+      availableModels: target.models.map((candidate) => candidate.slug),
+    });
+    const effectiveModel = modelResolution.model;
+    const requestedSelection = resolveSpawnModelSelection(target, effectiveModel);
+    const policy = applySubAgentModelPolicy({
+      driver: target.driver,
+      model: effectiveModel,
+      availableModels: target.models.map((candidate) => candidate.slug),
+      selection: requestedSelection,
+      modelResolution,
+      capabilitiesFor: (resolvedModel) =>
+        target.models.find((candidate) => candidate.slug === resolvedModel)?.capabilities ??
+        undefined,
+    });
+    const modelSelection = policy.selection;
+    const policyNotices = policy.notices;
+    const title =
+      executor !== null
+        ? truncateTitle(`${baseTitle} [executor: ${target.instanceId}/${effectiveModel}]`)
+        : baseTitle;
+    const effort = resolveSpawnEffort(target, modelSelection);
+    const parentTurnId = yield* readParentTurnId(scope.threadId);
+
+    yield* engine
+      .dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`server:sub-agent-spawn:${commandUuid}`),
         threadId: childThreadId,
-        providerInstanceId: target.instanceId,
-        model,
+        projectId: parent.projectId,
         title,
+        modelSelection,
+        runtimeMode: parent.runtimeMode,
+        interactionMode: "default",
+        branch: parent.branch,
+        worktreePath: parent.worktreePath,
+        parentThreadId: scope.threadId,
+        createdAt,
+      })
+      .pipe(Effect.mapError(dispatchFailed("create sub-agent thread")));
+
+    const lastTurnRequestedAt = yield* startTurn(childThreadId, input.prompt, parent.runtimeMode);
+
+    yield* emitSpawnStartedActivity({
+      scope,
+      taskId: activityTaskId,
+      childThreadId,
+      providerLabel: target.displayName ?? target.driver,
+      title,
+      model: effectiveModel,
+      ...(effort !== undefined ? { effort } : {}),
+      policyNotices,
+      parentTurnId,
+      createdAt,
+    }).pipe(Effect.catch(() => Effect.void));
+
+    yield* recordSpawnTimestamp(scope.threadId, spawnNow);
+    yield* SynchronizedRef.update(children, (current) => {
+      const next = new Map(current);
+      next.set(childThreadId, {
+        parentThreadId: scope.threadId,
+        depth: callerDepth + 1,
+        lastTurnRequestedAt,
         ...(name !== undefined ? { name } : {}),
-        status: "running" as const,
-      };
-    },
-  );
+        title,
+        providerInstanceId: target.instanceId,
+        model: effectiveModel,
+        ...(effort !== undefined ? { effort } : {}),
+        policyNotices,
+        activityTaskId,
+        parentTurnId,
+        status: "running",
+      });
+      return next;
+    });
+
+    return {
+      threadId: childThreadId,
+      providerInstanceId: target.instanceId,
+      model: effectiveModel,
+      title,
+      ...(name !== undefined ? { name } : {}),
+      policyNotices,
+      status: "running" as const,
+    };
+  });
+
+  // The rate limit and both concurrency caps are check-then-act over shared
+  // state; concurrent spawns could each pass the same snapshot and
+  // oversubscribe the limits, so spawns serialize through a single permit.
+  // Spawn dispatch itself is in-process command handling, not the child's
+  // actual turn, so holding the permit across it stays cheap.
+  const spawn: SubAgentCoordinatorShape["spawn"] = (scope, input) =>
+    spawnGate.withPermits(1)(spawnLocked(scope, input));
 
   const send: SubAgentCoordinatorShape["send"] = Effect.fn("SubAgentCoordinator.send")(
     function* (scope, input) {
@@ -846,6 +1005,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         title: record.title,
         model: record.model,
         ...(record.effort !== undefined ? { effort: record.effort } : {}),
+        policyNotices: record.policyNotices,
         parentTurnId,
         createdAt: lastTurnRequestedAt,
       }).pipe(Effect.catch(() => Effect.void));

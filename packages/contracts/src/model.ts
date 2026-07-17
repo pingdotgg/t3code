@@ -135,7 +135,7 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const FUGU_DRIVER_KIND = ProviderDriverKind.make("fugu");
 const CHATGPT_DRIVER_KIND = ProviderDriverKind.make("chatgpt");
 
-export const DEFAULT_MODEL = "gpt-5.4";
+export const DEFAULT_MODEL = "gpt-5.6";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {

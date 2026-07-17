@@ -5,17 +5,24 @@ describe("SubAgentProviderInfo", () => {
   it("should classify cheap models correctly", () => {
     expect(getModelCostTier("claude-haiku-4.5")).toBe("cheap");
     expect(getModelCostTier("gpt-4o-mini")).toBe("cheap");
+    expect(getModelCostTier("gpt-5.6-luna")).toBe("cheap");
+    expect(getModelCostTier("claudex-luna")).toBe("cheap");
   });
 
   it("should classify moderate models correctly", () => {
     expect(getModelCostTier("claude-sonnet-5")).toBe("moderate");
     expect(getModelCostTier("gpt-4o")).toBe("moderate");
+    expect(getModelCostTier("gpt-5.6")).toBe("moderate");
+    expect(getModelCostTier("gpt-5.6-terra")).toBe("moderate");
   });
 
   it("should classify expensive models correctly", () => {
     expect(getModelCostTier("claude-fable-5")).toBe("expensive");
     expect(getModelCostTier("claude-opus-4.8")).toBe("expensive");
+    expect(getModelCostTier("claude-opus-4-8")).toBe("expensive");
     expect(getModelCostTier("gpt-5.5")).toBe("expensive");
+    expect(getModelCostTier("gpt-5.6-sol")).toBe("expensive");
+    expect(getModelCostTier("claudex-sol")).toBe("expensive");
   });
 
   it("should default unknown models to moderate", () => {

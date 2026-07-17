@@ -52,7 +52,7 @@ enum SubagentTaskPresentation {
     static func title(for task: SubagentTaskItem) -> String {
         task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? task.description!
-            : "Subagent task"
+            : task.entityKind == .command ? "Command" : "Subagent task"
     }
 
     /// Compact identity badge: "Explore · Sonnet 5 · High" or "workflow · Opus 4.8".
