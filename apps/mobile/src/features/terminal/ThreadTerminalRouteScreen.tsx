@@ -70,6 +70,7 @@ import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiSt
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
 const TERMINAL_ACCESSORY_HEIGHT = 52;
+const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 type PendingModifier = "ctrl" | "meta";
 type HostPlatform = "mac" | "linux" | "windows" | "unknown";
@@ -1218,6 +1219,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           <>
             <View className="flex-1" style={{ paddingBottom: terminalBottomInset }}>
               <TerminalSurface
+                autoFocus={!SHOWCASE_ENABLED}
                 buffer={terminalSurfaceBuffer}
                 fontSize={fontSize}
                 isRunning={isRunning}
