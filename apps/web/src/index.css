@@ -5,31 +5,43 @@
 @custom-variant wco (&:is(.wco, .wco *));
 
 :root {
+  --app-scrollbar-width: 6px;
+  --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
+  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
+  --workspace-titlebar-control-size: 1.75rem;
+  --workspace-titlebar-control-gap: 0.75rem;
 }
 
-@media (width >= 40rem) {
-  :root {
-    --workspace-controls-right: calc(env(safe-area-inset-right) + 1.25rem);
-  }
+[data-slot="sidebar-wrapper"] {
+  --workspace-titlebar-content-left: calc(
+    var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +
+      var(--workspace-titlebar-control-gap)
+  );
 }
 
 .wco {
   --workspace-topbar-height: env(titlebar-area-height, 52px);
   --workspace-controls-top: env(titlebar-area-y, 0px);
+  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
   --workspace-controls-right: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 1em
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
   );
   --workspace-native-controls-inset: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 1em
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
   );
 }
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  /* Duty-cycled indicator animations: long opacity holds with short stepped
+     ramps, so the compositor only produces frames while the value changes
+     (~20% of the cycle) instead of every vsync. Keep flat holds dominant. */
+  --animate-status-pulse: status-pulse 2s infinite;
+  --animate-status-ping: status-ping 2s infinite;
   --font-sans:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
@@ -72,6 +84,36 @@
       background-position: -200% 0;
     }
   }
+  @keyframes status-pulse {
+    0%,
+    40% {
+      opacity: 1;
+      animation-timing-function: steps(6);
+    }
+    50%,
+    90% {
+      opacity: 0.5;
+      animation-timing-function: steps(6);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-ping {
+    /* Burst first (immediate feedback for click ripples), then hold
+       invisible for the rest of the cycle. Mirrors animate-ping's
+       75%-scale start. */
+    0% {
+      opacity: 0.9;
+      scale: 0.75;
+      animation-timing-function: steps(8);
+    }
+    40%,
+    100% {
+      opacity: 0;
+      scale: 2;
+    }
+  }
 }
 
 @layer base {
@@ -96,6 +138,28 @@
 }
 
 @layer components {
+  .sidebar-brand {
+    display: none;
+  }
+
+  .sidebar-brand-stage {
+    display: none;
+  }
+
+  @media (min-width: 48rem) {
+    @container sidebar-header (min-width: 13.5rem) {
+      .sidebar-brand {
+        display: flex;
+      }
+    }
+
+    @container sidebar-header (min-width: 15.75rem) {
+      .sidebar-brand-stage {
+        display: inline-flex;
+      }
+    }
+  }
+
   .workspace-topbar {
     display: flex;
     height: var(--workspace-topbar-height);
@@ -111,6 +175,76 @@
     display: flex;
     height: var(--workspace-topbar-height);
     align-items: center;
+    -webkit-app-region: no-drag;
+  }
+
+  .surface-subheader {
+    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+
+  .chat-composer-horizontal-inset {
+    padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .chat-composer-glass {
+    background: color-mix(in srgb, var(--card) 20%, transparent);
+  }
+
+  /* Mix from --background (not --card): the lower chrome is a full-width
+     strip over the main view, and a card-tinted wash reads as a lighter
+     seam against it when no content is scrolled underneath. The backdrop
+     blur, not the tint, carries the frosted effect. */
+  .chat-composer-lower-chrome {
+    background: color-mix(in srgb, var(--background) 20%, transparent);
+  }
+
+  .chat-composer-glass {
+    box-shadow:
+      0 18px 48px -20px rgb(0 0 0 / 28%),
+      0 4px 14px -7px rgb(0 0 0 / 22%);
+  }
+
+  .chat-composer-shared-blur {
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+  }
+
+  .dark .chat-composer-glass {
+    background: color-mix(in srgb, var(--card) 45%, transparent);
+  }
+
+  .dark .chat-composer-lower-chrome {
+    background: color-mix(in srgb, var(--background) 45%, transparent);
+  }
+
+  .dark .chat-composer-glass {
+    box-shadow:
+      0 18px 48px -20px rgb(0 0 0 / 60%),
+      0 4px 14px -7px rgb(0 0 0 / 40%);
+  }
+
+  .chat-composer-lower-chrome {
+    margin-top: -1px;
+    margin-inline-end: var(--app-scrollbar-width);
+    padding-top: 1px;
+  }
+
+  @media (min-width: 40rem) {
+    .chat-composer-horizontal-inset {
+      padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
+      padding-inline-end: calc(env(safe-area-inset-right) + 1.25rem);
+    }
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .chat-composer-glass {
+      background: var(--card);
+    }
+
+    .chat-composer-lower-chrome {
+      background: var(--background);
+    }
   }
 }
 
@@ -128,6 +262,15 @@
 }
 @utility pr-safe {
   padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+/* Grain texture for chrome surfaces that float above the body (see the
+   --surface-grain note). Layered over the element's background-color, so it
+   composes with bg-* utilities. */
+@utility surface-grain {
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
 /* Suppress all transitions during theme changes */
@@ -233,15 +376,26 @@ body {
   overflow-y: hidden;
   overscroll-behavior-y: none;
   padding-top: max(env(safe-area-inset-top), 0px);
+  padding-right: var(--desktop-window-right-resize-inset);
 }
 
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+.electron-windows {
+  --desktop-window-right-resize-inset: 6px;
+}
+
+/* App-chrome grain. Baked into each surface's own background (behind
+   content) rather than a fixed overlay on top: a full-viewport overlay
+   forces the compositor to re-blend every frame any animation produces,
+   which multiplied idle GPU cost. The overlay's 0.035 opacity lives in the
+   SVG rect instead. Surfaces that float over the body (e.g. the inset main
+   card) must opt in via the surface-grain utility, or they lose the
+   grain's subtle brightening and stand out against the body. */
+:root {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+body {
+  background-image: var(--surface-grain);
   background-repeat: repeat;
   background-size: 256px 256px;
 }
@@ -267,7 +421,7 @@ code {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: var(--app-scrollbar-width);
 }
 
 ::-webkit-scrollbar-track {
@@ -690,7 +844,8 @@ label:has(> select#reasoning-effort) select {
   background: color-mix(in srgb, var(--background) 94%, var(--card));
 }
 
-.diff-render-file {
+.diff-render-file,
+.diff-render-surface > diffs-container {
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   overflow: clip;
@@ -726,10 +881,33 @@ label:has(> select#reasoning-effort) select {
     #ec4899 90%,
     #ff6b6b 100%
   );
+  position: relative;
+  background: transparent;
+}
+
+.ultrathink-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
   background-image: var(--ultrathink-spectrum);
   background-size: 220% 220%;
+  pointer-events: none;
   filter: saturate(0.82) brightness(0.92);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
   animation: ultrathink-rainbow 10s linear infinite;
+}
+
+.ultrathink-frame > * {
+  position: relative;
 }
 
 .ultrathink-chroma {
