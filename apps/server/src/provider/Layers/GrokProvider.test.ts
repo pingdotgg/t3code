@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
+import { GROK_UNAUTHENTICATED_MESSAGE } from "../acp/GrokAcpSupport.ts";
 import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -81,6 +82,32 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
+  it.effect("reports unauthenticated before ACP model discovery when credentials are missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-unauth-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-cli-" });
+      const grokPath = path.join(dir, "grok");
+      yield* fs.writeFileString(
+        grokPath,
+        ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+      );
+      yield* fs.chmod(grokPath, 0o755);
+
+      const snapshot = yield* checkGrokProviderStatus(
+        decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+        { HOME: homeDirectory },
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.auth.status).toBe("unauthenticated");
+      expect(snapshot.message).toBe(GROK_UNAUTHENTICATED_MESSAGE);
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
+    }),
+  );
+
   it.effect("reports an error when ACP model discovery is unavailable", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
@@ -97,6 +124,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { XAI_API_KEY: "xai-test" },
           );
         }),
       );

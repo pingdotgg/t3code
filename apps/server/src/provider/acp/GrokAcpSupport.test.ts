@@ -1,10 +1,18 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  grokAuthJsonHasCredentials,
+  GROK_UNAUTHENTICATED_MESSAGE,
+  hasGrokApiKeyInEnvironment,
+  probeGrokCliCredentials,
+  resolveGrokAuthJsonPath,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
 
@@ -13,6 +21,55 @@ describe("resolveGrokAcpBaseModelId", () => {
     expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-build");
     expect(resolveGrokAcpBaseModelId("  grok-test-custom-model  ")).toBe("grok-test-custom-model");
+  });
+});
+
+describe("grok credential helpers", () => {
+  it("detects API key environment variables", () => {
+    expect(hasGrokApiKeyInEnvironment({})).toBe(false);
+    expect(hasGrokApiKeyInEnvironment({ XAI_API_KEY: "   " })).toBe(false);
+    expect(hasGrokApiKeyInEnvironment({ XAI_API_KEY: "xai-test" })).toBe(true);
+  });
+
+  it("parses cached Grok auth.json credentials", () => {
+    expect(grokAuthJsonHasCredentials("")).toBe(false);
+    expect(grokAuthJsonHasCredentials("{}")).toBe(false);
+    expect(
+      grokAuthJsonHasCredentials(
+        '{"https://auth.x.ai::example":{"refresh_token":"refresh-token"}}',
+      ),
+    ).toBe(true);
+    expect(grokAuthJsonHasCredentials('{"https://auth.x.ai::example":{"key":"api-key"}}')).toBe(
+      true,
+    );
+  });
+
+  it("resolves the default Grok auth.json path", () => {
+    expect(resolveGrokAuthJsonPath("/home/user")).toBe("/home/user/.grok/auth.json");
+  });
+
+  it.effect("probes credentials from env or auth.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-auth-" });
+      const authPath = path.join(homeDirectory, ".grok", "auth.json");
+      yield* fs.makeDirectory(path.join(homeDirectory, ".grok"), { recursive: true });
+
+      expect(yield* probeGrokCliCredentials({}, homeDirectory)).toBe(false);
+
+      yield* fs.writeFileString(
+        authPath,
+        '{"https://auth.x.ai::example":{"refresh_token":"refresh-token"}}',
+      );
+      expect(yield* probeGrokCliCredentials({}, homeDirectory)).toBe(true);
+      expect(yield* probeGrokCliCredentials({ XAI_API_KEY: "xai-test" }, homeDirectory)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it("documents the unauthenticated guidance message", () => {
+    expect(GROK_UNAUTHENTICATED_MESSAGE).toContain("grok login");
+    expect(GROK_UNAUTHENTICATED_MESSAGE).toContain("XAI_API_KEY");
   });
 });
 
