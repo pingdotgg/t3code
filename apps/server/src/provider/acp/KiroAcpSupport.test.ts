@@ -18,9 +18,10 @@ describe("buildKiroAcpSpawnInput", () => {
 });
 
 describe("resolveKiroAcpModelId", () => {
-  it("preserves the CLI default and normalizes explicit model ids", () => {
+  it("keeps the selectable default slug and normalizes explicit model ids", () => {
     expect(resolveKiroAcpModelId(undefined)).toBeUndefined();
-    expect(resolveKiroAcpModelId(" default ")).toBeUndefined();
+    expect(resolveKiroAcpModelId("")).toBeUndefined();
+    expect(resolveKiroAcpModelId(" default ")).toBe("default");
     expect(resolveKiroAcpModelId(" claude-opus-4.6 ")).toBe("claude-opus-4.6");
   });
 });

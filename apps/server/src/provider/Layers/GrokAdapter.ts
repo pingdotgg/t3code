@@ -756,7 +756,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
-          const displayBoundModel = resolveModelId(boundModelId);
+          // Only resolve for display when ACP (or a switch) actually produced a
+          // model id. Calling resolveModelId(undefined) would fall through to
+          // provider defaults (e.g. "grok-build") and mis-advertise the session.
+          const displayBoundModel = boundModelId ? resolveModelId(boundModelId) : undefined;
 
           const now = yield* nowIso;
           const session: ProviderSession = {

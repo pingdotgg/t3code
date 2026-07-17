@@ -64,7 +64,9 @@ export const makeKiroAcpRuntime = (
 
 export function resolveKiroAcpModelId(model: string | null | undefined): string | undefined {
   const trimmed = model?.trim();
-  if (!trimmed || trimmed === "default") {
+  // Keep the advertised "default" slug as a real model id so selecting it after
+  // a custom model issues session/set_model instead of "do not switch" (undefined).
+  if (!trimmed) {
     return undefined;
   }
   return normalizeModelSlug(trimmed, KIRO_DRIVER_KIND) ?? trimmed;
