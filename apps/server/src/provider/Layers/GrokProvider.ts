@@ -142,14 +142,19 @@ function buildGrokDiscoveredModelsFromSessionModelState(
     .filter((model): model is ServerProviderModel => model !== undefined);
 }
 
+/**
+ * Wait until Grok emits `available_commands_update` (including an empty list).
+ * Option.none = no notification yet; Option.some([]) = explicit empty command set.
+ * Times out to [] when the agent never sends the update.
+ */
 const waitForGrokSlashCommands = (
-  slashCommandsRef: Ref.Ref<ReadonlyArray<ServerProviderSlashCommand>>,
+  slashCommandsRef: Ref.Ref<Option.Option<ReadonlyArray<ServerProviderSlashCommand>>>,
 ) =>
   Effect.gen(function* () {
     while (true) {
       const commands = yield* Ref.get(slashCommandsRef);
-      if (commands.length > 0) {
-        return commands;
+      if (Option.isSome(commands)) {
+        return commands.value;
       }
       yield* Effect.sleep(Duration.millis(GROK_ACP_SLASH_COMMAND_POLL_MS));
     }
@@ -179,24 +184,30 @@ const discoverGrokModelsViaAcp = (
 
     // Collect ACP available_commands_update (skills + builtins) for the composer.
     // Register before start so we do not miss the post-session/new notification.
-    const slashCommandsRef = yield* Ref.make<ReadonlyArray<ServerProviderSlashCommand>>([]);
+    // Option.none = not yet received; Option.some(list) = notification seen (list may be empty).
+    const slashCommandsRef = yield* Ref.make<
+      Option.Option<ReadonlyArray<ServerProviderSlashCommand>>
+    >(Option.none());
     yield* acp.handleSessionUpdate((notification) => {
       const update = notification.update;
       if (update.sessionUpdate !== "available_commands_update") {
         return Effect.void;
       }
-      return Ref.set(slashCommandsRef, parseAcpAvailableCommands(update.availableCommands));
+      return Ref.set(
+        slashCommandsRef,
+        Option.some(parseAcpAvailableCommands(update.availableCommands)),
+      );
     });
 
     const started = yield* acp.start();
     const models = buildGrokDiscoveredModelsFromSessionModelState(
       started.sessionSetupResult.models,
     );
-    // Commands usually arrive after the session/new response; wait briefly.
-    let slashCommands = yield* Ref.get(slashCommandsRef);
-    if (slashCommands.length === 0) {
-      slashCommands = yield* waitForGrokSlashCommands(slashCommandsRef);
-    }
+    // Commands usually arrive after the session/new response; wait briefly if still pending.
+    const pendingOrReady = yield* Ref.get(slashCommandsRef);
+    const slashCommands = Option.isSome(pendingOrReady)
+      ? pendingOrReady.value
+      : yield* waitForGrokSlashCommands(slashCommandsRef);
 
     return { models, slashCommands } satisfies GrokAcpDiscoveryResult;
   }).pipe(Effect.scoped);
