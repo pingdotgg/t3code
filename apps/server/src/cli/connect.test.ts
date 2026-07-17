@@ -1,9 +1,18 @@
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 
-import { acquireRelayClientForLink } from "./connect.ts";
+import {
+  acquireRelayClientForLink,
+  isPublishAgentActivityEnabledValue,
+  reportCloudDisconnectResults,
+} from "./connect.ts";
 
 const managedExecutable = {
   status: "available",
@@ -100,3 +109,58 @@ it.effect("reuses an available relay client executable without prompting", () =>
     assert.equal(promptCalls, 0);
   }),
 );
+
+it.effect("keeps disconnect causes in structured logs and out of console warnings", () => {
+  const warnings: ReadonlyArray<unknown>[] = [];
+  const logs: Readonly<Record<string, unknown>>[] = [];
+  const testConsole = {
+    ...globalThis.console,
+    warn: (...args: ReadonlyArray<unknown>) => {
+      warnings.push(args);
+    },
+  } satisfies Console.Console;
+  const logger = Logger.make(({ fiber }) => {
+    logs.push(fiber.getRef(References.CurrentLogAnnotations));
+  });
+  const liveFailure = "live unlink private diagnostic";
+  const relayFailure = "relay revoke private diagnostic";
+
+  return reportCloudDisconnectResults({
+    clearAuthorization: true,
+    liveResult: {
+      status: "failed",
+      cause: Cause.fail(new Error(liveFailure)),
+    },
+    relayResult: Exit.failCause(Cause.die(new Error(relayFailure))),
+  }).pipe(
+    Effect.provideService(Console.Console, testConsole),
+    Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.lengthOf(warnings, 2);
+        const warningText = warnings.flat().map(String).join("\n");
+        assert.include(warningText, "running server could not stop its tunnel");
+        assert.include(warningText, "Could not revoke the relay-side environment record");
+        assert.notInclude(warningText, liveFailure);
+        assert.notInclude(warningText, relayFailure);
+        assert.deepEqual(
+          logs.map(({ operation, clearAuthorization }) => ({ operation, clearAuthorization })),
+          [
+            { operation: "live-server-unlink", clearAuthorization: true },
+            { operation: "relay-environment-unlink", clearAuthorization: true },
+          ],
+        );
+        const loggedCauses = logs.map((log) => String(log.cause)).join("\n");
+        assert.include(loggedCauses, liveFailure);
+        assert.include(loggedCauses, relayFailure);
+      }),
+    ),
+  );
+});
+
+it("treats only the literal 'true' as publish-enabled", () => {
+  assert.equal(isPublishAgentActivityEnabledValue("true"), true);
+  assert.equal(isPublishAgentActivityEnabledValue("false"), false);
+  assert.equal(isPublishAgentActivityEnabledValue(null), false);
+  assert.equal(isPublishAgentActivityEnabledValue("TRUE"), false);
+});

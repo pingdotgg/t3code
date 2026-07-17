@@ -1,13 +1,15 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError, type SourceControlProviderError } from "@t3tools/contracts";
+import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -20,8 +22,8 @@ const CLONE_URLS = {
 };
 
 function makeProvider(
-  overrides: Partial<SourceControlProvider.SourceControlProviderShape> = {},
-): SourceControlProvider.SourceControlProviderShape {
+  overrides: Partial<SourceControlProvider.SourceControlProvider["Service"]> = {},
+): SourceControlProvider.SourceControlProvider["Service"] {
   const unsupported = (operation: string) =>
     Effect.die(`unexpected provider operation ${operation}`) as Effect.Effect<
       never,
@@ -52,10 +54,11 @@ function processOutput(): GitVcsDriver.ExecuteGitResult {
 }
 
 function makeLayer(input: {
-  readonly provider?: SourceControlProvider.SourceControlProviderShape;
-  readonly git?: Partial<GitVcsDriver.GitVcsDriverShape>;
+  readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
+  readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  readonly fileSystem?: FileSystem.FileSystem;
 }) {
-  return SourceControlRepositoryService.layer.pipe(
+  const serviceLayer = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         get: () => Effect.succeed(input.provider ?? makeProvider()),
@@ -75,9 +78,20 @@ function makeLayer(input: {
         ...input.git,
       }),
     ),
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-repos-" })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(
+      ServerConfig.layerTest(
+        process.cwd(),
+        input.fileSystem ? "/tmp/t3-source-control-repos" : { prefix: "t3-source-control-repos-" },
+      ),
+    ),
   );
+
+  return input.fileSystem
+    ? serviceLayer.pipe(
+        Layer.provide(Layer.succeed(FileSystem.FileSystem, input.fileSystem)),
+        Layer.provideMerge(NodePath.layer),
+      )
+    : serviceLayer.pipe(Layer.provideMerge(NodeServices.layer));
 }
 
 it.effect("looks up repositories through the requested provider without search", () => {
@@ -100,6 +114,39 @@ it.effect("looks up repositories through the requested provider without search",
 
     assert.deepStrictEqual(result, { provider: "github", ...CLONE_URLS });
     assert.deepStrictEqual(calls, [{ cwd: "/workspace", repository: "octocat/t3code" }]);
+  }).pipe(Effect.provide(makeLayer({ provider })));
+});
+
+it.effect("preserves provider failures without deriving the repository message from them", () => {
+  const providerCause = new SourceControlProviderError({
+    provider: "github",
+    operation: "getRepositoryCloneUrls",
+    cwd: "/workspace",
+    repository: "octocat/t3code",
+    detail: "credential token abc123 was rejected",
+  });
+  const provider = makeProvider({
+    getRepositoryCloneUrls: () => Effect.fail(providerCause),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.lookupRepository({
+        provider: "github",
+        repository: "octocat/t3code",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.strictEqual(error.provider, "github");
+    assert.strictEqual(error.operation, "lookupRepository");
+    assert.strictEqual(error.detail, "The source control operation could not be completed.");
+    assert.strictEqual(
+      error.message,
+      "Source control repository operation lookupRepository failed for github: The source control operation could not be completed.",
+    );
+    assert.strictEqual(error.cause, providerCause);
   }).pipe(Effect.provide(makeLayer({ provider })));
 });
 
@@ -147,6 +194,38 @@ it.effect("clones a looked-up repository into the requested destination", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("preserves destination probe failures instead of treating them as missing paths", () => {
+  const fileSystemCause = PlatformError.systemError({
+    _tag: "PermissionDenied",
+    module: "FileSystem",
+    method: "exists",
+    pathOrDescriptor: "/restricted/t3code",
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.cloneRepository({
+        remoteUrl: CLONE_URLS.sshUrl,
+        destinationPath: "/restricted/t3code",
+      }),
+    );
+
+    assert.strictEqual(error.provider, "unknown");
+    assert.strictEqual(error.operation, "cloneRepository");
+    assert.strictEqual(error.cause, fileSystemCause);
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        fileSystem: FileSystem.makeNoop({
+          exists: () => Effect.fail(fileSystemCause),
+          makeDirectory: () => Effect.void,
+        }),
+      }),
+    ),
+  );
+});
 
 it.effect("publishes by creating the repository, adding a remote, and pushing upstream", () => {
   const createCalls: Array<{ cwd: string; repository: string; visibility: string }> = [];
