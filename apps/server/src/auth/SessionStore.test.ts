@@ -44,14 +44,14 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessi
   create: () => Effect.void,
   getById: () => Effect.fail(repositoryFailure),
   listActive: () => Effect.succeed([]),
-  revoke: () => Effect.succeed(false),
-  revokeAllExcept: () => Effect.succeed([]),
+  revoke: () => Effect.fail(repositoryFailure),
+  revokeAllExcept: () => Effect.fail(repositoryFailure),
   setLastConnectedAt: () => Effect.void,
 });
 
 const failingSessionLookupCredentialLayer = Layer.effect(
   SessionStore.SessionStore,
-  SessionStore.make(),
+  SessionStore.make,
 ).pipe(
   Layer.provide(failingSessionLookupRepositoryLayer),
   Layer.provide(ServerSecretStore.layer),
@@ -89,7 +89,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const sessions = yield* SessionStore.SessionStore;
       const error = yield* Effect.flip(sessions.verify("not-a-session-token"));
 
-      expect(error._tag).toBe("SessionCredentialInvalidError");
+      expect(error._tag).toBe("MalformedSessionTokenError");
       expect(error.message).toContain("Malformed session token");
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
@@ -104,11 +104,29 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       const sessionError = yield* Effect.flip(sessions.verify(issued.token));
       const websocketError = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
+      const revokeError = yield* Effect.flip(sessions.revoke(issued.sessionId));
+      const revokeOthersError = yield* Effect.flip(sessions.revokeAllExcept(issued.sessionId));
 
-      expect(sessionError._tag).toBe("SessionCredentialInternalError");
-      expect(websocketError._tag).toBe("SessionCredentialInternalError");
+      expect(sessionError._tag).toBe("SessionCredentialVerificationError");
+      expect(websocketError._tag).toBe("WebSocketTokenVerificationError");
       expect(sessionError.cause).toBe(repositoryFailure);
       expect(websocketError.cause).toBe(repositoryFailure);
+      if (sessionError._tag === "SessionCredentialVerificationError") {
+        expect(sessionError.sessionId).toBe(issued.sessionId);
+      }
+      if (websocketError._tag === "WebSocketTokenVerificationError") {
+        expect(websocketError.sessionId).toBe(issued.sessionId);
+      }
+      expect(revokeError).toMatchObject({
+        _tag: "SessionRevocationError",
+        sessionId: issued.sessionId,
+        cause: repositoryFailure,
+      });
+      expect(revokeOthersError).toMatchObject({
+        _tag: "OtherSessionsRevocationError",
+        currentSessionId: issued.sessionId,
+        cause: repositoryFailure,
+      });
     }).pipe(Effect.provide(failingSessionLookupCredentialLayer)),
   );
   it.effect("verifies session tokens against the Effect clock", () =>
@@ -145,7 +163,52 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       yield* TestClock.adjust(Duration.seconds(2));
 
       const error = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
-      expect(error.message).toContain("expired");
+      expect(error._tag).toBe("WebSocketSessionExpiredError");
+      if (error._tag === "WebSocketSessionExpiredError") {
+        expect(error.sessionId).toBe(issued.sessionId);
+        expect(error.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+        expect(error.observedAt.epochMilliseconds).toBeGreaterThan(
+          error.expiresAt.epochMilliseconds,
+        );
+      }
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("includes expiry context when session and websocket tokens expire", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "short-lived-token",
+        ttl: Duration.seconds(1),
+      });
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId, {
+        ttl: Duration.seconds(1),
+      });
+
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      const sessionError = yield* Effect.flip(sessions.verify(issued.token));
+      const websocketError = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
+
+      expect(sessionError._tag).toBe("SessionTokenExpiredError");
+      if (sessionError._tag === "SessionTokenExpiredError") {
+        expect(sessionError.sessionId).toBe(issued.sessionId);
+        expect(sessionError.expiresAt.epochMilliseconds).toBe(issued.expiresAt.epochMilliseconds);
+        expect(sessionError.observedAt.epochMilliseconds).toBeGreaterThan(
+          sessionError.expiresAt.epochMilliseconds,
+        );
+      }
+      expect(websocketError._tag).toBe("WebSocketTokenExpiredError");
+      if (websocketError._tag === "WebSocketTokenExpiredError") {
+        expect(websocketError.sessionId).toBe(issued.sessionId);
+        expect(websocketError.expiresAt.epochMilliseconds).toBe(
+          websocket.expiresAt.epochMilliseconds,
+        );
+        expect(websocketError.observedAt.epochMilliseconds).toBeGreaterThan(
+          websocketError.expiresAt.epochMilliseconds,
+        );
+      }
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
@@ -173,12 +236,16 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
           ipAddress: "192.168.1.88",
         },
       });
+      const clientWebSocket = yield* sessions.issueWebSocketToken(client.sessionId);
 
       yield* sessions.markConnected(client.sessionId);
       const beforeRevoke = yield* sessions.listActive();
       const revokedCount = yield* sessions.revokeAllExcept(administrative.sessionId);
       const afterRevoke = yield* sessions.listActive();
       const revokedClient = yield* Effect.flip(sessions.verify(client.token));
+      const revokedClientWebSocket = yield* Effect.flip(
+        sessions.verifyWebSocketToken(clientWebSocket.token),
+      );
 
       expect(beforeRevoke).toHaveLength(2);
       expect(beforeRevoke.find((entry) => entry.sessionId === client.sessionId)?.connected).toBe(
@@ -194,7 +261,16 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(revokedCount).toBe(1);
       expect(afterRevoke).toHaveLength(1);
       expect(afterRevoke[0]?.sessionId).toBe(administrative.sessionId);
-      expect(revokedClient.message).toContain("revoked");
+      expect(revokedClient._tag).toBe("SessionTokenRevokedError");
+      if (revokedClient._tag === "SessionTokenRevokedError") {
+        expect(revokedClient.sessionId).toBe(client.sessionId);
+        expect(revokedClient.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
+      }
+      expect(revokedClientWebSocket._tag).toBe("WebSocketSessionRevokedError");
+      if (revokedClientWebSocket._tag === "WebSocketSessionRevokedError") {
+        expect(revokedClientWebSocket.sessionId).toBe(client.sessionId);
+        expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
+      }
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 

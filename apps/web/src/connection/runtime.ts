@@ -1,28 +1,29 @@
 import { Connection } from "@t3tools/client-runtime/connection";
+import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
+import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 
 import { runtimeContextLayer } from "../lib/runtime";
 import { connectionPlatformLayer } from "./platform";
 
-const providedConnectionPlatformLayer: Layer.Layer<
-  Layer.Success<typeof connectionPlatformLayer>,
-  Layer.Error<typeof connectionPlatformLayer>
-> = connectionPlatformLayer.pipe(Layer.provide(runtimeContextLayer));
+const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
+  Layer.provide(runtimeContextLayer),
+);
+
+const snapshotLoaderLayer = Layer.merge(threadSnapshotLoaderLayer, shellSnapshotLoaderLayer);
 
 type ConnectionLayerSource =
   | typeof Connection.layer
+  | typeof snapshotLoaderLayer
   | typeof runtimeContextLayer
-  | typeof providedConnectionPlatformLayer;
+  | typeof connectionPlatformLayer;
 
-export const connectionLayer: Layer.Layer<
-  Layer.Success<ConnectionLayerSource>,
-  Layer.Error<ConnectionLayerSource>
-> = Connection.layer.pipe(
+const connectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
   Layer.provideMerge(Layer.mergeAll(runtimeContextLayer, providedConnectionPlatformLayer)),
 );
 
 export const connectionAtomRuntime: Atom.AtomRuntime<
-  Layer.Success<typeof connectionLayer>,
-  Layer.Error<typeof connectionLayer>
+  Layer.Success<ConnectionLayerSource>,
+  Layer.Error<ConnectionLayerSource>
 > = Atom.runtime(connectionLayer);

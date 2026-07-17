@@ -12,12 +12,15 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -246,6 +249,7 @@ interface EditableFileSurfaceProps {
   contents: string;
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
+  wordWrap: boolean;
   onPostRender: FilePostRender;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
@@ -294,6 +298,7 @@ function EditableFileSurface({
   contents,
   resolvedTheme,
   revealRequestId,
+  wordWrap,
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
@@ -514,7 +519,7 @@ function EditableFileSurface({
               onGutterUtilityClick: setSelectedRange,
               onLineSelectionChange: setSelectedRange,
               onLineSelectionEnd: handleLineSelectionEnd,
-              overflow: "scroll",
+              overflow: wordWrap ? "wrap" : "scroll",
               theme: resolveDiffThemeName(resolvedTheme),
               themeType: resolvedTheme,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -555,7 +560,12 @@ function RenderedMarkdownSurface({
   onPendingChange,
 }: Omit<
   EditableFileSurfaceProps,
-  "resolvedTheme" | "composerDraftTarget" | "revealLine" | "revealRequestId" | "onPostRender"
+  | "resolvedTheme"
+  | "composerDraftTarget"
+  | "revealLine"
+  | "revealRequestId"
+  | "wordWrap"
+  | "onPostRender"
 > & {
   threadRef: ScopedThreadRef;
 }) {
@@ -589,8 +599,9 @@ function RenderedMarkdownSurface({
 
 function initialExplorerOpen(): boolean {
   try {
-    return window.localStorage.getItem(FILE_EXPLORER_STORAGE_KEY) !== "false";
-  } catch {
+    return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
+  } catch (error) {
+    console.error(error);
     return true;
   }
 }
@@ -610,6 +621,7 @@ export default function FilePreviewPanel({
   onPendingChange,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
+  const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -650,8 +662,10 @@ export default function FilePreviewPanel({
     setExplorerOpen((current) => {
       const next = !current;
       try {
-        window.localStorage.setItem(FILE_EXPLORER_STORAGE_KEY, String(next));
-      } catch {}
+        setLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, next, Schema.Boolean);
+      } catch (error) {
+        console.error(error);
+      }
       return next;
     });
   };
@@ -839,7 +853,7 @@ export default function FilePreviewPanel({
                   }}
                   options={{
                     disableFileHeader: true,
-                    overflow: "scroll",
+                    overflow: wordWrap ? "wrap" : "scroll",
                     theme: resolveDiffThemeName(resolvedTheme),
                     themeType: resolvedTheme,
                     unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -858,6 +872,7 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
+                wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
                 onPendingChange={onPendingChange}
               />

@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -42,7 +43,16 @@ describe("ElectronProtocol", () => {
           assert.isDefined(handler);
 
           const response = yield* Effect.promise(() =>
-            handler!(new Request("t3code-dev://app/api/health?verbose=1")),
+            handler!(
+              new Request("t3code-dev://app/api/health?verbose=1", {
+                headers: {
+                  accept: "application/json",
+                  origin: "t3code-dev://app",
+                  referer: "t3code-dev://app/",
+                  "sec-fetch-site": "same-origin",
+                },
+              }),
+            ),
           );
           assert.equal(yield* Effect.promise(() => response.text()), "ok");
           assert.include(
@@ -69,6 +79,11 @@ describe("ElectronProtocol", () => {
         ["t3code-dev"],
       );
       assert.equal(netFetchMock.mock.calls[0]?.[0], "http://127.0.0.1:3773/api/health?verbose=1");
+      const forwardedHeaders = new Headers(netFetchMock.mock.calls[0]?.[1]?.headers);
+      assert.equal(forwardedHeaders.get("accept"), "application/json");
+      assert.isNull(forwardedHeaders.get("origin"));
+      assert.isNull(forwardedHeaders.get("referer"));
+      assert.isNull(forwardedHeaders.get("sec-fetch-site"));
       assert.deepEqual(unhandleMock.mock.calls, [["t3code-dev"]]);
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
@@ -95,6 +110,88 @@ describe("ElectronProtocol", () => {
 
       assert.equal(response.status, 404);
       assert.equal(netFetchMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
+  it.effect("retries transient renderer target failures", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock
+        .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:5733"))
+        .mockResolvedValueOnce(new Response("ready"));
+
+      const response = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:5733/"),
+            backendOrigin: new URL("http://127.0.0.1:3773/"),
+            clerkFrontendApiHostname: undefined,
+          });
+          return yield* Effect.promise(() => handler!(new Request("t3code-dev://app/")));
+        }),
+      );
+
+      assert.equal(yield* Effect.promise(() => response.text()), "ready");
+      assert.equal(netFetchMock.mock.calls.length, 2);
+    }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
+  it.effect("preserves protocol registration failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("protocol registration failed");
+      handleMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      const error = yield* Effect.scoped(
+        protocol.registerDesktopProtocol({
+          scheme: "t3code-dev",
+          targetOrigin: new URL("http://127.0.0.1:3773/"),
+          backendOrigin: new URL("http://127.0.0.1:3774/"),
+          clerkFrontendApiHostname: undefined,
+        }),
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronProtocol.ElectronProtocolRegistrationError);
+      assert.equal(error.scheme, "t3code-dev");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message, 'Failed to register Electron protocol scheme "t3code-dev".');
+    }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
+  it.effect("preserves protocol unregistration failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("protocol unregistration failed");
+      unhandleMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      const exit = yield* Effect.exit(
+        Effect.scoped(
+          protocol.registerDesktopProtocol({
+            scheme: "t3code",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            backendOrigin: new URL("http://127.0.0.1:3773/"),
+            clerkFrontendApiHostname: undefined,
+          }),
+        ),
+      );
+
+      assert.equal(exit._tag, "Failure");
+      if (exit._tag === "Failure") {
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, ElectronProtocol.ElectronProtocolUnregistrationError);
+        assert.equal(error.scheme, "t3code");
+        assert.strictEqual(error.cause, cause);
+        assert.equal(error.message, 'Failed to unregister Electron protocol scheme "t3code".');
+      }
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
 

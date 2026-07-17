@@ -53,29 +53,25 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("classifies invalid bootstrap credential failures for the HTTP boundary", () =>
     Effect.sync(() => {
       const error = EnvironmentAuth.toBootstrapExchangeError(
-        new PairingGrantStore.BootstrapCredentialInvalidError({
-          message: "Unknown bootstrap credential.",
-        }),
+        new PairingGrantStore.UnknownBootstrapCredentialError({}),
       );
 
       expect(error._tag).toBe("ServerAuthInvalidCredentialError");
-      if (error._tag === "ServerAuthInvalidCredentialError") {
-        expect(error.reason).toBe("invalid_credential");
-      }
     }),
   );
 
   it.effect("maps unexpected bootstrap failures to 500", () =>
     Effect.sync(() => {
-      const error = EnvironmentAuth.toBootstrapExchangeError(
-        new PairingGrantStore.BootstrapCredentialInternalError({
-          message: "Failed to consume bootstrap credential.",
-          cause: new Error("sqlite is unavailable"),
-        }),
-      );
+      const cause = new PairingGrantStore.BootstrapCredentialConsumeError({
+        cause: new Error("sqlite is unavailable"),
+      });
+      const error = EnvironmentAuth.toBootstrapExchangeError(cause);
 
-      expect(error._tag).toBe("ServerAuthInternalError");
+      expect(error._tag).toBe("ServerAuthBootstrapCredentialValidationError");
       expect(error.message).toBe("Failed to validate bootstrap credential.");
+      if (error._tag === "ServerAuthBootstrapCredentialValidationError") {
+        expect(error.cause).toBe(cause);
+      }
     }),
   );
 
@@ -117,10 +113,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         )
         .pipe(Effect.flip);
 
-      expect(error._tag).toBe("ServerAuthInvalidRequestError");
-      if (error._tag === "ServerAuthInvalidRequestError") {
-        expect(error.reason).toBe("scope_not_granted");
-      }
+      expect(error._tag).toBe("ServerAuthScopeNotGrantedError");
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 

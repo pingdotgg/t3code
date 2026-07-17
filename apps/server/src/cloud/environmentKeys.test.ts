@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 
 const makeServerSecretStoreLayer = () =>
@@ -65,8 +65,8 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
           }).pipe(
             Effect.flatMap(() =>
               Effect.fail(
-                new ServerSecretStore.SecretStoreError({
-                  message: "Concurrent keypair creation won.",
+                new ServerSecretStore.SecretStorePersistError({
+                  resource: "environment signing key pair",
                   cause: PlatformError.systemError({
                     _tag: "AlreadyExists",
                     module: "FileSystem",
@@ -79,7 +79,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
           ),
         getOrCreateRandom: unusedSecretStoreOperation,
         remove: unusedSecretStoreOperation,
-      } satisfies ServerSecretStore.ServerSecretStoreShape;
+      } satisfies ServerSecretStore.ServerSecretStore["Service"];
 
       assert.deepEqual(yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore), {
         privateKey: "winner-private",

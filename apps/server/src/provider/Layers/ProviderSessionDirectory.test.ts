@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
@@ -229,8 +229,8 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
   it("rehydrates persisted mappings across layer restart", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-"));
-      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-directory-"));
+      const dbPath = NodePath.join(tempDir, "orchestration.sqlite");
       const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
 
       const threadId = ThreadId.make("thread-restart");
@@ -266,6 +266,6 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         assert.equal(legacyTableRows.length, 0);
       }).pipe(Effect.provide(directoryLayer));
 
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }));
 });
