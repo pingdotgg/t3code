@@ -1,6 +1,7 @@
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 
 import type { Preferences } from "../../persistence/mobile-preferences";
+import { supportsAgentAwarenessPush } from "./capabilities";
 
 // Development builds are Xcode-signed and receive sandbox APNs tokens;
 // preview and production builds are distribution-signed and use production
@@ -21,7 +22,8 @@ export function makeRelayDeviceRegistrationRequest(input: {
   readonly notificationsEnabled: boolean;
   readonly preferences: Preferences;
 }): RelayDeviceRegistrationRequest {
-  const liveActivitiesEnabled = input.preferences.liveActivitiesEnabled !== false;
+  const pushAvailable = supportsAgentAwarenessPush();
+  const liveActivitiesEnabled = pushAvailable && input.preferences.liveActivitiesEnabled !== false;
   return {
     deviceId: input.deviceId,
     label: input.label,
@@ -34,7 +36,7 @@ export function makeRelayDeviceRegistrationRequest(input: {
     ...(input.pushToStartToken ? { pushToStartToken: input.pushToStartToken } : {}),
     preferences: {
       liveActivitiesEnabled,
-      notificationsEnabled: input.notificationsEnabled,
+      notificationsEnabled: pushAvailable && input.notificationsEnabled,
       notifyOnApproval: true,
       notifyOnInput: true,
       notifyOnCompletion: true,

@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { Platform, Pressable } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
 
