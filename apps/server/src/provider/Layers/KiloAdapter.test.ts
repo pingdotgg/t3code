@@ -125,24 +125,11 @@ const KiloRuntimeTestDouble: KiloRuntimeShape = {
         add: async () => undefined,
       },
       event: {
-        subscribe: async (_params?: unknown, options?: { signal?: AbortSignal }) => ({
+        subscribe: async () => ({
           stream: (async function* () {
             for (const event of runtimeMock.state.subscribedEvents) {
-              if (options?.signal?.aborted) {
-                return;
-              }
               yield event;
             }
-            // Keep the subscription open until the adapter aborts it (session
-            // stop / layer teardown), matching long-lived production SSE.
-            if (options?.signal?.aborted) {
-              return;
-            }
-            await new Promise<void>((resolve) => {
-              options?.signal?.addEventListener("abort", () => resolve(), {
-                once: true,
-              });
-            });
           })(),
         }),
       },

@@ -988,16 +988,14 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           Effect.gen(function* () {
             // Expected paths: caller aborted the fetch or the session
             // has already been marked stopped. Treat as a clean exit.
+            // Clean stream completion is ignored here (same as OpenCode):
+            // production SSE is long-lived and only ends on abort/failure.
             if (eventsAbortController.signal.aborted || (yield* Ref.get(context.stopped))) {
               return;
             }
             if (Exit.isFailure(exit)) {
               yield* emitUnexpectedExit(context, kiloRuntimeErrorDetail(Cause.squash(exit.cause)));
-              return;
             }
-            // Clean remote close still ends the event stream — tear the
-            // session down so it cannot stay "running" without events.
-            yield* emitUnexpectedExit(context, "Kilo event stream closed unexpectedly.");
           }),
         ),
         Effect.forkIn(context.sessionScope),
