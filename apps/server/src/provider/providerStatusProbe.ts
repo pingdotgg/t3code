@@ -65,6 +65,7 @@ export interface CliProviderStatusProbeConfig<
   RVersion,
   EDiscovery,
   RDiscovery,
+  TDiscovery = ReadonlyArray<ServerProviderModel>,
 > {
   readonly presentation: ServerProviderPresentation;
   /** Always true here — the disabled case is handled before this scaffold runs. */
@@ -74,21 +75,25 @@ export interface CliProviderStatusProbeConfig<
   readonly versionProbeTimeoutMs: number;
   readonly discoveryTimeoutMs: number;
   readonly runVersionCommand: Effect.Effect<CommandResult, EVersion, RVersion>;
-  readonly discoverModels: Effect.Effect<
-    ReadonlyArray<ServerProviderModel>,
-    EDiscovery,
-    RDiscovery
-  >;
+  /**
+   * Discovery result passed opaquely to {@link buildDiscoveredSnapshot}.
+   * Defaults to a plain discovered-model list (Grok), but a provider can
+   * return a richer value — e.g. Kimi carries whether an empty catalog means
+   * "signed out" or "no model option at all" so the two are not conflated.
+   */
+  readonly discoverModels: Effect.Effect<TDiscovery, EDiscovery, RDiscovery>;
   readonly messages: CliProviderStatusProbeMessages;
   readonly logMessages: CliProviderStatusProbeLogMessages;
   /**
    * Assemble the terminal snapshot from a successful discovery. Providers
    * differ here: Grok maps an empty discovered-model list back to fallback
-   * models with unknown auth, while Kimi maps it to an unauthenticated error.
+   * models with unknown auth, while Kimi maps an empty catalog to an
+   * unauthenticated error only when the CLI actually reported an empty model
+   * option (signed out), and to a discovery error otherwise.
    */
   readonly buildDiscoveredSnapshot: (input: {
     readonly version: string | null;
-    readonly discoveredModels: ReadonlyArray<ServerProviderModel>;
+    readonly discoveredModels: TDiscovery;
   }) => ServerProviderDraft;
 }
 
@@ -103,8 +108,9 @@ export const runCliProviderStatusProbe = <
   RVersion,
   EDiscovery,
   RDiscovery,
+  TDiscovery = ReadonlyArray<ServerProviderModel>,
 >(
-  config: CliProviderStatusProbeConfig<EVersion, RVersion, EDiscovery, RDiscovery>,
+  config: CliProviderStatusProbeConfig<EVersion, RVersion, EDiscovery, RDiscovery, TDiscovery>,
 ): Effect.Effect<ServerProviderDraft, never, RVersion | RDiscovery> =>
   Effect.gen(function* () {
     const { presentation, enabled, checkedAt, fallbackModels, messages, logMessages } = config;

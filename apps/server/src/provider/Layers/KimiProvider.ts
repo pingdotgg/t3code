@@ -13,9 +13,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   getKimiAcpModelOptions,
+  isKimiModelCatalogEmpty,
   KIMI_AUTH_REQUIRED_MESSAGE,
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
@@ -47,6 +49,13 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 // after boot, antivirus scanning) can far exceed the ~1s warm-path latency.
 const VERSION_PROBE_TIMEOUT_MS = 15_000;
 const KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+
+// Shown when the ACP session carried no "model" config option at all (as
+// opposed to an empty option list, which is the signed-out signal). This
+// points at an incompatible or malformed CLI rather than an auth problem, so
+// telling the user to "run kimi login" would only mislead them.
+const KIMI_MODELS_UNAVAILABLE_MESSAGE =
+  "Kimi Code CLI is installed but returned no models. The installed CLI may be incompatible or misconfigured; check server logs for details.";
 
 export const KIMI_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -135,10 +144,90 @@ export function buildKimiDiscoveredModelsFromConfigOptions(
   });
 }
 
+export interface KimiAcpDiscoveryResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  /**
+   * True when the CLI reported a "model" config option whose option list is
+   * empty — Kimi's signed-out signal. Distinguished from a response that
+   * carries no "model" option at all (an incompatible or malformed CLI), which
+   * also yields zero models but is not an authentication problem.
+   */
+  readonly catalogEmpty: boolean;
+}
+
+/**
+ * Map an ACP model-discovery result to a terminal provider snapshot. The three
+ * outcomes are kept distinct on purpose:
+ *  - models present     → ready / authenticated
+ *  - empty catalog      → unauthenticated ("run kimi login")
+ *  - no model option    → discovery error (incompatible/malformed CLI)
+ *
+ * Collapsing the last two — as a plain `models.length === 0` check would — tells
+ * users to log in even when authentication is fine, masking the real fault.
+ */
+export function buildKimiDiscoveredProviderSnapshot(input: {
+  readonly kimiSettings: KimiSettings;
+  readonly checkedAt: string;
+  readonly fallbackModels: ReadonlyArray<ServerProviderModel>;
+  readonly version: string | null;
+  readonly discovery: KimiAcpDiscoveryResult;
+}): ServerProviderDraft {
+  const { kimiSettings, checkedAt, fallbackModels, version, discovery } = input;
+
+  if (discovery.models.length > 0) {
+    return buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: kimiSettings.enabled,
+      checkedAt,
+      models: kimiModelsFromSettings(kimiSettings.customModels, discovery.models),
+      probe: {
+        installed: true,
+        version,
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+  }
+
+  if (discovery.catalogEmpty) {
+    return buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: kimiSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: KIMI_AUTH_REQUIRED_MESSAGE,
+      },
+    });
+  }
+
+  return buildServerProvider({
+    presentation: KIMI_PRESENTATION,
+    enabled: kimiSettings.enabled,
+    checkedAt,
+    models: fallbackModels,
+    probe: {
+      installed: true,
+      version,
+      status: "error",
+      auth: { status: "unknown" },
+      message: KIMI_MODELS_UNAVAILABLE_MESSAGE,
+    },
+  });
+}
+
 export const discoverKimiModelsViaAcp = (
   kimiSettings: KimiSettings,
   environment: NodeJS.ProcessEnv = process.env,
-) =>
+): Effect.Effect<
+  KimiAcpDiscoveryResult,
+  EffectAcpErrors.AcpError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const acp = yield* makeKimiAcpRuntime({
@@ -149,7 +238,11 @@ export const discoverKimiModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     yield* acp.start();
-    return buildKimiDiscoveredModelsFromConfigOptions(yield* acp.getConfigOptions);
+    const configOptions = yield* acp.getConfigOptions;
+    return {
+      models: buildKimiDiscoveredModelsFromConfigOptions(configOptions),
+      catalogEmpty: isKimiModelCatalogEmpty(configOptions),
+    };
   }).pipe(Effect.scoped);
 
 const runKimiVersionCommand = (
@@ -227,32 +320,13 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
         "Kimi ACP model discovery timed out after " + KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS + "ms.",
     },
     buildDiscoveredSnapshot: ({ version, discoveredModels }) =>
-      discoveredModels.length === 0
-        ? buildServerProvider({
-            presentation: KIMI_PRESENTATION,
-            enabled: kimiSettings.enabled,
-            checkedAt,
-            models: fallbackModels,
-            probe: {
-              installed: true,
-              version,
-              status: "error",
-              auth: { status: "unauthenticated" },
-              message: KIMI_AUTH_REQUIRED_MESSAGE,
-            },
-          })
-        : buildServerProvider({
-            presentation: KIMI_PRESENTATION,
-            enabled: kimiSettings.enabled,
-            checkedAt,
-            models: kimiModelsFromSettings(kimiSettings.customModels, discoveredModels),
-            probe: {
-              installed: true,
-              version,
-              status: "ready",
-              auth: { status: "authenticated" },
-            },
-          }),
+      buildKimiDiscoveredProviderSnapshot({
+        kimiSettings,
+        checkedAt,
+        fallbackModels,
+        version,
+        discovery: discoveredModels,
+      }),
   });
 });
 

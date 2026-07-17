@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import {
   buildInitialKimiProviderSnapshot,
   buildKimiDiscoveredModelsFromConfigOptions,
+  buildKimiDiscoveredProviderSnapshot,
   checkKimiProviderStatus,
 } from "./KimiProvider.ts";
 
@@ -73,6 +74,56 @@ describe("buildKimiDiscoveredModelsFromConfigOptions", () => {
         },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("buildKimiDiscoveredProviderSnapshot", () => {
+  const fallbackModels = [
+    { slug: "kimi-for-coding", name: "Kimi for Coding", isCustom: false, capabilities: {} },
+  ] as const;
+  const baseInput = {
+    kimiSettings: decodeKimiSettings({ enabled: true }),
+    checkedAt: "2026-07-17T00:00:00.000Z",
+    fallbackModels,
+    version: "0.26.0",
+  };
+
+  it("reports ready/authenticated when models were discovered", () => {
+    const snapshot = buildKimiDiscoveredProviderSnapshot({
+      ...baseInput,
+      discovery: {
+        models: [
+          { slug: "kimi-for-coding", name: "Kimi for Coding", isCustom: false, capabilities: {} },
+        ],
+        catalogEmpty: false,
+      },
+    });
+
+    expect(snapshot.status).toBe("ready");
+    expect(snapshot.auth.status).toBe("authenticated");
+  });
+
+  it("reports unauthenticated when the model catalog is empty (signed out)", () => {
+    const snapshot = buildKimiDiscoveredProviderSnapshot({
+      ...baseInput,
+      discovery: { models: [], catalogEmpty: true },
+    });
+
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.auth.status).toBe("unauthenticated");
+    expect(snapshot.message).toMatch(/kimi login/);
+  });
+
+  it("reports a discovery error, not an auth failure, when there is no model option", () => {
+    const snapshot = buildKimiDiscoveredProviderSnapshot({
+      ...baseInput,
+      discovery: { models: [], catalogEmpty: false },
+    });
+
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.auth.status).toBe("unknown");
+    expect(snapshot.message).not.toMatch(/kimi login/);
+    expect(snapshot.message).toMatch(/incompatible|misconfigured|no models/);
   });
 });
 

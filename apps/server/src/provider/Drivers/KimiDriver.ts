@@ -1,4 +1,5 @@
 import { KimiSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -110,11 +111,21 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
         ...effectiveConfig,
         binaryPath: resolvedKimiCommand,
       } satisfies KimiSettings;
+      // Provider maintenance (`kimi upgrade`) is spawned from the server's own
+      // environment, not this instance's ProviderInstanceEnvironment. A bare
+      // "kimi" executable (found only via the instance-augmented PATH) would
+      // fail command-not-found there, so pin the maintenance command to an
+      // absolute path resolved with the instance environment while it is still
+      // in scope. If the CLI can't be resolved (not installed), fall back to
+      // the bare command — maintenance can't run in that state anyway.
+      const kimiUpdateExecutable = yield* resolveCommandPath(resolvedKimiCommand, {
+        env: processEnv,
+      }).pipe(Effect.catchTag("CommandResolutionError", () => Effect.succeed(resolvedKimiCommand)));
       const update = makeStaticProviderMaintenanceResolver(
         makeProviderMaintenanceCapabilities({
           provider: KIMI_DRIVER_KIND,
           packageName: null,
-          updateExecutable: resolvedKimiCommand,
+          updateExecutable: kimiUpdateExecutable,
           updateArgs: ["upgrade"],
           updateLockKey: "kimi-code",
         }),
