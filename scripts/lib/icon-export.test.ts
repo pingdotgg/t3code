@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
 
 import { encodePngIco, readPngDimensions } from "./icon-export.ts";
 
@@ -13,7 +13,7 @@ const pngHeader = (width: number, height: number) => {
 
 describe("icon export", () => {
   it("reads dimensions from a PNG IHDR chunk", () => {
-    expect(readPngDimensions(pngHeader(1024, 512))).toEqual({ width: 1024, height: 512 });
+    assert.deepEqual(readPngDimensions(pngHeader(1024, 512)), { width: 1024, height: 512 });
   });
 
   it("encodes PNG renditions into an ICO directory", () => {
@@ -24,22 +24,24 @@ describe("icon export", () => {
       { size: 256, contents: large },
     ]);
 
-    expect(ico.readUInt16LE(2)).toBe(1);
-    expect(ico.readUInt16LE(4)).toBe(2);
-    expect(ico.readUInt8(6)).toBe(16);
-    expect(ico.readUInt8(22)).toBe(0);
-    expect(ico.readUInt32LE(18)).toBe(38);
-    expect(ico.readUInt32LE(34)).toBe(38 + small.length);
-    expect(ico.subarray(38, 38 + small.length)).toEqual(small);
-    expect(ico.subarray(38 + small.length)).toEqual(large);
+    assert.equal(ico.readUInt16LE(2), 1);
+    assert.equal(ico.readUInt16LE(4), 2);
+    assert.equal(ico.readUInt8(6), 16);
+    assert.equal(ico.readUInt8(22), 0);
+    assert.equal(ico.readUInt32LE(18), 38);
+    assert.equal(ico.readUInt32LE(34), 38 + small.length);
+    assert.deepEqual(ico.subarray(38, 38 + small.length), small);
+    assert.deepEqual(ico.subarray(38 + small.length), large);
   });
 
   it("rejects duplicate ICO rendition sizes", () => {
-    expect(() =>
-      encodePngIco([
-        { size: 32, contents: pngHeader(32, 32) },
-        { size: 32, contents: pngHeader(32, 32) },
-      ]),
-    ).toThrow("provided more than once");
+    assert.throws(
+      () =>
+        encodePngIco([
+          { size: 32, contents: pngHeader(32, 32) },
+          { size: 32, contents: pngHeader(32, 32) },
+        ]),
+      /provided more than once/,
+    );
   });
 });
