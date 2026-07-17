@@ -1274,9 +1274,17 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           isSteer
             ? Effect.void
             : Effect.gen(function* () {
-                // Only clear if we still own the claim (a concurrent steer may
-                // have reused this turn id; still safe to clear on fresh fail).
-                yield* Ref.set(context.activeTurnId, undefined);
+                // Only clear when we still own the claim. A concurrent steer
+                // reuses this turn id; wiping it would abort still-running work.
+                const stillOwnsClaim = yield* Ref.modify(context.activeTurnId, (current) => {
+                  if (current === turnId) {
+                    return [true, undefined] as const;
+                  }
+                  return [false, current] as const;
+                });
+                if (!stillOwnsClaim) {
+                  return;
+                }
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 yield* updateProviderSession(
