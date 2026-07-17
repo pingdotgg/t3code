@@ -6,35 +6,49 @@
     {
       "layers": [
         {
-          "hidden": false,
-          "image-name": "gpt-image-1.5-jd70szmrd03p36z4zv48ycsbax81egvr.png",
-          "name": "gpt-image-1.5-jd70szmrd03p36z4zv48ycsbax81egvr",
+          "glass": true,
+          "image-name": "blueprint-glass.svg",
+          "name": "Blueprint Glass T3",
           "position": {
-            "scale": 1.1,
+            "scale": 8.5,
             "translation-in-points": [0, 0]
           }
         },
         {
-          "image-name": "T3.svg",
-          "name": "T3",
+          "glass": false,
+          "image-name": "blueprint-t3.svg",
+          "name": "Blueprint T3",
           "position": {
-            "scale": 10,
+            "scale": 8.5,
             "translation-in-points": [0, 0]
           }
         },
         {
-          "hidden": true,
-          "image-name": "Texturelabs_Paper_381XL.jpg",
-          "name": "Texturelabs_Paper_381XL"
+          "glass": false,
+          "image-name": "blueprint-annotations.svg",
+          "name": "Drafting Annotations",
+          "position": {
+            "scale": 8.5,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "glass": true,
+          "image-name": "blueprint-bg.svg",
+          "name": "Blueprint Background",
+          "position": {
+            "scale": 8.1,
+            "translation-in-points": [0, 0]
+          }
         }
       ],
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.5
+        "opacity": 0.6
       },
       "translucency": {
         "enabled": true,
-        "value": 0.5
+        "value": 0.2
       }
     }
   ],

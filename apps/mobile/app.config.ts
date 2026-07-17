@@ -49,9 +49,9 @@ const PREVIEW_ASSETS = {
 } as const;
 
 const RELEASE_ASSETS = {
-  appIcon: "./assets/splash-icon-prod.png",
-  iosIcon: "./assets/icon-composer-prod.icon",
-  splashIcon: "./assets/splash-icon-prod.png",
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   androidAdaptiveForeground: "./assets/android-icon-mark.png",
   androidAdaptiveBackgroundColor: "#000000",
   androidMonochromeIcon: "./assets/android-icon-mark.png",

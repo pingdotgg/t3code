@@ -10,7 +10,7 @@ const BRAND_MARK_SOURCE =
     ? require("../../../../assets/dev/blueprint-ios-1024.png")
     : appVariant === "preview"
       ? require("../../../../assets/nightly/nightly-ios-1024.png")
-      : require("../../assets/splash-icon-prod.png");
+      : require("../../../../assets/prod/black-ios-1024.png");
 const DEFAULT_STAGE_LABEL =
   appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Alpha";
 
