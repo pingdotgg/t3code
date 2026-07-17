@@ -67,7 +67,13 @@ export function eventThreadId(event: OrchestrationEvent): ThreadId | null {
 export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boolean {
   switch (event.type) {
     case "thread.message-sent":
-      return !event.payload.streaming;
+    case "thread.turn-start-requested":
+      // These events express intent to start work, but the shell still contains
+      // the previous turn's terminal state until the provider acknowledges the
+      // new turn. Publishing that snapshot can queue a fresh "Done" alert just
+      // before the real running state arrives. Provider lifecycle events publish
+      // the authoritative starting/running state instead.
+      return false;
     case "thread.proposed-plan-upserted":
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":

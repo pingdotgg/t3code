@@ -1,8 +1,9 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "./AppSymbol";
 import { Image } from "expo-image";
 import { useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
 
@@ -12,6 +13,7 @@ const loadedFaviconUrls = new Set<string>();
 /* ─── Component ──────────────────────────────────────────────────────── */
 export function ProjectFavicon(props: {
   readonly environmentId: EnvironmentId;
+  readonly open?: boolean;
   readonly size?: number;
   readonly projectTitle: string;
   readonly workspaceRoot?: string | null;
@@ -23,11 +25,13 @@ export function ProjectFavicon(props: {
       ? null
       : { _tag: "project-favicon", cwd: props.workspaceRoot },
   );
+  const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
 
   return (
     <ProjectFaviconImage
       key={faviconUrl}
-      faviconUrl={faviconUrl}
+      faviconUrl={renderableFaviconUrl}
+      open={props.open}
       projectTitle={props.projectTitle}
       size={size}
     />
@@ -36,6 +40,7 @@ export function ProjectFavicon(props: {
 
 function ProjectFaviconImage(props: {
   readonly faviconUrl: string | null;
+  readonly open?: boolean;
   readonly projectTitle: string;
   readonly size: number;
 }) {
@@ -59,7 +64,7 @@ function ProjectFaviconImage(props: {
       {/* Folder icon fallback (matches web's FolderIcon) */}
       {!showImage ? (
         <SymbolView
-          name="folder.fill"
+          name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
           size={props.size * 0.78}
           tintColor={iconMuted}
           type="monochrome"
