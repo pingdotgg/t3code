@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
+import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -228,6 +229,7 @@ describe("AssetAccess", () => {
       const fallbackResult = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root },
       });
+      expect(fallbackResult.relativeUrl.endsWith(`/${PROJECT_FAVICON_FALLBACK_MARKER}`)).toBe(true);
       const fallbackSuffix = fallbackResult.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const fallbackSeparatorIndex = fallbackSuffix.indexOf("/");
       expect(
@@ -235,7 +237,7 @@ describe("AssetAccess", () => {
           fallbackSuffix.slice(0, fallbackSeparatorIndex),
           fallbackSuffix.slice(fallbackSeparatorIndex + 1),
         ),
-      ).toEqual({ kind: "project-favicon-fallback" });
+      ).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 
