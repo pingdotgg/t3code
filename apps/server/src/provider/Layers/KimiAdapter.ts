@@ -20,7 +20,7 @@ import {
   resolveKimiAcpBaseModelId,
 } from "../acp/KimiAcpSupport.ts";
 import type { KimiAdapterShape } from "../Services/KimiAdapter.ts";
-import { makeStandardAcpAdapter, type StandardAcpAdapterConfig } from "./CursorAdapter.ts";
+import { makeStandardAcpAdapter, type StandardAcpAdapterConfig } from "./StandardAcpAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("kimi");
@@ -44,7 +44,10 @@ function applyKimiSessionConfiguration<E>(input: {
     | undefined;
   readonly mapError: (context: {
     readonly cause: EffectAcpErrors.AcpError;
-    readonly method: "session/set_config_option" | "session/set_mode";
+    // Kimi has no session/set_mode RPC: both model and mode changes go
+    // through session/set_config_option, so that is the only method tag
+    // this adapter can ever report.
+    readonly method: "session/set_config_option";
   }) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
@@ -95,8 +98,6 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
       provider: PROVIDER,
       defaultInstanceId: ProviderInstanceId.make("kimi"),
       displayName: "Kimi Code",
-      eventFailureDetail: "Failed to process Kimi Code ACP event.",
-      registerCursorExtensions: false,
       makeRuntime,
       applySessionConfiguration: applyKimiSessionConfiguration,
       resolveBaseModelId: resolveKimiAcpBaseModelId,

@@ -19,6 +19,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+import { applyAcpModelSelectionIfChanged } from "./AcpModelSelection.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 export const KIMI_AUTH_METHOD_ID = "login";
@@ -120,11 +121,13 @@ export function resolveKimiAcpBaseModelId(model: string | null | undefined): str
 export function findKimiModelConfigOption(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): Extract<EffectAcpSchema.SessionConfigOption, { readonly type: "select" }> | undefined {
+  // Match by id only, mirroring the generic findSessionConfigOption used by
+  // the setConfigOption write path. Requiring the category tag as well would
+  // let a CLI-side metadata change break model discovery (empty catalog ->
+  // permanently "not authenticated") while writes kept working.
   return configOptions?.find(
     (option): option is Extract<EffectAcpSchema.SessionConfigOption, { readonly type: "select" }> =>
-      option.type === "select" &&
-      option.id.trim().toLowerCase() === "model" &&
-      option.category?.trim().toLowerCase() === "model",
+      option.type === "select" && option.id.trim().toLowerCase() === "model",
   );
 }
 
@@ -186,14 +189,12 @@ export function applyKimiAcpModelSelection<E>(input: {
   readonly requestedModelId: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
-  const shouldSwitchModel =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  if (!shouldSwitchModel) {
-    return Effect.succeed(input.currentModelId);
-  }
-  return input.runtime
-    .setConfigOption("model", input.requestedModelId)
-    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+  return applyAcpModelSelectionIfChanged({
+    currentModelId: input.currentModelId,
+    requestedModelId: input.requestedModelId,
+    setModel: (modelId) => input.runtime.setConfigOption("model", modelId),
+    mapError: input.mapError,
+  });
 }
 
 export function resolveKimiAcpModeId(input: {

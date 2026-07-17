@@ -14,7 +14,7 @@ import {
 
 import type { AcpPermissionRequest, AcpPlanUpdate, AcpToolCallState } from "./AcpRuntimeModel.ts";
 
-type AcpAdapterRawSource = Extract<
+export type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,
   "acp.jsonrpc" | `acp.${string}.extension`
 >;

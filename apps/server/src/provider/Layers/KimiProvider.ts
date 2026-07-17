@@ -6,15 +6,11 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -25,18 +21,17 @@ import {
   resolveKimiAcpBaseModelId,
   resolveKimiBinaryPath,
 } from "../acp/KimiAcpSupport.ts";
-import {
-  enrichProviderSnapshotWithVersionAdvisory,
-  type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
+import { type ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import {
   buildServerProvider,
-  isCommandMissingCause,
-  parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import {
+  enrichCliProviderSnapshotAdvisory,
+  runCliProviderStatusProbe,
+} from "../providerStatusProbe.ts";
 
 const KIMI_PRESENTATION = {
   displayName: "Kimi Code",
@@ -202,145 +197,62 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
     });
   }
 
-  const versionResult = yield* runKimiVersionCommand(kimiSettings, environment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(versionResult)) {
-    const error = versionResult.failure;
-    yield* Effect.logWarning("Kimi Code CLI health check failed.", {
-      errorTag: error._tag,
-    });
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Kimi Code CLI command kimi is not installed or not on PATH."
-          : "Failed to execute Kimi Code CLI health check.",
-      },
-    });
-  }
-
-  if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Kimi Code CLI is installed but timed out while running kimi --version.",
-      },
-    });
-  }
-
-  const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(versionOutput.stdout + "\n" + versionOutput.stderr);
-  if (versionOutput.code !== 0) {
-    yield* Effect.logWarning("Kimi Code CLI version probe exited with a non-zero status.", {
-      exitCode: versionOutput.code,
-      stdoutLength: versionOutput.stdout.length,
-      stderrLength: versionOutput.stderr.length,
-    });
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Kimi Code CLI is installed but failed to run.",
-      },
-    });
-  }
-
-  const discoveryExit = yield* discoverKimiModelsViaAcp(kimiSettings, environment).pipe(
-    Effect.timeoutOption(KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
-    Effect.exit,
-  );
-  if (Exit.isFailure(discoveryExit)) {
-    yield* Effect.logWarning("Kimi ACP model discovery failed", {
-      errorTag: causeErrorTag(discoveryExit.cause),
-    });
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message:
-          "Kimi Code CLI is installed but ACP startup failed. Check server logs for details.",
-      },
-    });
-  }
-  if (Option.isNone(discoveryExit.value)) {
-    yield* Effect.logWarning(
-      "Kimi ACP model discovery timed out after " + KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS + "ms.",
-    );
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message:
-          "Kimi Code CLI is installed but ACP startup timed out after " +
-          KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS +
-          "ms.",
-      },
-    });
-  }
-
-  const discoveredModels = discoveryExit.value.value;
-  if (discoveredModels.length === 0) {
-    return buildServerProvider({
-      presentation: KIMI_PRESENTATION,
-      enabled: kimiSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unauthenticated" },
-        message: KIMI_AUTH_REQUIRED_MESSAGE,
-      },
-    });
-  }
-
-  return buildServerProvider({
+  return yield* runCliProviderStatusProbe({
     presentation: KIMI_PRESENTATION,
     enabled: kimiSettings.enabled,
     checkedAt,
-    models: kimiModelsFromSettings(kimiSettings.customModels, discoveredModels),
-    probe: {
-      installed: true,
-      version,
-      status: "ready",
-      auth: { status: "authenticated" },
+    fallbackModels,
+    versionProbeTimeoutMs: VERSION_PROBE_TIMEOUT_MS,
+    discoveryTimeoutMs: KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
+    runVersionCommand: runKimiVersionCommand(kimiSettings, environment),
+    discoverModels: discoverKimiModelsViaAcp(kimiSettings, environment),
+    messages: {
+      disabled: "Kimi Code is disabled in T3 Code settings.",
+      commandMissing: "Kimi Code CLI command kimi is not installed or not on PATH.",
+      healthCheckFailed: "Failed to execute Kimi Code CLI health check.",
+      versionProbeTimeout: "Kimi Code CLI is installed but timed out while running kimi --version.",
+      nonZeroExit: "Kimi Code CLI is installed but failed to run.",
+      discoveryFailed:
+        "Kimi Code CLI is installed but ACP startup failed. Check server logs for details.",
+      discoveryTimeout:
+        "Kimi Code CLI is installed but ACP startup timed out after " +
+        KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS +
+        "ms.",
     },
+    logMessages: {
+      healthCheckFailed: "Kimi Code CLI health check failed.",
+      nonZeroExit: "Kimi Code CLI version probe exited with a non-zero status.",
+      discoveryFailed: "Kimi ACP model discovery failed",
+      discoveryTimeout:
+        "Kimi ACP model discovery timed out after " + KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS + "ms.",
+    },
+    buildDiscoveredSnapshot: ({ version, discoveredModels }) =>
+      discoveredModels.length === 0
+        ? buildServerProvider({
+            presentation: KIMI_PRESENTATION,
+            enabled: kimiSettings.enabled,
+            checkedAt,
+            models: fallbackModels,
+            probe: {
+              installed: true,
+              version,
+              status: "error",
+              auth: { status: "unauthenticated" },
+              message: KIMI_AUTH_REQUIRED_MESSAGE,
+            },
+          })
+        : buildServerProvider({
+            presentation: KIMI_PRESENTATION,
+            enabled: kimiSettings.enabled,
+            checkedAt,
+            models: kimiModelsFromSettings(kimiSettings.customModels, discoveredModels),
+            probe: {
+              installed: true,
+              version,
+              status: "ready",
+              auth: { status: "authenticated" },
+            },
+          }),
   });
 });
 
@@ -351,21 +263,13 @@ export const enrichKimiSnapshot = (input: {
   readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
-  if (!input.settings.enabled || input.snapshot.auth.status === "unauthenticated") {
-    return Effect.void;
-  }
-
-  return enrichProviderSnapshotWithVersionAdvisory(input.snapshot, input.maintenanceCapabilities, {
+}): Effect.Effect<void> =>
+  enrichCliProviderSnapshotAdvisory({
+    snapshot: input.snapshot,
+    maintenanceCapabilities: input.maintenanceCapabilities,
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
-  }).pipe(
-    Effect.provideService(HttpClient.HttpClient, input.httpClient),
-    Effect.flatMap((enrichedSnapshot) => input.publishSnapshot(enrichedSnapshot)),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Kimi version advisory enrichment failed", {
-        errorTag: causeErrorTag(cause),
-      }),
-    ),
-    Effect.asVoid,
-  );
-};
+    publishSnapshot: input.publishSnapshot,
+    httpClient: input.httpClient,
+    warningLogMessage: "Kimi version advisory enrichment failed",
+    skip: !input.settings.enabled || input.snapshot.auth.status === "unauthenticated",
+  });

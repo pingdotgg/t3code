@@ -9,7 +9,7 @@ import {
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
 } from "../provider/acp/KimiAcpSupport.ts";
-import { makeStandardAcpTextGeneration } from "./GrokTextGeneration.ts";
+import { makeStandardAcpTextGeneration } from "./StandardAcpTextGeneration.ts";
 
 export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(function* (
   kimiSettings: KimiSettings,

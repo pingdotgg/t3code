@@ -6,12 +6,8 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -19,16 +15,15 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
-  isCommandMissingCause,
-  parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { type ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import {
-  enrichProviderSnapshotWithVersionAdvisory,
-  type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
+  enrichCliProviderSnapshotAdvisory,
+  runCliProviderStatusProbe,
+} from "../providerStatusProbe.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
@@ -187,129 +182,47 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const versionResult = yield* runGrokVersionCommand(grokSettings, environment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(versionResult)) {
-    const error = versionResult.failure;
-    yield* Effect.logWarning("Grok CLI health check failed.", {
-      errorTag: error._tag,
-    });
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Grok CLI (`grok`) is not installed or not on PATH."
-          : "Failed to execute Grok CLI health check.",
-      },
-    });
-  }
-
-  if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but timed out while running `grok --version`.",
-      },
-    });
-  }
-
-  const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
-  if (versionOutput.code !== 0) {
-    yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
-      exitCode: versionOutput.code,
-      stdoutLength: versionOutput.stdout.length,
-      stderrLength: versionOutput.stderr.length,
-    });
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but failed to run.",
-      },
-    });
-  }
-
-  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
-    Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
-    Effect.exit,
-  );
-  if (Exit.isFailure(discoveryExit)) {
-    yield* Effect.logWarning("Grok ACP model discovery failed", {
-      errorTag: causeErrorTag(discoveryExit.cause),
-    });
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
-      },
-    });
-  }
-  if (Option.isNone(discoveryExit.value)) {
-    yield* Effect.logWarning(
-      `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-    );
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `Grok CLI is installed but ACP startup timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-      },
-    });
-  }
-  const discoveredModels = discoveryExit.value.value;
-  const models =
-    discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
-      : fallbackModels;
-
-  return buildServerProvider({
+  return yield* runCliProviderStatusProbe({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
     checkedAt,
-    models,
-    probe: {
-      installed: true,
-      version,
-      status: "ready",
-      auth: { status: "unknown" },
+    fallbackModels,
+    versionProbeTimeoutMs: VERSION_PROBE_TIMEOUT_MS,
+    discoveryTimeoutMs: GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
+    runVersionCommand: runGrokVersionCommand(grokSettings, environment),
+    discoverModels: discoverGrokModelsViaAcp(grokSettings, environment),
+    messages: {
+      disabled: "Grok is disabled in T3 Code settings.",
+      commandMissing: "Grok CLI (`grok`) is not installed or not on PATH.",
+      healthCheckFailed: "Failed to execute Grok CLI health check.",
+      versionProbeTimeout: "Grok CLI is installed but timed out while running `grok --version`.",
+      nonZeroExit: "Grok CLI is installed but failed to run.",
+      discoveryFailed:
+        "Grok CLI is installed but ACP startup failed. Check server logs for details.",
+      discoveryTimeout: `Grok CLI is installed but ACP startup timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
     },
+    logMessages: {
+      healthCheckFailed: "Grok CLI health check failed.",
+      nonZeroExit: "Grok CLI version probe exited with a non-zero status.",
+      discoveryFailed: "Grok ACP model discovery failed",
+      discoveryTimeout: `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+    },
+    buildDiscoveredSnapshot: ({ version, discoveredModels }) =>
+      buildServerProvider({
+        presentation: GROK_PRESENTATION,
+        enabled: grokSettings.enabled,
+        checkedAt,
+        models:
+          discoveredModels.length > 0
+            ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
+            : fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "ready",
+          auth: { status: "unknown" },
+        },
+      }),
   });
 });
 
@@ -319,19 +232,12 @@ export const enrichGrokSnapshot = (input: {
   readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
-  const { snapshot, publishSnapshot } = input;
-
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
+}): Effect.Effect<void> =>
+  enrichCliProviderSnapshotAdvisory({
+    snapshot: input.snapshot,
+    maintenanceCapabilities: input.maintenanceCapabilities,
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
-  }).pipe(
-    Effect.provideService(HttpClient.HttpClient, input.httpClient),
-    Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Grok version advisory enrichment failed", {
-        errorTag: causeErrorTag(cause),
-      }),
-    ),
-    Effect.asVoid,
-  );
-};
+    publishSnapshot: input.publishSnapshot,
+    httpClient: input.httpClient,
+    warningLogMessage: "Grok version advisory enrichment failed",
+  });
