@@ -59,6 +59,70 @@ describe("remote", () => {
     });
   });
 
+  it("treats a protocol-relative host as https", () => {
+    expect(
+      resolveRemotePairingTarget({
+        host: "//remote.example.com",
+        pairingCode: "pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
+
+  it("preserves the port when normalizing a protocol-relative host", () => {
+    expect(
+      resolveRemotePairingTarget({
+        host: "//remote.example.com:3000",
+        pairingCode: "pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://remote.example.com:3000/",
+      wsBaseUrl: "wss://remote.example.com:3000/",
+    });
+  });
+
+  it("normalizes a protocol-relative host from a hosted pairing link", () => {
+    expect(
+      resolveRemotePairingTarget({
+        pairingUrl: "https://app.t3.codes/pair?host=%2F%2Fremote.example.com#token=pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
+
+  it("collapses extra leading slashes instead of producing an empty host", () => {
+    expect(
+      resolveRemotePairingTarget({
+        host: "///example.com",
+        pairingCode: "pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://example.com/",
+      wsBaseUrl: "wss://example.com/",
+    });
+  });
+
+  it("does not double-prepend https when the host already carries a scheme", () => {
+    expect(
+      resolveRemotePairingTarget({
+        host: "//https://example.com",
+        pairingCode: "pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://example.com/",
+      wsBaseUrl: "wss://example.com/",
+    });
+  });
+
   it("preserves host ports when normalizing a bare host input", () => {
     expect(
       resolveRemotePairingTarget({
