@@ -2,7 +2,7 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -15,6 +15,15 @@ import { splitEnvironmentSections } from "../connection/environmentSections";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import {
+  applyShowcaseLocalEnvironmentDisplayUrls,
+  resolveShowcaseEnvironmentUpdateDisplayUrl,
+  SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
+  SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS,
+} from "../showcase/showcaseEnvironmentRows";
+import { markNativeShowcaseReady } from "../showcase/nativeShowcaseScene";
+
+const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 export function SettingsEnvironmentsRouteScreen() {
   const {
@@ -25,18 +34,56 @@ export function SettingsEnvironmentsRouteScreen() {
   } = useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { localEnvironments, connectedCloudEnvironments } = splitEnvironmentSections({
+  const environmentSections = splitEnvironmentSections({
     connectedEnvironments,
     cloudEnvironments: null,
   });
+  const localEnvironments = SHOWCASE_ENABLED
+    ? applyShowcaseLocalEnvironmentDisplayUrls(environmentSections.localEnvironments)
+    : environmentSections.localEnvironments;
+  const connectedCloudEnvironments = SHOWCASE_ENABLED
+    ? SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS
+    : environmentSections.connectedCloudEnvironments;
   const hasLocalEnvironments = localEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const accentColor = useThemeColor("--color-icon-muted");
   const headerIconColor = useThemeColor("--color-icon");
 
+  useEffect(() => {
+    if (!SHOWCASE_ENABLED) return;
+    const timer = setTimeout(() => markNativeShowcaseReady("environments"), 500);
+    return () => clearTimeout(timer);
+  }, []);
+
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   }, []);
+  const handleUpdateEnvironment = useCallback(
+    (
+      environmentId: EnvironmentId,
+      updates: { readonly label: string; readonly displayUrl: string },
+    ) => {
+      if (!SHOWCASE_ENABLED) return onUpdateEnvironment(environmentId, updates);
+      const actualEnvironment = environmentSections.localEnvironments.find(
+        (environment) => environment.environmentId === environmentId,
+      );
+      const presentedEnvironment = localEnvironments.find(
+        (environment) => environment.environmentId === environmentId,
+      );
+      return onUpdateEnvironment(environmentId, {
+        ...updates,
+        displayUrl:
+          actualEnvironment && presentedEnvironment
+            ? resolveShowcaseEnvironmentUpdateDisplayUrl({
+                actualDisplayUrl: actualEnvironment.displayUrl,
+                presentedDisplayUrl: presentedEnvironment.displayUrl,
+                submittedDisplayUrl: updates.displayUrl,
+              })
+            : updates.displayUrl,
+      });
+    },
+    [environmentSections.localEnvironments, localEnvironments, onUpdateEnvironment],
+  );
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -92,7 +139,7 @@ export function SettingsEnvironmentsRouteScreen() {
                   onToggle={() => handleToggle(environment.environmentId)}
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
-                  onUpdate={onUpdateEnvironment}
+                  onUpdate={handleUpdateEnvironment}
                 />
               </View>
             ))}
@@ -114,10 +161,16 @@ export function SettingsEnvironmentsRouteScreen() {
           </View>
         )}
 
-        {hasCloudPublicConfig() ? (
+        {hasCloudPublicConfig() || SHOWCASE_ENABLED ? (
           <CloudEnvironmentRows
             connectedCloudEnvironments={connectedCloudEnvironments}
             onReconnectEnvironment={onReconnectEnvironment}
+            {...(SHOWCASE_ENABLED
+              ? {
+                  showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
+                  showcaseSignedIn: true,
+                }
+              : {})}
           />
         ) : null}
       </ScrollView>

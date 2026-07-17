@@ -37,6 +37,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly buffer: string;
   readonly fontSize?: number;
   readonly isRunning: boolean;
+  readonly autoFocus?: boolean;
   readonly keyboardFocusRequest?: number;
   readonly theme?: TerminalTheme;
   readonly onInput: (data: string) => void;
@@ -215,6 +216,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
       <View style={props.style}>
         <NativeTerminalSurfaceView
           appearanceScheme={appearanceScheme}
+          autoFocus={props.autoFocus ?? true}
           backgroundColor={theme.background}
           focusRequest={props.isRunning ? (props.keyboardFocusRequest ?? 0) : 0}
           foregroundColor={theme.foreground}

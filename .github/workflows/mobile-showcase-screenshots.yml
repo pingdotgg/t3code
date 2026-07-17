@@ -1,0 +1,134 @@
+name: Mobile Showcase Screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Device platforms to capture
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - ios
+          - android
+      appearance:
+        description: System appearances to capture
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - dark
+          - light
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+
+jobs:
+  ios:
+    name: iPhone 6.9, iPhone 6.5, and iPad 13
+    if: inputs.platform == 'all' || inputs.platform == 'ios'
+    runs-on: blacksmith-12vcpu-macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Capture iOS showcase
+        run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}"
+
+      - name: Validate App Store Connect assets
+        run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}" --validate-only
+
+      - name: Upload iOS screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-store-connect-screenshots
+          path: artifacts/app-store/screenshots/apple/
+          if-no-files-found: warn
+          retention-days: 14
+
+  android:
+    name: Android phone, 7-inch tablet, and 10-inch tablet
+    if: inputs.platform == 'all' || inputs.platform == 'android'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 60
+    env:
+      T3_SHOWCASE_ANDROID_ABI: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Capture Android showcase
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          avd-name: Pixel_10_Pro
+          cores: 8
+          ram-size: 4096M
+          disable-animations: false
+          script: pnpm screenshots:mobile --platform android --appearance "${{ inputs.appearance }}"
+
+      - name: Validate Google Play assets
+        run: pnpm screenshots:mobile --platform android --appearance "${{ inputs.appearance }}" --validate-only
+
+      - name: Upload Android screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: google-play-screenshots
+          path: artifacts/app-store/screenshots/google-play/
+          if-no-files-found: warn
+          retention-days: 14

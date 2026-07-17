@@ -33,6 +33,8 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 export function CloudEnvironmentRows(props: {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
+  readonly showcaseSignedIn?: boolean;
   /**
    * Hide the "T3 Connect" section title + refresh button for hosts that
    * provide their own chrome (the onboarding sheet's native header and
@@ -43,7 +45,8 @@ export function CloudEnvironmentRows(props: {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const controller = useConnectionController();
   const iconColor = useThemeColor("--color-icon");
-  const availableCloudEnvironments = controller.availableRelayEnvironments;
+  const availableCloudEnvironments =
+    props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
@@ -64,7 +67,7 @@ export function CloudEnvironmentRows(props: {
 
   const showHeader = props.showHeader ?? true;
 
-  if (!isSignedIn) return null;
+  if (!(props.showcaseSignedIn ?? isSignedIn)) return null;
 
   return (
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>

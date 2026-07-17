@@ -27,6 +27,10 @@ public class T3TerminalModule: Module {
         view.focusRequest = focusRequest
       }
 
+      Prop("autoFocus") { (view: T3TerminalView, autoFocus: Bool) in
+        view.autoFocus = autoFocus
+      }
+
       Prop("appearanceScheme") { (view: T3TerminalView, appearanceScheme: String) in
         view.appearanceScheme = appearanceScheme
       }

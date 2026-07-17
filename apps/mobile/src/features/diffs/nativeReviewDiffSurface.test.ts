@@ -96,5 +96,22 @@ describe("isPendingNativeViewRegistration", () => {
         new Error("Unable to find the 'T3ReviewDiffView' view for this native tag"),
       ),
     ).toBe(false);
+    expect(
+      isPendingNativeViewRegistration(
+        new Error(
+          "Unable to find the class expo.modules.t3reviewdiff.T3ReviewDiffView view with tag 1150",
+        ),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("isNativeReviewDiffDrawEvent", () => {
+  it("accepts only native events emitted after diff rows draw", async () => {
+    const { isNativeReviewDiffDrawEvent } = await import("./nativeReviewDiffSurface");
+
+    expect(isNativeReviewDiffDrawEvent({ message: "draw-metrics" })).toBe(true);
+    expect(isNativeReviewDiffDrawEvent({ message: "visible-range" })).toBe(true);
+    expect(isNativeReviewDiffDrawEvent({ message: "rows-decoded" })).toBe(false);
   });
 });

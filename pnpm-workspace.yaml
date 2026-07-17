@@ -92,6 +92,9 @@ overrides:
   yaml: "catalog:"
 
 packageExtensions:
+  "@clerk/expo@*":
+    dependencies:
+      "@expo/config-plugins": 56.0.9
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"

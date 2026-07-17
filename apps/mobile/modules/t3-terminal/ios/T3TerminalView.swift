@@ -248,6 +248,17 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  var autoFocus = true {
+    didSet {
+      guard oldValue != autoFocus else { return }
+      if autoFocus {
+        requestKeyboardFocus()
+      } else {
+        inputField.resignFirstResponder()
+      }
+    }
+  }
+
   var appearanceScheme: String = TerminalAppearanceScheme.dark.rawValue {
     didSet {
       guard oldValue != appearanceScheme else { return }
@@ -359,7 +370,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   public override func didMoveToWindow() {
     super.didMoveToWindow()
 
-    guard window != nil else { return }
+    guard window != nil, autoFocus else { return }
     DispatchQueue.main.async { [weak self] in
       self?.requestKeyboardFocus()
     }
