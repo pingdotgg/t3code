@@ -277,6 +277,36 @@ it.layer(KiloAdapterTestLayer)("KiloAdapter", (it) => {
     }),
   );
 
+  it.effect("steers concurrent sendTurn into one active turn id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* KiloAdapter;
+      const threadId = asThreadId("thread-kilo-steer");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("kilo"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const modelSelection = createModelSelection(
+        ProviderInstanceId.make("kilo"),
+        "anthropic/claude-sonnet-4-5",
+      );
+      const first = yield* adapter.sendTurn({
+        threadId,
+        input: "first",
+        modelSelection,
+      });
+      const second = yield* adapter.sendTurn({
+        threadId,
+        input: "second",
+        modelSelection,
+      });
+
+      NodeAssert.equal(String(second.turnId), String(first.turnId));
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+    }),
+  );
+
   it.effect("maps permission decisions to once/always/reject", () =>
     Effect.gen(function* () {
       const adapter = yield* KiloAdapter;

@@ -79,7 +79,12 @@ interface KiloSessionContext {
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<KiloTurnSnapshot>;
-  activeTurnId: TurnId | undefined;
+  /**
+   * Active turn claim. Stored in a Ref so concurrent `sendTurn` calls can
+   * atomically steer (reuse) vs open a new turn without both emitting
+   * `turn.started`.
+   */
+  readonly activeTurnId: Ref.Ref<TurnId | undefined>;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
@@ -529,7 +534,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
       if (yield* Ref.getAndSet(context.stopped, true)) {
         return;
       }
-      const turnId = context.activeTurnId;
+      const turnId = yield* Ref.get(context.activeTurnId);
       sessions.delete(context.session.threadId);
       // Emit lifecycle events BEFORE tearing down the scope. Both call sites
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
@@ -644,7 +649,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         return;
       }
 
-      const turnId = context.activeTurnId;
+      const turnId = yield* Ref.get(context.activeTurnId);
       yield* writeNativeEventBestEffort(context.session.threadId, {
         observedAt: yield* nowIso,
         event: {
@@ -869,7 +874,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           if (event.properties.status.type === "busy") {
             yield* updateProviderSession(context, {
               status: "running",
-              activeTurnId: turnId,
+              ...(turnId ? { activeTurnId: turnId } : {}),
             });
           }
 
@@ -890,7 +895,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           }
 
           if (event.properties.status.type === "idle" && turnId) {
-            context.activeTurnId = undefined;
+            yield* Ref.set(context.activeTurnId, undefined);
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -909,8 +914,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
-          const activeTurnId = context.activeTurnId;
-          context.activeTurnId = undefined;
+          const activeTurnId = yield* Ref.getAndSet(context.activeTurnId, undefined);
           yield* updateProviderSession(
             context,
             {
@@ -1132,7 +1136,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
           turns: [],
-          activeTurnId: undefined,
+          activeTurnId: yield* Ref.make<TurnId | undefined>(undefined),
           activeAgent: undefined,
           activeVariant: undefined,
           stopped: yield* Ref.make(false),
@@ -1174,11 +1178,6 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
     const sendTurn: KiloAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
       const context = ensureSessionContext(sessions, input.threadId);
-      // A sendTurn while a turn is active is a steer: Kilo queues the
-      // prompt into the busy session and the work continues as one turn, so
-      // the active turn id is reused instead of opening a new turn.
-      const steeringTurnId = context.activeTurnId;
-      const turnId = steeringTurnId ?? TurnId.make(`kilo-turn-${yield* randomUUIDv4}`);
       const modelSelection =
         input.modelSelection ??
         (context.session.model
@@ -1219,7 +1218,20 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
-      context.activeTurnId = turnId;
+      // Atomic claim: concurrent sendTurn on an idle session must not both
+      // open new turns. First caller wins and emits turn.started; later
+      // callers steer into that turn id.
+      const candidateTurnId = TurnId.make(`kilo-turn-${yield* randomUUIDv4}`);
+      type TurnClaim = { readonly turnId: TurnId; readonly isSteer: boolean };
+      const claimed = yield* Ref.modify(context.activeTurnId, (current): [TurnClaim, TurnId] => {
+        if (current !== undefined) {
+          return [{ turnId: current, isSteer: true }, current];
+        }
+        return [{ turnId: candidateTurnId, isSteer: false }, candidateTurnId];
+      });
+      const turnId = claimed.turnId;
+      const isSteer = claimed.isSteer;
+
       context.activeAgent = resolveKiloAgent({ interactionMode: input.interactionMode });
       context.activeVariant = variant;
       yield* updateProviderSession(
@@ -1232,7 +1244,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         { clearLastError: true },
       );
 
-      if (steeringTurnId === undefined) {
+      if (!isSteer) {
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
           type: "turn.started",
@@ -1259,10 +1271,12 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         // here — `toRequestError` already produced the right shape. A failed
         // steer leaves the still-running original turn untouched.
         Effect.tapError((requestError) =>
-          steeringTurnId !== undefined
+          isSteer
             ? Effect.void
             : Effect.gen(function* () {
-                context.activeTurnId = undefined;
+                // Only clear if we still own the claim (a concurrent steer may
+                // have reused this turn id; still safe to clear on fresh fail).
+                yield* Ref.set(context.activeTurnId, undefined);
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 yield* updateProviderSession(
@@ -1300,11 +1314,11 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
     const interruptTurn: KiloAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = ensureSessionContext(sessions, threadId);
-        const interruptedTurnId = turnId ?? context.activeTurnId;
+        const interruptedTurnId = turnId ?? (yield* Ref.get(context.activeTurnId));
         yield* runKiloSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.kiloSessionId }),
         ).pipe(Effect.mapError(toRequestError));
-        context.activeTurnId = undefined;
+        yield* Ref.set(context.activeTurnId, undefined);
         context.activeAgent = undefined;
         context.activeVariant = undefined;
         yield* updateProviderSession(
