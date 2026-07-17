@@ -39,6 +39,11 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+// Selects which provider-specific ACP model list this mock advertises.
+// Defaults to the Grok list; `kimi` swaps in the Kimi models so the same
+// mock agent backs both provider adapters. Additive — leaving it unset
+// preserves the original Grok behaviour byte-for-byte.
+const modelSet = process.env.T3_ACP_MODEL_SET;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
@@ -283,13 +288,21 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
+const kimiAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
+  { modelId: "kimi-k3", name: "Kimi K3" },
+  { modelId: "kimi-k2-thinking", name: "Kimi K2 Thinking" },
+];
+
+const acpModels = modelSet === "kimi" ? kimiAcpModels : grokAcpModels;
+const defaultAcpModelId = modelSet === "kimi" ? "kimi-k3" : "grok-build";
+
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const modelId = acpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : defaultAcpModelId;
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: acpModels,
   };
 }
 
@@ -382,7 +395,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!acpModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {

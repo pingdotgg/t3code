@@ -122,6 +122,27 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("includes Kimi custom models from the selected provider instance", () => {
+    const providers = [provider({ provider: ProviderDriverKind.make("kimi"), instanceId: "kimi" })];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("kimi")]: {
+          driver: ProviderDriverKind.make("kimi"),
+          config: { customModels: ["kimi-test-custom-model"] },
+        },
+      },
+    };
+    const kimi = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "kimi",
+    )!;
+
+    expect(getAppModelOptionsForInstance(settings, kimi).map((option) => option.slug)).toContain(
+      "kimi-test-custom-model",
+    );
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({

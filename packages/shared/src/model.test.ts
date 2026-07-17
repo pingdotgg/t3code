@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -10,6 +10,7 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  normalizeModelSlug,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -57,6 +58,28 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
       currentValue: "1m",
     },
   ],
+});
+
+describe("normalizeModelSlug — Kimi", () => {
+  const KIMI = ProviderDriverKind.make("kimi");
+
+  it("has no Kimi aliases — ACP-discovered ids must round-trip verbatim", () => {
+    expect(normalizeModelSlug("k3", KIMI)).toBe("k3");
+    expect(normalizeModelSlug("k2-thinking", KIMI)).toBe("k2-thinking");
+    expect(normalizeModelSlug("kimi-k2", KIMI)).toBe("kimi-k2");
+  });
+
+  it("passes canonical and unknown Kimi slugs through unchanged", () => {
+    expect(normalizeModelSlug("kimi-k3", KIMI)).toBe("kimi-k3");
+    expect(normalizeModelSlug("kimi-k2-thinking", KIMI)).toBe("kimi-k2-thinking");
+    expect(normalizeModelSlug("  kimi-k3  ", KIMI)).toBe("kimi-k3");
+    expect(normalizeModelSlug("some-future-model", KIMI)).toBe("some-future-model");
+  });
+
+  it("returns null for empty or non-string input", () => {
+    expect(normalizeModelSlug(undefined, KIMI)).toBeNull();
+    expect(normalizeModelSlug("   ", KIMI)).toBeNull();
+  });
 });
 
 describe("descriptor helpers", () => {
