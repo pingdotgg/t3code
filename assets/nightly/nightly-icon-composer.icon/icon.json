@@ -6,7 +6,7 @@
     {
       "layers": [
         {
-          "glass": false,
+          "glass": true,
           "image-name": "text.svg",
           "name": "text",
           "position": {
