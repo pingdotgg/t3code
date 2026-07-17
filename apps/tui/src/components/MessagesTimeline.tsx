@@ -17,6 +17,7 @@ import { clip } from "../format.ts";
 import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { deferMouseAction } from "../mouse.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
+import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import type { ExpandedImagePreview } from "./ImageLightbox.tsx";
 import {
@@ -246,7 +247,8 @@ function FoldableRowView({
     return <WorkGroupSection groupedEntries={row.groupedEntries} palette={palette} width={width} />;
   }
   const message = row.message;
-  const body = message.text.trim().length > 0 ? message.text : "…";
+  const rawBody = message.text.trim().length > 0 ? message.text : "…";
+  const body = linkifyTimelineUrls(rawBody);
   const checkpoint = checkpointByMessage.get(message.id);
   const images = (message.attachments ?? []).filter((a) => a.type === "image");
   const attachmentsNode =
@@ -259,7 +261,7 @@ function FoldableRowView({
     ) : null;
   if (message.role === "user") {
     const maxBubble = Math.max(16, Math.floor(width * 0.72));
-    const longestLine = body.split("\n").reduce((max, line) => Math.max(max, line.length), 1);
+    const longestLine = rawBody.split("\n").reduce((max, line) => Math.max(max, line.length), 1);
     const bubbleWidth = Math.min(maxBubble, longestLine + 4);
     // Right-align by putting the bubble in a row whose width is the DEFINITE
     // scrollbox content width (= the `width` prop). Inside a scrollbox the
@@ -483,7 +485,7 @@ function ProposedPlanCard({
         <span fg={palette.accent}>{"◆ "}</span>
         <strong>{plan.title}</strong>
       </text>
-      <markdown content={plan.body} syntaxStyle={syntaxStyle} />
+      <markdown content={linkifyTimelineUrls(plan.body)} syntaxStyle={syntaxStyle} />
       <text fg={palette.dim}>proposed plan · ^Y implement · ^B build mode to refine</text>
     </box>
   );

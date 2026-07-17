@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { CliRenderEvents, SyntaxStyle } from "@opentui/core";
+import { CliRenderEvents, getLinkId, SyntaxStyle } from "@opentui/core";
 import { MockTreeSitterClient, setRendererCapabilities } from "@opentui/core/testing";
 import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
@@ -90,6 +90,63 @@ async function bodyFrame(
 }
 
 describe("MessagesTimeline body", () => {
+  it("Given a bare URL in a message, then the rendered URL cells carry an OSC 8 link", async () => {
+    const url = "https://example.com/docs?q=timeline";
+    const mock = new MockTreeSitterClient({ autoResolveTimeout: 0 });
+    mock.setMockResult({
+      highlights: [[6, 6 + url.length, "string.special.url"]],
+    });
+    const full = {
+      ...detail("default"),
+      messages: [
+        {
+          id: "a1",
+          role: "assistant",
+          text: `Open ${url}.`,
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        treeSitterClient={mock}
+      />,
+      { width: 92, height: 24 },
+    );
+    for (let i = 0; i < 6; i += 1) {
+      await t.renderOnce();
+      mock.resolveAllHighlightOnce();
+      await t.flush();
+    }
+
+    const lines = t.captureCharFrame().split("\n");
+    const row = lines.findIndex((line) => line.includes(url));
+    const column = row >= 0 ? (lines[row]?.indexOf(url) ?? -1) : -1;
+    expect(row).toBeGreaterThanOrEqual(0);
+    expect(column).toBeGreaterThanOrEqual(0);
+    const buffer = t.renderer.currentRenderBuffer;
+    const linkedCells = Array.from(
+      buffer.buffers.attributes.slice(
+        row * buffer.width + column,
+        row * buffer.width + column + url.length,
+      ),
+    ).filter((attributes) => getLinkId(attributes) > 0);
+    expect(linkedCells).toHaveLength(url.length);
+    t.renderer.destroy();
+  });
+
   it("Given Kitty graphics are unavailable, then an image attachment remains a file link", async () => {
     const full = {
       ...detail("default"),
