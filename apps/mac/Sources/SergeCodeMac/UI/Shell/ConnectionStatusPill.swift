@@ -1,9 +1,8 @@
 import SwiftUI
 
 /// Dot + label summarizing the sidecar/websocket connection phase, shown in
-/// the toolbar. No background of its own — the macOS 26 toolbar already
-/// wraps items in glass, and stacking a second capsule read as a
-/// double bubble.
+/// the toolbar. Uses a non-interactive Alpine glass chip after the system
+/// per-item capsule is suppressed with `.sharedBackgroundVisibility(.hidden)`.
 struct ConnectionStatusPill: View {
     let phase: ConnectionPhase
 
@@ -23,8 +22,8 @@ struct ConnectionStatusPill: View {
                 .lineLimit(1)
                 .contentTransition(.numericText())
         }
-        .padding(.horizontal, 4)
         .fixedSize()
+        .alpineToolbarChip(interactive: false)
         .animation(Motion.ambient, value: phase)
         .onChange(of: phase) { oldPhase, newPhase in
             guard oldPhase != .ready, newPhase == .ready,
