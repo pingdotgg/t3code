@@ -406,7 +406,8 @@ const makeKiloRuntime = Effect.gen(function* () {
           const nextStdout = yield* Ref.updateAndGet(stdoutRef, (stdout) => `${stdout}${chunk}`);
           const parsed = parseServerUrlFromOutput(nextStdout);
           if (parsed) {
-            yield* Ref.set(captureOutputRef, false);
+            // Do not clear capture here — keep capturing until the success path
+            // after ready settles so concurrent stderr diagnostics are not lost.
             yield* Deferred.succeed(readyDeferred, parsed).pipe(Effect.ignore);
           }
         });
