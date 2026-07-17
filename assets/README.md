@@ -2,9 +2,11 @@
 
 The three Icon Composer projects are the source of truth for full application icons:
 
-- `dev/blueprint-icon-composer.icon`
-- `nightly/nightly-icon-composer.icon`
-- `prod/black-icon-composer.icon`
+- `dev/app-icon.icon`
+- `nightly/app-icon.icon`
+- `prod/app-icon.icon`
+
+Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked PNG and ICO assets for mobile, desktop, and web. Run `vp run icons:check` to verify that the generated assets match their sources without changing files.
 

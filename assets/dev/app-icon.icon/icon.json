@@ -7,8 +7,8 @@
       "layers": [
         {
           "glass": true,
-          "image-name": "blueprint-glass.svg",
-          "name": "Blueprint Glass T3",
+          "image-name": "text-glass.svg",
+          "name": "Text Glass",
           "position": {
             "scale": 8.5,
             "translation-in-points": [0, 0]
@@ -16,8 +16,8 @@
         },
         {
           "glass": false,
-          "image-name": "blueprint-t3.svg",
-          "name": "Blueprint T3",
+          "image-name": "text.svg",
+          "name": "Text",
           "position": {
             "scale": 8.5,
             "translation-in-points": [0, 0]
@@ -25,8 +25,8 @@
         },
         {
           "glass": false,
-          "image-name": "blueprint-annotations.svg",
-          "name": "Drafting Annotations",
+          "image-name": "annotations.svg",
+          "name": "Annotations",
           "position": {
             "scale": 8.5,
             "translation-in-points": [0, 0]
@@ -34,8 +34,8 @@
         },
         {
           "glass": true,
-          "image-name": "blueprint-bg.svg",
-          "name": "Blueprint Background",
+          "image-name": "background.svg",
+          "name": "Background",
           "position": {
             "scale": 8.1,
             "translation-in-points": [0, 0]

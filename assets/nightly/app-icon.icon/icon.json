@@ -8,7 +8,7 @@
         {
           "glass": true,
           "image-name": "text.svg",
-          "name": "text",
+          "name": "Text",
           "position": {
             "scale": 8.5,
             "translation-in-points": [0, 0]
@@ -16,8 +16,8 @@
         },
         {
           "glass": false,
-          "image-name": "xcloud-flipped.svg",
-          "name": "xcloud-flipped",
+          "image-name": "cloud-upper-right.svg",
+          "name": "Cloud Upper Right",
           "opacity": 1,
           "position": {
             "scale": 15,
@@ -26,8 +26,8 @@
         },
         {
           "glass": false,
-          "image-name": "xcloud 2.svg",
-          "name": "xcloud 2",
+          "image-name": "cloud-lower-left.svg",
+          "name": "Cloud Lower Left",
           "position": {
             "scale": 25,
             "translation-in-points": [-309.63750000000005, 268.66077693836917]
@@ -36,8 +36,8 @@
         {
           "glass": true,
           "hidden": false,
-          "image-name": "bg 4.svg",
-          "name": "bg 4",
+          "image-name": "background.svg",
+          "name": "Background",
           "position": {
             "scale": 8.1,
             "translation-in-points": [0, -2.171875]
