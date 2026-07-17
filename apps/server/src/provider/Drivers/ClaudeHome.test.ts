@@ -39,6 +39,26 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("uses the effective environment HOME when no explicit override is configured", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const environmentHome = path.resolve(NodeOS.tmpdir(), "claude-environment-home");
+        const environment = { ...process.env, HOME: environmentHome };
+
+        expect(yield* resolveClaudeHomePath({ homePath: "" }, environment)).toBe(environmentHome);
+        expect(yield* makeClaudeEnvironment({ homePath: "" }, environment)).toBe(environment);
+        expect(yield* makeClaudeContinuationGroupKey({ homePath: "" }, environment)).toBe(
+          `claude:home:${environmentHome}`,
+        );
+        expect(
+          yield* makeClaudeCapabilitiesCacheKey(
+            { binaryPath: "claude", homePath: "" },
+            environment,
+          ),
+        ).toBe(`claude\0${environmentHome}`);
+      }),
+    );
+
     it.effect("keeps continuation compatible across instances with the same Claude HOME", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

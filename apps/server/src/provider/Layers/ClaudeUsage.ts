@@ -232,6 +232,7 @@ export function mapClaudeUsageResponse(raw: unknown): {
 export const makeClaudeUsage = Effect.fn("makeClaudeUsage")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   meta: ClaudeUsageMeta,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<
   ProviderUsageShape,
   never,
@@ -240,7 +241,7 @@ export const makeClaudeUsage = Effect.fn("makeClaudeUsage")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
-  const homePath = yield* resolveClaudeHomePath(config);
+  const homePath = yield* resolveClaudeHomePath(config, environment);
   const credentialsPath = path.join(homePath, ".claude", ".credentials.json");
 
   const fetchUsage = Effect.gen(function* () {
