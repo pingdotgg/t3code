@@ -1157,6 +1157,16 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         sessions.set(input.threadId, context);
         yield* startEventPump(context);
 
+        // Event-pump / server-exit fibers can tear the session down before we
+        // resume. Do not advertise a started session that is already gone.
+        if ((yield* Ref.get(context.stopped)) || sessions.get(input.threadId) !== context) {
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: "Kilo session exited during startup.",
+          });
+        }
+
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
           type: "session.started",
@@ -1322,20 +1332,36 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
     const interruptTurn: KiloAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = ensureSessionContext(sessions, threadId);
-        const interruptedTurnId = turnId ?? (yield* Ref.get(context.activeTurnId));
+        // Clear the active claim before remote abort so concurrent sendTurn
+        // cannot steer into a turn that is about to be aborted.
+        const interruptedTurnId = yield* Ref.modify(context.activeTurnId, (current) => {
+          const target = turnId ?? current;
+          if (target === undefined) {
+            return [undefined, current] as const;
+          }
+          if (current === target) {
+            return [target, undefined] as const;
+          }
+          // Explicit turnId that is no longer active — still report abort for it,
+          // but leave any newer claim untouched.
+          return [target, current] as const;
+        });
         yield* runKiloSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.kiloSessionId }),
         ).pipe(Effect.mapError(toRequestError));
-        yield* Ref.set(context.activeTurnId, undefined);
-        context.activeAgent = undefined;
-        context.activeVariant = undefined;
-        yield* updateProviderSession(
-          context,
-          {
-            status: "ready",
-          },
-          { clearActiveTurnId: true },
-        );
+        // Only flip session ready if nothing new claimed the turn during abort.
+        const stillIdle = (yield* Ref.get(context.activeTurnId)) === undefined;
+        if (stillIdle) {
+          context.activeAgent = undefined;
+          context.activeVariant = undefined;
+          yield* updateProviderSession(
+            context,
+            {
+              status: "ready",
+            },
+            { clearActiveTurnId: true },
+          );
+        }
         if (interruptedTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
