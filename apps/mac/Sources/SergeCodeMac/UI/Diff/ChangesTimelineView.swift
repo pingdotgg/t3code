@@ -76,9 +76,13 @@ public struct ChangesTimelineView: View {
             }
             #if DEBUG
                 if key == "activity" {
-                    DispatchQueue.main.async { mode = .activity }
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.reveal) { mode = .activity }
+                    }
                 } else if key == "files" {
-                    DispatchQueue.main.async { mode = .files }
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.reveal) { mode = .files }
+                    }
                 }
             #endif
         }
