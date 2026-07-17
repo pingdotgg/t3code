@@ -214,6 +214,72 @@ describe("ThreadTerminalDrawer session events", () => {
     t.renderer.destroy();
   });
 
+  it("Given the cursor moves over text, then that character retains a visible block background", async () => {
+    let onEvent: Parameters<TuiClient["subscribeTerminal"]>[1] = () => {
+      throw new Error("terminal subscription not ready");
+    };
+    const eventClient = {
+      subscribeTerminal: (
+        _input: Parameters<TuiClient["subscribeTerminal"]>[0],
+        next: Parameters<TuiClient["subscribeTerminal"]>[1],
+      ) => {
+        onEvent = next;
+        return () => {};
+      },
+      terminalWrite: () => Promise.resolve(),
+      terminalResize: () => Promise.resolve(),
+      terminalClose: () => Promise.resolve(),
+    } as unknown as TuiClient;
+    const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
+      (() => string) | null
+    >;
+    const scrollRef = React.createRef<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >() as React.MutableRefObject<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >;
+    const t = await testRender(
+      <ThreadTerminalDrawer
+        client={eventClient}
+        info={info}
+        cols={40}
+        rows={4}
+        focused
+        copyRef={copyRef}
+        scrollRef={scrollRef}
+        tabIds={["term-1"]}
+        activeTabId="term-1"
+        onSelectTab={() => {}}
+        onNewTab={() => {}}
+        onCloseTab={() => {}}
+      />,
+      { width: 50, height: 12 },
+    );
+    await t.renderOnce();
+    await t.flush();
+
+    // Write "abc", then move two cells left so xterm's cursor sits on "b".
+    onEvent?.({
+      type: "output",
+      threadId: "t1",
+      terminalId: "term-1",
+      data: "abc\x1b[2D",
+    } as never);
+    await Bun.sleep(25);
+    await t.renderOnce();
+
+    const terminalLine = t.captureSpans().lines.find((line) =>
+      line.spans
+        .map((span) => span.text)
+        .join("")
+        .includes("abc"),
+    );
+    const cursorSpan = terminalLine?.spans.find((span) => span.text === "b");
+    expect(cursorSpan?.bg.intent).toBe("indexed");
+    expect(cursorSpan?.bg.slot).toBe(6);
+    t.renderer.destroy();
+  });
+
   it("Given terminal output is visible, when the server clears the session, then the stale buffer disappears", async () => {
     let onEvent: Parameters<TuiClient["subscribeTerminal"]>[1] = () => {
       throw new Error("terminal subscription not ready");

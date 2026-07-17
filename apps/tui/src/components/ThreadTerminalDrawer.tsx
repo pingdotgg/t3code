@@ -53,21 +53,24 @@ function renderSegment(segment: TermSegment, key: number, cursorFocused: boolean
   // A shell cursor normally sits on an empty cell. Rendering that as inverse
   // default colours is unreliable on a transparent framebuffer: some terminal
   // palettes resolve the foreground/background intents to an indistinguishable
-  // cell. Use a real block glyph for an empty cursor cell so it remains visible.
-  // When the cursor is over a character, retain xterm's inverse-video treatment.
+  // cell. Use a real block glyph for an empty cursor cell, and an explicit block
+  // background when it moves over a character, so both cursor states stay visible.
   const blankCursor = segment.cursor && segment.text === " ";
-  const inverse = blankCursor ? false : segment.inverse;
+  const cursorColor = cursorFocused ? THEME.accent : THEME.dim;
+  const inverse = segment.cursor ? false : segment.inverse;
   // Default cells inherit the terminal's own fg/bg; inverse swaps them so the
   // cursor cell and reverse-video runs read correctly on any theme.
-  const fg = blankCursor
-    ? cursorFocused
-      ? THEME.accent
-      : THEME.dim
+  const fg = segment.cursor
+    ? blankCursor
+      ? cursorColor
+      : (segment.backgroundColor ?? THEME.bg)
     : inverse
       ? (segment.backgroundColor ?? THEME.bg)
       : (segment.color ?? THEME.text);
-  const bg = blankCursor
-    ? segment.backgroundColor
+  const bg = segment.cursor
+    ? blankCursor
+      ? segment.backgroundColor
+      : cursorColor
     : inverse
       ? (segment.color ?? THEME.text)
       : segment.backgroundColor;
