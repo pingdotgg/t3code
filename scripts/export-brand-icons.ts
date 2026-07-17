@@ -41,7 +41,7 @@ const decodeIconComposerVersion = Schema.decodeUnknownEffect(
   Schema.fromJsonString(IconComposerVersion),
 );
 
-type IconPlatform = "iOS" | "macOS";
+type IconPlatform = "iOS";
 
 interface VariantOutputs {
   readonly ios: string;
@@ -246,6 +246,14 @@ const ICON_VARIANTS = [
     },
   },
 ] as const satisfies ReadonlyArray<IconVariant>;
+
+const MACOS_EXPORT_CODEX_PROMPT = [
+  "Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app to export the three macOS app icons in this repository.",
+  "For each project below, use Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, and Scale: 1×, then save the PNG to the exact destination:",
+  ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
+  "Do not resize, composite, or otherwise post-process the exported PNGs.",
+  "Verify every result is 1024×1024 and has the classic macOS safe area: an 824×824 opaque body inset 100px on every side, with only Icon Composer's native shadow extending beyond it.",
+];
 
 const RepositoryRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
@@ -578,7 +586,6 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
   });
 
   const ios = yield* render("iOS", 1024);
-  const macos = yield* render("macOS", 1024);
   const icoRenditions = yield* Effect.forEach(
     WINDOWS_ICON_SIZES,
     (size) => render("iOS", size).pipe(Effect.map((contents) => ({ size, contents }))),
@@ -591,7 +598,6 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
-    [variant.outputs.macos, macos],
     [variant.outputs.universal, ios],
     [variant.outputs.appleTouch, yield* render("iOS", 180)],
     [variant.outputs.favicon16, yield* render("iOS", 16)],
@@ -600,6 +606,24 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.windowsIco, ico],
   ]);
 });
+
+const logManualMacOsExportInstructions = Effect.fn("iconExport.logManualMacOsExportInstructions")(
+  function* () {
+    yield* Console.warn(
+      [
+        "macOS icons require Icon Composer's GUI-only pre-Tahoe preset and were not changed.",
+        "Export each source with Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, Scale: 1×:",
+        ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
+        "See assets/README.md for the complete workflow.",
+        "",
+        "Copy/paste this prompt into Codex to perform the native exports:",
+        "---",
+        ...MACOS_EXPORT_CODEX_PROMPT,
+        "---",
+      ].join("\n"),
+    );
+  },
+);
 
 const writeAtomically = Effect.fn("iconExport.writeAtomically")(function* (
   repositoryRoot: string,
@@ -740,6 +764,7 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
       });
     }
     yield* Console.log(`All ${generated.size} generated icon assets are current.`);
+    yield* logManualMacOsExportInstructions();
     return;
   }
 
@@ -749,6 +774,7 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
     { concurrency: 1, discard: true },
   );
   yield* Console.log(`Updated ${generated.size} generated icon assets.`);
+  yield* logManualMacOsExportInstructions();
 });
 
 export const exportBrandIconsCommand = Command.make(
