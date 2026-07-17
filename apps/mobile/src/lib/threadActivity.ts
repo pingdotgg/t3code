@@ -1,6 +1,5 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
-  MessageId,
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
@@ -10,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
-import type { QueuedThreadMessage } from "../state/thread-outbox-model";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -57,6 +55,8 @@ export interface ThreadFeedActivity {
   readonly status: "success" | "failure" | "neutral" | null;
 }
 
+const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+
 type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "declined" | "stopped";
 
 interface WorkLogEntry {
@@ -89,13 +89,6 @@ type RawThreadFeedEntry =
       readonly message: OrchestrationThread["messages"][number];
     }
   | {
-      readonly type: "queued-message";
-      readonly id: string;
-      readonly createdAt: string;
-      readonly queuedMessage: QueuedThreadMessage;
-      readonly sending: boolean;
-    }
-  | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
@@ -104,13 +97,23 @@ type RawThreadFeedEntry =
     };
 
 export type ThreadFeedEntry =
-  | Extract<RawThreadFeedEntry, { type: "message" | "queued-message" }>
+  | Extract<RawThreadFeedEntry, { type: "message" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
       readonly createdAt: string;
       readonly turnId: TurnId | null;
       readonly activities: ReadonlyArray<ThreadFeedActivity>;
+    }
+  | {
+      readonly type: "work-toggle";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly groupId: string;
+      readonly hiddenCount: number;
+      readonly expanded: boolean;
+      readonly onlyToolActivities: boolean;
     }
   | {
       readonly type: "turn-fold";
@@ -1101,8 +1104,11 @@ export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
   expandedTurnIds: ReadonlySet<TurnId>,
+  expandedWorkGroupIds: ReadonlySet<string> = new Set(),
 ): ThreadFeedEntry[] {
-  const sourceFeed = feed.filter((entry) => entry.type !== "turn-fold");
+  const sourceFeed = feed.filter(
+    (entry) => entry.type !== "turn-fold" && entry.type !== "work-toggle",
+  );
   const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn);
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
@@ -1127,10 +1133,60 @@ export function deriveThreadFeedPresentation(
       });
     }
     if (!collapsedEntryIds.has(entry.id)) {
-      result.push(entry);
+      appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
     }
   }
   return result;
+}
+
+function appendPresentedFeedEntry(
+  result: ThreadFeedEntry[],
+  entry: Exclude<ThreadFeedEntry, { readonly type: "turn-fold" | "work-toggle" }>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+): void {
+  if (entry.type !== "activity-group") {
+    result.push(entry);
+    return;
+  }
+
+  const activities = entry.activities.filter(
+    (activity) => !(activity.toolLike && activity.status === "neutral"),
+  );
+  if (activities.length === 0) {
+    return;
+  }
+  if (activities.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+    result.push({
+      ...entry,
+      activities,
+    });
+    return;
+  }
+
+  const groupId = entry.id;
+  const expanded = expandedWorkGroupIds.has(groupId);
+  const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+
+  for (const activity of visibleActivities) {
+    result.push({
+      type: "activity-group",
+      id: activity.id,
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      activities: [activity],
+    });
+  }
+  result.push({
+    type: "work-toggle",
+    id: `work-toggle:${groupId}`,
+    createdAt: entry.createdAt,
+    turnId: entry.turnId,
+    groupId,
+    hiddenCount,
+    expanded,
+    onlyToolActivities: activities.every((activity) => activity.toolLike),
+  });
 }
 
 export function derivePendingApprovals(
@@ -1255,8 +1311,6 @@ export function buildPendingUserInputAnswers(
 
 export function buildThreadFeed(
   thread: OrchestrationThread,
-  queuedMessages: ReadonlyArray<QueuedThreadMessage>,
-  dispatchingQueuedMessageId: MessageId | null,
   options?: {
     readonly loadedMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
   },
@@ -1272,13 +1326,6 @@ export function buildThreadFeed(
         id: message.id,
         createdAt: message.createdAt,
         message,
-      })),
-      ...queuedMessages.map<RawThreadFeedEntry>((queuedMessage) => ({
-        type: "queued-message",
-        id: queuedMessage.messageId,
-        createdAt: queuedMessage.createdAt,
-        queuedMessage,
-        sending: queuedMessage.messageId === dispatchingQueuedMessageId,
       })),
       ...workLogEntries
         .filter((entry) => {

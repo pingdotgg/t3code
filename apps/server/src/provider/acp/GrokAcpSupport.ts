@@ -1,4 +1,5 @@
 import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -8,6 +9,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
@@ -54,7 +56,7 @@ export const makeGrokAcpRuntime = (
 ): Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Scope.Scope
+  Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
     const acpContext = yield* Layer.build(
@@ -68,9 +70,10 @@ export const makeGrokAcpRuntime = (
         ),
       ),
     );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
       Effect.provide(acpContext),
     );
+    return yield* makeXAiPromptCompletionRuntime(runtime);
   });
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {

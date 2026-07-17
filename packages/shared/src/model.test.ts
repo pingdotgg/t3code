@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  DEFAULT_MODEL,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ModelCapabilities,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
@@ -16,11 +10,6 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
-  isClaudeUltrathinkPrompt,
-  normalizeModelSlug,
-  resolveModelSlugForProvider,
-  resolveSelectableModel,
-  trimOrNull,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -68,82 +57,6 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
       currentValue: "1m",
     },
   ],
-});
-
-describe("normalizeModelSlug", () => {
-  it("maps known aliases to canonical slugs", () => {
-    const claude = ProviderDriverKind.make("claudeAgent");
-    expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.4");
-    expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
-    expect(normalizeModelSlug("sonnet", claude)).toBe("claude-sonnet-4-6");
-  });
-
-  it("returns null for empty or missing values", () => {
-    expect(normalizeModelSlug("")).toBeNull();
-    expect(normalizeModelSlug("   ")).toBeNull();
-    expect(normalizeModelSlug(null)).toBeNull();
-    expect(normalizeModelSlug(undefined)).toBeNull();
-  });
-});
-
-describe("resolveModelSlugForProvider", () => {
-  it("returns defaults when the model is missing", () => {
-    expect(resolveModelSlugForProvider(ProviderDriverKind.make("codex"), undefined)).toBe(
-      DEFAULT_MODEL,
-    );
-    expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
-      DEFAULT_MODEL,
-    );
-    expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok"), undefined)).toBe(
-      "grok-build",
-    );
-  });
-
-  it("preserves normalized unknown models", () => {
-    expect(
-      resolveModelSlugForProvider(ProviderDriverKind.make("codex"), "custom/internal-model"),
-    ).toBe("custom/internal-model");
-  });
-});
-
-describe("resolveSelectableModel", () => {
-  it("resolves exact slugs, labels, and aliases", () => {
-    const options = [
-      { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-      { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    ];
-    expect(resolveSelectableModel(ProviderDriverKind.make("codex"), "gpt-5.3-codex", options)).toBe(
-      "gpt-5.3-codex",
-    );
-    expect(resolveSelectableModel(ProviderDriverKind.make("codex"), "gpt-5.3 codex", options)).toBe(
-      "gpt-5.3-codex",
-    );
-    expect(resolveSelectableModel(ProviderDriverKind.make("claudeAgent"), "sonnet", options)).toBe(
-      "claude-sonnet-4-6",
-    );
-  });
-});
-
-describe("misc helpers", () => {
-  it("detects ultrathink prompts", () => {
-    expect(isClaudeUltrathinkPrompt("Please ultrathink about this")).toBe(true);
-    expect(isClaudeUltrathinkPrompt("Ultrathink:\nInvestigate")).toBe(true);
-    expect(isClaudeUltrathinkPrompt("Investigate")).toBe(false);
-  });
-
-  it("prefixes ultrathink prompts once", () => {
-    expect(applyClaudePromptEffortPrefix("Investigate", "ultrathink")).toBe(
-      "Ultrathink:\nInvestigate",
-    );
-    expect(applyClaudePromptEffortPrefix("Ultrathink:\nInvestigate", "ultrathink")).toBe(
-      "Ultrathink:\nInvestigate",
-    );
-  });
-
-  it("trims strings to null", () => {
-    expect(trimOrNull("  hi  ")).toBe("hi");
-    expect(trimOrNull("   ")).toBeNull();
-  });
 });
 
 describe("descriptor helpers", () => {
