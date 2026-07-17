@@ -995,7 +995,10 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+          <div
+            className="mt-1.5 flex items-center gap-2 text-xs tabular-nums"
+            data-assistant-message-footer="persistent"
+          >
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
               <Tooltip>
