@@ -48,6 +48,17 @@ describe("deriveProviderUsageHeadline", () => {
     expect(headline).toEqual({ label: "$88.00 left", usedPercent: 12 });
   });
 
+  it("uses numeric credits when they are more constrained than a time window", () => {
+    const headline = deriveProviderUsageHeadline(
+      makeUsage({
+        windows: [{ id: "session", label: "Session", kind: "session", usedPercent: 50 }],
+        credits: { label: "Credits", usedCredits: 95, monthlyLimit: 100 },
+      }),
+    );
+
+    expect(headline).toEqual({ label: "$5.00 left", usedPercent: 95 });
+  });
+
   it("does not summarize non-success states", () => {
     expect(deriveProviderUsageHeadline(makeUsage({ status: "unauthenticated" }))).toBeNull();
   });

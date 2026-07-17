@@ -84,7 +84,7 @@ import {
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
-import { ProviderUsageControl } from "./ProviderUsageControl";
+import { ProviderUsageAlert } from "./ProviderUsageControl";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
@@ -356,7 +356,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      <ProviderUsageControl
+      <ProviderUsageAlert
         environmentId={props.environmentId}
         instanceId={props.providerInstanceId}
         compact={props.compact}
@@ -2481,6 +2481,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ProviderModelPicker
                   compact={isComposerFooterCompact}
                   activeInstanceId={selectedInstanceId}
+                  environmentId={environmentId}
                   model={selectedModelForPickerWithCustomFallback}
                   lockedProvider={lockedProvider}
                   lockedContinuationGroupKey={lockedContinuationGroupKey}

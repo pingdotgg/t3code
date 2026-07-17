@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
@@ -25,6 +26,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
    * icon, label and the default-highlighted combobox row.
    */
   activeInstanceId: ProviderInstanceId;
+  environmentId?: EnvironmentId;
   model: string;
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
@@ -192,6 +194,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <ModelPickerContent
           activeInstanceId={activeInstanceId}
+          {...(props.environmentId ? { environmentId: props.environmentId } : {})}
           model={props.model}
           lockedProvider={props.lockedProvider}
           lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}

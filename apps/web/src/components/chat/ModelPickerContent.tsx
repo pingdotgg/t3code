@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
@@ -9,6 +10,7 @@ import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRe
 import { SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { ProviderUsageSelectorPanel } from "./ProviderUsageControl";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxListVirtualized } from "../ui/combobox";
@@ -60,6 +62,7 @@ function splitInstanceModelKey(key: string): { instanceId: ProviderInstanceId; s
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
+  environmentId?: EnvironmentId;
   model: string;
   /**
    * When set, the picker is locked to the given driver kind — typically
@@ -251,6 +254,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
   const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const usageInstanceId =
+    selectedInstanceId === "favorites" ? props.activeInstanceId : selectedInstanceId;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -669,6 +674,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
               No models found
             </ComboboxEmpty>
+            {props.environmentId ? (
+              <ProviderUsageSelectorPanel
+                environmentId={props.environmentId}
+                instanceId={usageInstanceId}
+              />
+            ) : null}
           </div>
         </Combobox>
       </div>

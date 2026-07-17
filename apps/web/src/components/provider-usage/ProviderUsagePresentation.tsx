@@ -62,22 +62,35 @@ export function deriveProviderUsageHeadline(
       current === null || window.usedPercent > current.usedPercent ? window : current,
     null,
   );
-  if (mostConstrainedWindow) {
-    return {
-      label: `${Math.round(providerUsagePercentLeft(mostConstrainedWindow.usedPercent))}% left`,
-      usedPercent: mostConstrainedWindow.usedPercent,
-    };
-  }
-  if (!usage.credits) return null;
-  const label = formatProviderUsageCredits(usage.credits)?.split(" · ")[0] ?? null;
-  return label
+  const windowHeadline = mostConstrainedWindow
     ? {
-        label,
-        usedPercent: providerUsageCreditsHaveMeter(usage.credits)
-          ? providerUsageCreditsUsedPercent(usage.credits)
-          : null,
+        label: `${Math.round(providerUsagePercentLeft(mostConstrainedWindow.usedPercent))}% left`,
+        usedPercent: mostConstrainedWindow.usedPercent,
       }
     : null;
+  const credits = usage.credits;
+  const creditLabel = credits
+    ? (formatProviderUsageCredits(credits)?.split(" · ")[0] ?? null)
+    : null;
+  const creditHeadline =
+    credits && creditLabel
+      ? {
+          label: creditLabel,
+          usedPercent: providerUsageCreditsHaveMeter(credits)
+            ? providerUsageCreditsUsedPercent(credits)
+            : null,
+        }
+      : null;
+
+  if (!windowHeadline) return creditHeadline;
+  if (
+    creditHeadline?.usedPercent === null ||
+    creditHeadline?.usedPercent === undefined ||
+    windowHeadline.usedPercent >= creditHeadline.usedPercent
+  ) {
+    return windowHeadline;
+  }
+  return creditHeadline;
 }
 
 export function ProviderUsageIdentity({
