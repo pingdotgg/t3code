@@ -1,0 +1,21 @@
+<svg width="64" height="32" viewBox="0 0 64 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cloud" x1="7" y1="10" x2="57" y2="25" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4EA4FF" stop-opacity="0.62"/>
+      <stop offset="0.52" stop-color="#696FEA" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#A85BEA" stop-opacity="0.58"/>
+    </linearGradient>
+    <radialGradient id="highlight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(30 14) rotate(13) scale(27 10)">
+      <stop stop-color="#C8D7FF" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#8C8EF2" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-8" y="-8" width="80" height="48" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+  </defs>
+
+  <g transform="translate(64 0) scale(-1 1)" filter="url(#soft)">
+    <path d="M7 23.5C7 18.9 10.8 15.2 15.5 15.2C16.9 10.7 21.1 7.5 26.1 7.5C31 7.5 35.2 10.5 36.7 14.8C38.5 13.2 40.9 12.2 43.5 12.2C49.1 12.2 53.7 16.4 54.1 21.8C57 22.2 59.2 24 60 26.5H8.2C7.4 25.7 7 24.7 7 23.5Z" fill="url(#cloud)"/>
+    <path d="M11 22.9C12.7 19.8 16 18 19.5 18.5C21 13.4 25.6 10 30.8 10.6C35 11 38.3 13.9 39.4 17.7C43.8 15.5 49 17.3 51.1 21.7C46.2 20.3 41.9 21 37.7 22.1C29.6 24.2 21.5 21.3 11 22.9Z" fill="url(#highlight)"/>
+  </g>
+</svg>

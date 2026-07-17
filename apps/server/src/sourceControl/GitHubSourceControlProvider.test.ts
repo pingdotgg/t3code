@@ -24,8 +24,8 @@ const processResult = (
   stderrTruncated: false,
 });
 
-function makeProvider(github: Partial<GitHubCli.GitHubCliShape>) {
-  return GitHubSourceControlProvider.make().pipe(
+function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
+  return GitHubSourceControlProvider.make.pipe(
     Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
   );
 }
@@ -65,6 +65,47 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
       headRepositoryNameWithOwner: "fork/t3code",
       headRepositoryOwnerLogin: "fork",
     });
+  }),
+);
+
+it.effect("adds safe request context while retaining GitHub CLI causes", () =>
+  Effect.gen(function* () {
+    const cause = new GitHubCli.GitHubPullRequestNotFoundError({
+      command: "gh",
+      cwd: "/repo",
+      cause: new Error("raw upstream detail that should remain in the cause"),
+    });
+    const provider = yield* makeProvider({
+      getPullRequest: () => Effect.fail(cause),
+    });
+
+    const error = yield* provider
+      .getChangeRequest({
+        cwd: "/repo",
+        reference: "https://user:secret@github.com/pingdotgg/t3code/pull/42?token=secret#diff",
+      })
+      .pipe(Effect.flip);
+
+    assert.deepStrictEqual(
+      {
+        provider: error.provider,
+        operation: error.operation,
+        command: error.command,
+        cwd: error.cwd,
+        reference: error.reference,
+        detail: error.detail,
+      },
+      {
+        provider: "github",
+        operation: "getChangeRequest",
+        command: "gh",
+        cwd: "/repo",
+        reference: "https://github.com/pingdotgg/t3code/pull/42",
+        detail: "Pull request not found. Check the PR number or URL and try again.",
+      },
+    );
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );
 
@@ -139,7 +180,8 @@ it.effect("treats empty non-open change request listing output as no results", (
 
 it.effect("creates GitHub PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<GitHubCli.GitHubCliShape["createPullRequest"]>[0] | null = null;
+    let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
+      null;
     const provider = yield* makeProvider({
       createPullRequest: (input) => {
         createInput = input;

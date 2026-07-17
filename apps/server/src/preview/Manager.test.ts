@@ -1,5 +1,6 @@
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
+import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
 import { Effect, PubSub } from "effect";
 import { expect } from "vite-plus/test";
 
@@ -83,6 +84,31 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const manager = yield* PreviewManager.PreviewManager;
       const error = yield* Effect.flip(manager.open({ threadId, url: "   " }));
       expect(error._tag).toBe("PreviewInvalidUrlError");
+      expect(error).toMatchObject({ inputLength: 3, reason: "empty" });
+      expect(error).not.toHaveProperty("rawUrl");
+      expect(error.cause).toBeInstanceOf(PreviewUrlNormalizationError);
+      expect((error.cause as PreviewUrlNormalizationError).reason).toBe("empty");
+    }),
+  );
+
+  it.effect("preserves URL parser failures as the invalid URL cause chain", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
+      const error = yield* Effect.flip(manager.open({ threadId, url: rawUrl }));
+
+      expect(error).toMatchObject({
+        inputLength: rawUrl.length,
+        reason: "parse",
+        protocol: "https:",
+      });
+      expect(error).not.toHaveProperty("rawUrl");
+      expect(error.cause).toBeInstanceOf(PreviewUrlNormalizationError);
+      const normalizationError = error.cause as PreviewUrlNormalizationError;
+      expect(normalizationError.cause).toBeInstanceOf(Error);
+      expect(error.message).not.toContain((normalizationError.cause as Error).message);
+      expect(error.message).not.toMatch(/user|password|access_token|secret|fragment/);
     }),
   );
 
@@ -119,6 +145,61 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
           threadId,
           tabId: "tab_missing",
           url: "http://localhost:5173",
+        }),
+      );
+      expect(error._tag).toBe("PreviewSessionLookupError");
+    }),
+  );
+
+  it.effect("resizes a tab and preserves its viewport across navigation reports", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+
+      const resized = yield* manager.resize({
+        threadId,
+        tabId: opened.tabId,
+        viewport: { _tag: "freeform", width: 1024, height: 768 },
+      });
+      expect(resized.viewport).toEqual({ _tag: "freeform", width: 1024, height: 768 });
+
+      const navigated = yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "http://localhost:5173/resized",
+      });
+      expect(navigated.viewport).toEqual(resized.viewport);
+
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/resized", title: "Resized" },
+        canGoBack: true,
+        canGoForward: false,
+      });
+      const listed = yield* manager.list({ threadId });
+      expect(listed.sessions[0]?.viewport).toEqual(resized.viewport);
+
+      const events = yield* collector.drain;
+      expect(events.map((event) => event.type)).toEqual([
+        "opened",
+        "resized",
+        "navigated",
+        "navigated",
+      ]);
+    }),
+  );
+
+  it.effect("rejects resize for an unknown tab", () =>
+    Effect.gen(function* () {
+      const manager = yield* PreviewManager.PreviewManager;
+      const error = yield* Effect.flip(
+        manager.resize({
+          threadId: freshThreadId(),
+          tabId: "tab_missing",
+          viewport: { _tag: "fill" },
         }),
       );
       expect(error._tag).toBe("PreviewSessionLookupError");

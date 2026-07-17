@@ -1,7 +1,10 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
+  isProviderInstancePickerVisible,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
@@ -29,6 +32,79 @@ function provider(input: {
     skills: [],
   };
 }
+
+describe("isProviderInstancePickerReady", () => {
+  it("rejects a disabled instance even while its last probe status is ready", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        enabled: false,
+      }),
+    ]);
+
+    expect(entry?.status).toBe("ready");
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
+  });
+
+  it("accepts an enabled, available, ready instance", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+    ]);
+
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
+});
+
+describe("isProviderInstancePickerVisible", () => {
+  it("keeps enabled instances in the rail and removes disabled instances", () => {
+    const [enabledEntry, disabledEntry] = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        enabled: false,
+      }),
+    ]);
+
+    expect(enabledEntry && isProviderInstancePickerVisible(enabledEntry)).toBe(true);
+    expect(disabledEntry && isProviderInstancePickerVisible(disabledEntry)).toBe(false);
+  });
+});
+
+describe("applyProviderInstanceSettings", () => {
+  it("uses settings when a streamed snapshot still reports a disabled default as enabled", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+        },
+      },
+      providers: {} as never,
+    });
+
+    expect(entry?.enabled).toBe(false);
+  });
+
+  it("treats a removed custom instance snapshot as disabled", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_work",
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {},
+      providers: {} as never,
+    });
+
+    expect(entry?.enabled).toBe(false);
+  });
+});
 
 describe("deriveProviderInstanceEntries", () => {
   it("uses explicit instance id and driver kind from the snapshot", () => {
