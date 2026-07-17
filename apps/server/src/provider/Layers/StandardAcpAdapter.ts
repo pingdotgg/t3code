@@ -146,7 +146,7 @@ export interface StandardAcpAdapterConfig {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    FileSystem.FileSystem | Path.Path | Scope.Scope
+    Crypto.Crypto | FileSystem.FileSystem | Path.Path | Scope.Scope
   >;
   readonly applySessionConfiguration: StandardAcpApplySessionConfiguration;
   readonly resolveBaseModelId: (model: string | null | undefined) => string;
@@ -527,6 +527,7 @@ export function makeStandardAcpAdapter(
             .pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(Scope.Scope, sessionScope),
               Effect.mapError(
                 (cause) =>

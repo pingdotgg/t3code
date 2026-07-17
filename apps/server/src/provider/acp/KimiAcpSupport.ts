@@ -9,6 +9,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isCommandAvailable } from "@t3tools/shared/shell";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -92,7 +93,7 @@ export const makeKimiAcpRuntime = (
 ): Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  FileSystem.FileSystem | Path.Path | Scope.Scope
+  Crypto.Crypto | FileSystem.FileSystem | Path.Path | Scope.Scope
 > =>
   Effect.gen(function* () {
     const spawn = yield* buildKimiAcpSpawnInput(input.kimiSettings, input.cwd, input.environment);

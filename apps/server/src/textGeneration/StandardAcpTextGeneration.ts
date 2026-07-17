@@ -9,6 +9,7 @@
  * @module StandardAcpTextGeneration
  */
 
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -57,7 +58,7 @@ export interface StandardAcpTextGenerationConfig {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    FileSystem.FileSystem | Path.Path | Scope.Scope
+    Crypto.Crypto | FileSystem.FileSystem | Path.Path | Scope.Scope
   >;
   readonly applyModelSelection: (input: {
     readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
@@ -84,6 +85,7 @@ export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGener
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
 
   const runAcpJson = <S extends Schema.Top>({
     operation,
@@ -115,6 +117,7 @@ export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGener
         .pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
         );
 
       yield* runtime.handleSessionUpdate((notification) => {
