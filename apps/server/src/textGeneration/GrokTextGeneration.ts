@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
@@ -28,18 +31,50 @@ import {
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../provider/acp/GrokAcpSupport.ts";
+import type * as AcpSessionRuntime from "../provider/acp/AcpSessionRuntime.ts";
 
-const GROK_TIMEOUT_MS = 180_000;
+const ACP_TEXT_GENERATION_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
-export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
-  grokSettings: GrokSettings,
+export interface StandardAcpTextGenerationConfig {
+  readonly displayName: string;
+  readonly agentName: string;
+  readonly resolveBaseModelId: (model: string | null | undefined) => string;
+  readonly makeRuntime: (
+    input: Omit<
+      AcpSessionRuntime.AcpSessionRuntimeOptions,
+      "authMethodId" | "clientCapabilities" | "spawn"
+    > & {
+      readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+      readonly environment?: NodeJS.ProcessEnv;
+    },
+  ) => Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    FileSystem.FileSystem | Path.Path | Scope.Scope
+  >;
+  readonly applyModelSelection: (input: {
+    readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+    readonly started: AcpSessionRuntime.AcpSessionRuntimeStartResult;
+    readonly model: string;
+    readonly operation:
+      | "generateCommitMessage"
+      | "generatePrContent"
+      | "generateBranchName"
+      | "generateThreadTitle";
+  }) => Effect.Effect<void, TextGenerationError>;
+}
+
+export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGeneration")(function* (
+  config: StandardAcpTextGenerationConfig,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
-  const runGrokJson = <S extends Schema.Top>({
+  const runAcpJson = <S extends Schema.Top>({
     operation,
     cwd,
     prompt,
@@ -57,15 +92,19 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
+      const resolvedModel = config.resolveBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
-      const runtime = yield* makeGrokAcpRuntime({
-        grokSettings,
-        environment,
-        childProcessSpawner: commandSpawner,
-        cwd,
-        clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      });
+      const runtime = yield* config
+        .makeRuntime({
+          environment,
+          childProcessSpawner: commandSpawner,
+          cwd,
+          clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+        })
+        .pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
@@ -81,28 +120,26 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
       const promptResult = yield* Effect.gen(function* () {
         const started = yield* runtime.start();
-        yield* applyGrokAcpModelSelection({
+        yield* config.applyModelSelection({
           runtime,
-          currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
-          requestedModelId: resolvedModel,
-          mapError: (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: "Failed to set Grok ACP base model for text generation.",
-              cause,
-            }),
+          started,
+          model: resolvedModel,
+          operation,
         });
 
         return yield* runtime.prompt({
           prompt: [{ type: "text", text: prompt }],
         });
       }).pipe(
-        Effect.timeoutOption(GROK_TIMEOUT_MS),
+        Effect.timeoutOption(ACP_TEXT_GENERATION_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
             onNone: () =>
               Effect.fail(
-                new TextGenerationError({ operation, detail: "Grok ACP request timed out." }),
+                new TextGenerationError({
+                  operation,
+                  detail: config.displayName + " ACP request timed out.",
+                }),
               ),
             onSome: (value) => Effect.succeed(value),
           }),
@@ -112,7 +149,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: "Grok ACP request failed.",
+                detail: config.displayName + " ACP request failed.",
                 cause,
               }),
         ),
@@ -124,8 +161,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           operation,
           detail:
             promptResult.stopReason === "cancelled"
-              ? "Grok ACP request was cancelled."
-              : "Grok Agent returned empty output.",
+              ? config.displayName + " ACP request was cancelled."
+              : config.agentName + " returned empty output.",
         });
       }
 
@@ -136,7 +173,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             Effect.fail(
               new TextGenerationError({
                 operation,
-                detail: "Grok Agent returned invalid structured output.",
+                detail: config.agentName + " returned invalid structured output.",
                 cause,
               }),
             ),
@@ -148,7 +185,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           ? cause
           : new TextGenerationError({
               operation,
-              detail: "Grok ACP text generation failed.",
+              detail: config.displayName + " ACP text generation failed.",
               cause,
             }),
       ),
@@ -164,7 +201,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         includeBranch: input.includeBranch === true,
       });
 
-      const generated = yield* runGrokJson({
+      const generated = yield* runAcpJson({
         operation: "generateCommitMessage",
         cwd: input.cwd,
         prompt,
@@ -191,7 +228,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         diffPatch: input.diffPatch,
       });
 
-      const generated = yield* runGrokJson({
+      const generated = yield* runAcpJson({
         operation: "generatePrContent",
         cwd: input.cwd,
         prompt,
@@ -212,7 +249,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         attachments: input.attachments,
       });
 
-      const generated = yield* runGrokJson({
+      const generated = yield* runAcpJson({
         operation: "generateBranchName",
         cwd: input.cwd,
         prompt,
@@ -232,7 +269,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         attachments: input.attachments,
       });
 
-      const generated = yield* runGrokJson({
+      const generated = yield* runAcpJson({
         operation: "generateThreadTitle",
         cwd: input.cwd,
         prompt,
@@ -251,4 +288,35 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     generateBranchName,
     generateThreadTitle,
   } satisfies TextGeneration.TextGeneration["Service"];
+});
+
+export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
+  grokSettings: GrokSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  return yield* makeStandardAcpTextGeneration(
+    {
+      displayName: "Grok",
+      agentName: "Grok Agent",
+      resolveBaseModelId: resolveGrokAcpBaseModelId,
+      makeRuntime: (input) =>
+        makeGrokAcpRuntime({
+          ...input,
+          grokSettings,
+        }),
+      applyModelSelection: ({ runtime, started, model, operation }) =>
+        applyGrokAcpModelSelection({
+          runtime,
+          currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
+          requestedModelId: model,
+          mapError: (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Failed to set Grok ACP base model for text generation.",
+              cause,
+            }),
+        }).pipe(Effect.asVoid),
+    },
+    environment,
+  );
 });
