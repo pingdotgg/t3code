@@ -966,7 +966,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             Effect.catch((cause) =>
               Effect.logError("Failed to process Grok runtime notification.", { cause }),
             ),
-            Effect.forkChild,
+            // Fork into the session scope, never the calling fiber: callers wrap
+            // startSession in Effect.timeout (ProviderCommandReactor), whose racer
+            // fiber exits as soon as startup succeeds and would interrupt a
+            // forkChild consumer — silently killing all session/update streaming
+            // and wedging every turn on the drain barrier.
+            Effect.forkIn(sessionScope),
           );
 
           ctx.notificationFiber = nf;

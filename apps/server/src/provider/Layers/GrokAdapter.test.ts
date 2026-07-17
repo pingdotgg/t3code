@@ -189,6 +189,55 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps streaming when startSession is wrapped in Effect.timeout", () =>
+    // Regression: ProviderCommandReactor wraps startSession in Effect.timeout,
+    // whose racer fiber exits once startup succeeds. The ACP notification
+    // consumer must survive that (forkIn the session scope, not forkChild),
+    // or every session/update is dropped and turns wedge on the drain barrier.
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-timeout-wrapped-thread");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("grok"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.timeout("30 seconds"));
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello grok",
+        attachments: [],
+      });
+
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const types = runtimeEvents.map((event) => event.type);
+      assert.includeMembers(types, ["content.delta", "turn.completed"] as const);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("streams agent_thought_chunk as reasoning_text content deltas", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-thought-chunk-thread");
