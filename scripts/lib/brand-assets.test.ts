@@ -55,4 +55,19 @@ describe("brand-assets", () => {
     expect(resolveWebAssetBrandForChannel("latest")).toBe("production");
     expect(resolveWebAssetBrandForChannel("nightly")).toBe("nightly");
   });
+
+  it("keeps development, nightly, and production icon families separate", () => {
+    expect([
+      BRAND_ASSET_PATHS.developmentIconComposerProject,
+      BRAND_ASSET_PATHS.nightlyIconComposerProject,
+      BRAND_ASSET_PATHS.productionIconComposerProject,
+    ]).toEqual([
+      "assets/dev/app-icon.icon",
+      "assets/nightly/app-icon.icon",
+      "assets/prod/app-icon.icon",
+    ]);
+    expect(BRAND_ASSET_PATHS.developmentDesktopIconPng).toMatch(/^assets\/dev\/blueprint-/);
+    expect(BRAND_ASSET_PATHS.nightlyMacIconPng).toMatch(/^assets\/nightly\/nightly-/);
+    expect(BRAND_ASSET_PATHS.productionMacIconPng).toMatch(/^assets\/prod\/black-/);
+  });
 });
