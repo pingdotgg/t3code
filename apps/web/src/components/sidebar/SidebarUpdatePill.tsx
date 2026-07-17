@@ -15,6 +15,7 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { DesktopUpdateTooltipPopup } from "../DesktopUpdateTooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function SidebarUpdatePill() {
@@ -151,7 +152,7 @@ export function SidebarUpdatePill() {
                 </button>
               }
             />
-            <TooltipPopup side="top">{tooltip}</TooltipPopup>
+            <DesktopUpdateTooltipPopup state={state} summary={tooltip} side="top" />
           </Tooltip>
           {action === "download" && (
             <Tooltip>

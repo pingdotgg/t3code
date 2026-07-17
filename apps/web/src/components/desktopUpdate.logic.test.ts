@@ -7,6 +7,8 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateLatestVersion,
+  getDesktopUpdateReleaseNotesUrl,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -287,6 +289,50 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "idle" })).toBe("Up to date");
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
+    );
+  });
+});
+
+describe("desktop update release notes helpers", () => {
+  it("resolves the latest version from downloaded or available state", () => {
+    expect(
+      getDesktopUpdateLatestVersion({
+        ...baseState,
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.1",
+      }),
+    ).toBe("1.1.1");
+    expect(getDesktopUpdateLatestVersion({ ...baseState, availableVersion: "1.1.0" })).toBe(
+      "1.1.0",
+    );
+  });
+
+  it("links stable updates to their GitHub release tag", () => {
+    expect(
+      getDesktopUpdateReleaseNotesUrl({
+        ...baseState,
+        channel: "latest",
+        availableVersion: "1.1.0",
+      }),
+    ).toBe("https://github.com/pingdotgg/t3code/releases/tag/v1.1.0");
+  });
+
+  it("links nightly updates to their GitHub release tag", () => {
+    expect(
+      getDesktopUpdateReleaseNotesUrl({
+        ...baseState,
+        channel: "nightly",
+        availableVersion: "1.1.0-nightly.20260501.17",
+      }),
+    ).toBe("https://github.com/pingdotgg/t3code/releases/tag/nightly-v1.1.0-nightly.20260501.17");
+  });
+
+  it("falls back to the releases page when no latest version is known", () => {
+    expect(getDesktopUpdateReleaseNotesUrl(null)).toBe(
+      "https://github.com/pingdotgg/t3code/releases",
+    );
+    expect(getDesktopUpdateReleaseNotesUrl(baseState)).toBe(
+      "https://github.com/pingdotgg/t3code/releases",
     );
   });
 });
