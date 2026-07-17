@@ -76,7 +76,9 @@ import {
 } from "./serverRuntimeState.ts";
 import {
   orchestrationDispatchRouteLayer,
+  orchestrationShellSnapshotRouteLayer,
   orchestrationSnapshotRouteLayer,
+  orchestrationThreadSnapshotRouteLayer,
 } from "./orchestration/http.ts";
 import { NetService } from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -339,7 +341,9 @@ export const makeRoutesLayer = Layer.mergeAll(
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,
   orchestrationDispatchRouteLayer,
+  orchestrationShellSnapshotRouteLayer,
   orchestrationSnapshotRouteLayer,
+  orchestrationThreadSnapshotRouteLayer,
   ConnectHttpApiLayerLive,
   mobileRouteLayer,
   otlpTracesProxyRouteLayer,

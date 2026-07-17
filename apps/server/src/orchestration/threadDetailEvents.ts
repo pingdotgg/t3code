@@ -5,6 +5,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
   {
     type:
       | "thread.message-sent"
+      | "thread.review-result-set"
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
@@ -19,6 +20,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
 > {
   switch (event.type) {
     case "thread.message-sent":
+    case "thread.review-result-set":
     case "thread.proposed-plan-upserted":
     case "thread.activity-appended":
     case "thread.turn-diff-completed":

@@ -384,7 +384,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     cwd: thread.branch != null ? gitCwd : null,
   });
   const isHighlighted = isActive || isSelected;
-  const isThreadRunning = isThreadActivelyWorking(thread.latestTurn, thread.session);
+  const isThreadRunning =
+    virtualAgentRun?.status === "running" ||
+    isThreadActivelyWorking(thread.latestTurn, thread.session);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -1461,14 +1463,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ]),
     );
     const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
-      if (thread.virtualAgentRun?.status === "running") {
-        return {
-          label: "Working",
-          colorClass: "text-sky-600 dark:text-sky-300/80",
-          dotClass: "bg-sky-500 dark:bg-sky-300/80",
-          pulse: true,
-        } as const;
-      }
       const lastVisitedAt = lastVisitedAtByThreadKey.get(
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );

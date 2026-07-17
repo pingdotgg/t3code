@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ReviewChangesScope } from "./agentWorkflows.ts";
+import { ReviewSnapshot } from "./reviewSchemas.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -407,6 +408,7 @@ const GitReviewChangesContextBase = {
   statusShort: Schema.String,
   untrackedFiles: Schema.Array(TrimmedNonEmptyStringSchema),
   hasReviewableChanges: Schema.Boolean,
+  snapshot: Schema.optionalKey(ReviewSnapshot),
 };
 
 export const GitResolveReviewChangesContextResult = Schema.Union([

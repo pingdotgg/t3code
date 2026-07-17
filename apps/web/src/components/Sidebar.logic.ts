@@ -55,6 +55,7 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestTurn"
   | "session"
+  | "virtualAgentRun"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -358,7 +359,10 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (isThreadActivelyWorking(thread.latestTurn, thread.session)) {
+  if (
+    thread.virtualAgentRun?.status === "running" ||
+    isThreadActivelyWorking(thread.latestTurn, thread.session)
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

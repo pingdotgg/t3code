@@ -27,6 +27,7 @@ import {
   ThreadQueuedTurnFailedPayload,
   ThreadQueuedTurnUpdatedPayload,
   ThreadRuntimeModeSetPayload,
+  ThreadReviewResultSetPayload,
   ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
@@ -306,6 +307,10 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            ...(payload.reviewSnapshot !== undefined
+              ? { reviewSnapshot: payload.reviewSnapshot }
+              : {}),
+            reviewResult: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -482,6 +487,22 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.review-result-set":
+      return decodeForEvent(
+        ThreadReviewResultSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            reviewResult: payload.result,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {

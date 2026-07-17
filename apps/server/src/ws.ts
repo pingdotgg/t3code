@@ -418,6 +418,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 : "No uncommitted changes.",
             );
           }
+          if (reviewContext.snapshot === undefined) {
+            return yield* new WorkflowRunError({
+              message: "Unable to capture an immutable review snapshot.",
+            });
+          }
 
           const title =
             input.title ??
@@ -436,6 +441,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             settings: {
               promptTemplate: override?.promptTemplate ?? reviewSettings.promptTemplate,
             },
+            snapshot: reviewContext.snapshot,
           });
           const threadId = ThreadId.make(crypto.randomUUID());
           const commandId = CommandId.make(crypto.randomUUID());
@@ -471,6 +477,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 interactionMode,
                 branch: reviewContext.branch,
                 worktreePath: cwd === project.workspaceRoot ? null : cwd,
+                reviewSnapshot: reviewContext.snapshot,
                 createdAt,
               },
             },
@@ -648,6 +655,50 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getShellSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getShellSnapshot,
+            projectionSnapshotQuery.getShellSnapshot().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getThreadSnapshot]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getThreadSnapshot,
+            Effect.all([
+              projectionSnapshotQuery.getThreadDetailById(input.threadId),
+              projectionSnapshotQuery.getShellSnapshot(),
+            ]).pipe(
+              Effect.flatMap(([threadDetail, shellSnapshot]) => {
+                if (Option.isNone(threadDetail)) {
+                  return new OrchestrationGetSnapshotError({
+                    message: `Thread ${input.threadId} was not found`,
+                    cause: input.threadId,
+                  });
+                }
+                return Effect.succeed({
+                  snapshotSequence: shellSnapshot.snapshotSequence,
+                  thread: threadDetail.value,
+                });
+              }),
+              Effect.mapError((cause) =>
+                cause instanceof OrchestrationGetSnapshotError
+                  ? cause
+                  : new OrchestrationGetSnapshotError({
+                      message: `Failed to load thread ${input.threadId}`,
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
@@ -693,9 +744,16 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       }),
                   ),
                 ),
-                orchestrationEngine
-                  .getReadModel()
-                  .pipe(Effect.map((readModel) => readModel.snapshotSequence)),
+                projectionSnapshotQuery.getShellSnapshot().pipe(
+                  Effect.map((snapshot) => snapshot.snapshotSequence),
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Failed to load thread ${input.threadId}`,
+                        cause,
+                      }),
+                  ),
+                ),
               ]);
 
               if (Option.isNone(threadDetail)) {

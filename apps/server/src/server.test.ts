@@ -61,6 +61,7 @@ import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { CloudHttpRuntimeLayerLive, makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
+import { getLiveOrchestrationShellSnapshot } from "./cli/client.ts";
 import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
@@ -1678,6 +1679,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
         assert.equal(response.auth.policy, "desktop-managed-local");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("loads a large CLI shell snapshot without reading the full projection", () =>
+    Effect.gen(function* () {
+      const now = new Date().toISOString();
+      const shellSnapshot = {
+        snapshotSequence: 338,
+        projects: [
+          {
+            id: defaultProjectId,
+            title: "Default Project",
+            workspaceRoot: "/workspace/default-project",
+            defaultModelSelection,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        threads: Array.from({ length: 338 }, (_, index) =>
+          makeDefaultOrchestrationThreadShell({
+            id: ThreadId.make(`thread-${index}`),
+          }),
+        ),
+        updatedAt: now,
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getSnapshot: () => Effect.die("CLI must not request the full projection snapshot"),
+            getShellSnapshot: () => Effect.succeed(shellSnapshot),
+          },
+        },
+      });
+
+      const snapshot = yield* getLiveOrchestrationShellSnapshot({
+        url: Option.some(yield* getHttpServerUrl()),
+        token: Option.some(yield* getAuthenticatedBearerSessionToken()),
+        baseDir: Option.none(),
+      });
+
+      assert.equal(snapshot.threads.length, 338);
+      assert.equal(snapshot.snapshotSequence, 338);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("serves versioned mobile descriptor and auth wrappers", () =>

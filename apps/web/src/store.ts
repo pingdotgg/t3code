@@ -81,6 +81,7 @@ export interface EnvironmentState {
   turnDiffIdsByThreadId: Record<ThreadId, TurnId[]>;
   turnDiffSummaryByThreadId: Record<ThreadId, Record<TurnId, TurnDiffSummary>>;
   queuedTurnsByThreadId: Record<ThreadId, readonly OrchestrationQueuedTurn[]>;
+  reviewStateByThreadId?: Record<ThreadId, Pick<Thread, "reviewSnapshot" | "reviewResult">>;
 
   // ---------------------------------------------------------------------------
   // Sidebar summary — written ONLY by the shell stream
@@ -116,6 +117,7 @@ const initialEnvironmentState: EnvironmentState = {
   turnDiffIdsByThreadId: {},
   turnDiffSummaryByThreadId: {},
   queuedTurnsByThreadId: {},
+  reviewStateByThreadId: {},
   sidebarThreadSummaryById: {},
   bootstrapComplete: false,
 };
@@ -301,6 +303,8 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    ...(thread.reviewSnapshot !== undefined ? { reviewSnapshot: thread.reviewSnapshot } : {}),
+    ...(thread.reviewResult !== undefined ? { reviewResult: thread.reviewResult } : {}),
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
   };
@@ -816,6 +820,22 @@ function writeThreadState(
     };
   }
 
+  if (
+    previousThread?.reviewSnapshot !== nextThread.reviewSnapshot ||
+    previousThread?.reviewResult !== nextThread.reviewResult
+  ) {
+    nextState = {
+      ...nextState,
+      reviewStateByThreadId: {
+        ...nextState.reviewStateByThreadId,
+        [nextThread.id]: {
+          reviewSnapshot: nextThread.reviewSnapshot,
+          reviewResult: nextThread.reviewResult,
+        },
+      },
+    };
+  }
+
   return nextState;
 }
 
@@ -945,6 +965,8 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedTurnDiffs, ...turnDiffSummaryByThreadId } =
     state.turnDiffSummaryByThreadId;
   const { [threadId]: _removedQueuedTurns, ...queuedTurnsByThreadId } = state.queuedTurnsByThreadId;
+  const { [threadId]: _removedReviewState, ...reviewStateByThreadId } =
+    state.reviewStateByThreadId ?? {};
   const { [threadId]: _removedSidebarSummary, ...sidebarThreadSummaryById } =
     state.sidebarThreadSummaryById;
 
@@ -964,6 +986,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     turnDiffIdsByThreadId,
     turnDiffSummaryByThreadId,
     queuedTurnsByThreadId,
+    reviewStateByThreadId,
     sidebarThreadSummaryById,
   };
 }
@@ -1278,6 +1301,10 @@ function syncEnvironmentShellSnapshot(
       nextThreadIds,
     ),
     queuedTurnsByThreadId: retainThreadScopedRecord(state.queuedTurnsByThreadId, nextThreadIds),
+    reviewStateByThreadId: retainThreadScopedRecord(
+      state.reviewStateByThreadId ?? {},
+      nextThreadIds,
+    ),
     bootstrapComplete: true,
   };
 }
@@ -1428,6 +1455,9 @@ function applyEnvironmentOrchestrationEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          ...(event.payload.reviewSnapshot !== undefined
+            ? { reviewSnapshot: event.payload.reviewSnapshot }
+            : {}),
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -1552,6 +1582,7 @@ function applyEnvironmentOrchestrationEvent(
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
         });
+
         const existingMessage = thread.messages.find((entry) => entry.id === message.id);
         const messages = existingMessage
           ? thread.messages.map((entry) =>
@@ -1627,6 +1658,14 @@ function applyEnvironmentOrchestrationEvent(
           updatedAt: event.occurredAt,
         };
       });
+
+    case "thread.review-result-set":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        reviewSnapshot: event.payload.result.snapshot,
+        reviewResult: event.payload.result,
+        updatedAt: event.occurredAt,
+      }));
 
     case "thread.session-set":
       return updateThreadState(state, event.payload.threadId, (thread) => ({

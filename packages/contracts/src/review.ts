@@ -1,6 +1,5 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
 export const ReviewDiffPreviewInput = Schema.Struct({
@@ -31,5 +30,7 @@ export const ReviewDiffPreviewResult = Schema.Struct({
 });
 export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 
-export const ReviewDiffPreviewError = Schema.Union([VcsError, GitCommandError]);
+export const ReviewDiffPreviewError = VcsError;
 export type ReviewDiffPreviewError = typeof ReviewDiffPreviewError.Type;
+
+export * from "./reviewSchemas.ts";

@@ -159,6 +159,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { ReviewFindingsCard } from "./chat/ReviewFindingsCard";
 import { ChatHeader } from "./chat/ChatHeader";
 import {
   type AgentWorkflowHeaderAction,
@@ -3689,6 +3690,14 @@ function ChatViewBody(
     },
     [isServerThread, onDiffPanelOpen, updateDiffSearch],
   );
+  const onSelectReviewFinding = useCallback(
+    (findingId: string) => {
+      if (!isServerThread) return;
+      onDiffPanelOpen?.();
+      updateDiffSearch({ diff: "1", reviewFinding: findingId });
+    },
+    [isServerThread, onDiffPanelOpen, updateDiffSearch],
+  );
 
   const exportThreadDisabledReason = !isServerThread
     ? "Draft chats can be exported after they start."
@@ -4083,7 +4092,16 @@ function ChatViewBody(
               workspaceRoot={activeWorkspaceRoot}
               onIsAtEndChange={onIsAtEndChange}
               activeChatFindRowId={chatFindOpen ? (activeChatFindMatch?.rowId ?? null) : null}
+              reviewResultActive={activeThread.reviewResult?.status === "parsed"}
             />
+            {activeThread.reviewResult ? (
+              <div className="mx-auto w-full max-w-3xl px-4 pb-3">
+                <ReviewFindingsCard
+                  result={activeThread.reviewResult}
+                  onSelectFinding={onSelectReviewFinding}
+                />
+              </div>
+            ) : null}
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (

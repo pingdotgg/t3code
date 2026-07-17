@@ -826,6 +826,35 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(afterDispatch)[0]?.queuedTurns ?? []).toEqual([]);
   });
 
+  it("retains review snapshots and applies live structured review results", () => {
+    const threadId = ThreadId.make("thread-review");
+    const reviewSnapshot = {
+      scope: { kind: "uncommitted" as const, branch: "main", untrackedFiles: [] },
+      diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+      diffHash: "review-hash",
+      truncated: false,
+    };
+    const state = makeState(makeThread({ id: threadId, reviewSnapshot }));
+    const result = {
+      status: "parsed" as const,
+      snapshot: reviewSnapshot,
+      findings: [],
+      verdict: "approve" as const,
+      summary: "No issues found.",
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.review-result-set", { threadId, result }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next).find((thread) => thread.id === threadId)).toMatchObject({
+      reviewSnapshot: { diffHash: "review-hash" },
+      reviewResult: { status: "parsed", summary: "No issues found." },
+    });
+  });
+
   it("reuses an existing project row when project.created arrives with a new id for the same cwd", () => {
     const originalProjectId = ProjectId.make("project-1");
     const recreatedProjectId = ProjectId.make("project-2");

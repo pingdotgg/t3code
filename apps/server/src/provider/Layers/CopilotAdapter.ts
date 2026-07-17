@@ -773,10 +773,30 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         }
       });
 
+    const stopRunningBackgroundAgents = (ctx: CopilotSessionContext, turnId: TurnId | undefined) =>
+      Effect.forEach(
+        ctx.backgroundAgents.values(),
+        (agent) =>
+          Effect.gen(function* () {
+            if (agent.status !== "running") return;
+            agent.status = "stopped";
+            yield* offerRuntimeEvent({
+              type: "task.completed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              ...(turnId !== undefined ? { turnId } : {}),
+              payload: { taskId: agent.taskId, status: "stopped" },
+            });
+          }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+
     const stopSessionInternal = (ctx: CopilotSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        yield* stopRunningBackgroundAgents(ctx, ctx.activeTurnId);
         ctx.inFlightTurnId = undefined;
         ctx.cancelRequestedTurnId = undefined;
         ctx.activeTurnId = undefined;
@@ -1775,18 +1795,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         }
 
         ctx.cancelRequestedTurnId = turnId;
-        for (const agent of ctx.backgroundAgents.values()) {
-          if (agent.status !== "running") continue;
-          agent.status = "stopped";
-          yield* offerRuntimeEvent({
-            type: "task.completed",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId,
-            turnId,
-            payload: { taskId: agent.taskId, status: "stopped" },
-          });
-        }
+        yield* stopRunningBackgroundAgents(ctx, turnId);
         if (ctx.backgroundActivitySignal) {
           yield* Deferred.succeed(ctx.backgroundActivitySignal, undefined).pipe(Effect.ignore);
         }

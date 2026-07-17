@@ -17,6 +17,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ReviewResult, ReviewSnapshot } from "./review.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -25,6 +26,8 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiffState: "orchestration.getTurnDiffState",
   getFullThreadDiffState: "orchestration.getFullThreadDiffState",
   replayEvents: "orchestration.replayEvents",
+  getShellSnapshot: "orchestration.getShellSnapshot",
+  getThreadSnapshot: "orchestration.getThreadSnapshot",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -388,6 +391,8 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  reviewSnapshot: Schema.optionalKey(ReviewSnapshot),
+  reviewResult: Schema.optionalKey(Schema.NullOr(ReviewResult)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -553,6 +558,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  reviewSnapshot: Schema.optionalKey(ReviewSnapshot),
   createdAt: IsoDateTime,
 });
 
@@ -626,6 +632,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  reviewSnapshot: Schema.optionalKey(ReviewSnapshot),
   createdAt: IsoDateTime,
 });
 
@@ -866,6 +873,14 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadReviewResultSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.review-result.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  result: ReviewResult,
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -912,6 +927,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadReviewResultSetCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -940,6 +956,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.pending-runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.review-result-set",
   "thread.turn-start-requested",
   "thread.queued-turn-created",
   "thread.queued-turn-updated",
@@ -1003,6 +1020,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  reviewSnapshot: Schema.optionalKey(ReviewSnapshot),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1062,6 +1080,11 @@ export const ThreadMessageSentPayload = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+});
+
+export const ThreadReviewResultSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  result: ReviewResult,
 });
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
@@ -1265,6 +1288,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.review-result-set"),
+    payload: ThreadReviewResultSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1654,6 +1682,14 @@ export const OrchestrationRpcSchemas = {
   replayEvents: {
     input: OrchestrationReplayEventsInput,
     output: OrchestrationReplayEventsResult,
+  },
+  getShellSnapshot: {
+    input: Schema.Struct({}),
+    output: OrchestrationShellSnapshot,
+  },
+  getThreadSnapshot: {
+    input: OrchestrationSubscribeThreadInput,
+    output: OrchestrationThreadDetailSnapshot,
   },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),

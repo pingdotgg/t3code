@@ -103,6 +103,7 @@ interface TimelineRowSharedState {
   onForkAssistantMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
+  reviewResultMessageId: string | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -139,6 +140,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   activeChatFindRowId?: string | null;
+  reviewResultActive?: boolean;
 }
 
 const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
@@ -175,6 +177,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   onIsAtEndChange,
   activeChatFindRowId = null,
+  reviewResultActive = false,
 }: MessagesTimelineProps) {
   const handleForkAssistantMessage = onForkAssistantMessage ?? NOOP_FORK_ASSISTANT_MESSAGE;
   const rawRows = useMemo(
@@ -202,6 +205,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const reviewResultMessageId = useMemo(() => {
+    if (!reviewResultActive) return null;
+    const row = rawRows
+      .toReversed()
+      .find((entry) => entry.kind === "message" && entry.message.role === "assistant");
+    return row?.id ?? null;
+  }, [rawRows, reviewResultActive]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -250,6 +260,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkAssistantMessage: handleForkAssistantMessage,
       onImageExpand,
       onOpenTurnDiff,
+      reviewResultMessageId,
     }),
     [
       activeTurnInProgress,
@@ -270,6 +281,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       handleForkAssistantMessage,
       onImageExpand,
       onOpenTurnDiff,
+      reviewResultMessageId,
     ],
   );
 
@@ -455,11 +467,13 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           return (
             <>
               <div className="min-w-0 px-1 py-0.5">
-                <ChatMarkdown
-                  text={messageText}
-                  cwd={ctx.markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
-                />
+                {ctx.reviewResultMessageId === row.id ? null : (
+                  <ChatMarkdown
+                    text={messageText}
+                    cwd={ctx.markdownCwd}
+                    isStreaming={Boolean(row.message.streaming)}
+                  />
+                )}
                 <AssistantChangedFilesSection
                   turnSummary={row.assistantTurnDiffSummary}
                   resolvedTheme={ctx.resolvedTheme}

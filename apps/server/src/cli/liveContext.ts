@@ -1,17 +1,18 @@
-import { type OrchestrationReadModel } from "@t3tools/contracts";
+import { type OrchestrationShellSnapshot, type OrchestrationThread } from "@t3tools/contracts";
 import { Effect, Exit } from "effect";
 import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
 import {
-  getLiveOrchestrationSnapshot,
   withLiveOrchestrationClient,
+  withLiveSnapshotClient,
   withLiveSnapshotAndRpc,
   type CliLiveOrchestrationClient,
   type CliLiveTargetFlags,
   type WsRpcClient,
 } from "./client.ts";
 
-export type ActiveProject = OrchestrationReadModel["projects"][number];
-export type CliThread = OrchestrationReadModel["threads"][number];
+export type CliSnapshot = Pick<OrchestrationShellSnapshot, "projects" | "threads">;
+export type ActiveProject = OrchestrationShellSnapshot["projects"][number];
+export type CliThread = OrchestrationShellSnapshot["threads"][number];
 
 export interface ThreadResolutionOptions {
   // Archived threads are excluded by default so mutating commands never act on a
@@ -26,11 +27,14 @@ export const normalizeWorkspaceRootForProjectCommand = Effect.fn(
   return yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot);
 });
 
-export const activeProjectsOf = (snapshot: OrchestrationReadModel): ReadonlyArray<ActiveProject> =>
-  snapshot.projects.filter((project) => project.deletedAt === null);
+const isNotDeleted = (value: object): boolean =>
+  !("deletedAt" in value) || value.deletedAt === null;
 
-export const activeThreadsOf = (snapshot: OrchestrationReadModel): ReadonlyArray<CliThread> =>
-  snapshot.threads.filter((thread) => thread.deletedAt === null && thread.archivedAt === null);
+export const activeProjectsOf = (snapshot: CliSnapshot): ReadonlyArray<ActiveProject> =>
+  snapshot.projects.filter(isNotDeleted);
+
+export const activeThreadsOf = (snapshot: CliSnapshot): ReadonlyArray<CliThread> =>
+  snapshot.threads.filter((thread) => isNotDeleted(thread) && thread.archivedAt === null);
 
 export const projectSummary = (project: ActiveProject) => ({
   id: project.id,
@@ -59,7 +63,7 @@ export const threadSummary = (thread: CliThread) => ({
 });
 
 export const findProjectForCli = Effect.fn("findProjectForCli")(function* (
-  snapshot: OrchestrationReadModel,
+  snapshot: CliSnapshot,
   identifier: string,
 ) {
   const trimmed = identifier.trim();
@@ -95,7 +99,7 @@ export const findProjectForCli = Effect.fn("findProjectForCli")(function* (
 });
 
 export const findThreadForCli = (
-  snapshot: OrchestrationReadModel,
+  snapshot: CliSnapshot,
   identifier: string,
   options?: ThreadResolutionOptions,
 ) =>
@@ -107,7 +111,7 @@ export const findThreadForCli = (
 
     const includeArchived = options?.includeArchived ?? false;
     const candidates = snapshot.threads.filter(
-      (thread) => thread.deletedAt === null && (includeArchived || thread.archivedAt === null),
+      (thread) => isNotDeleted(thread) && (includeArchived || thread.archivedAt === null),
     );
     const byId = candidates.find((thread) => thread.id === trimmed);
     if (byId) return byId;
@@ -123,7 +127,7 @@ export const findThreadForCli = (
     if (!includeArchived) {
       const archivedMatch = snapshot.threads.find(
         (thread) =>
-          thread.deletedAt === null &&
+          isNotDeleted(thread) &&
           thread.archivedAt !== null &&
           (thread.id === trimmed || thread.title === trimmed),
       );
@@ -144,8 +148,9 @@ export const resolveThreadForCli = Effect.fn("resolveThreadForCli")(function* (
   identifier: string,
   options?: ThreadResolutionOptions,
 ) {
-  const snapshot = yield* getLiveOrchestrationSnapshot(flags);
-  return yield* findThreadForCli(snapshot, identifier, options);
+  return yield* withLiveOrchestrationClient(flags, ({ getSnapshot }) =>
+    Effect.flatMap(getSnapshot, (snapshot) => findThreadForCli(snapshot, identifier, options)),
+  );
 });
 
 // Resolve a thread and dispatch HTTP orchestration commands sharing a single
@@ -155,7 +160,7 @@ export const withThreadDispatch = <A, E, R>(
   identifier: string,
   run: (input: {
     readonly thread: CliThread;
-    readonly snapshot: OrchestrationReadModel;
+    readonly snapshot: CliSnapshot;
     readonly dispatch: CliLiveOrchestrationClient["dispatch"];
   }) => Effect.Effect<A, E, R>,
   options?: ThreadResolutionOptions,
@@ -175,7 +180,7 @@ export const withThreadRpc = <A, E, R>(
   identifier: string,
   run: (input: {
     readonly thread: CliThread;
-    readonly snapshot: OrchestrationReadModel;
+    readonly snapshot: CliSnapshot;
     readonly client: WsRpcClient;
   }) => Effect.Effect<A, E, R>,
 ) =>
@@ -193,7 +198,7 @@ export const withProjectRpc = <A, E, R>(
   identifier: string,
   run: (input: {
     readonly project: ActiveProject;
-    readonly snapshot: OrchestrationReadModel;
+    readonly snapshot: CliSnapshot;
     readonly client: WsRpcClient;
   }) => Effect.Effect<A, E, R>,
 ) =>
@@ -224,5 +229,24 @@ export const withTerminalRpc = <A, E, R>(
         return yield* Effect.fail(new Error(`Project '${thread.projectId}' not found.`));
       }
       return yield* run({ thread, project, client });
+    }),
+  );
+
+export const withThreadDetail = <A, E, R>(
+  flags: CliLiveTargetFlags,
+  identifier: string,
+  run: (input: {
+    readonly thread: CliThread;
+    readonly detail: OrchestrationThread;
+    readonly snapshot: CliSnapshot;
+  }) => Effect.Effect<A, E, R>,
+  options?: ThreadResolutionOptions,
+) =>
+  withLiveSnapshotClient(flags, ({ getSnapshot, getThreadSnapshot }) =>
+    Effect.gen(function* () {
+      const snapshot = yield* getSnapshot;
+      const thread = yield* findThreadForCli(snapshot, identifier, options);
+      const detail = yield* getThreadSnapshot(thread.id);
+      return yield* run({ thread, detail: detail.thread, snapshot });
     }),
   );

@@ -5,6 +5,7 @@ export interface DiffRouteSearch {
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
   diffScope?: TurnDiffScope | undefined;
+  reviewFinding?: string | undefined;
 }
 
 function isDiffOpenValue(value: unknown): boolean {
@@ -21,15 +22,16 @@ function normalizeSearchString(value: unknown): string | undefined {
 
 export function stripDiffSearchParams<T extends Record<string, unknown>>(
   params: T,
-): Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffScope"> {
+): Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffScope" | "reviewFinding"> {
   const {
     diff: _diff,
     diffTurnId: _diffTurnId,
     diffFilePath: _diffFilePath,
     diffScope: _diffScope,
+    reviewFinding: _reviewFinding,
     ...rest
   } = params;
-  return rest as Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffScope">;
+  return rest as Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffScope" | "reviewFinding">;
 }
 
 export function buildClosedDiffRouteSearch(): DiffRouteSearch {
@@ -39,6 +41,7 @@ export function buildClosedDiffRouteSearch(): DiffRouteSearch {
     diffTurnId: undefined,
     diffFilePath: undefined,
     diffScope: undefined,
+    reviewFinding: undefined,
   };
 }
 
@@ -52,13 +55,15 @@ export function normalizeDiffRouteSearch(search: DiffRouteSearch): DiffRouteSear
     ...(search.diffTurnId ? { diffTurnId: search.diffTurnId } : {}),
     ...(search.diffTurnId && search.diffFilePath ? { diffFilePath: search.diffFilePath } : {}),
     ...(search.diffTurnId && search.diffScope ? { diffScope: search.diffScope } : {}),
+    ...(search.reviewFinding ? { reviewFinding: search.reviewFinding } : {}),
   };
 }
 
 export function mergeDiffRouteSearch<T extends Record<string, unknown>>(
   params: T,
   search: DiffRouteSearch,
-): Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffScope"> & DiffRouteSearch {
+): Omit<T, "diff" | "diffTurnId" | "diffFilePath" | "diffScope" | "reviewFinding"> &
+  DiffRouteSearch {
   return {
     ...stripDiffSearchParams(params),
     ...normalizeDiffRouteSearch(search),
@@ -73,11 +78,13 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
   const diffScopeRaw = diff && diffTurnId ? normalizeSearchString(search.diffScope) : undefined;
   const diffScope =
     diffScopeRaw === "turn" || diffScopeRaw === "snapshot" ? diffScopeRaw : undefined;
+  const reviewFinding = diff ? normalizeSearchString(search.reviewFinding) : undefined;
 
   return {
     ...(diff ? { diff } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),
     ...(diffScope ? { diffScope } : {}),
+    ...(reviewFinding ? { reviewFinding } : {}),
   };
 }

@@ -8,6 +8,12 @@ describe("buildReviewChangesPrompt", () => {
     const prompt = buildReviewChangesPrompt({
       context: { scope: "uncommitted" },
       settings: { promptTemplate: "Custom reviewer instructions." },
+      snapshot: {
+        scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
+        diff: "diff --git a/a.ts b/a.ts\n",
+        diffHash: "snapshot-hash",
+        truncated: false,
+      },
     });
 
     expect(prompt).toContain("Review scope: uncommitted changes.");
@@ -16,6 +22,8 @@ describe("buildReviewChangesPrompt", () => {
     expect(prompt).toContain("git ls-files --others --exclude-standard");
     expect(prompt).toContain("Do not review already committed branch changes");
     expect(prompt).toContain("Custom reviewer instructions.");
+    expect(prompt).toContain('"diffHash":"snapshot-hash"');
+    expect(prompt).toContain("Return exactly one JSON object");
   });
 
   it("builds the base branch review scope with merge-base instructions", () => {
@@ -26,6 +34,18 @@ describe("buildReviewChangesPrompt", () => {
         mergeBaseSha: "abc123",
       },
       settings: { promptTemplate: "Custom reviewer instructions." },
+      snapshot: {
+        scope: {
+          kind: "against-base",
+          branch: "feature",
+          baseBranch: "origin/main",
+          mergeBaseSha: "abc123",
+          untrackedFiles: [],
+        },
+        diff: "diff --git a/a.ts b/a.ts\n",
+        diffHash: "snapshot-hash",
+        truncated: false,
+      },
     });
 
     expect(prompt).toContain("Review scope: changes against base branch.");
@@ -40,6 +60,12 @@ describe("buildReviewChangesPrompt", () => {
     const prompt = buildReviewChangesPrompt({
       context: { scope: "uncommitted" },
       settings: { promptTemplate: "   " },
+      snapshot: {
+        scope: { kind: "uncommitted", branch: null, untrackedFiles: [] },
+        diff: "",
+        diffHash: "snapshot-hash",
+        truncated: false,
+      },
     });
 
     expect(prompt).toContain(DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE);

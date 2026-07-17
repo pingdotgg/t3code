@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EventId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -53,6 +54,15 @@ const unsupported = () => Effect.die(new Error("Unsupported provider call in tes
 function makeReadModel(
   threads: ReadonlyArray<{
     readonly id: ThreadId;
+    readonly activities?: ReadonlyArray<{
+      readonly id: EventId;
+      readonly tone: "info";
+      readonly kind: string;
+      readonly summary: string;
+      readonly payload: unknown;
+      readonly turnId: TurnId | null;
+      readonly createdAt: string;
+    }>;
     readonly session: {
       readonly threadId: ThreadId;
       readonly status: "starting" | "running" | "ready" | "interrupted" | "stopped" | "error";
@@ -98,7 +108,7 @@ function makeReadModel(
       latestTurn: null,
       messages: [],
       session: thread.session,
-      activities: [],
+      activities: [...(thread.activities ?? [])],
       proposedPlans: [],
       checkpoints: [],
       deletedAt: null,
@@ -249,6 +259,66 @@ describe("ProviderSessionReaper", () => {
 
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
     expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("stops orphaned background agents left by a previous server process", async () => {
+    const threadId = ThreadId.make("thread-reaper-orphaned-background-agent");
+    const turnId = TurnId.make("turn-reaper-orphaned-background-agent");
+    const startedAt = "2026-07-17T18:21:14.630Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          activities: [
+            {
+              id: EventId.make("activity-background-agent-started"),
+              tone: "info",
+              kind: "task.started",
+              summary: "Background agent started",
+              payload: {
+                taskId: "snapshot-500-fix",
+                taskType: "background-agent",
+                name: "snapshot-500-fix",
+              },
+              turnId,
+              createdAt: startedAt,
+            },
+          ],
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: startedAt,
+          },
+        },
+      ]),
+    });
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make());
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+
+    await waitFor(() =>
+      harness.dispatchedCommands.some((command) => command.type === "thread.activity.append"),
+    );
+    const command = harness.dispatchedCommands.find(
+      (candidate) => candidate.type === "thread.activity.append",
+    );
+    expect(command).toMatchObject({
+      type: "thread.activity.append",
+      threadId,
+      activity: {
+        kind: "task.completed",
+        payload: {
+          taskId: "snapshot-500-fix",
+          status: "stopped",
+        },
+        turnId,
+      },
+    });
   });
 
   it("clears stale active turns when no provider session is still running them", async () => {

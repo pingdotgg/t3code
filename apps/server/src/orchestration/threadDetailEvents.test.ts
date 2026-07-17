@@ -16,6 +16,10 @@ describe("isThreadDetailEvent", () => {
     expect(isThreadDetailEvent(eventOf("thread.queued-turn-failed"))).toBe(true);
   });
 
+  it("includes structured review results in live thread detail streams", () => {
+    expect(isThreadDetailEvent(eventOf("thread.review-result-set"))).toBe(true);
+  });
+
   it("excludes events that belong to shell or unrelated streams", () => {
     expect(isThreadDetailEvent(eventOf("thread.deleted"))).toBe(false);
     expect(isThreadDetailEvent(eventOf("project.created"))).toBe(false);

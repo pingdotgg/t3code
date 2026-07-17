@@ -1,4 +1,10 @@
-import { CommandId, type ProviderSession, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  type ProviderSession,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { Duration, Effect, Layer, Schedule } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -23,6 +29,48 @@ function sessionKeepsTurnActive(
   return session.activeTurnId === activeTurnId;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function findOrphanedBackgroundAgents(
+  activities: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly payload: unknown;
+    readonly turnId: TurnId | null;
+    readonly createdAt: string;
+  }>,
+) {
+  const runningByTaskId = new Map<
+    string,
+    { readonly taskId: string; readonly name: string; readonly turnId: TurnId | null }
+  >();
+  const ordered = [...activities].toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
+
+  for (const activity of ordered) {
+    if (!isRecord(activity.payload)) continue;
+    const taskId = typeof activity.payload.taskId === "string" ? activity.payload.taskId : null;
+    if (taskId === null) continue;
+    if (activity.kind === "task.started" && activity.payload.taskType === "background-agent") {
+      runningByTaskId.set(taskId, {
+        taskId,
+        name: typeof activity.payload.name === "string" ? activity.payload.name : taskId,
+        turnId: activity.turnId,
+      });
+      continue;
+    }
+    if (activity.kind === "task.completed") {
+      runningByTaskId.delete(taskId);
+    }
+  }
+
+  return [...runningByTaskId.values()];
+}
+
 export interface ProviderSessionReaperLiveOptions {
   readonly inactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
@@ -39,6 +87,42 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       options?.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS,
     );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
+
+    const reconcileOrphanedBackgroundAgents = Effect.gen(function* () {
+      const readModel = yield* orchestrationEngine.getReadModel();
+      let reconciledCount = 0;
+      for (const thread of readModel.threads) {
+        const orphanedAgents = findOrphanedBackgroundAgents(thread.activities);
+        for (const agent of orphanedAgents) {
+          const createdAt = new Date().toISOString();
+          yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: serverCommandId("provider-session-reaper-orphaned-background-agent"),
+            threadId: thread.id,
+            activity: {
+              id: EventId.make(crypto.randomUUID()),
+              tone: "info",
+              kind: "task.completed",
+              summary: `${agent.name} stopped`,
+              payload: {
+                taskId: agent.taskId,
+                status: "stopped",
+                detail: "Provider session ended before the background agent reported completion.",
+              },
+              turnId: agent.turnId,
+              createdAt,
+            },
+            createdAt,
+          });
+          reconciledCount += 1;
+        }
+      }
+      if (reconciledCount > 0) {
+        yield* Effect.logWarning("provider.session.reaper.reconciled-background-agents", {
+          reconciledCount,
+        });
+      }
+    });
 
     const sweep = Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
@@ -161,6 +245,11 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
     const start: ProviderSessionReaperShape["start"] = () =>
       Effect.gen(function* () {
+        yield* reconcileOrphanedBackgroundAgents.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider.session.reaper.background-reconcile-failed", { cause }),
+          ),
+        );
         yield* Effect.forkScoped(
           sweep.pipe(
             Effect.catch((error: unknown) =>

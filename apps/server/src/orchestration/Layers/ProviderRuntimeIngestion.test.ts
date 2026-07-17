@@ -8,6 +8,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  type ReviewSnapshot,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -213,7 +214,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    reviewSnapshot?: ReviewSnapshot;
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
@@ -276,6 +280,9 @@ describe("ProviderRuntimeIngestion", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        ...(options?.reviewSnapshot !== undefined
+          ? { reviewSnapshot: options.reviewSnapshot }
+          : {}),
         createdAt,
       }),
     );
@@ -354,6 +361,82 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("parses and persists a reviewer child thread's final structured result", async () => {
+    const harness = await createHarness({
+      reviewSnapshot: {
+        scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
+        diff: `diff --git a/src/example.ts b/src/example.ts
+index 1111111..2222222 100644
+--- a/src/example.ts
++++ b/src/example.ts
+@@ -1 +1 @@
+-oldValue();
++newValue();
+`,
+        diffHash: "snapshot-hash",
+        truncated: false,
+      },
+    });
+    const startedAt = new Date().toISOString();
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-review-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: startedAt,
+      turnId: asTurnId("review-turn-1"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.activeTurnId === "review-turn-1",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-review-output"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("review-turn-1"),
+      createdAt: new Date().toISOString(),
+      payload: {
+        streamKind: "assistant_text",
+        delta: JSON.stringify({
+          findings: [
+            {
+              id: "new-value",
+              priority: "high",
+              title: "Unsafe new value",
+              body: "The replacement needs validation.",
+              confidence: 0.9,
+              location: { path: "src/example.ts", side: "new", startLine: 1, endLine: 1 },
+            },
+          ],
+          verdict: "request-changes",
+          summary: "One issue found.",
+        }),
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-review-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("review-turn-1"),
+      createdAt: new Date().toISOString(),
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.reviewResult?.status === "parsed",
+    );
+    expect(thread.reviewResult).toMatchObject({
+      status: "parsed",
+      findings: [{ id: "new-value" }],
+      verdict: "request-changes",
+    });
   });
 
   it("accepts turn completion without a provider turn id for the currently active turn", async () => {

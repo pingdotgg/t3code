@@ -34,6 +34,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { parseReviewResult } from "../reviewResult.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
@@ -921,6 +922,42 @@ const make = Effect.gen(function* () {
       yield* clearAssistantMessageState(input.messageId);
     });
 
+  const persistReviewResult = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    turnId: TurnId;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const thread = readModel.threads.find((entry) => entry.id === input.threadId);
+      if (
+        !thread?.reviewSnapshot ||
+        (thread.reviewResult !== undefined && thread.reviewResult !== null)
+      ) {
+        return;
+      }
+
+      const output =
+        thread.messages
+          .filter(
+            (message) =>
+              message.role === "assistant" && message.turnId === input.turnId && !message.streaming,
+          )
+          .toSorted(
+            (left, right) =>
+              left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+          )
+          .at(-1)?.text ?? "";
+      yield* orchestrationEngine.dispatch({
+        type: "thread.review-result.set",
+        commandId: providerCommandId(input.event, "review-result-set"),
+        threadId: input.threadId,
+        result: parseReviewResult({ output, snapshot: thread.reviewSnapshot }),
+        createdAt: input.createdAt,
+      });
+    });
+
   const finalizeActiveAssistantSegmentForTurn = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
@@ -1304,7 +1341,7 @@ const make = Effect.gen(function* () {
 
       if (isThreadLifecycleEvent) {
         if (event.type === "turn.completed") {
-          const completedTurnId = toTurnId(event.turnId);
+          const completedTurnId = lifecycleTurnId;
           if (completedTurnId) {
             const assistantMessageIds = yield* getAssistantMessageIdsForTurn(
               thread.id,
@@ -1342,6 +1379,14 @@ const make = Effect.gen(function* () {
         }
 
         yield* dispatchThreadLifecycleUpdate();
+        if (event.type === "turn.completed" && lifecycleTurnId !== undefined) {
+          yield* persistReviewResult({
+            event,
+            threadId: thread.id,
+            turnId: lifecycleTurnId,
+            createdAt: now,
+          });
+        }
       }
 
       if (

@@ -3,6 +3,9 @@ import {
   OrchestrationDispatchCommandError,
   OrchestrationGetSnapshotError,
   type OrchestrationReadModel,
+  type OrchestrationShellSnapshot,
+  type OrchestrationThreadDetailSnapshot,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -62,6 +65,68 @@ export const orchestrationSnapshotRouteLayer = HttpRouter.add(
     return HttpServerResponse.jsonUnsafe(snapshot satisfies OrchestrationReadModel, {
       status: 200,
     });
+  }).pipe(
+    Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError),
+    Effect.catchTag("OrchestrationGetSnapshotError", respondToOrchestrationHttpError),
+  ),
+);
+
+export const orchestrationShellSnapshotRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/orchestration/shell-snapshot",
+  Effect.gen(function* () {
+    yield* authenticateOwnerSession;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationGetSnapshotError({
+            message: "Failed to load orchestration shell snapshot.",
+            cause,
+          }),
+      ),
+    );
+    return HttpServerResponse.jsonUnsafe(snapshot satisfies OrchestrationShellSnapshot, {
+      status: 200,
+    });
+  }).pipe(
+    Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError),
+    Effect.catchTag("OrchestrationGetSnapshotError", respondToOrchestrationHttpError),
+  ),
+);
+
+export const orchestrationThreadSnapshotRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/orchestration/threads/:threadId/snapshot",
+  Effect.gen(function* () {
+    yield* authenticateOwnerSession;
+    const params = yield* HttpRouter.params;
+    const threadId = ThreadId.make(params.threadId ?? "");
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const [threadDetail, shellSnapshot] = yield* Effect.all([
+      projectionSnapshotQuery.getThreadDetailById(threadId),
+      projectionSnapshotQuery.getShellSnapshot(),
+    ]).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationGetSnapshotError({
+            message: `Failed to load thread ${threadId}`,
+            cause,
+          }),
+      ),
+    );
+    if (threadDetail._tag === "None") {
+      return yield* new OrchestrationGetSnapshotError({
+        message: `Thread ${threadId} was not found`,
+      });
+    }
+    return HttpServerResponse.jsonUnsafe(
+      {
+        snapshotSequence: shellSnapshot.snapshotSequence,
+        thread: threadDetail.value,
+      } satisfies OrchestrationThreadDetailSnapshot,
+      { status: 200 },
+    );
   }).pipe(
     Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError),
     Effect.catchTag("OrchestrationGetSnapshotError", respondToOrchestrationHttpError),

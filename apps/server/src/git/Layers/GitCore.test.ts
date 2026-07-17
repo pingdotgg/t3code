@@ -700,6 +700,13 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(result.statusShort).toContain("README.md");
         expect(result.statusShort).toContain("staged.txt");
         expect(result.untrackedFiles).toContain("untracked.txt");
+        if (!result.snapshot) {
+          throw new Error("expected review snapshot");
+        }
+        expect(result.snapshot.diffHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(result.snapshot.diff).toContain("README.md");
+        expect(result.snapshot.diff).toContain("staged.txt");
+        expect(result.snapshot.diff).toContain("untracked.txt");
       }),
     );
 
@@ -727,6 +734,14 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(result.mergeBaseSha).toBe(mergeBaseSha);
         expect(result.hasReviewableChanges).toBe(true);
         expect(result.untrackedFiles).toContain("untracked.txt");
+        if (!result.snapshot) {
+          throw new Error("expected review snapshot");
+        }
+        expect(result.snapshot.scope).toMatchObject({
+          kind: "against-base",
+          baseBranch: initialBranch,
+          mergeBaseSha,
+        });
       }),
     );
   });

@@ -31,6 +31,7 @@ const threadCache = new WeakMap<
     proposedPlans: Thread["proposedPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
     queuedTurns: readonly OrchestrationQueuedTurn[];
+    reviewState: NonNullable<EnvironmentState["reviewStateByThreadId"]>[ThreadId] | undefined;
     thread: Thread;
   }
 >();
@@ -116,6 +117,7 @@ export function getThreadFromEnvironmentState(
   const proposedPlans = selectThreadProposedPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
   const queuedTurns = state.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_TURNS;
+  const reviewState = state.reviewStateByThreadId?.[threadId];
   const cached = threadCache.get(shell);
 
   if (
@@ -126,7 +128,8 @@ export function getThreadFromEnvironmentState(
     cached.activities === activities &&
     cached.proposedPlans === proposedPlans &&
     cached.turnDiffSummaries === turnDiffSummaries &&
-    cached.queuedTurns === queuedTurns
+    cached.queuedTurns === queuedTurns &&
+    cached.reviewState === reviewState
   ) {
     return cached.thread;
   }
@@ -141,6 +144,7 @@ export function getThreadFromEnvironmentState(
     proposedPlans,
     turnDiffSummaries,
     ...(queuedTurns.length > 0 ? { queuedTurns: [...queuedTurns] } : {}),
+    ...reviewState,
   };
 
   threadCache.set(shell, {
@@ -151,6 +155,7 @@ export function getThreadFromEnvironmentState(
     proposedPlans,
     turnDiffSummaries,
     queuedTurns,
+    reviewState,
     thread,
   });
 

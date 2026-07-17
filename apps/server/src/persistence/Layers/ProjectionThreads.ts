@@ -11,11 +11,13 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection } from "@t3tools/contracts";
+import { ModelSelection, ReviewResult, ReviewSnapshot } from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    reviewSnapshot: Schema.fromJsonString(Schema.NullOr(ReviewSnapshot)),
+    reviewResult: Schema.fromJsonString(Schema.NullOr(ReviewResult)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -38,6 +40,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode,
           branch,
           worktree_path,
+          review_snapshot_json,
+          review_result_json,
           latest_turn_id,
           created_at,
           updated_at,
@@ -59,6 +63,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.interactionMode},
           ${row.branch},
           ${row.worktreePath},
+          ${JSON.stringify(row.reviewSnapshot ?? null)},
+          ${JSON.stringify(row.reviewResult ?? null)},
           ${row.latestTurnId},
           ${row.createdAt},
           ${row.updatedAt},
@@ -80,6 +86,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
+          review_snapshot_json = excluded.review_snapshot_json,
+          review_result_json = excluded.review_result_json,
           latest_turn_id = excluded.latest_turn_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -108,6 +116,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          review_snapshot_json AS "reviewSnapshot",
+          review_result_json AS "reviewResult",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -138,6 +148,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          review_snapshot_json AS "reviewSnapshot",
+          review_result_json AS "reviewResult",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

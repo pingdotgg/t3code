@@ -9,6 +9,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 import {
@@ -21,7 +22,8 @@ import {
   AuthWebSocketTokenResult,
   ClientOrchestrationCommand,
   CommandId,
-  OrchestrationReadModel,
+  OrchestrationShellSnapshot,
+  OrchestrationThreadDetailSnapshot,
   OrchestrationShellStreamItem,
   ORCHESTRATION_WS_METHODS,
   WsRpcGroup,
@@ -66,7 +68,8 @@ const JsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 const DispatchResult = Schema.Struct({ sequence: Schema.Number });
 const decodeJsonRecord = Schema.decodeUnknownEffect(JsonRecord);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
-const decodeReadModel = HttpClientResponse.schemaBodyJson(OrchestrationReadModel);
+const decodeShellSnapshot = HttpClientResponse.schemaBodyJson(OrchestrationShellSnapshot);
+const decodeThreadSnapshot = HttpClientResponse.schemaBodyJson(OrchestrationThreadDetailSnapshot);
 const decodeDispatchResult = HttpClientResponse.schemaBodyJson(DispatchResult);
 const decodeWsToken = HttpClientResponse.schemaBodyJson(AuthWebSocketTokenResult);
 const makeWsRpcClient = RpcClient.make(WsRpcGroup);
@@ -85,13 +88,23 @@ export type WsRpcClient =
   typeof makeWsRpcClient extends Effect.Effect<infer Client, any, any> ? Client : never;
 
 export interface CliLiveOrchestrationClient {
-  readonly getSnapshot: ReturnType<typeof fetchSnapshot>;
+  readonly getSnapshot: ReturnType<typeof fetchLiveOrchestrationShellSnapshot>;
   readonly dispatch: (command: ClientOrchestrationCommand) => ReturnType<typeof dispatchCommand>;
 }
 
 export interface CliLiveSnapshotRpcClient {
-  readonly getSnapshot: ReturnType<typeof fetchSnapshot>;
+  readonly getSnapshot: Effect.Effect<OrchestrationShellSnapshot, unknown, never>;
+  readonly getThreadSnapshot: (
+    threadId: import("@t3tools/contracts").ThreadId,
+  ) => Effect.Effect<OrchestrationThreadDetailSnapshot, unknown, never>;
   readonly client: WsRpcClient;
+}
+
+export interface CliLiveSnapshotClient {
+  readonly getSnapshot: ReturnType<typeof fetchLiveOrchestrationShellSnapshot>;
+  readonly getThreadSnapshot: (
+    threadId: import("@t3tools/contracts").ThreadId,
+  ) => ReturnType<typeof fetchLiveOrchestrationThreadSnapshot>;
 }
 
 export function formatJson(value: unknown): string {
@@ -235,9 +248,9 @@ const requestWebSocketToken = (origin: string, bearerToken: string) =>
     }),
   );
 
-const fetchSnapshot = (origin: string, bearerToken: string) =>
+export const fetchLiveOrchestrationShellSnapshot = (origin: string, bearerToken: string) =>
   Effect.gen(function* () {
-    const request = HttpClientRequest.get(`${origin}/api/orchestration/snapshot`).pipe(
+    const request = HttpClientRequest.get(`${origin}/api/orchestration/shell-snapshot`).pipe(
       HttpClientRequest.acceptJson,
       HttpClientRequest.bearerToken(bearerToken),
     );
@@ -245,14 +258,14 @@ const fetchSnapshot = (origin: string, bearerToken: string) =>
     const response = yield* httpClient.execute(request);
     if (response.status < 200 || response.status >= 300) {
       return yield* new CliRpcError({
-        message: `Failed to fetch orchestration snapshot: HTTP ${response.status}.`,
+        message: `Failed to fetch orchestration shell snapshot: HTTP ${response.status}.`,
       });
     }
-    return yield* decodeReadModel(response).pipe(
+    return yield* decodeShellSnapshot(response).pipe(
       Effect.mapError(
         (cause) =>
           new CliRpcError({
-            message: "Failed to decode orchestration snapshot.",
+            message: "Failed to decode orchestration shell snapshot.",
             cause,
           }),
       ),
@@ -262,7 +275,44 @@ const fetchSnapshot = (origin: string, bearerToken: string) =>
       duration: LIVE_REQUEST_TIMEOUT,
       orElse: () =>
         new CliRpcError({
-          message: `Timed out fetching orchestration snapshot after ${Duration.toSeconds(
+          message: `Timed out fetching orchestration shell snapshot after ${Duration.toSeconds(
+            LIVE_REQUEST_TIMEOUT,
+          )}s. Is the T3 server responsive?`,
+        }),
+    }),
+  );
+
+export const fetchLiveOrchestrationThreadSnapshot = (
+  origin: string,
+  bearerToken: string,
+  threadId: import("@t3tools/contracts").ThreadId,
+) =>
+  Effect.gen(function* () {
+    const request = HttpClientRequest.get(
+      `${origin}/api/orchestration/threads/${encodeURIComponent(threadId)}/snapshot`,
+    ).pipe(HttpClientRequest.acceptJson, HttpClientRequest.bearerToken(bearerToken));
+    const httpClient = yield* HttpClient.HttpClient;
+    const response = yield* httpClient.execute(request);
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new CliRpcError({
+        message: `Failed to fetch thread snapshot: HTTP ${response.status}.`,
+      });
+    }
+    return yield* decodeThreadSnapshot(response).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CliRpcError({
+            message: "Failed to decode thread snapshot.",
+            cause,
+          }),
+      ),
+    );
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: LIVE_REQUEST_TIMEOUT,
+      orElse: () =>
+        new CliRpcError({
+          message: `Timed out fetching thread snapshot after ${Duration.toSeconds(
             LIVE_REQUEST_TIMEOUT,
           )}s. Is the T3 server responsive?`,
         }),
@@ -309,8 +359,10 @@ const dispatchCommand = (
     }),
   );
 
-const wsRpcProtocolLayer = (url: string) => {
-  const socketLayer = Socket.layerWebSocket(url);
+export const wsRpcProtocolLayer = (url: string) => {
+  const socketLayer = Socket.layerWebSocket(url).pipe(
+    Layer.provide(NodeSocket.layerWebSocketConstructor),
+  );
   return RpcClient.layerProtocolSocket().pipe(
     Layer.provide(socketLayer),
     Layer.provide(RpcSerialization.layerJson),
@@ -393,20 +445,27 @@ export const withLiveRpcClient = <A, E, R>(
   run: (client: WsRpcClient) => Effect.Effect<A, E, R>,
 ) =>
   withBorrowedBearerToken(flags, ({ origin, bearerToken }) =>
-    Effect.gen(function* () {
-      const wsToken = yield* requestWebSocketToken(origin, bearerToken);
-      const wsUrl = originToWsUrl(origin, wsToken.token);
-      return yield* makeWsRpcClient.pipe(
-        Effect.flatMap(run),
-        Effect.provide(wsRpcProtocolLayer(wsUrl)),
-        Effect.scoped,
-      );
-    }),
+    withRpcClientForBearerToken(origin, bearerToken, run),
   ).pipe(Effect.provide(FetchHttpClient.layer));
 
-export const getLiveOrchestrationSnapshot = (flags: CliLiveTargetFlags) =>
+export const withRpcClientForBearerToken = <A, E, R>(
+  origin: string,
+  bearerToken: string,
+  run: (client: WsRpcClient) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const wsToken = yield* requestWebSocketToken(origin, bearerToken);
+    const wsUrl = originToWsUrl(origin, wsToken.token);
+    return yield* makeWsRpcClient.pipe(
+      Effect.flatMap(run),
+      Effect.provide(wsRpcProtocolLayer(wsUrl)),
+      Effect.scoped,
+    );
+  });
+
+export const getLiveOrchestrationShellSnapshot = (flags: CliLiveTargetFlags) =>
   withBorrowedBearerToken(flags, ({ origin, bearerToken }) =>
-    fetchSnapshot(origin, bearerToken),
+    fetchLiveOrchestrationShellSnapshot(origin, bearerToken),
   ).pipe(Effect.provide(FetchHttpClient.layer));
 
 export const withLiveOrchestrationClient = <A, E, R>(
@@ -415,8 +474,20 @@ export const withLiveOrchestrationClient = <A, E, R>(
 ) =>
   withBorrowedBearerToken(flags, ({ origin, bearerToken }) =>
     run({
-      getSnapshot: fetchSnapshot(origin, bearerToken),
+      getSnapshot: fetchLiveOrchestrationShellSnapshot(origin, bearerToken),
       dispatch: (command) => dispatchCommand(origin, bearerToken, command),
+    }),
+  ).pipe(Effect.provide(FetchHttpClient.layer));
+
+export const withLiveSnapshotClient = <A, E, R>(
+  flags: CliLiveTargetFlags,
+  run: (client: CliLiveSnapshotClient) => Effect.Effect<A, E, R>,
+) =>
+  withBorrowedBearerToken(flags, ({ origin, bearerToken }) =>
+    run({
+      getSnapshot: fetchLiveOrchestrationShellSnapshot(origin, bearerToken),
+      getThreadSnapshot: (threadId) =>
+        fetchLiveOrchestrationThreadSnapshot(origin, bearerToken, threadId),
     }),
   ).pipe(Effect.provide(FetchHttpClient.layer));
 
@@ -424,19 +495,14 @@ export const withLiveSnapshotAndRpc = <A, E, R>(
   flags: CliLiveTargetFlags,
   run: (client: CliLiveSnapshotRpcClient) => Effect.Effect<A, E, R>,
 ) =>
-  withBorrowedBearerToken(flags, ({ origin, bearerToken }) =>
-    Effect.gen(function* () {
-      const wsToken = yield* requestWebSocketToken(origin, bearerToken);
-      const wsUrl = originToWsUrl(origin, wsToken.token);
-      return yield* makeWsRpcClient.pipe(
-        Effect.flatMap((client) =>
-          run({ getSnapshot: fetchSnapshot(origin, bearerToken), client }),
-        ),
-        Effect.provide(wsRpcProtocolLayer(wsUrl)),
-        Effect.scoped,
-      );
+  withLiveRpcClient(flags, (client) =>
+    run({
+      getSnapshot: client[ORCHESTRATION_WS_METHODS.getShellSnapshot]({}),
+      getThreadSnapshot: (threadId) =>
+        client[ORCHESTRATION_WS_METHODS.getThreadSnapshot]({ threadId }),
+      client,
     }),
-  ).pipe(Effect.provide(FetchHttpClient.layer));
+  );
 
 export const decodeRpcPayload = (payload: unknown) =>
   decodeJsonRecord(payload).pipe(

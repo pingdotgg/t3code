@@ -17,6 +17,8 @@ import type {
   ProviderInstanceId,
   CheckpointRef,
   ProviderInteractionMode,
+  ReviewResult,
+  ReviewSnapshot,
   RuntimeMode,
 } from "@t3tools/contracts";
 
@@ -120,6 +122,8 @@ export interface Thread {
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
+  reviewSnapshot?: ReviewSnapshot | undefined;
+  reviewResult?: ReviewResult | null | undefined;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }

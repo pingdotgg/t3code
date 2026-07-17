@@ -3,7 +3,13 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { DiffFile, DiffSnapshot, TurnDiffScope, TurnId } from "@t3tools/contracts";
+import type {
+  DiffFile,
+  DiffSnapshot,
+  ReviewFinding,
+  TurnDiffScope,
+  TurnId,
+} from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -41,6 +47,7 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffScopeToggle } from "./chat/DiffScopeToggle";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { Badge } from "./ui/badge";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -52,6 +59,33 @@ const DIFF_ZOOM_DEFAULT = 100;
 
 function diffZoomFontSizePx(zoom: number, basePx: number): number {
   return Math.round((basePx * zoom) / 100);
+}
+
+function ReviewFindingPopover({ finding }: { readonly finding: ReviewFinding }) {
+  const priority =
+    finding.priority === "critical" || finding.priority === "high" ? "error" : "warning";
+  const label =
+    finding.priority === "critical"
+      ? "P0"
+      : finding.priority === "high"
+        ? "P1"
+        : finding.priority === "medium"
+          ? "P2"
+          : "P3";
+  return (
+    <article className="mx-2 mb-2 rounded-xl border border-border bg-card p-3 shadow-sm">
+      <div className="flex items-center gap-2">
+        <Badge size="sm" variant={priority}>
+          {label}
+        </Badge>
+        <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{finding.title}</h3>
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground">{finding.body}</p>
+      <p className="mt-2 font-mono text-[10px] text-muted-foreground">
+        {finding.location.side} lines {finding.location.startLine}-{finding.location.endLine}
+      </p>
+    </article>
+  );
 }
 
 function diffZoomLineHeight(zoom: number): number {
@@ -328,7 +362,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
+  const reviewSnapshot =
+    activeThread?.reviewSnapshot ?? activeThread?.reviewResult?.snapshot ?? null;
+  const reviewResult =
+    activeThread?.reviewResult?.status === "parsed" ? activeThread.reviewResult : null;
+  const selectedReviewFinding =
+    reviewResult?.findings.find((finding) => finding.id === diffSearch.reviewFinding) ?? null;
+  const selectedFilePath =
+    selectedReviewFinding?.location.path ??
+    (selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null);
   // Exact match only. If diffTurnId points at a turn that has no summary
   // (deleted, never persisted, stale URL after revert), surface an explicit
   // unavailable state below — do NOT silently render some other turn's diff.
@@ -400,7 +442,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       kind: selectedTurn ? "turn" : "conversation",
       scope: selectedScope,
       cacheScope: activeDiffCacheScope,
-      enabled: isGitRepo && !selectedTurnRequestedButMissing && !selectedTurnRangeMissing,
+      enabled:
+        reviewSnapshot === null &&
+        isGitRepo &&
+        !selectedTurnRequestedButMissing &&
+        !selectedTurnRangeMissing,
     }),
   );
   useEffect(() => {
@@ -475,7 +521,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         ? "Failed to load checkpoint diff."
         : null);
 
-  const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
+  const selectedPatch =
+    reviewSnapshot?.diff ??
+    (selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff);
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const diffSafetyByPath = useMemo(() => {
@@ -833,7 +881,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
-      ) : orderedTurnDiffSummaries.length === 0 ? (
+      ) : orderedTurnDiffSummaries.length === 0 && !reviewSnapshot ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           No completed turns yet.
         </div>
@@ -936,6 +984,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           {safetyLabel}
                         </div>
                       )}
+                      {reviewResult?.findings
+                        .filter((finding) => finding.location.path === filePath)
+                        .map((finding) => (
+                          <ReviewFindingPopover key={finding.id} finding={finding} />
+                        ))}
                       <FileDiff
                         fileDiff={fileDiff}
                         renderHeaderPrefix={() => (

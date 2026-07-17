@@ -523,6 +523,23 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
+  it("shows working for a running virtual background agent", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: null,
+          session: null,
+          virtualAgentRun: {
+            parentThreadId: ThreadId.make("parent-thread"),
+            taskId: "agent-1",
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
   it("shows pending approval before all other statuses", () => {
     expect(
       resolveThreadStatusPill({

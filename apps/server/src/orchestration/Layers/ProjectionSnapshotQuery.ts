@@ -25,6 +25,8 @@ import {
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
+  ReviewResult,
+  ReviewSnapshot,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -79,6 +81,8 @@ const ProjectionQueuedTurnDbRowSchema = ProjectionQueuedTurn.mapFields(
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    reviewSnapshot: Schema.fromJsonString(Schema.NullOr(ReviewSnapshot)),
+    reviewResult: Schema.fromJsonString(Schema.NullOr(ReviewResult)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -381,6 +385,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          review_snapshot_json AS "reviewSnapshot",
+          review_result_json AS "reviewResult",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -690,6 +696,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          review_snapshot_json AS "reviewSnapshot",
+          review_result_json AS "reviewResult",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1177,6 +1185,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  ...(row.reviewSnapshot !== null && row.reviewSnapshot !== undefined
+                    ? { reviewSnapshot: row.reviewSnapshot }
+                    : {}),
+                  reviewResult: row.reviewResult ?? null,
                   latestTurn: reconcileLatestTurnWithSession(
                     latestTurnByThread.get(row.threadId) ?? null,
                     session,
@@ -1681,6 +1693,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        ...(threadRow.value.reviewSnapshot !== null && threadRow.value.reviewSnapshot !== undefined
+          ? { reviewSnapshot: threadRow.value.reviewSnapshot }
+          : {}),
+        reviewResult: threadRow.value.reviewResult ?? null,
         latestTurn: reconcileLatestTurnWithSession(
           Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
           session,
