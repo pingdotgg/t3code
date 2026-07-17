@@ -1715,8 +1715,15 @@ export function ChatView({
     onApprovalPrev: () =>
       setApprovalIndex((index) => (index <= 0 ? approvals.length - 1 : index - 1)),
     onApprovalNext: () => setApprovalIndex((index) => (index + 1) % approvals.length),
-    onScrollUp: () => scrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
-    onScrollDown: () => scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
+    onScrollUp: () => {
+      const box = scrollRef.current;
+      getKittyImageManager(renderer).pauseForScroll();
+      box?.scrollBy({ x: 0, y: -SCROLL_STEP });
+    },
+    onScrollDown: () => {
+      getKittyImageManager(renderer).pauseForScroll();
+      scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP });
+    },
     onNewThread: openNewThread,
     onToggleTerminal: toggleTerminal,
     onGrowTerminal: () => resizeTerminal(2),

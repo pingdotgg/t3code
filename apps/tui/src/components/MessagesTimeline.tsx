@@ -1,5 +1,5 @@
 import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
-import { Image, type RgbaImage } from "@t3tools/opentui-image/react";
+import { getKittyImageManager, Image, type RgbaImage } from "@t3tools/opentui-image/react";
 import type { OrchestrationCheckpointSummary } from "@t3tools/contracts";
 import * as React from "react";
 import { useRenderer } from "@opentui/react";
@@ -531,6 +531,9 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
 }): React.ReactNode {
   const renderer = useRenderer();
   const inlineImagesSupported = useKittyGraphicsSupport();
+  const pauseImagesForScroll = React.useCallback(() => {
+    getKittyImageManager(renderer).pauseForScroll();
+  }, [renderer]);
   const imageCellWidth = renderer.resolution ? renderer.resolution.width / renderer.width : 18;
   const mdClient = treeSitterClient ? { treeSitterClient: treeSitterClient as never } : {};
   const palette = usePalette();
@@ -641,6 +644,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         height={bodyHeight}
         stickyScroll
         stickyStart="bottom"
+        onMouseScroll={pauseImagesForScroll}
         style={{ rootOptions: { backgroundColor: "transparent" } }}
       >
         {timeline.map((row) => {

@@ -1,6 +1,7 @@
 import {
   CliRenderEvents,
   Renderable,
+  RGBA,
   type CliRenderer,
   type OptimizedBuffer,
   type RenderableOptions,
@@ -12,6 +13,8 @@ import { assertRgbaImage } from "./kittyProtocol.ts";
 
 const DEFAULT_CELL_WIDTH = 18;
 const DEFAULT_CELL_HEIGHT = 35;
+const SCROLL_PLACEHOLDER = "[ image paused while scrolling ]";
+const SCROLL_PLACEHOLDER_COLOR = RGBA.fromInts(128, 128, 128, 255);
 
 export interface ImageOptions extends Omit<
   RenderableOptions<ImageRenderable>,
@@ -123,10 +126,17 @@ export class ImageRenderable extends Renderable {
     this.requestRender();
   }
 
-  protected override renderSelf(_buffer: OptimizedBuffer, _deltaTime: number): void {
+  protected override renderSelf(buffer: OptimizedBuffer, _deltaTime: number): void {
     assertRgbaImage(this.#data, this.#imageWidth, this.#imageHeight);
     const visible = this.#visibleImageRect();
     if (!visible) return;
+    if (this.#manager.isScrollPaused) {
+      const label = SCROLL_PLACEHOLDER.slice(0, visible.columns);
+      const x = visible.x + Math.max(0, Math.floor((visible.columns - label.length) / 2));
+      const y = visible.y + Math.floor((visible.rows - 1) / 2);
+      buffer.drawText(label, x, y, SCROLL_PLACEHOLDER_COLOR);
+      return;
+    }
     this.#manager.submit({
       key: this.num,
       revision: this.#revision,

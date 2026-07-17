@@ -1,4 +1,5 @@
 import { CliRenderEvents, type CliRenderer } from "@opentui/core";
+import * as NodeTimers from "node:timers";
 
 import {
   assertRgbaImage,
@@ -51,6 +52,8 @@ export class KittyImageManager {
   readonly #pending = new Map<number, KittyImagePatch>();
   #active = new Map<number, ActivePatch>();
   #nextImageId = 1;
+  #scrollPaused = false;
+  #scrollResumeTimer: ReturnType<typeof NodeTimers.setTimeout> | null = null;
   #disposed = false;
 
   readonly #beforeFrame = async (): Promise<void> => {
@@ -93,6 +96,10 @@ export class KittyImageManager {
     return this.#disposed;
   }
 
+  get isScrollPaused(): boolean {
+    return this.#scrollPaused;
+  }
+
   /** Apply explicit installation options even if a renderable created the manager first. */
   configure(options: KittyImageExtensionOptions): void {
     if (this.#disposed) return;
@@ -110,7 +117,7 @@ export class KittyImageManager {
   }
 
   submit(patch: KittyImagePatch): void {
-    if (this.#disposed) return;
+    if (this.#disposed || this.#scrollPaused) return;
     assertRgbaImage(patch.data, patch.imageWidth, patch.imageHeight);
     if (!Number.isSafeInteger(patch.columns) || patch.columns <= 0) {
       throw new RangeError("columns must be a positive safe integer");
@@ -124,7 +131,7 @@ export class KittyImageManager {
   flushFrame(): void {
     if (this.#disposed) return;
 
-    if (!this.isSupported) {
+    if (!this.isSupported || this.#scrollPaused) {
       this.#deleteAllActive();
       return;
     }
@@ -156,6 +163,40 @@ export class KittyImageManager {
     if (output.length > 0) this.#writer.write(output.join(""));
   }
 
+  /**
+   * Replace terminal image overlays with in-buffer placeholders until scrolling
+   * has been idle for `idleMs`. Repeated calls extend the idle window.
+   */
+  pauseForScroll(idleMs = 160): void {
+    if (this.#disposed) return;
+    if (!Number.isFinite(idleMs) || idleMs < 0) {
+      throw new RangeError("idleMs must be a non-negative finite number");
+    }
+    if (this.#scrollResumeTimer) NodeTimers.clearTimeout(this.#scrollResumeTimer);
+    this.#scrollResumeTimer = null;
+    if (!this.#scrollPaused) {
+      this.#scrollPaused = true;
+      this.#pending.clear();
+      this.#deleteAllActive();
+      this.#renderer.requestRender();
+    }
+    // @effect-diagnostics-next-line globalTimers:off - Renderer extension lifecycle is callback-based, outside an Effect runtime.
+    this.#scrollResumeTimer = NodeTimers.setTimeout(() => {
+      this.#scrollResumeTimer = null;
+      this.resumeAfterScroll();
+    }, idleMs);
+    this.#scrollResumeTimer.unref?.();
+  }
+
+  /** Restore Kitty placements immediately after a scroll pause. */
+  resumeAfterScroll(): void {
+    if (this.#scrollResumeTimer) NodeTimers.clearTimeout(this.#scrollResumeTimer);
+    this.#scrollResumeTimer = null;
+    if (this.#disposed || !this.#scrollPaused) return;
+    this.#scrollPaused = false;
+    this.#renderer.requestRender();
+  }
+
   /** Remove all terminal placements without uninstalling the renderer hooks. */
   clearImages(): void {
     if (this.#disposed) return;
@@ -165,6 +206,8 @@ export class KittyImageManager {
 
   dispose(): void {
     if (this.#disposed) return;
+    if (this.#scrollResumeTimer) NodeTimers.clearTimeout(this.#scrollResumeTimer);
+    this.#scrollResumeTimer = null;
     this.clearImages();
     this.#disposed = true;
     this.#pending.clear();

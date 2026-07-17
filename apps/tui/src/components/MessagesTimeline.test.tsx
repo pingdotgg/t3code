@@ -211,6 +211,81 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
+  it("Given an inline image, when the timeline scrolls, then it uses a placeholder until scrolling settles", async () => {
+    const full = {
+      ...detail("default"),
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          text: "scroll past this",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [
+            {
+              type: "image",
+              id: "att1",
+              name: "large-diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 720_000,
+            },
+          ],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const writes: string[] = [];
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        getAttachmentUrl={async () => "https://srv/assets/att1.png"}
+        getAttachmentImage={async () => ({
+          data: new Uint8Array(600 * 300 * 4),
+          imageWidth: 600,
+          imageHeight: 300,
+        })}
+      />,
+      { width: 92, height: 24 },
+    );
+    const manager = installKittyImageExtension(t.renderer, {
+      writer: { write: (value) => writes.push(value) },
+    });
+    const capabilities = setRendererCapabilities(t.renderer, { kitty_graphics: true });
+    t.renderer.emit(CliRenderEvents.CAPABILITIES, capabilities);
+    for (let i = 0; i < 8; i += 1) {
+      await t.renderOnce();
+      await t.flush();
+    }
+    const metadataRow = t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes("large-diagram.png"));
+    expect(metadataRow).toBeGreaterThanOrEqual(0);
+    expect(writes.join("")).toContain("a=T");
+
+    await t.mockMouse.scroll(2, metadataRow + 2, "up");
+    await t.renderOnce();
+
+    expect(manager.isScrollPaused).toBe(true);
+    expect(writes.at(-1)).toContain("a=d");
+    expect(t.captureCharFrame()).toContain("[ image paused while scrolling ]");
+
+    manager.resumeAfterScroll();
+    await t.renderOnce();
+
+    expect(manager.isScrollPaused).toBe(false);
+    expect(writes.at(-1)).toContain("a=T");
+    t.renderer.destroy();
+  });
+
   it("Given an attachment whose link can't be resolved, then it shows it as unavailable (not stuck resolving)", async () => {
     const full = {
       ...detail("default"),

@@ -97,6 +97,11 @@ The PR adds pixel buffers to OpenTUI's Zig renderer, allowing image and text
 output to be emitted in the same native render operation. A package extension
 cannot access that private native pipeline, so this implementation flushes one
 deduplicated Kitty command batch immediately after each OpenTUI frame. Images
-remain terminal overlays: text cannot occlude them, and partially clipped image
-regions are not cropped. Those constraints match the PR's current compositing
-model, while native atomic buffering remains the one material limitation.
+remain terminal overlays, so text cannot occlude them. Partially clipped image
+regions are cropped before placement, but native atomic buffering remains the
+one material limitation.
+
+Call `getKittyImageManager(renderer).pauseForScroll()` before moving a scroll
+viewport. Active Kitty placements are removed immediately, each image paints a
+same-size in-buffer placeholder, and the placements return after scrolling has
+been idle for 160ms. Repeated calls extend the idle window.

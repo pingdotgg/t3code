@@ -180,4 +180,29 @@ describe("KittyImageManager", () => {
     expect(renderer.callbacks.size).toBe(1);
     expect(manager.isDisposed).toBe(false);
   });
+
+  it("replaces active placements during scrolling and restores them when scrolling settles", () => {
+    const { renderer, manager, writes } = createHarness();
+    manager.beginFrame();
+    manager.submit(patch());
+    manager.flushFrame();
+
+    manager.pauseForScroll(10_000);
+
+    expect(manager.isScrollPaused).toBe(true);
+    expect(writes.at(-1)).toContain("a=d,d=i,i=1");
+    manager.beginFrame();
+    manager.submit(patch());
+    manager.flushFrame();
+    expect(writes.filter((value) => value.includes("a=T"))).toHaveLength(1);
+
+    manager.resumeAfterScroll();
+    manager.beginFrame();
+    manager.submit(patch());
+    manager.flushFrame();
+
+    expect(manager.isScrollPaused).toBe(false);
+    expect(writes.filter((value) => value.includes("a=T"))).toHaveLength(2);
+    expect(renderer.renderRequests).toBeGreaterThanOrEqual(2);
+  });
 });

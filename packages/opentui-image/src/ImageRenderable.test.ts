@@ -146,4 +146,31 @@ describe("ImageRenderable", () => {
     expect(writes.join("")).toContain("x=0,y=1,w=2,h=1,c=2,r=1,C=1");
     t.renderer.destroy();
   });
+
+  it("renders an in-buffer placeholder while Kitty placements are paused for scrolling", async () => {
+    const t = await createTestRenderer({ width: 40, height: 8 });
+    const writes: string[] = [];
+    const manager = installKittyImageExtension(t.renderer, {
+      capability: "always",
+      writer: { write: (value) => writes.push(value) },
+    });
+    t.renderer.root.add(
+      new ImageRenderable(t.renderer, {
+        data: new Uint8Array(2 * 2 * 4),
+        imageWidth: 2,
+        imageHeight: 2,
+        columns: 34,
+        rows: 3,
+      }),
+    );
+    await t.renderOnce();
+
+    manager.pauseForScroll(10_000);
+    await t.renderOnce();
+
+    expect(t.captureCharFrame()).toContain("[ image paused while scrolling ]");
+    expect(writes.at(-1)).toContain("a=d");
+    manager.resumeAfterScroll();
+    t.renderer.destroy();
+  });
 });
