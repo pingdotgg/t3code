@@ -170,6 +170,17 @@ export const makePluginProviderAdapter = (input: {
     ) =>
       Effect.gen(function* () {
         const threadId = startInput.threadId;
+        // Reject a startSession for a thread that ALREADY has a session — before
+        // calling the driver. Blindly installing a fresh SessionState (turnFiber:
+        // null, activeTurnId: null) would orphan a running turn's fiber (interrupt /
+        // stop could no longer reach it) and drop its deltas (its turnId is no longer
+        // active). The lifecycle is startSession -> sendTurn* -> stopSession; a caller
+        // that wants to restart must stopSession first.
+        if ((yield* Ref.get(sessions)).has(threadId)) {
+          return yield* Effect.fail(
+            new PluginProviderError("a session already exists for this thread"),
+          );
+        }
         // Effect.suspend so a driver that THROWS synchronously (or returns a
         // non-Effect) from startSession becomes a typed PluginProviderError instead
         // of a defect escaping the adapter. Driver code is dynamically loaded plugin
