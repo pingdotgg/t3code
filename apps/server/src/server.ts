@@ -24,6 +24,7 @@ import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRe
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import * as KiloRuntime from "./provider/kiloRuntime.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -312,7 +313,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // the rewritten registry reads snapshots off the instance registry and
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+  // SDK-backed drivers yield their runtimes at create(); expose both at the
+  // runtime level so the instance registry can construct them without each
+  // driver layer re-providing the same Live. Merged into one provideMerge
+  // slot so the pipe arity stays within Effect's Layer helper limits.
+  Layer.provideMerge(
+    Layer.mergeAll(OpenCodeRuntime.OpenCodeRuntimeLive, KiloRuntime.KiloRuntimeLive),
+  ),
   Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),

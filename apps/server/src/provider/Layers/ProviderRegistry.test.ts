@@ -32,6 +32,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import * as KiloRuntime from "../kiloRuntime.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
@@ -1120,6 +1121,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
             ),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(KiloRuntime.KiloRuntimeLive),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
             // genuinely spawn a subprocess. The missing-binary ENOENT is
@@ -1212,6 +1214,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
             ),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(KiloRuntime.KiloRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 spawnedCommands.push((command as { readonly command: string }).command);
@@ -1333,6 +1336,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
             ),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(KiloRuntime.KiloRuntimeLive),
             Layer.provideMerge(NodeServices.layer),
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
@@ -1394,6 +1398,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ),
               ),
               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+              Layer.provideMerge(KiloRuntime.KiloRuntimeLive),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {
                   if (command === "agent") {
@@ -1437,6 +1442,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "codex",
                 "cursor",
                 "grok",
+                "kilo",
                 "opencode",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);

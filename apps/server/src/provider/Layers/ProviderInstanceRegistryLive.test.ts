@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
+ *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`, `kilo`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -18,7 +18,7 @@
  *
  * Every instance in these tests is configured with `enabled: false` so the
  * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `opencode`
+ * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `opencode` / `kilo`
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
@@ -29,6 +29,7 @@ import {
   type CodexSettings,
   type CursorSettings,
   type GrokSettings,
+  type KiloSettings,
   type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
@@ -44,9 +45,13 @@ import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
+import { KiloDriver } from "../Drivers/KiloDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
+import { KiloRuntimeLive } from "../kiloRuntime.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
+import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
+import type { AnyProviderDriver } from "../ProviderDriver.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
 const TestHttpClientLive = Layer.succeed(
@@ -94,6 +99,13 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   binaryPath: "opencode",
   serverUrl: "",
   serverPassword: "",
+  customModels: [],
+  ...overrides,
+});
+
+const makeKiloConfig = (overrides: Partial<KiloSettings>): KiloSettings => ({
+  enabled: false,
+  binaryPath: "kilo",
   customModels: [],
   ...overrides,
 });
@@ -230,18 +242,20 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
 
 describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem +
-  // Path). `OpenCodeDriver.create` additionally yields `OpenCodeRuntime`
-  // at construction time, so we wire `OpenCodeRuntimeLive` into the stack.
-  // `OpenCodeRuntimeLive` bundles its own `NetService.layer` via
-  // `Layer.provide`, so the only external requirement it still exposes is
-  // `ChildProcessSpawner` — resolved here by piping it through
+  // Path). `OpenCodeDriver.create` / `KiloDriver.create` additionally yield
+  // their runtime services at construction time, so we wire those Live
+  // layers into the stack. Each runtime bundles its own `NetService.layer`
+  // via `Layer.provide`, so the only external requirement still exposed is
+  // `ChildProcessSpawner` — resolved here by piping through
   // `provideMerge(NodeServices.layer)`.
   //
   // The nested `provideMerge`s read bottom-up: `NodeServices.layer`
-  // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
-  // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
-  // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+  // provides runtime deps while keeping its own outputs surfaced; that
+  // merged layer then provides `ServerConfig.layerTest`'s `FileSystem` dep
+  // while keeping everything else surfaced to the test.
+  const infraLayer = Layer.mergeAll(OpenCodeRuntimeLive, KiloRuntimeLive).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  );
   const testLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-all-drivers-test",
   }).pipe(
@@ -258,12 +272,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const kiloId = ProviderInstanceId.make("kilo_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const kiloDriverKind = ProviderDriverKind.make("kilo");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -299,10 +315,23 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [kiloId]: {
+          driver: kiloDriverKind,
+          displayName: "Kilo",
+          enabled: false,
+          config: makeKiloConfig({}),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CursorDriver,
+          GrokDriver,
+          OpenCodeDriver,
+          KiloDriver,
+        ] as ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>>,
         configMap,
       });
 
@@ -312,9 +341,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, kiloId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -325,16 +354,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const kilo = yield* registry.getInstance(kiloId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(kilo?.driverKind).toBe(kiloDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(kilo?.displayName).toBe("Kilo");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -347,6 +379,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        kilo!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -355,6 +388,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        kilo!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -363,6 +397,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        kilo!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
