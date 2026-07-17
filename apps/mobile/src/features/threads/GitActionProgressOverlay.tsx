@@ -1,11 +1,12 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useRef } from "react";
-import { ActivityIndicator, Linking, Pressable, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
@@ -30,7 +31,7 @@ export function GitActionProgressOverlay(props: {
 
   const handlePress = useCallback(() => {
     if (progress.prUrl) {
-      void Linking.openURL(progress.prUrl);
+      void tryOpenExternalUrl(progress.prUrl, "pull-request");
       return;
     }
     if (progress.phase === "success" || progress.phase === "error") {
@@ -46,7 +47,8 @@ export function GitActionProgressOverlay(props: {
     <Animated.View
       entering={FadeIn.duration(200)}
       exiting={FadeOut.duration(150)}
-      style={{ top: insets.top + 48, left: 12, right: 12, position: "absolute", zIndex: 100 }}
+      className="absolute inset-x-3 z-[100]"
+      style={{ top: insets.top + 48 }}
       pointerEvents="box-none"
     >
       <Pressable onPress={handlePress}>
@@ -73,12 +75,12 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
 
       <View className="flex-1 gap-0.5">
         {progress.label ? (
-          <Text className="text-[13px] font-t3-bold text-foreground" numberOfLines={1}>
+          <Text className="text-sm font-t3-bold text-foreground" numberOfLines={1}>
             {progress.label}
           </Text>
         ) : null}
         {progress.description ? (
-          <Text className="text-[11px] text-foreground-muted" numberOfLines={1}>
+          <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
             {progress.description}
           </Text>
         ) : null}
