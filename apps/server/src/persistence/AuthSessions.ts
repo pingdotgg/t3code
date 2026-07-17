@@ -15,8 +15,9 @@ import {
 
 import {
   type AuthSessionRepositoryError,
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
+  PersistenceDecodeError,
+  type PersistenceErrorCorrelation,
+  PersistenceSqlError,
 } from "./Errors.ts";
 
 export const AuthSessionClientMetadataRecord = Schema.Struct({
@@ -122,6 +123,25 @@ const AuthSessionDbRow = Schema.Struct({
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 
+const AuthSessionRawDbRow = Schema.Struct({
+  sessionId: Schema.String,
+  subject: Schema.Unknown,
+  scopes: Schema.Unknown,
+  method: Schema.Unknown,
+  clientLabel: Schema.Unknown,
+  clientIpAddress: Schema.Unknown,
+  clientUserAgent: Schema.Unknown,
+  clientDeviceType: Schema.Unknown,
+  clientOs: Schema.Unknown,
+  clientBrowser: Schema.Unknown,
+  issuedAt: Schema.Unknown,
+  expiresAt: Schema.Unknown,
+  lastConnectedAt: Schema.Unknown,
+  revokedAt: Schema.Unknown,
+});
+
+const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
+
 function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionRecord {
   return {
     sessionId: row.sessionId,
@@ -143,11 +163,19 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
   };
 }
 
-function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+function toPersistenceSqlOrDecodeError(
+  sqlOperation: string,
+  decodeOperation: string,
+  correlation?: PersistenceErrorCorrelation,
+) {
   return (cause: unknown): AuthSessionRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause, correlation)
+      : new PersistenceSqlError({
+          operation: sqlOperation,
+          ...(correlation === undefined ? {} : { correlation }),
+          cause,
+        });
 }
 
 export const make = Effect.gen(function* () {
@@ -192,7 +220,7 @@ export const make = Effect.gen(function* () {
 
   const getSessionRowById = SqlSchema.findOneOption({
     Request: GetAuthSessionByIdInput,
-    Result: AuthSessionDbRow,
+    Result: AuthSessionRawDbRow,
     execute: ({ sessionId }) =>
       sql`
         SELECT
@@ -217,7 +245,7 @@ export const make = Effect.gen(function* () {
 
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
-    Result: AuthSessionDbRow,
+    Result: AuthSessionRawDbRow,
     execute: ({ now }) =>
       sql`
         SELECT
@@ -285,6 +313,7 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.create:query",
           "AuthSessionRepository.create:encodeRequest",
+          { sessionId: input.sessionId },
         ),
       ),
     );
@@ -295,12 +324,23 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.getById:query",
           "AuthSessionRepository.getById:decodeRow",
+          { sessionId: input.sessionId },
         ),
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
           onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) => Effect.succeed(Option.some(toAuthSessionRecord(row))),
+          onSome: (row) =>
+            decodeAuthSessionDbRow(row).pipe(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "AuthSessionRepository.getById:decodeRow",
+                  cause,
+                  { sessionId: input.sessionId },
+                ),
+              ),
+              Effect.map((decodedRow) => Option.some(toAuthSessionRecord(decodedRow))),
+            ),
         }),
       ),
     );
@@ -313,7 +353,20 @@ export const make = Effect.gen(function* () {
           "AuthSessionRepository.listActive:decodeRows",
         ),
       ),
-      Effect.flatMap((rows) => Effect.succeed(rows.map((row) => toAuthSessionRecord(row)))),
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          decodeAuthSessionDbRow(row).pipe(
+            Effect.mapError((cause) =>
+              PersistenceDecodeError.fromSchemaError(
+                "AuthSessionRepository.listActive:decodeRows",
+                cause,
+                { sessionId: row.sessionId },
+              ),
+            ),
+            Effect.map(toAuthSessionRecord),
+          ),
+        ),
+      ),
     );
 
   const revoke: AuthSessionRepository["Service"]["revoke"] = (input) =>
@@ -322,6 +375,7 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.revoke:query",
           "AuthSessionRepository.revoke:decodeRows",
+          { sessionId: input.sessionId },
         ),
       ),
       Effect.map((rows) => rows.length > 0),
@@ -333,6 +387,7 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.revokeAllExcept:query",
           "AuthSessionRepository.revokeAllExcept:decodeRows",
+          { currentSessionId: input.currentSessionId },
         ),
       ),
       Effect.map((rows) => rows.map((row) => row.sessionId)),
@@ -344,6 +399,7 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.setLastConnectedAt:query",
           "AuthSessionRepository.setLastConnectedAt:encodeRequest",
+          { sessionId: input.sessionId },
         ),
       ),
     );

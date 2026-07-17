@@ -25,11 +25,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
-import {
-  ASSET_ROUTE_PREFIX,
-  FALLBACK_PROJECT_FAVICON_SVG,
-  resolveAsset,
-} from "./assets/AssetAccess.ts";
+import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -44,13 +40,18 @@ import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./ht
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
+    // Dev uses credentialed requests from Vite or the Electron custom origin, so both must be
+    // explicit. Packaged desktop omits credentials and uses Effect's default wildcard origin.
     return HttpRouter.cors({
-      ...(devOrigin ? { allowedOrigins: [devOrigin], credentials: true } : {}),
+      ...(devOrigin
+        ? { allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS], credentials: true }
+        : {}),
       allowedMethods: browserApiCorsAllowedMethods,
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
@@ -81,10 +82,12 @@ const authenticateRawRouteWithScope = (
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
-      Effect.catchTags({
-        ServerAuthInvalidCredentialError: (error) => failEnvironmentAuthInvalid(error.reason),
-        ServerAuthInternalError: (error) => failEnvironmentInternal("internal_error", error),
-      }),
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
     );
     if (!session.scopes.includes(scope)) {
       return yield* failEnvironmentScopeRequired(scope);
@@ -189,17 +192,6 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
-    if (asset.kind === "project-favicon-fallback") {
-      return HttpServerResponse.text(FALLBACK_PROJECT_FAVICON_SVG, {
-        status: 200,
-        contentType: "image/svg+xml",
-        headers: {
-          "Cache-Control": "private, max-age=3600",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    }
-
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
       headers: {

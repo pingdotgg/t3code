@@ -6,6 +6,7 @@ const { withUniwindConfig } = require("uniwind/metro");
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
 const workspaceRoot = path.resolve(__dirname, "../..");
+const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mobileShikiRoot = path.dirname(require.resolve("shiki/package.json", { paths: [__dirname] }));
 const resolveShikiDependencyRoot = (packageName) => {
   const entryPath = require.resolve(packageName, { paths: [mobileShikiRoot] });
@@ -25,6 +26,14 @@ const resolveShikiDependencyRoot = (packageName) => {
 config.watchFolders = [...new Set([...(config.watchFolders ?? []), workspaceRoot])];
 config.resolver = {
   ...config.resolver,
+  blockList: [
+    ...(Array.isArray(config.resolver?.blockList)
+      ? config.resolver.blockList
+      : config.resolver?.blockList
+        ? [config.resolver.blockList]
+        : []),
+    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.t3[/\\\\].*`),
+  ],
   extraNodeModules: {
     // oxlint-disable-next-line unicorn/no-useless-fallback-in-spread
     ...(config.resolver?.extraNodeModules ?? {}),

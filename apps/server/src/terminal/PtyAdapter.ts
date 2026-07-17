@@ -25,9 +25,7 @@ export class PtySpawnError extends Schema.TaggedErrorClass<PtySpawnError>()("Pty
       this.attemptedShells === undefined || this.attemptedShells.length === 0
         ? ""
         : ` Tried shells: ${this.attemptedShells.join(", ")}.`;
-    const causeMessage =
-      this.cause instanceof Error && this.cause.message.length > 0 ? ` ${this.cause.message}` : "";
-    return `Failed to spawn PTY process${shell} with ${this.adapter}.${attemptedShells}${causeMessage}`;
+    return `Failed to spawn PTY process${shell} with ${this.adapter}.${attemptedShells}`;
   }
 }
 

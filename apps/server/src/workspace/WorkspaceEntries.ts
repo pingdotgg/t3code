@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -22,23 +22,6 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
-
-export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(
-  "WorkspaceEntriesError",
-  {
-    cwd: Schema.String,
-    operation: Schema.Literals([
-      "workspaceEntries.normalizeWorkspaceRoot",
-      "workspaceEntries.search",
-      "workspaceEntries.list",
-    ]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Workspace entries operation '${this.operation}' failed for '${this.cwd}'.`;
-  }
-}
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedErrorClass<WorkspaceEntriesWindowsPathUnsupportedError>()(
   "WorkspaceEntriesWindowsPathUnsupportedError",
@@ -87,6 +70,17 @@ export const WorkspaceEntriesBrowseError = Schema.Union([
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
 
+export const WorkspaceEntriesError = Schema.Union([
+  WorkspacePaths.WorkspaceRootNotExistsError,
+  WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootStatFailedError,
+  WorkspacePaths.WorkspaceRootNotDirectoryError,
+  WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
+  WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
+  WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed,
+]);
+export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
+
 export class WorkspaceEntries extends Context.Service<
   WorkspaceEntries,
   {
@@ -105,10 +99,10 @@ export class WorkspaceEntries extends Context.Service<
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") {
-    return homedir();
+    return NodeOS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(homedir(), input.slice(2));
+    return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
 }
@@ -146,16 +140,7 @@ export const make = Effect.gen(function* () {
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
   ): Effect.fn.Return<string, WorkspaceEntriesError> {
-    return yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceEntriesError({
-            cwd,
-            operation: "workspaceEntries.normalizeWorkspaceRoot",
-            cause,
-          }),
-      ),
-    );
+    return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
@@ -166,20 +151,29 @@ export const make = Effect.gen(function* () {
       if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, normalizedCwd))) {
         return;
       }
+      const recoverRefreshFailure = (
+        cause:
+          | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+          | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+          | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+      ) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Failed to refresh workspace search index", {
+            cwd,
+            cause,
+          });
+          yield* workspaceSearchIndexes.invalidate(normalizedCwd);
+        });
       yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         yield* searchIndex.refresh();
       }).pipe(
         Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("Failed to refresh workspace search index", {
-              cwd,
-              cause,
-            });
-            yield* workspaceSearchIndexes.invalidate(normalizedCwd);
-          }),
-        ),
+        Effect.catchTags({
+          WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
+          WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
+          WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
+        }),
       );
     },
   );
@@ -192,7 +186,7 @@ export const make = Effect.gen(function* () {
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
       const dirents = yield* Effect.tryPromise({
-        try: () => readdir(parentPath, { withFileTypes: true }),
+        try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
         catch: (cause) =>
           new WorkspaceEntriesReadDirectoryError({
             cwd: input.cwd,
@@ -243,17 +237,7 @@ export const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit);
-      }).pipe(
-        Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceEntriesError({
-              cwd: input.cwd,
-              operation: "workspaceEntries.search",
-              cause,
-            }),
-        ),
-      );
+      }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
     },
   );
 
@@ -263,17 +247,7 @@ export const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
-      }).pipe(
-        Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceEntriesError({
-              cwd: input.cwd,
-              operation: "workspaceEntries.list",
-              cause,
-            }),
-        ),
-      );
+      }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
     },
   );
 

@@ -1,9 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
-import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
-import path from "node:path";
+import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
@@ -25,7 +25,7 @@ const driver = (value: string) => ProviderDriverKind.make(value);
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.randomUUIDv4),
-    Effect.map((id) => path.join(NodeOS.tmpdir(), `${name}-${id}`)),
+    Effect.map((id) => NodePath.join(NodeOS.tmpdir(), `${name}-${id}`)),
   );
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
@@ -203,11 +203,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-vite-plus-capabilities");
-        const vitePlusBinDir = path.join(tempDir, ".vite-plus", "bin");
-        mkdirSync(vitePlusBinDir, { recursive: true });
-        const packageToolPath = path.join(vitePlusBinDir, "package-tool");
-        writeFileSync(packageToolPath, "#!/bin/sh\n");
-        chmodSync(packageToolPath, 0o755);
+        const vitePlusBinDir = NodePath.join(tempDir, ".vite-plus", "bin");
+        NodeFS.mkdirSync(vitePlusBinDir, { recursive: true });
+        const packageToolPath = NodePath.join(vitePlusBinDir, "package-tool");
+        NodeFS.writeFileSync(packageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(packageToolPath, 0o755);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
@@ -240,9 +240,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-bun-capabilities");
-        const bunBinDir = path.join(tempDir, ".bun", "bin");
-        mkdirSync(bunBinDir, { recursive: true });
-        writeFileSync(path.join(bunBinDir, "native-package-tool.exe"), "MZ");
+        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+        NodeFS.mkdirSync(bunBinDir, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(bunBinDir, "native-package-tool.exe"), "MZ");
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
@@ -276,11 +276,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-pnpm-capabilities");
-        const pnpmHomeDir = path.join(tempDir, ".local", "share", "pnpm");
-        mkdirSync(pnpmHomeDir, { recursive: true });
-        const scopedPackageToolPath = path.join(pnpmHomeDir, "scoped-package-tool");
-        writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-        chmodSync(scopedPackageToolPath, 0o755);
+        const pnpmHomeDir = NodePath.join(tempDir, ".local", "share", "pnpm");
+        NodeFS.mkdirSync(pnpmHomeDir, { recursive: true });
+        const scopedPackageToolPath = NodePath.join(pnpmHomeDir, "scoped-package-tool");
+        NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(scopedPackageToolPath, 0o755);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           scopedPackageToolUpdate,
@@ -336,11 +336,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-native-package-tool-native-capabilities");
-        const nativeBinDir = path.join(tempDir, ".local", "bin");
-        mkdirSync(nativeBinDir, { recursive: true });
-        const nativePackageToolPath = path.join(nativeBinDir, "native-package-tool");
-        writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
-        chmodSync(nativePackageToolPath, 0o755);
+        const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        const nativePackageToolPath = NodePath.join(nativeBinDir, "native-package-tool");
+        NodeFS.writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(nativePackageToolPath, 0o755);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
@@ -373,11 +373,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-scoped-package-tool-native-capabilities");
-        const nativeBinDir = path.join(tempDir, ".scoped-package-tool", "bin");
-        mkdirSync(nativeBinDir, { recursive: true });
-        const scopedPackageToolPath = path.join(nativeBinDir, "scoped-package-tool");
-        writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-        chmodSync(scopedPackageToolPath, 0o755);
+        const nativeBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        const scopedPackageToolPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+        NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(scopedPackageToolPath, 0o755);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           scopedPackageToolUpdate,
@@ -454,8 +454,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-capabilities");
-      const binDir = path.join(tempDir, "bin");
-      const packageBinDir = path.join(
+      const binDir = NodePath.join(tempDir, "bin");
+      const packageBinDir = NodePath.join(
         tempDir,
         "lib",
         "node_modules",
@@ -463,13 +463,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "package-tool",
         "bin",
       );
-      mkdirSync(binDir, { recursive: true });
-      mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = path.join(packageBinDir, "package-tool.js");
-      const symlinkPath = path.join(binDir, "package-tool");
-      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      chmodSync(packageBinPath, 0o755);
-      symlinkSync(packageBinPath, symlinkPath);
+      NodeFS.mkdirSync(binDir, { recursive: true });
+      NodeFS.mkdirSync(packageBinDir, { recursive: true });
+      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+      const symlinkPath = NodePath.join(binDir, "package-tool");
+      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+      NodeFS.chmodSync(packageBinPath, 0o755);
+      NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: symlinkPath,
@@ -497,8 +497,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
-      const binDir = path.join(tempDir, "bin");
-      const packageBinDir = path.join(
+      const binDir = NodePath.join(tempDir, "bin");
+      const packageBinDir = NodePath.join(
         tempDir,
         ".local",
         "share",
@@ -510,13 +510,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "package-tool",
         "bin",
       );
-      mkdirSync(binDir, { recursive: true });
-      mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = path.join(packageBinDir, "package-tool.js");
-      const symlinkPath = path.join(binDir, "package-tool");
-      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      chmodSync(packageBinPath, 0o755);
-      symlinkSync(packageBinPath, symlinkPath);
+      NodeFS.mkdirSync(binDir, { recursive: true });
+      NodeFS.mkdirSync(packageBinDir, { recursive: true });
+      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+      const symlinkPath = NodePath.join(binDir, "package-tool");
+      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+      NodeFS.chmodSync(packageBinPath, 0o755);
+      NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: symlinkPath,

@@ -198,6 +198,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
       assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
+      assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
       assert.equal(defaultsByCommand.get("rightPanel.toggle"), "mod+alt+b");
       assert.equal(defaultsByCommand.get("terminal.splitVertical"), "mod+shift+d");
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
@@ -407,6 +408,28 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         { key: "mod+shift+r", command: "script.run-tests.run" },
         { key: "mod+alt+r", command: "script.run-tests.run" },
       ]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("replacing with a rule that already exists elsewhere does not duplicate it", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+r", command: "script.run-tests.run" },
+        { key: "mod+alt+r", command: "script.run-tests.run" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+alt+r",
+          command: "script.run-tests.run",
+          replace: { key: "mod+r", command: "script.run-tests.run" },
+        });
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [{ key: "mod+alt+r", command: "script.run-tests.run" }]);
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 

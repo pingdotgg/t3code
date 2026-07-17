@@ -36,13 +36,6 @@ export class VcsDriverRegistry extends Context.Service<
   }
 >()("t3/vcs/VcsDriverRegistry") {}
 
-const unsupported = (operation: string, kind: VcsDriverKind, detail: string) =>
-  new VcsUnsupportedOperationError({
-    operation,
-    kind,
-    detail,
-  });
-
 function detectionCacheKey(input: {
   readonly cwd: string;
   readonly requestedKind: VcsDriverKind | "auto";
@@ -78,7 +71,11 @@ export const make = Effect.gen(function* () {
     const driver = drivers[kind];
     if (!driver) {
       return Effect.fail(
-        unsupported("VcsDriverRegistry.get", kind, `No ${kind} VCS driver is registered.`),
+        new VcsUnsupportedOperationError({
+          operation: "VcsDriverRegistry.get",
+          kind,
+          detail: `No ${kind} VCS driver is registered.`,
+        }),
       );
     }
     return Effect.succeed(driver);
@@ -137,13 +134,14 @@ export const make = Effect.gen(function* () {
       }
 
       const requestedKind = input.requestedKind ?? "auto";
-      return yield* unsupported(
-        "VcsDriverRegistry.resolve",
-        requestedKind === "auto" ? "unknown" : requestedKind,
-        requestedKind === "auto"
-          ? `No supported VCS repository was detected at ${input.cwd}.`
-          : `No ${requestedKind} repository was detected at ${input.cwd}.`,
-      );
+      return yield* new VcsUnsupportedOperationError({
+        operation: "VcsDriverRegistry.resolve",
+        kind: requestedKind === "auto" ? "unknown" : requestedKind,
+        detail:
+          requestedKind === "auto"
+            ? `No supported VCS repository was detected at ${input.cwd}.`
+            : `No ${requestedKind} repository was detected at ${input.cwd}.`,
+      });
     },
   );
 

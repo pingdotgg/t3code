@@ -45,23 +45,29 @@ export interface ProcessRunOutput {
 
 const ProcessInvocationFields = {
   command: Schema.String,
-  args: Schema.Array(Schema.String),
+  argumentCount: Schema.Number,
   cwd: Schema.optional(Schema.String),
+  spawnCwd: Schema.optional(Schema.String),
 };
 
 const formatProcessInvocation = (input: {
   readonly command: string;
-  readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
+  readonly spawnCwd?: string | undefined;
 }): string => {
-  const command = [input.command, ...input.args].join(" ");
-  return input.cwd === undefined ? `'${command}'` : `'${command}' in '${input.cwd}'`;
+  const executionCwd = input.spawnCwd ?? input.cwd;
+  return executionCwd === undefined
+    ? `'${input.command}'`
+    : `'${input.command}' in '${executionCwd}'`;
 };
 
 export class ProcessSpawnError extends Schema.TaggedErrorClass<ProcessSpawnError>()(
   "ProcessSpawnError",
   {
     ...ProcessInvocationFields,
+    resolvedCommand: Schema.optional(Schema.String),
+    resolvedArgumentCount: Schema.optional(Schema.Number),
+    shell: Schema.optional(Schema.Boolean),
     cause: Schema.Defect(),
   },
 ) {
@@ -74,6 +80,7 @@ export class ProcessStdinError extends Schema.TaggedErrorClass<ProcessStdinError
   "ProcessStdinError",
   {
     ...ProcessInvocationFields,
+    stdinBytes: Schema.Number,
     cause: Schema.Defect(),
   },
 ) {
@@ -88,10 +95,11 @@ export class ProcessOutputLimitError extends Schema.TaggedErrorClass<ProcessOutp
     ...ProcessInvocationFields,
     stream: Schema.Literals(["stdout", "stderr"]),
     maxBytes: Schema.Number,
+    observedBytes: Schema.Number,
   },
 ) {
   override get message(): string {
-    return `Process ${formatProcessInvocation(this)} ${this.stream} exceeded ${this.maxBytes} bytes`;
+    return `Process ${formatProcessInvocation(this)} ${this.stream} produced ${this.observedBytes} bytes, exceeding the ${this.maxBytes} byte limit`;
   }
 }
 
@@ -120,12 +128,14 @@ export class ProcessTimeoutError extends Schema.TaggedErrorClass<ProcessTimeoutE
   }
 }
 
-export type ProcessRunError =
-  | ProcessSpawnError
-  | ProcessStdinError
-  | ProcessOutputLimitError
-  | ProcessReadError
-  | ProcessTimeoutError;
+export const ProcessRunError = Schema.Union([
+  ProcessSpawnError,
+  ProcessStdinError,
+  ProcessOutputLimitError,
+  ProcessReadError,
+  ProcessTimeoutError,
+]);
+export type ProcessRunError = typeof ProcessRunError.Type;
 
 export class ProcessRunner extends Context.Service<
   ProcessRunner,
@@ -163,6 +173,7 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
+  readonly spawnCwd?: string | undefined;
   readonly streamName: "stdout" | "stderr";
   readonly stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly maxOutputBytes: number;
@@ -174,8 +185,9 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
       (cause) =>
         new ProcessReadError({
           command: input.command,
-          args: input.args,
+          argumentCount: input.args.length,
           cwd: input.cwd,
+          spawnCwd: input.spawnCwd,
           stream: input.streamName,
           cause,
         }),
@@ -203,14 +215,16 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
       () => ({ chunks: [], bytes: 0 }),
       (state, chunk) => {
         const remainingBytes = input.maxOutputBytes - state.bytes;
-        if (remainingBytes <= 0 || chunk.byteLength > remainingBytes) {
+        if (chunk.byteLength > remainingBytes) {
           return Effect.fail(
             new ProcessOutputLimitError({
               command: input.command,
-              args: input.args,
+              argumentCount: input.args.length,
               cwd: input.cwd,
+              spawnCwd: input.spawnCwd,
               stream: input.streamName,
               maxBytes: input.maxOutputBytes,
+              observedBytes: state.bytes + chunk.byteLength,
             }),
           );
         }
@@ -259,8 +273,9 @@ function finalizeRunProcess<R>(
       return Effect.fail(
         new ProcessTimeoutError({
           command: input.command,
-          args: input.args,
+          argumentCount: input.args.length,
           cwd: input.cwd,
+          spawnCwd: input.spawnCwd,
           timeoutMs: Duration.toMillis(timeout),
         }),
       );
@@ -300,23 +315,30 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         (cause) =>
           new ProcessSpawnError({
             command: input.command,
-            args: input.args,
+            argumentCount: input.args.length,
             cwd: input.cwd,
+            spawnCwd: input.spawnCwd,
+            resolvedCommand: spawnCommand.command,
+            resolvedArgumentCount: spawnCommand.args.length,
+            shell: spawnCommand.shell,
             cause,
           }),
       ),
     );
 
+  const stdin = input.stdin;
   const writeStdin =
-    input.stdin === undefined
+    stdin === undefined
       ? Effect.void
-      : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
+      : Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
           Effect.mapError(
             (cause) =>
               new ProcessStdinError({
                 command: input.command,
-                args: input.args,
+                argumentCount: input.args.length,
                 cwd: input.cwd,
+                spawnCwd: input.spawnCwd,
+                stdinBytes: Buffer.byteLength(stdin),
                 cause,
               }),
           ),
@@ -328,6 +350,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         command: input.command,
         args: input.args,
         cwd: input.cwd,
+        spawnCwd: input.spawnCwd,
         streamName: "stdout",
         stream: child.stdout,
         maxOutputBytes,
@@ -338,6 +361,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         command: input.command,
         args: input.args,
         cwd: input.cwd,
+        spawnCwd: input.spawnCwd,
         streamName: "stderr",
         stream: child.stderr,
         maxOutputBytes,
@@ -354,8 +378,9 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       (cause) =>
         new ProcessReadError({
           command: input.command,
-          args: input.args,
+          argumentCount: input.args.length,
           cwd: input.cwd,
+          spawnCwd: input.spawnCwd,
           stream: "exitCode",
           cause,
         }),

@@ -24,7 +24,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1061,7 +1061,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   yield* Effect.addFinalizer(() =>
     runStopAll().pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("failed to stop provider service", { cause: Cause.pretty(cause) }),
+        Effect.logWarning("failed to stop provider service", {
+          errorTag: causeErrorTag(cause),
+        }),
       ),
     ),
   );

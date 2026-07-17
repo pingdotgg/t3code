@@ -462,19 +462,32 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       notify: transport.notify,
     },
     agent: {
-      initialize: (payload) => callRpc(rpc[AGENT_METHODS.initialize](payload)),
-      authenticate: (payload) => callRpc(rpc[AGENT_METHODS.authenticate](payload)),
-      logout: (payload) => callRpc(rpc[AGENT_METHODS.logout](payload)),
-      createSession: (payload) => callRpc(rpc[AGENT_METHODS.session_new](payload)),
-      loadSession: (payload) => callRpc(rpc[AGENT_METHODS.session_load](payload)),
-      listSessions: (payload) => callRpc(rpc[AGENT_METHODS.session_list](payload)),
-      forkSession: (payload) => callRpc(rpc[AGENT_METHODS.session_fork](payload)),
-      resumeSession: (payload) => callRpc(rpc[AGENT_METHODS.session_resume](payload)),
-      closeSession: (payload) => callRpc(rpc[AGENT_METHODS.session_close](payload)),
-      setSessionModel: (payload) => callRpc(rpc[AGENT_METHODS.session_set_model](payload)),
+      initialize: (payload) =>
+        callRpc(AGENT_METHODS.initialize, rpc[AGENT_METHODS.initialize](payload)),
+      authenticate: (payload) =>
+        callRpc(AGENT_METHODS.authenticate, rpc[AGENT_METHODS.authenticate](payload)),
+      logout: (payload) => callRpc(AGENT_METHODS.logout, rpc[AGENT_METHODS.logout](payload)),
+      createSession: (payload) =>
+        callRpc(AGENT_METHODS.session_new, rpc[AGENT_METHODS.session_new](payload)),
+      loadSession: (payload) =>
+        callRpc(AGENT_METHODS.session_load, rpc[AGENT_METHODS.session_load](payload)),
+      listSessions: (payload) =>
+        callRpc(AGENT_METHODS.session_list, rpc[AGENT_METHODS.session_list](payload)),
+      forkSession: (payload) =>
+        callRpc(AGENT_METHODS.session_fork, rpc[AGENT_METHODS.session_fork](payload)),
+      resumeSession: (payload) =>
+        callRpc(AGENT_METHODS.session_resume, rpc[AGENT_METHODS.session_resume](payload)),
+      closeSession: (payload) =>
+        callRpc(AGENT_METHODS.session_close, rpc[AGENT_METHODS.session_close](payload)),
+      setSessionModel: (payload) =>
+        callRpc(AGENT_METHODS.session_set_model, rpc[AGENT_METHODS.session_set_model](payload)),
       setSessionConfigOption: (payload) =>
-        callRpc(rpc[AGENT_METHODS.session_set_config_option](payload)),
-      prompt: (payload) => callRpc(rpc[AGENT_METHODS.session_prompt](payload)),
+        callRpc(
+          AGENT_METHODS.session_set_config_option,
+          rpc[AGENT_METHODS.session_set_config_option](payload),
+        ),
+      prompt: (payload) =>
+        callRpc(AGENT_METHODS.session_prompt, rpc[AGENT_METHODS.session_prompt](payload)),
       cancel: (payload) => transport.notify(AGENT_METHODS.session_cancel, payload),
     },
     handleRequestPermission: (handler) =>
