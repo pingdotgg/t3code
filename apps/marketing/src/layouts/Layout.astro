@@ -1,12 +1,16 @@
 ---
+import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
+
 interface Props {
   title?: string;
   description?: string;
+  pageClass?: string;
 }
 
 const {
   title = "T3 Code",
   description = "T3 Code — The open-source control plane for coding agents.",
+  pageClass,
 } = Astro.props;
 ---
 
@@ -28,7 +32,7 @@ const {
     <title>{title}</title>
   </head>
   <body>
-    <div class="page">
+    <div class:list={["page", pageClass]}>
       <nav class="nav">
         <div class="nav-inner">
           <a href="/" class="nav-brand" aria-label="T3 Code home">
@@ -36,17 +40,17 @@ const {
           </a>
           <div class="nav-right">
             <a
-              class="nav-gh"
-              href="https://github.com/pingdotgg/t3code"
+              class="nav-stars"
+              href={GITHUB_REPOSITORY_URL}
               target="_blank"
               rel="noopener noreferrer"
+              aria-label={`Star T3 Code on GitHub — ${MARKETING_STATS.githubStars} stars`}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/>
+                <path d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"/>
               </svg>
-              <span>GitHub</span>
+              <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
             </a>
-            <a class="btn btn-primary" href="/#download">Download</a>
           </div>
         </div>
       </nav>
@@ -62,9 +66,12 @@ const {
             <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
           </div>
           <div class="footer-links">
-            <a href="https://github.com/pingdotgg/t3code" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
             <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
             <a href="/download">Download</a>
+            <a href="/terms-of-service">Terms</a>
+            <a href="/privacy-policy">Privacy</a>
+            <a href="/security-policy">Security</a>
           </div>
         </div>
       </footer>
@@ -277,7 +284,7 @@ const {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .nav {
@@ -329,23 +336,36 @@ const {
     gap: 8px;
   }
 
-  .nav-gh {
+  .nav-stars {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 7px 12px;
+    gap: 7px;
+    height: 36px;
+    padding: 0 14px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.02);
     color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
   }
 
-  .nav-gh:hover {
+  .nav-stars:hover {
     color: var(--fg);
-    background: rgba(255, 255, 255, 0.04);
     border-color: var(--border-strong);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .nav-stars strong {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .nav-stars svg {
+    color: var(--warn);
+    flex-shrink: 0;
   }
 
   .main {
@@ -387,6 +407,8 @@ const {
 
   .footer-links {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 20px;
   }
 
@@ -405,6 +427,41 @@ const {
     .footer-inner {
       padding-left: 20px;
       padding-right: 20px;
+    }
+
+    .legal-document-page .nav {
+      display: none;
+    }
+
+    .footer {
+      padding-bottom: max(32px, env(safe-area-inset-bottom));
+    }
+
+    .footer-inner {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .footer-links {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      width: 100%;
+      gap: 14px 20px;
+      justify-content: initial;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .nav-inner {
+      gap: 12px;
+    }
+
+    .nav-stars {
+      height: 34px;
+      gap: 6px;
+      padding: 0 12px;
+      font-size: 12px;
     }
   }
 </style>

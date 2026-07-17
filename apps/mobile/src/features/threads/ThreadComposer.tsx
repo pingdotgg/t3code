@@ -1,8 +1,9 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type {
   EnvironmentId,
+  MessageId,
   ModelSelection,
-  OrchestrationThread,
+  OrchestrationThreadShell,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -15,9 +16,20 @@ import {
 } from "@t3tools/shared/composerTrigger";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Image, Pressable, useColorScheme, View, type ViewStyle } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  Pressable,
+  useColorScheme,
+  View,
+  type ViewStyle,
+} from "react-native";
 import ImageViewing from "react-native-image-viewing";
+import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -36,6 +48,7 @@ import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
   insertRankedSearchResult,
@@ -43,11 +56,12 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+  applyProviderOptionMenuEvent,
+  buildProviderOptionMenuActions,
+  providerOptionsConfigurationLabel,
+  resolveProviderOptionDescriptors,
+} from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
-import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 
 /**
@@ -66,9 +80,18 @@ export interface ThreadComposerProps {
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly placeholder: string;
+  readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
-  readonly selectedThread: OrchestrationThread;
+  readonly connectionError: string | null;
+  readonly environmentLabel: string | null;
+  /**
+   * Message sync phase for the selected thread (drives the status pill):
+   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
+   * are on screen while they reconcile with the server.
+   */
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
+  readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -79,82 +102,173 @@ export interface ThreadComposerProps {
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
-  readonly onStopThread: () => Promise<void>;
-  readonly onSendMessage: () => void;
-  readonly onUpdateModelSelection: (modelSelection: ModelSelection) => Promise<void>;
-  readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
-  readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => Promise<void>;
+  readonly onStopThread: () => void;
+  readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
+  readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
+  readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
 }
 
 /**
  * The pill / card container — renders as LiquidGlassView on supported
  * iOS 26+ devices (progressive blur, native morph), opaque View otherwise.
+ * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
-function ComposerSurface(props: {
+// One timing for every piece of the expanded↔compact morph so the surface,
+// toolbar, and siblings move together instead of popping between layouts.
+// Android gets NO layout transition: the composer rides the keyboard via
+// KeyboardStickyView (frame-synced to the IME), and a time-based morph
+// running alongside that translate reads as jitter. Snapping the layout and
+// letting the keyboard-synced slide be the only motion looks native there.
+const COMPOSER_LAYOUT_TRANSITION =
+  Platform.OS === "android" ? undefined : LinearTransition.duration(220);
+
+export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
 }) {
+  // Drop shadow lives on a wrapper: `overflow: "hidden"` on the surface itself
+  // (needed to clip content to the pill shape) would clip the shadow on iOS.
+  const shadowStyle: ViewStyle = {
+    borderRadius: props.style.borderRadius,
+    shadowColor: "#000000",
+    shadowOpacity: props.isDarkMode ? 0.35 : 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  };
+
   if (isLiquidGlassSupported) {
     return (
-      <LiquidGlassView
-        effect="clear"
-        interactive
-        tintColor={props.isDarkMode ? "rgba(44,44,46,0.5)" : "rgba(255,255,255,0.45)"}
-        colorScheme={props.isDarkMode ? "dark" : "light"}
-        style={props.style}
-      >
-        {props.children}
-      </LiquidGlassView>
+      <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} style={shadowStyle}>
+        <LiquidGlassView
+          effect="regular"
+          interactive
+          colorScheme={props.isDarkMode ? "dark" : "light"}
+          style={props.style}
+        >
+          {props.children}
+        </LiquidGlassView>
+      </Animated.View>
     );
   }
 
   return (
-    <View
-      style={[
-        props.style,
-        {
-          backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
-          borderWidth: 1,
-          borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-        },
-      ]}
-    >
-      {props.children}
-    </View>
+    <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} style={shadowStyle}>
+      <View
+        style={[
+          props.style,
+          {
+            backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
+            borderWidth: 1,
+            borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+          },
+        ]}
+      >
+        {props.children}
+      </View>
+    </Animated.View>
   );
 }
 
-function withModelSelectionOption(
-  selection: ModelSelection,
-  id: string,
-  value: string | boolean | undefined,
-): ModelSelection {
-  const options = (selection.options ?? []).filter((option) => option.id !== id);
-  return {
-    ...selection,
-    options: value === undefined ? options : [...options, { id, value }],
-  };
+type ComposerStatusPillState = {
+  readonly kind: "unavailable" | "reconnecting" | "syncing";
+  readonly label: string;
+};
+
+function composerConnectionStatus(input: {
+  readonly connectionError: string | null;
+  readonly connectionState: RemoteClientConnectionState;
+  readonly environmentLabel: string | null;
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
+}): ComposerStatusPillState | null {
+  const environmentLabel = input.environmentLabel ?? "Environment";
+
+  switch (input.connectionState) {
+    case "connecting":
+    case "reconnecting":
+      return {
+        kind: "reconnecting",
+        label:
+          input.connectionError === null
+            ? `Reconnecting to ${environmentLabel}...`
+            : `Failed to connect. Retrying ${environmentLabel}...`,
+      };
+    case "offline":
+      return { kind: "unavailable", label: "You are offline" };
+    case "error":
+      return {
+        kind: "unavailable",
+        label: input.connectionError
+          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
+          : `Failed to connect to ${environmentLabel}`,
+      };
+    case "available":
+      return { kind: "unavailable", label: `${environmentLabel} is not connected` };
+    case "connected":
+      break;
+  }
+
+  // Connected: the pill is the single loading/sync indicator. One stable
+  // label per open — "Loading" when starting from scratch, "Syncing" when
+  // cached messages are already visible.
+  switch (input.threadSyncPhase) {
+    case "loading":
+      return { kind: "syncing", label: "Loading messages..." };
+    case "syncing":
+      return { kind: "syncing", label: "Syncing messages..." };
+    default:
+      return null;
+  }
 }
 
-function formatTitleCase(value: string): string {
-  return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
-}
+const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(props: {
+  readonly onPress: () => void;
+  readonly status: ComposerStatusPillState;
+}) {
+  const isReconnecting = props.status.kind !== "unavailable";
+
+  return (
+    <View className="items-center pb-2">
+      <Pressable
+        accessibilityRole="button"
+        onPress={props.onPress}
+        className="max-w-full flex-row items-center gap-2 rounded-full bg-white/90 px-3 py-2 shadow-sm active:opacity-70 dark:bg-neutral-900/90"
+      >
+        {isReconnecting ? (
+          <ActivityIndicator size="small" color="#8e8e93" />
+        ) : (
+          <View className="h-2 w-2 rounded-full bg-red-500" />
+        )}
+        <Text
+          className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
+          numberOfLines={1}
+        >
+          {props.status.label}
+        </Text>
+      </Pressable>
+    </View>
+  );
+});
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
+  const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
+  const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
-  const canSend = props.connectionState === "ready" && hasContent;
+  const canSend = hasContent;
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -182,13 +296,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [onExpandedChange]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
-    props.selectedThread.session?.status === "starting" ||
-    props.queueCount > 0;
+    props.selectedThread.session?.status === "starting";
 
-  const sendLabel = props.activeThreadBusy || props.queueCount > 0 ? "Queue" : "Send";
+  const sendLabel =
+    props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
+      ? "Queue"
+      : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
+  const connectionStatus = composerConnectionStatus({
+    connectionError: props.connectionError,
+    connectionState: props.connectionState,
+    environmentLabel: props.environmentLabel,
+    threadSyncPhase: props.threadSyncPhase,
+  });
   const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
   const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
   const selectedProviderStatus = useMemo(() => {
@@ -200,18 +322,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
 
-  // Extract current model options (effort, fastMode, contextWindow)
-  const selectedProviderDriver = selectedProviderStatus?.driver ?? null;
-  const currentEffort =
-    selectedProviderDriver === "claudeAgent"
-      ? (getModelSelectionStringOptionValue(currentModelSelection, "effort") ?? "high")
-      : "high";
-  const currentFastMode =
-    getModelSelectionBooleanOptionValue(currentModelSelection, "fastMode") ?? false;
-  const currentContextWindow =
-    selectedProviderDriver === "claudeAgent"
-      ? (getModelSelectionStringOptionValue(currentModelSelection, "contextWindow") ?? "1M")
-      : "1M";
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
     start: props.draftMessage.length,
@@ -393,10 +503,28 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
-  const handleSend = useCallback(() => {
-    onSendMessage();
-    inputRef.current?.blur();
-  }, [onSendMessage]);
+  const handleSend = useCallback(async () => {
+    const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+    if (inFlightThreadIdsRef.current.has(threadKey)) return;
+    inFlightThreadIdsRef.current.add(threadKey);
+    // Sending a prompt starts agent work: arm the lock-screen card now, while
+    // the app is foregrounded and the activity token can be registered.
+    armAgentAwarenessLiveActivityForLocalWork({
+      threadTitle: props.selectedThread.title,
+      projectTitle: props.environmentLabel ?? "T3 Code",
+    });
+    try {
+      await onSendMessage();
+    } finally {
+      inFlightThreadIdsRef.current.delete(threadKey);
+    }
+  }, [
+    onSendMessage,
+    props.environmentId,
+    props.environmentLabel,
+    props.selectedThread.id,
+    props.selectedThread.title,
+  ]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;
@@ -413,7 +541,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         );
         setComposerSelection({ start: result.cursor, end: result.cursor });
         onChangeDraftMessage(result.text);
-        void onUpdateInteractionMode(item.command);
+        onUpdateInteractionMode(item.command);
         return;
       }
 
@@ -452,14 +580,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         option.selection.instanceId === currentModelSelection.instanceId &&
         option.selection.model === currentModelSelection.model,
     ) ?? null;
-  const configurationLabel = useMemo(() => {
-    const parts = [
-      formatTitleCase(currentEffort),
-      currentFastMode ? "Fast" : null,
-      currentContextWindow !== "1M" ? currentContextWindow : null,
-    ].filter((part): part is string => Boolean(part));
-    return parts.length > 0 ? parts.join(" · ") : "Configuration";
-  }, [currentContextWindow, currentEffort, currentFastMode]);
+  const providerOptionDescriptors = useMemo(
+    () =>
+      resolveProviderOptionDescriptors({
+        capabilities: currentModelOption?.capabilities,
+        selections: currentModelSelection.options,
+      }),
+    [currentModelOption?.capabilities, currentModelSelection.options],
+  );
+  const configurationLabel = useMemo(
+    () => providerOptionsConfigurationLabel(providerOptionDescriptors),
+    [providerOptionDescriptors],
+  );
   const modelMenuActions = useMemo(
     () =>
       providerGroups.map((group) => ({
@@ -486,36 +618,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Options menu ─────────────────────────────────────────
   const optionsMenuActions = useMemo(
     () => [
-      {
-        id: "options-effort",
-        title: "Effort",
-        subtitle: `${currentEffort.charAt(0).toUpperCase()}${currentEffort.slice(1)}`,
-        subactions: CLAUDE_AGENT_EFFORT_OPTIONS.map((level) => ({
-          id: `options:effort:${level}`,
-          title: `${level}${level === "high" ? " (default)" : ""}`,
-          state: currentEffort === level ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "options-fast-mode",
-        title: "Fast Mode",
-        subtitle: currentFastMode ? "On" : "Off",
-        subactions: ([false, true] as const).map((value) => ({
-          id: `options:fast-mode:${value ? "on" : "off"}`,
-          title: value ? "On" : "Off",
-          state: currentFastMode === value ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "options-context-window",
-        title: "Context Window",
-        subtitle: currentContextWindow,
-        subactions: (["200k", "1M"] as const).map((value) => ({
-          id: `options:context-window:${value}`,
-          title: `${value}${value === "1M" ? " (default)" : ""}`,
-          state: currentContextWindow === value ? ("on" as const) : undefined,
-        })),
-      },
+      ...buildProviderOptionMenuActions(providerOptionDescriptors),
       {
         id: "options-runtime",
         title: "Runtime",
@@ -555,13 +658,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         }),
       },
     ],
-    [
-      currentEffort,
-      currentFastMode,
-      currentContextWindow,
-      currentRuntimeMode,
-      currentInteractionMode,
-    ],
+    [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
   );
 
   // ── Menu handlers ────────────────────────────────────────
@@ -572,77 +669,49 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     const modelKey = event.slice("model:".length);
     const option = modelOptions.find((o) => o.key === modelKey);
     if (option) {
-      void props.onUpdateModelSelection(option.selection);
+      props.onUpdateModelSelection(option.selection);
     }
   }
 
   function handleOptionsMenuAction(event: string) {
-    if (event.startsWith("options:effort:")) {
-      const effort = event.slice("options:effort:".length);
-      const updated: ModelSelection =
-        selectedProviderDriver === "claudeAgent"
-          ? withModelSelectionOption(
-              currentModelSelection,
-              "effort",
-              effort as typeof currentEffort,
-            )
-          : currentModelSelection;
-      void props.onUpdateModelSelection(updated);
-      return;
-    }
-    if (event.startsWith("options:fast-mode:")) {
-      const fastMode = event.endsWith(":on");
-      const nextFast = fastMode || undefined;
-      if (selectedProviderDriver === "opencode") {
-        return;
-      }
-      const updated = withModelSelectionOption(currentModelSelection, "fastMode", nextFast);
-      void props.onUpdateModelSelection(updated);
-      return;
-    }
-    if (event.startsWith("options:context-window:")) {
-      const contextWindow = event.slice("options:context-window:".length);
-      const updated: ModelSelection =
-        selectedProviderDriver === "claudeAgent"
-          ? withModelSelectionOption(currentModelSelection, "contextWindow", contextWindow)
-          : currentModelSelection;
-      void props.onUpdateModelSelection(updated);
+    const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
+    if (providerOptions) {
+      props.onUpdateModelSelection({
+        ...currentModelSelection,
+        options: providerOptions,
+      });
       return;
     }
     if (event.startsWith("options:runtime:")) {
       const runtimeMode = event.slice("options:runtime:".length) as RuntimeMode;
-      void props.onUpdateRuntimeMode(runtimeMode);
+      props.onUpdateRuntimeMode(runtimeMode);
       return;
     }
     if (event.startsWith("options:interaction:")) {
       const interactionMode = event.slice("options:interaction:".length) as ProviderInteractionMode;
-      void props.onUpdateInteractionMode(interactionMode);
+      props.onUpdateInteractionMode(interactionMode);
     }
   }
 
   return (
-    <View
+    <Animated.View
+      className="px-4"
+      layout={COMPOSER_LAYOUT_TRANSITION}
       style={{
-        paddingHorizontal: 16,
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
         experimental_backgroundImage: isDarkMode
-          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
+          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
       }}
     >
-      <View className="w-full" style={{ position: "relative" }}>
+      <Animated.View
+        className="relative w-full self-center"
+        layout={COMPOSER_LAYOUT_TRANSITION}
+        style={{ maxWidth: props.contentMaxWidth }}
+      >
         {composerTrigger && composerMenuItems.length > 0 ? (
-          <View
-            style={{
-              position: "absolute",
-              bottom: "100%",
-              left: 0,
-              right: 0,
-              marginBottom: 8,
-              zIndex: 10,
-            }}
-          >
+          <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
@@ -650,6 +719,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onSelect={handleCommandSelect}
             />
           </View>
+        ) : null}
+
+        {connectionStatus ? (
+          <ComposerConnectionStatusPill
+            status={connectionStatus}
+            onPress={props.onReconnectEnvironment}
+          />
         ) : null}
 
         <ComposerSurface
@@ -675,16 +751,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         >
           {/* Attachment strip — inside the card, above the text input */}
           {isExpanded ? (
-            <View style={{ paddingBottom: props.draftAttachments.length > 0 ? 10 : 0 }}>
+            <Animated.View
+              className={props.draftAttachments.length > 0 ? "pb-2.5" : undefined}
+              entering={FadeIn.duration(160)}
+              exiting={FadeOut.duration(120)}
+            >
               <ComposerAttachmentStrip
                 attachments={props.draftAttachments}
                 onRemove={props.onRemoveDraftImage}
                 onPressImage={onPressImage}
               />
-            </View>
+            </Animated.View>
           ) : null}
 
-          <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>
+          <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
             <ComposerEditor
               ref={inputRef}
               multiline
@@ -697,8 +777,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               placeholder={props.placeholder}
               onFocus={handleFocus}
               onBlur={handleBlur}
+              onSubmit={handleSend}
               scrollEnabled={isExpanded}
-              contentInsetVertical={isExpanded ? 0 : 6}
+              // Android: collapsed single line centers natively (gravity) in
+              // a pill-height box matching the send button; iOS keeps insets.
+              singleLineCentered={!isExpanded}
+              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
               style={
                 isExpanded
                   ? {
@@ -712,41 +796,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     }
               }
               textStyle={{
-                fontSize: 15,
-                lineHeight: isExpanded ? 22 : 20,
+                ...bodyText,
                 color: foregroundColor,
-                fontFamily: "DMSans_400Regular",
               }}
             />
           </View>
           {!isExpanded && props.draftAttachments.length > 0 ? (
-            <View style={{ flexDirection: "row", gap: 4, paddingLeft: 4 }}>
+            <View className="flex-row gap-1 pl-1">
               {props.draftAttachments.slice(0, 3).map((image) => (
                 <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
                   <Image
                     source={{ uri: image.previewUri }}
-                    className="bg-subtle"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: 8,
-                    }}
+                    className="size-[30px] rounded-lg bg-subtle"
                     resizeMode="cover"
                   />
                 </Pressable>
               ))}
               {props.draftAttachments.length > 3 ? (
-                <View
-                  className="bg-subtle-strong"
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: 8,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text className="text-foreground-muted text-[11px] font-t3-bold">
+                <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
+                  <Text className="text-foreground-muted text-2xs font-t3-bold">
                     +{props.draftAttachments.length - 3}
                   </Text>
                 </View>
@@ -754,92 +822,89 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </View>
           ) : null}
           {!isExpanded ? (
-            showStopAction ? (
-              <ControlPill
-                icon="stop.fill"
-                variant="danger"
-                onPress={() => void props.onStopThread()}
-              />
-            ) : (
-              <ControlPill
+            <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
+              {showStopAction ? (
+                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+              ) : (
+                <ControlPill
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canSend}
+                  onPress={handleSend}
+                />
+              )}
+            </Animated.View>
+          ) : null}
+        </ComposerSurface>
+
+        {isExpanded ? (
+          // Toolbar row — matches draft page layout (expanded only)
+          <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
+            <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+              <ComposerToolbarScroller
+                fadeOpaque={toolbarFadeOpaque}
+                fadeTransparent={toolbarFadeTransparent}
+              >
+                <ComposerToolbarButton
+                  accessibilityLabel="Add attachment"
+                  icon="plus"
+                  onPress={() => void props.onPickDraftImages()}
+                  showChevron={false}
+                />
+                <ControlPillMenu
+                  actions={modelMenuActions}
+                  onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+                >
+                  <ComposerToolbarTrigger
+                    accessibilityLabel="Model"
+                    iconNode={
+                      <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                    }
+                    label={currentModelOption?.label ?? currentModelSelection.model}
+                  />
+                </ControlPillMenu>
+                <ControlPillMenu
+                  actions={optionsMenuActions}
+                  onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+                >
+                  <ComposerToolbarTrigger
+                    accessibilityLabel="Configuration"
+                    icon="slider.horizontal.3"
+                    label={configurationLabel}
+                  />
+                </ControlPillMenu>
+                {showStopAction ? (
+                  <ComposerToolbarButton
+                    accessibilityLabel="Stop"
+                    icon="stop.fill"
+                    variant="danger"
+                    onPress={props.onStopThread}
+                    showChevron={false}
+                  />
+                ) : null}
+              </ComposerToolbarScroller>
+              <ComposerToolbarButton
+                accessibilityLabel={sendLabel}
                 icon="arrow.up"
                 variant="primary"
                 disabled={!canSend}
                 onPress={handleSend}
-              />
-            )
-          ) : null}
-        </ComposerSurface>
-
-        {/* Toolbar row — matches draft page layout (expanded only) */}
-        {isExpanded ? (
-          <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-            <ComposerToolbarScroller
-              fadeOpaque={toolbarFadeOpaque}
-              fadeTransparent={toolbarFadeTransparent}
-            >
-              <ComposerToolbarButton
-                icon="plus"
-                onPress={() => void props.onPickDraftImages()}
                 showChevron={false}
               />
-              <ControlPillMenu
-                actions={modelMenuActions}
-                onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Model"
-                  iconNode={
-                    <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
-                  }
-                  label={currentModelOption?.label ?? currentModelSelection.model}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={optionsMenuActions}
-                onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Configuration"
-                  icon="slider.horizontal.3"
-                  label={configurationLabel}
-                />
-              </ControlPillMenu>
-              {showStopAction ? (
-                <ComposerToolbarButton
-                  icon="stop.fill"
-                  variant="danger"
-                  onPress={() => void props.onStopThread()}
-                  showChevron={false}
-                />
-              ) : null}
-            </ComposerToolbarScroller>
-            <ComposerToolbarButton
-              accessibilityLabel={sendLabel}
-              icon="arrow.up"
-              variant="primary"
-              disabled={!canSend}
-              onPress={handleSend}
-              showChevron={false}
-            />
-          </ComposerToolbarRow>
+            </ComposerToolbarRow>
+          </Animated.View>
         ) : null}
 
         {/* Queue count */}
         {props.queueCount > 0 ? (
-          <Text
-            className="text-foreground-muted"
-            style={{
-              fontSize: 12,
-              lineHeight: 18,
-              paddingTop: 8,
-            }}
-          >
-            {props.queueCount} queued message{props.queueCount === 1 ? "" : "s"} will send
-            automatically.
-          </Text>
+          <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
+            <Text className="pt-2 text-xs text-foreground-muted">
+              {props.queueCount} queued message{props.queueCount === 1 ? "" : "s"} will send
+              automatically.
+            </Text>
+          </Animated.View>
         ) : null}
-      </View>
+      </Animated.View>
 
       <ImageViewing
         images={previewImageUri ? [{ uri: previewImageUri }] : []}
@@ -849,6 +914,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         swipeToCloseEnabled
         doubleTapToZoomEnabled
       />
-    </View>
+    </Animated.View>
   );
 });

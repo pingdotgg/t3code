@@ -1,12 +1,29 @@
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { requireNativeView } from "expo";
-import { useImperativeHandle, useMemo, useRef, type Ref } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "react-native";
 import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useFontFamily } from "../lib/useFontFamily";
+import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
+import {
+  acknowledgeComposerNativeEvent,
+  isComposerNativeEcho,
+  pruneAcknowledgedComposerNativeEvents,
+  resolveComposerControlledEventCount,
+  type ComposerNativeEventSnapshot,
+} from "./composerEditorRevision";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
@@ -15,10 +32,13 @@ const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
   readonly selection: ComposerEditorSelection;
+  readonly eventCount: number;
 }>;
 
 type NativeSelectionEvent = NativeSyntheticEvent<{
+  readonly value: string;
   readonly selection: ComposerEditorSelection;
+  readonly eventCount: number;
 }>;
 
 type NativePasteImagesEvent = NativeSyntheticEvent<{
@@ -33,9 +53,7 @@ interface NativeComposerEditorRef {
 
 interface NativeComposerEditorProps extends ViewProps {
   readonly ref?: Ref<NativeComposerEditorRef>;
-  readonly value: string;
-  readonly tokensJson: string;
-  readonly selectionJson: string;
+  readonly controlledDocumentJson: string;
   readonly themeJson: string;
   readonly placeholder: string;
   readonly fontFamily: string;
@@ -52,6 +70,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
+  readonly onComposerSubmit?: () => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -76,11 +95,20 @@ export function ComposerEditor({
   onPasteImages,
   onFocus,
   onBlur,
+  onSubmit,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
   const nativeRef = useRef<NativeComposerEditorRef>(null);
+  const mostRecentEventCountRef = useRef(0);
+  const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
+  const [nativeEventSequence, setNativeEventSequence] = useState(0);
+  const previousRenderedEventSequenceRef = useRef(0);
+  const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([
+    { eventCount: 0, value: props.value, selection: selection ?? null },
+  ]);
   const confirmedTokensRef = useRef(collectComposerInlineTokens(props.value));
+  const bodyText = useScaledTextRole("body");
   const textColor = useThemeColor("--color-foreground");
   const placeholderColor = useThemeColor("--color-placeholder");
   const chipBackground = useThemeColor("--color-subtle");
@@ -90,6 +118,7 @@ export function ComposerEditor({
   const skillBorder = useThemeColor("--color-inline-skill-border");
   const skillText = useThemeColor("--color-inline-skill-foreground");
   const fileTint = useThemeColor("--color-icon-muted");
+  const fontFamily = useFontFamily("regular");
 
   useImperativeHandle(
     ref,
@@ -125,6 +154,61 @@ export function ComposerEditor({
       })),
     );
   }, [props.value, skillLabels]);
+  const includesNativeEvent = nativeEventSequence !== previousRenderedEventSequenceRef.current;
+  const controlledEventCount = includesNativeEvent
+    ? resolveComposerControlledEventCount(
+        props.value,
+        selection ?? null,
+        mostRecentEventCount,
+        nativeEventSnapshotsRef.current,
+      )
+    : mostRecentEventCount;
+  const acknowledgesLatestNativeEvent = isComposerNativeEcho(
+    props.value,
+    selection ?? null,
+    mostRecentEventCount,
+    nativeEventSnapshotsRef.current,
+  );
+  const isNativeEcho =
+    includesNativeEvent &&
+    controlledEventCount === mostRecentEventCount &&
+    acknowledgesLatestNativeEvent;
+  const controlledDocumentJson = JSON.stringify({
+    value: props.value,
+    selection: isNativeEcho ? null : (selection ?? null),
+    tokensJson,
+    mostRecentEventCount: controlledEventCount,
+    isNativeEcho,
+  });
+  useEffect(() => {
+    previousRenderedEventSequenceRef.current = nativeEventSequence;
+  }, [nativeEventSequence]);
+  useEffect(() => {
+    if (!acknowledgesLatestNativeEvent) return;
+    nativeEventSnapshotsRef.current = pruneAcknowledgedComposerNativeEvents(
+      nativeEventSnapshotsRef.current,
+      mostRecentEventCount,
+    );
+  }, [acknowledgesLatestNativeEvent, mostRecentEventCount]);
+  const acceptNativeEvent = useCallback(
+    (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
+      const acknowledgedEventCount = acknowledgeComposerNativeEvent(
+        mostRecentEventCountRef.current,
+        eventCount,
+      );
+      if (acknowledgedEventCount === null) {
+        return false;
+      }
+      mostRecentEventCountRef.current = acknowledgedEventCount;
+      nativeEventSnapshotsRef.current.push({
+        eventCount: acknowledgedEventCount,
+        value,
+        selection: nextSelection,
+      });
+      return acknowledgedEventCount;
+    },
+    [],
+  );
   const themeJson = JSON.stringify({
     text: String(textColor),
     placeholder: String(placeholderColor),
@@ -140,19 +224,21 @@ export function ComposerEditor({
   return (
     <NativeView
       ref={nativeRef}
-      value={props.value}
-      tokensJson={tokensJson}
-      selectionJson={selection ? JSON.stringify(selection) : ""}
+      controlledDocumentJson={controlledDocumentJson}
       themeJson={themeJson}
       placeholder={props.placeholder ?? ""}
       fontFamily={
-        typeof resolvedTextStyle.fontFamily === "string"
-          ? resolvedTextStyle.fontFamily
-          : "DMSans_400Regular"
+        typeof resolvedTextStyle.fontFamily === "string" ? resolvedTextStyle.fontFamily : fontFamily
       }
-      fontSize={typeof resolvedTextStyle.fontSize === "number" ? resolvedTextStyle.fontSize : 15}
+      fontSize={
+        typeof resolvedTextStyle.fontSize === "number"
+          ? resolvedTextStyle.fontSize
+          : bodyText.fontSize
+      }
       lineHeight={
-        typeof resolvedTextStyle.lineHeight === "number" ? resolvedTextStyle.lineHeight : 22
+        typeof resolvedTextStyle.lineHeight === "number"
+          ? resolvedTextStyle.lineHeight
+          : bodyText.lineHeight
       }
       contentInsetVertical={contentInsetVertical}
       editable={props.editable ?? true}
@@ -162,13 +248,32 @@ export function ComposerEditor({
       spellCheck={props.spellCheck ?? true}
       style={style as StyleProp<ViewStyle>}
       onComposerChange={(event) => {
+        const acknowledgedEventCount = acceptNativeEvent(
+          event.nativeEvent.eventCount,
+          event.nativeEvent.value,
+          event.nativeEvent.selection,
+        );
+        if (acknowledgedEventCount === false) return;
         onChangeText(event.nativeEvent.value);
         onSelectionChange?.(event.nativeEvent.selection);
+        setMostRecentEventCount(acknowledgedEventCount);
+        setNativeEventSequence((sequence) => sequence + 1);
       }}
-      onComposerSelectionChange={(event) => onSelectionChange?.(event.nativeEvent.selection)}
+      onComposerSelectionChange={(event) => {
+        const acknowledgedEventCount = acceptNativeEvent(
+          event.nativeEvent.eventCount,
+          event.nativeEvent.value,
+          event.nativeEvent.selection,
+        );
+        if (acknowledgedEventCount === false) return;
+        onSelectionChange?.(event.nativeEvent.selection);
+        setMostRecentEventCount(acknowledgedEventCount);
+        setNativeEventSequence((sequence) => sequence + 1);
+      }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
       onComposerFocus={onFocus}
       onComposerBlur={onBlur}
+      onComposerSubmit={onSubmit}
     />
   );
 }
