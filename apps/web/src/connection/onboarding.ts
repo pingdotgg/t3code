@@ -33,6 +33,10 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
     mode: "serial",
     key: (input: { readonly target: DesktopSshEnvironmentTarget }) => JSON.stringify(input.target),
   },
-  execute: (input: { readonly target: DesktopSshEnvironmentTarget; readonly label?: string }) =>
-    ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerSsh(input))),
+  execute: (input: {
+    readonly target: DesktopSshEnvironmentTarget;
+    readonly label?: string;
+    readonly accessMode?: "ssh-tunnel" | "tailscale";
+    readonly tailscaleServePort?: number;
+  }) => ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerSsh(input))),
 });

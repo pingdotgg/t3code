@@ -48,6 +48,12 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "./errors.ts";
+import {
+  ensureRemoteTailscaleServe,
+  RemoteTailscaleServeConflictError,
+  RemoteTailscaleUnavailableError,
+} from "./tailscale.ts";
+import type { TailscaleStatusParseError } from "@t3tools/tailscale";
 
 export const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -95,6 +101,9 @@ type SshEnvironmentEffectError =
   | SshPairingError
   | SshReadinessError
   | SshPasswordPromptError
+  | RemoteTailscaleUnavailableError
+  | RemoteTailscaleServeConflictError
+  | TailscaleStatusParseError
   | NetService.NetError;
 
 function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCommandError {
@@ -139,9 +148,16 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
 }
 
 export interface SshEnvironmentManagerShape {
+  readonly authenticationOptions: (
+    target: DesktopSshEnvironmentTarget,
+  ) => Effect.Effect<SshAuthOptions>;
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
+    options?: {
+      readonly issuePairingToken?: boolean;
+      readonly accessMode?: "ssh-tunnel" | "tailscale";
+      readonly tailscaleServePort?: number;
+    },
   ) => Effect.Effect<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1488,7 +1504,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
-    requestOptions?: { readonly issuePairingToken?: boolean },
+    requestOptions?: {
+      readonly issuePairingToken?: boolean;
+      readonly accessMode?: "ssh-tunnel" | "tailscale";
+      readonly tailscaleServePort?: number;
+    },
   ): Effect.fn.Return<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1497,6 +1517,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     yield* Effect.logInfo("ssh.environment.ensure.start", {
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
+      accessMode: requestOptions?.accessMode ?? "ssh-tunnel",
     });
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
@@ -1521,6 +1542,57 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
+    if (requestOptions?.accessMode === "tailscale") {
+      const remoteLaunch = yield* runWithSshAuth({
+        key,
+        target: resolvedTarget,
+        operation: (authOptions) => launchOrReuseRemoteServer(resolvedTarget, authOptions, runner),
+      });
+      const endpoint = yield* runWithSshAuth({
+        key,
+        target: resolvedTarget,
+        operation: (authOptions) =>
+          ensureRemoteTailscaleServe(resolvedTarget, {
+            localPort: remoteLaunch.remotePort,
+            ...(requestOptions.tailscaleServePort === undefined
+              ? {}
+              : { servePort: requestOptions.tailscaleServePort }),
+            auth: authOptions,
+          }),
+      });
+      const pairingResult = requestOptions.issuePairingToken
+        ? yield* runWithSshAuth({
+            key,
+            target: resolvedTarget,
+            operation: (authOptions) =>
+              issueRemotePairingToken(resolvedTarget, authOptions, runner),
+          })
+        : null;
+      yield* Effect.logInfo("ssh.environment.ensure.tailscale.succeeded", {
+        ...sshTargetLogFields(resolvedTarget),
+        key,
+        remotePort: remoteLaunch.remotePort,
+        magicDnsName: endpoint.status.magicDnsName,
+        servePort: endpoint.servePort,
+      });
+      return {
+        target: resolvedTarget,
+        httpBaseUrl: endpoint.httpBaseUrl,
+        wsBaseUrl: endpoint.wsBaseUrl,
+        pairingToken: pairingResult?.credential ?? null,
+        remotePort: remoteLaunch.remotePort,
+        ...(remoteLaunch.remoteServerKind
+          ? { remoteServerKind: remoteLaunch.remoteServerKind }
+          : {}),
+        accessMode: "tailscale" as const,
+        tailscale: {
+          magicDnsName: endpoint.status.magicDnsName!,
+          tailnetIpv4Addresses: endpoint.status.tailnetIpv4Addresses,
+          servePort: endpoint.servePort,
+        },
+      };
+    }
+
     const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
 
     const pairingResult = requestOptions?.issuePairingToken
@@ -1585,7 +1657,23 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  const authenticationOptions = (target: DesktopSshEnvironmentTarget) =>
+    Effect.sync(() => {
+      const authSecret = authSecrets.get(targetConnectionKey(target));
+      return authSecret === undefined
+        ? { batchMode: "yes" as const, interactiveAuth: false }
+        : {
+            authSecret,
+            batchMode: "no" as const,
+            interactiveAuth: true,
+          };
+    });
+
+  return SshEnvironmentManager.of({
+    authenticationOptions,
+    ensureEnvironment,
+    disconnectEnvironment,
+  });
 });
 
 /**

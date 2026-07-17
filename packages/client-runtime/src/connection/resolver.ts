@@ -215,6 +215,10 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       connectionId: target.connectionId,
       expectedEnvironmentId: target.environmentId,
       target: profile.target,
+      accessMode: profile.accessMode ?? "ssh-tunnel",
+      ...(profile.tailscaleServePort === undefined
+        ? {}
+        : { tailscaleServePort: profile.tailscaleServePort }),
     });
     yield* profiles.put(
       new SshConnectionProfile({
@@ -222,6 +226,10 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
         environmentId: profile.environmentId,
         label: profile.label,
         target: prepared.bootstrap.target,
+        accessMode: profile.accessMode ?? "ssh-tunnel",
+        ...(profile.tailscaleServePort === undefined
+          ? {}
+          : { tailscaleServePort: profile.tailscaleServePort }),
       }),
     );
     const authorized = yield* remote.authorizeBearer({

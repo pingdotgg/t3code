@@ -216,6 +216,8 @@ describe("connection onboarding", () => {
       };
       const registration = yield* prepareSshRegistration({
         target,
+        accessMode: "tailscale",
+        tailscaleServePort: 8443,
       }).pipe(
         Effect.provideService(
           SshEnvironmentGateway,
@@ -250,6 +252,8 @@ describe("connection onboarding", () => {
           label: "Remote development box",
           connectionId: "ssh:environment-ssh",
           target,
+          accessMode: "tailscale",
+          tailscaleServePort: 8443,
         },
       });
     }),

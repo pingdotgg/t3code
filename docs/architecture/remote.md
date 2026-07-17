@@ -254,6 +254,22 @@ This keeps the renderer transport model consistent with every other access metho
 
 The desktop main process owns the SSH bridge because it can spawn local SSH processes, manage askpass prompts, write temporary launch scripts, and clean up forwards. The renderer receives a saved environment record and connects through the forwarded URL; it should not need SSH-specific RPC paths for normal environment traffic.
 
+### 4. Mosh-managed launch with Tailscale access
+
+Mosh is a roaming control session, not a TCP tunnel. A mosh-managed environment therefore separates
+the two paths explicitly:
+
+- SSH performs authenticated bootstrap and supplies the same resolved target and credentials to
+  mosh.
+- Mosh keeps a lightweight, roaming control session to the remote machine.
+- Tailscale Serve exposes the persistent remote T3 server through MagicDNS HTTPS/WSS.
+- The ordinary environment supervisor remains the only WebSocket retry owner.
+
+The remote server is not scoped to the mosh process or desktop application. Mosh failure is fatal
+during initial setup, where it usually indicates missing prerequisites, but is only control-plane
+degradation after the environment has been saved. It must not tear down a healthy RPC session or
+prevent reconnection to an already-running server over Tailscale.
+
 ## Launch methods
 
 Launch methods answer a different question:

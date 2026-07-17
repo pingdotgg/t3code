@@ -1388,14 +1388,16 @@ function SavedBackendListRow({
     [copyTraceIdToClipboard],
   );
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
-  const sshTarget =
+  const sshProfile =
     environment.entry.target._tag === "SshConnectionTarget" &&
     Option.isSome(environment.entry.profile) &&
     environment.entry.profile.value._tag === "SshConnectionProfile"
-      ? environment.entry.profile.value.target
+      ? environment.entry.profile.value
       : null;
   const metadataBits = [
-    sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
+    sshProfile
+      ? `${sshProfile.accessMode === "tailscale" ? "Mosh + Tailscale" : "SSH tunnel"} ${formatDesktopSshTarget(sshProfile.target)}`
+      : null,
     environment.relayManaged ? "T3 Connect" : null,
   ].filter((value): value is string => value !== null);
 
@@ -1771,6 +1773,10 @@ export function ConnectionsSettings() {
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
+  const [savedBackendSshUseTailscale, setSavedBackendSshUseTailscale] = useState(true);
+  const [savedBackendRemoteServePort, setSavedBackendRemoteServePort] = useState(
+    String(DEFAULT_TAILSCALE_SERVE_PORT),
+  );
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
@@ -1897,6 +1903,12 @@ export function ConnectionsSettings() {
     Number.isInteger(parsedTailscaleServePort) &&
     parsedTailscaleServePort >= 1 &&
     parsedTailscaleServePort <= 65_535;
+  const parsedRemoteServePort = Number(savedBackendRemoteServePort.trim());
+  const isRemoteServePortValid =
+    /^\d+$/u.test(savedBackendRemoteServePort.trim()) &&
+    Number.isInteger(parsedRemoteServePort) &&
+    parsedRemoteServePort >= 1 &&
+    parsedRemoteServePort <= 65_535;
 
   const pendingTailscaleServeBaseUrl = useMemo(() => {
     if (!pendingTailscaleServeEndpoint) return null;
@@ -2085,6 +2097,10 @@ export function ConnectionsSettings() {
 
   const handleAddSavedBackend = useCallback(async () => {
     if (savedBackendMode === "ssh") {
+      if (savedBackendSshUseTailscale && !isRemoteServePortValid) {
+        setSavedBackendError("Enter a remote HTTPS port from 1 to 65535.");
+        return;
+      }
       setIsAddingSavedBackend(true);
       setSavedBackendError(null);
       let target: DesktopSshEnvironmentTarget;
@@ -2100,7 +2116,14 @@ export function ConnectionsSettings() {
         return;
       }
 
-      const result = await connectSshEnvironment({ target, label: "" });
+      const result = await connectSshEnvironment({
+        target,
+        label: "",
+        accessMode: savedBackendSshUseTailscale ? "tailscale" : "ssh-tunnel",
+        ...(savedBackendSshUseTailscale && isRemoteServePortValid
+          ? { tailscaleServePort: parsedRemoteServePort }
+          : {}),
+      });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           setSavedBackendError(formatDesktopSshConnectionError(squashAtomCommandFailure(result)));
@@ -2118,7 +2141,9 @@ export function ConnectionsSettings() {
       toastManager.add({
         type: "success",
         title: "Environment connected",
-        description: `${target.alias} is ready over an SSH-managed tunnel.`,
+        description: savedBackendSshUseTailscale
+          ? `${target.alias} is running persistently over Tailscale HTTPS.`
+          : `${target.alias} is ready over an SSH-managed tunnel.`,
       });
       setIsAddingSavedBackend(false);
       return;
@@ -2185,6 +2210,9 @@ export function ConnectionsSettings() {
     savedBackendSshHost,
     savedBackendSshPort,
     savedBackendSshUsername,
+    savedBackendSshUseTailscale,
+    isRemoteServePortValid,
+    parsedRemoteServePort,
   ]);
 
   const handleConnectSavedBackend = useCallback(
@@ -2231,6 +2259,10 @@ export function ConnectionsSettings() {
 
   const handleConnectSshHost = useCallback(
     async (target: DesktopSshEnvironmentTarget, label?: string) => {
+      if (savedBackendSshUseTailscale && !isRemoteServePortValid) {
+        setSavedBackendError("Enter a remote HTTPS port from 1 to 65535.");
+        return;
+      }
       setConnectingSshHostAlias(target.alias);
       if (savedBackendMode === "ssh") {
         setSavedBackendError(null);
@@ -2240,6 +2272,10 @@ export function ConnectionsSettings() {
       const result = await connectSshEnvironment({
         target,
         ...(label === undefined ? {} : { label }),
+        accessMode: savedBackendSshUseTailscale ? "tailscale" : "ssh-tunnel",
+        ...(savedBackendSshUseTailscale && isRemoteServePortValid
+          ? { tailscaleServePort: parsedRemoteServePort }
+          : {}),
       });
       setConnectingSshHostAlias(null);
       if (result._tag === "Success") {
@@ -2252,7 +2288,9 @@ export function ConnectionsSettings() {
           title: savedDesktopSshEnvironmentsByAlias[target.alias]
             ? "Environment reconnected"
             : "Environment connected",
-          description: `${label?.trim() || target.alias} is ready over an SSH-managed tunnel.`,
+          description: savedBackendSshUseTailscale
+            ? `${label?.trim() || target.alias} is running persistently over Tailscale HTTPS.`
+            : `${label?.trim() || target.alias} is ready over an SSH-managed tunnel.`,
         });
         return;
       }
@@ -2266,7 +2304,14 @@ export function ConnectionsSettings() {
         }
       }
     },
-    [connectSshEnvironment, savedBackendMode, savedDesktopSshEnvironmentsByAlias],
+    [
+      connectSshEnvironment,
+      savedBackendMode,
+      savedBackendSshUseTailscale,
+      isRemoteServePortValid,
+      parsedRemoteServePort,
+      savedDesktopSshEnvironmentsByAlias,
+    ],
   );
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
@@ -2449,6 +2494,53 @@ export function ConnectionsSettings() {
             />
           </label>
         </div>
+        <div className="flex items-start justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">Mosh + Tailscale</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Keep chats and agent runs on the remote machine, and reconnect directly through its
+              Tailscale HTTPS address after sleep or network changes.
+            </p>
+          </div>
+          <Switch
+            checked={savedBackendSshUseTailscale}
+            onCheckedChange={setSavedBackendSshUseTailscale}
+            disabled={isAddingSavedBackend}
+            aria-label="Use Mosh and Tailscale"
+          />
+        </div>
+        {savedBackendSshUseTailscale ? (
+          <div className="space-y-3">
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Requires Tailscale and MagicDNS on both machines. T3 Code will configure Tailscale
+              Serve on the remote machine. SSH is used for setup; chats do not depend on a live SSH
+              tunnel afterward.
+            </p>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">
+                Remote HTTPS port
+              </span>
+              <Input
+                value={savedBackendRemoteServePort}
+                onChange={(event) => setSavedBackendRemoteServePort(event.target.value)}
+                placeholder="443"
+                inputMode="numeric"
+                disabled={isAddingSavedBackend}
+                aria-invalid={!isRemoteServePortValid}
+              />
+              <span
+                className={cn(
+                  "mt-1 block text-[11px]",
+                  isRemoteServePortValid ? "text-muted-foreground" : "text-destructive",
+                )}
+              >
+                {isRemoteServePortValid
+                  ? "Use another port if this machine already serves something on 443."
+                  : "Enter a port from 1 to 65535."}
+              </span>
+            </label>
+          </div>
+        ) : null}
         {savedBackendError || discoveredSshHostsError ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             {savedBackendError ?? discoveredSshHostsError}
@@ -2457,7 +2549,9 @@ export function ConnectionsSettings() {
         <Button
           variant="outline"
           className="w-full"
-          disabled={isAddingSavedBackend}
+          disabled={
+            isAddingSavedBackend || (savedBackendSshUseTailscale && !isRemoteServePortValid)
+          }
           onClick={() => void handleAddSavedBackend()}
         >
           <PlusIcon className="size-3.5" />

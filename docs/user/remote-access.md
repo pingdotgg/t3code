@@ -152,6 +152,34 @@ With mise/asdf/fnm/nodenv, make sure the tool's shim directory is installed and 
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 
+### Option 4: Persistent Mosh + Tailscale
+
+Use this when chats and agent runs should keep running on another machine through laptop sleep,
+Wi-Fi changes, and temporary connection loss.
+
+1. Install and sign in to Tailscale on both machines, with MagicDNS enabled.
+2. Install `mosh` on the desktop and `mosh-server` on the remote machine.
+3. Open **Settings** → **Connections** → **Add environment** → **SSH**.
+4. Leave **Mosh + Tailscale** enabled and add the remote host.
+
+T3 Code uses the existing SSH configuration and authentication flow to launch or reuse a persistent
+T3 server. It then starts a roaming mosh control session and configures Tailscale Serve on the
+remote machine. Normal chat traffic connects directly to the remote server over HTTPS/WSS using
+its stable MagicDNS name; mosh does not proxy WebSocket traffic.
+
+The remote T3 server owns chats, provider processes, projects, terminals, and event history. Closing
+the desktop app or losing the mosh session does not stop that server. When the desktop reconnects,
+cached chats remain visible while the shared connection supervisor restores the Tailscale socket
+and synchronizes newer remote events.
+
+Initial setup reports missing local `mosh`, remote `mosh-server`, Tailscale, or MagicDNS separately.
+After setup, a mosh control-session failure does not take down a healthy Tailscale chat connection.
+Removing the saved environment explicitly stops the launcher-managed remote server.
+
+T3 Code inspects the remote Tailscale Serve configuration before changing it. If the requested
+HTTPS port already routes to another service, setup stops and reports the conflict instead of
+replacing that handler. Choose a different Serve port or move the existing service first.
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.

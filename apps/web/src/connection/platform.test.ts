@@ -28,11 +28,18 @@ const TARGET: DesktopSshEnvironmentTarget = {
 
 function makeBridge(
   calls: string[],
-  options?: { readonly failDescriptor?: boolean },
+  options?: {
+    readonly failDescriptor?: boolean;
+    readonly ensureOptions?: Array<{
+      readonly accessMode?: "ssh-tunnel" | "tailscale";
+      readonly requireMosh?: boolean;
+    }>;
+  },
 ): DesktopBridge {
   return {
-    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
+    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget, ensureOptions) => {
       calls.push("ensure");
+      options?.ensureOptions?.push(ensureOptions ?? {});
       return {
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
@@ -93,6 +100,30 @@ describe("desktop SSH pairing", () => {
       ).pipe(Effect.flip);
 
       expect(calls).toEqual(["ensure", "descriptor"]);
+    }),
+  );
+
+  it.effect("requires mosh when provisioning a persistent Tailscale environment", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const ensureOptions: Array<{
+        readonly accessMode?: "ssh-tunnel" | "tailscale";
+        readonly requireMosh?: boolean;
+      }> = [];
+
+      yield* provisionDesktopSshEnvironment(makeBridge(calls, { ensureOptions }), TARGET, {
+        accessMode: "tailscale",
+        tailscaleServePort: 8443,
+      });
+
+      expect(ensureOptions).toEqual([
+        {
+          issuePairingToken: true,
+          accessMode: "tailscale",
+          requireMosh: true,
+          tailscaleServePort: 8443,
+        },
+      ]);
     }),
   );
 });

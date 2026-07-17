@@ -41,6 +41,8 @@ export interface PairingConnectionInput {
 export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
+  readonly accessMode?: "ssh-tunnel" | "tailscale";
+  readonly tailscaleServePort?: number;
 }
 
 export interface BearerConnectionUpdateInput {
@@ -214,7 +216,12 @@ export const prepareSshRegistration = Effect.fn(
   "clientRuntime.connection.onboarding.prepareSshRegistration",
 )(function* (input: SshConnectionInput) {
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
-  const provisioned = yield* gateway.provision(input.target);
+  const provisioned = yield* gateway.provision(input.target, {
+    accessMode: input.accessMode ?? "ssh-tunnel",
+    ...(input.tailscaleServePort === undefined
+      ? {}
+      : { tailscaleServePort: input.tailscaleServePort }),
+  });
   const connectionId = `ssh:${provisioned.environmentId}`;
   const label = input.label?.trim() || provisioned.label || provisioned.bootstrap.target.alias;
 
@@ -229,6 +236,10 @@ export const prepareSshRegistration = Effect.fn(
       environmentId: provisioned.environmentId,
       label,
       target: provisioned.bootstrap.target,
+      accessMode: input.accessMode ?? "ssh-tunnel",
+      ...(input.tailscaleServePort === undefined
+        ? {}
+        : { tailscaleServePort: input.tailscaleServePort }),
     }),
   });
 });

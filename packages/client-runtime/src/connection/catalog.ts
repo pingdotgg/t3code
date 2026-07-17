@@ -30,6 +30,8 @@ export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfil
   {
     ...ConnectionProfileBase,
     target: DesktopSshEnvironmentTargetSchema,
+    accessMode: Schema.optionalKey(Schema.Literals(["ssh-tunnel", "tailscale"])),
+    tailscaleServePort: Schema.optionalKey(Schema.Number),
   },
 ) {}
 

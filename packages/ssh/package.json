@@ -19,6 +19,10 @@
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     },
+    "./tailscale": {
+      "types": "./src/tailscale.ts",
+      "import": "./src/tailscale.ts"
+    },
     "./tunnel": {
       "types": "./src/tunnel.ts",
       "import": "./src/tunnel.ts"
@@ -31,6 +35,7 @@
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

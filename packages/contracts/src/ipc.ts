@@ -319,6 +319,12 @@ export interface DesktopSshEnvironmentBootstrap {
   pairingToken: string | null;
   remotePort?: number;
   remoteServerKind?: "external" | "managed";
+  accessMode?: "ssh-tunnel" | "tailscale";
+  tailscale?: {
+    magicDnsName: string;
+    tailnetIpv4Addresses: readonly string[];
+    servePort: number;
+  };
 }
 
 export const DesktopSshEnvironmentBootstrapSchema = Schema.Struct({
@@ -328,6 +334,14 @@ export const DesktopSshEnvironmentBootstrapSchema = Schema.Struct({
   pairingToken: Schema.NullOr(Schema.String),
   remotePort: Schema.optionalKey(Schema.Number),
   remoteServerKind: Schema.optionalKey(Schema.Literals(["external", "managed"])),
+  accessMode: Schema.optionalKey(Schema.Literals(["ssh-tunnel", "tailscale"])),
+  tailscale: Schema.optionalKey(
+    Schema.Struct({
+      magicDnsName: Schema.String,
+      tailnetIpv4Addresses: Schema.Array(Schema.String),
+      servePort: Schema.Number,
+    }),
+  ),
 });
 
 export interface DesktopSshPasswordPromptRequest {
@@ -355,6 +369,9 @@ export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
 
 export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
   issuePairingToken: Schema.optionalKey(Schema.Boolean),
+  accessMode: Schema.optionalKey(Schema.Literals(["ssh-tunnel", "tailscale"])),
+  tailscaleServePort: Schema.optionalKey(Schema.Number),
+  requireMosh: Schema.optionalKey(Schema.Boolean),
 });
 
 export const DesktopSshEnvironmentEnsureInputSchema = Schema.Struct({
@@ -959,7 +976,12 @@ export interface DesktopBridge {
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { issuePairingToken?: boolean },
+    options?: {
+      issuePairingToken?: boolean;
+      accessMode?: "ssh-tunnel" | "tailscale";
+      tailscaleServePort?: number;
+      requireMosh?: boolean;
+    },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;

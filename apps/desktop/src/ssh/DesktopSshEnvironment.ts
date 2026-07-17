@@ -3,6 +3,13 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import {
+  MoshClientUnavailableError,
+  MoshControlManager,
+  MoshServerUnavailableError,
+  MoshSessionStartError,
+  MoshUnsupportedPlatformError,
+} from "@t3tools/mosh";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { discoverSshHosts } from "@t3tools/ssh/config";
@@ -16,6 +23,11 @@ import {
   SshReadinessError,
 } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
+import {
+  RemoteTailscaleServeConflictError,
+  RemoteTailscaleUnavailableError,
+} from "@t3tools/ssh/tailscale";
+import type { TailscaleStatusParseError } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,6 +52,13 @@ export type DesktopSshEnvironmentOperationError =
   | SshPairingError
   | SshReadinessError
   | SshPasswordPromptError
+  | RemoteTailscaleUnavailableError
+  | RemoteTailscaleServeConflictError
+  | TailscaleStatusParseError
+  | MoshClientUnavailableError
+  | MoshServerUnavailableError
+  | MoshSessionStartError
+  | MoshUnsupportedPlatformError
   | NetService.NetError;
 
 export type DesktopSshEnvironmentDiscoverError = SshHostDiscoveryError;
@@ -56,7 +75,12 @@ export class DesktopSshEnvironment extends Context.Service<
     }) => Effect.Effect<readonly DesktopDiscoveredSshHost[], DesktopSshEnvironmentDiscoverError>;
     readonly ensureEnvironment: (
       target: DesktopSshEnvironmentTarget,
-      options?: { readonly issuePairingToken?: boolean },
+      options?: {
+        readonly issuePairingToken?: boolean;
+        readonly accessMode?: "ssh-tunnel" | "tailscale";
+        readonly tailscaleServePort?: number;
+        readonly requireMosh?: boolean;
+      },
     ) => Effect.Effect<DesktopSshEnvironmentBootstrap, DesktopSshEnvironmentOperationError>;
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
@@ -126,6 +150,7 @@ const makePasswordPrompt = (
 
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
+  const mosh = yield* MoshControlManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
   const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
@@ -137,17 +162,35 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("desktop.ssh.discoverHosts"),
       ),
     ensureEnvironment: (target, ensureOptions) =>
-      manager
-        .ensureEnvironment(target, ensureOptions)
-        .pipe(
-          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.ensureEnvironment"),
+      manager.ensureEnvironment(target, ensureOptions).pipe(
+        Effect.tap((bootstrap) =>
+          bootstrap.accessMode === "tailscale"
+            ? manager.authenticationOptions(bootstrap.target).pipe(
+                Effect.flatMap((auth) => mosh.ensure(bootstrap.target, { auth })),
+                Effect.asVoid,
+                ensureOptions?.requireMosh === false
+                  ? Effect.catch((cause) =>
+                      Effect.logWarning(
+                        "Mosh control session is unavailable; continuing over Tailscale.",
+                        {
+                          target: bootstrap.target.alias,
+                          cause,
+                        },
+                      ),
+                    )
+                  : (effect) => effect,
+              )
+            : Effect.void,
         ),
+        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.ensureEnvironment"),
+      ),
     disconnectEnvironment: (target) =>
-      manager
-        .disconnectEnvironment(target)
+      mosh
+        .disconnect(target)
         .pipe(
+          Effect.andThen(manager.disconnectEnvironment(target)),
           Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
           Effect.withSpan("desktop.ssh.disconnectEnvironment"),
@@ -157,6 +200,7 @@ export const make = Effect.gen(function* () {
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
+    Layer.provide(MoshControlManager.layer),
     Layer.provide(
       SshTunnel.SshEnvironmentManager.layer({
         ...(options.resolveCliPackageSpec === undefined

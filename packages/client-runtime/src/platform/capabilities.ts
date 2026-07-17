@@ -55,11 +55,17 @@ export class SshEnvironmentGateway extends Context.Service<
   {
     readonly provision: (
       target: DesktopSshEnvironmentTarget,
+      options?: {
+        readonly accessMode?: "ssh-tunnel" | "tailscale";
+        readonly tailscaleServePort?: number;
+      },
     ) => Effect.Effect<ProvisionedSshEnvironment, ConnectionAttemptError>;
     readonly prepare: (input: {
       readonly connectionId: string;
       readonly expectedEnvironmentId: EnvironmentId;
       readonly target: DesktopSshEnvironmentTarget;
+      readonly accessMode?: "ssh-tunnel" | "tailscale";
+      readonly tailscaleServePort?: number;
     }) => Effect.Effect<PreparedSshEnvironment, ConnectionAttemptError>;
     readonly disconnect: (
       target: DesktopSshEnvironmentTarget,

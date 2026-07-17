@@ -139,11 +139,23 @@ function sshPreparationError(cause: unknown) {
 
 export const provisionDesktopSshEnvironment = Effect.fn(
   "web.connectionPlatform.ssh.provisionDesktop",
-)(function* (bridge: DesktopBridge, target: DesktopSshEnvironmentTarget) {
+)(function* (
+  bridge: DesktopBridge,
+  target: DesktopSshEnvironmentTarget,
+  options?: {
+    readonly accessMode?: "ssh-tunnel" | "tailscale";
+    readonly tailscaleServePort?: number;
+  },
+) {
   const bootstrap = yield* Effect.tryPromise({
     try: () =>
       bridge.ensureSshEnvironment(target, {
         issuePairingToken: true,
+        accessMode: options?.accessMode ?? "ssh-tunnel",
+        requireMosh: options?.accessMode === "tailscale",
+        ...(options?.tailscaleServePort === undefined
+          ? {}
+          : { tailscaleServePort: options.tailscaleServePort }),
       }),
     catch: sshPreparationError,
   });
@@ -217,7 +229,7 @@ const capabilitiesLayer = Layer.effectContext(
       }).pipe(Effect.map(Option.fromNullishOr)),
     });
     const ssh = SshEnvironmentGateway.of({
-      provision: Effect.fn("web.connectionPlatform.ssh.provision")(function* (target) {
+      provision: Effect.fn("web.connectionPlatform.ssh.provision")(function* (target, options) {
         const bridge = window.desktopBridge;
         if (bridge === undefined) {
           return yield* new ConnectionBlockedError({
@@ -225,7 +237,7 @@ const capabilitiesLayer = Layer.effectContext(
             detail: "SSH environments are only available in the desktop app.",
           });
         }
-        return yield* provisionDesktopSshEnvironment(bridge, target);
+        return yield* provisionDesktopSshEnvironment(bridge, target, options);
       }),
       prepare: Effect.fn("web.connectionPlatform.ssh.prepare")(function* (input) {
         const bridge = window.desktopBridge;
@@ -239,6 +251,11 @@ const capabilitiesLayer = Layer.effectContext(
           try: () =>
             bridge.ensureSshEnvironment(input.target, {
               issuePairingToken: true,
+              accessMode: input.accessMode ?? "ssh-tunnel",
+              requireMosh: false,
+              ...(input.tailscaleServePort === undefined
+                ? {}
+                : { tailscaleServePort: input.tailscaleServePort }),
             }),
           catch: sshPreparationError,
         });

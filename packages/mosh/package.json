@@ -1,0 +1,27 @@
+{
+  "name": "@t3tools/mosh",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/mosh.ts",
+      "import": "./src/mosh.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/ssh": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
