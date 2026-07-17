@@ -1063,6 +1063,14 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   );
 });
 
+// Errors surface through two maps (draft-keyed and thread-keyed) whose entries
+// can race around promotion, so each write carries its time to let the latest
+// one win when they collide.
+type LocalThreadErrorEntry = {
+  readonly message: string | null;
+  readonly at: number;
+};
+
 function ChatViewContent(props: ChatViewProps) {
   const {
     environmentId,
@@ -1188,10 +1196,10 @@ function ChatViewContent(props: ChatViewProps) {
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
-    Record<string, string | null>
+    Record<string, LocalThreadErrorEntry>
   >({});
   const [localServerErrorsByThreadKey, setLocalServerErrorsByThreadKey] = useState<
-    Record<string, string | null>
+    Record<string, LocalThreadErrorEntry>
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
@@ -1305,21 +1313,22 @@ function ChatViewContent(props: ChatViewProps) {
   const fallbackDraftProject = useProject(fallbackDraftProjectRef);
   const localDraftError = serverThread
     ? null
-    : ((draftId ? localDraftErrorsByDraftId[draftId] : null) ?? null);
-  const localServerError = localServerErrorsByThreadKey[routeThreadKey] ?? null;
+    : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
+  const localServerError = localServerErrorsByThreadKey[routeThreadKey]?.message ?? null;
   // Draft errors are keyed by draftId while server errors are keyed by thread
-  // key, so a pending draft error must migrate when the server thread loads or
-  // a failed send would silently disappear on promotion.
+  // key, so a pending draft entry must migrate when the server thread loads or
+  // a failed send would silently disappear on promotion. When both keys hold
+  // an entry, the most recent write wins.
   useEffect(() => {
     if (!serverThread || !draftId) {
       return;
     }
-    const pendingDraftError = localDraftErrorsByDraftId[draftId] ?? null;
-    if (pendingDraftError === null) {
+    const pendingDraftEntry = localDraftErrorsByDraftId[draftId];
+    if (pendingDraftEntry === undefined) {
       return;
     }
     setLocalDraftErrorsByDraftId((existing) => {
-      if ((existing[draftId] ?? null) === null) {
+      if (existing[draftId] === undefined) {
         return existing;
       }
       const next = { ...existing };
@@ -1327,12 +1336,17 @@ function ChatViewContent(props: ChatViewProps) {
       return next;
     });
     setLocalServerErrorsByThreadKey((existing) => {
-      if ((existing[routeThreadKey] ?? null) === pendingDraftError) {
+      const currentEntry = existing[routeThreadKey];
+      if (
+        currentEntry !== undefined &&
+        (currentEntry.at > pendingDraftEntry.at ||
+          currentEntry.message === pendingDraftEntry.message)
+      ) {
         return existing;
       }
       return {
         ...existing,
-        [routeThreadKey]: pendingDraftError,
+        [routeThreadKey]: pendingDraftEntry,
       };
     });
   }, [draftId, localDraftErrorsByDraftId, routeThreadKey, serverThread]);
@@ -2352,6 +2366,7 @@ function ChatViewContent(props: ChatViewProps) {
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
       const nextError = sanitizeThreadErrorMessage(error);
+      const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
       if (
         serverThread &&
         targetThreadId === routeThreadRef.threadId &&
@@ -2359,24 +2374,24 @@ function ChatViewContent(props: ChatViewProps) {
         serverThread.id === targetThreadId
       ) {
         setLocalServerErrorsByThreadKey((existing) => {
-          if ((existing[routeThreadKey] ?? null) === nextError) {
+          if ((existing[routeThreadKey]?.message ?? null) === nextError) {
             return existing;
           }
           return {
             ...existing,
-            [routeThreadKey]: nextError,
+            [routeThreadKey]: nextEntry,
           };
         });
         return;
       }
       const localDraftErrorKey = draftId ?? targetThreadId;
       setLocalDraftErrorsByDraftId((existing) => {
-        if ((existing[localDraftErrorKey] ?? null) === nextError) {
+        if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
           return existing;
         }
         return {
           ...existing,
-          [localDraftErrorKey]: nextError,
+          [localDraftErrorKey]: nextEntry,
         };
       });
     },
