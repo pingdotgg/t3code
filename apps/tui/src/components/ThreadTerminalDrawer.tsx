@@ -49,14 +49,29 @@ export interface TerminalInfo {
 }
 
 /** Render one styled terminal segment, applying fg/bg + bold/underline/inverse. */
-function renderSegment(segment: TermSegment, key: number): React.ReactNode {
+function renderSegment(segment: TermSegment, key: number, cursorFocused: boolean): React.ReactNode {
+  // A shell cursor normally sits on an empty cell. Rendering that as inverse
+  // default colours is unreliable on a transparent framebuffer: some terminal
+  // palettes resolve the foreground/background intents to an indistinguishable
+  // cell. Use a real block glyph for an empty cursor cell so it remains visible.
+  // When the cursor is over a character, retain xterm's inverse-video treatment.
+  const blankCursor = segment.cursor && segment.text === " ";
+  const inverse = blankCursor ? false : segment.inverse;
   // Default cells inherit the terminal's own fg/bg; inverse swaps them so the
   // cursor cell and reverse-video runs read correctly on any theme.
-  const fg = segment.inverse
-    ? (segment.backgroundColor ?? THEME.bg)
-    : (segment.color ?? THEME.text);
-  const bg = segment.inverse ? (segment.color ?? THEME.text) : segment.backgroundColor;
-  let node: React.ReactNode = segment.text;
+  const fg = blankCursor
+    ? cursorFocused
+      ? THEME.accent
+      : THEME.dim
+    : inverse
+      ? (segment.backgroundColor ?? THEME.bg)
+      : (segment.color ?? THEME.text);
+  const bg = blankCursor
+    ? segment.backgroundColor
+    : inverse
+      ? (segment.color ?? THEME.text)
+      : segment.backgroundColor;
+  let node: React.ReactNode = blankCursor ? "█" : segment.text;
   if (segment.href) node = <a href={segment.href}>{node}</a>;
   if (segment.underline || segment.href) node = <u>{node}</u>;
   if (segment.italic) node = <em>{node}</em>;
@@ -290,7 +305,9 @@ const TerminalPane = React.memo(function TerminalPane({
       ) : null}
       {bodyRows.map((segments, index) => (
         <text key={index}>
-          {segments.length === 0 ? " " : segments.map((segment, i) => renderSegment(segment, i))}
+          {segments.length === 0
+            ? " "
+            : segments.map((segment, i) => renderSegment(segment, i, focused))}
         </text>
       ))}
     </box>

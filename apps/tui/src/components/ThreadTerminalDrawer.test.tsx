@@ -157,6 +157,63 @@ describe("ThreadTerminalDrawer tab bar", () => {
 });
 
 describe("ThreadTerminalDrawer session events", () => {
+  it("Given the shell cursor is on a blank cell, then the drawer renders a visible block", async () => {
+    let onEvent: Parameters<TuiClient["subscribeTerminal"]>[1] = () => {
+      throw new Error("terminal subscription not ready");
+    };
+    const eventClient = {
+      subscribeTerminal: (
+        _input: Parameters<TuiClient["subscribeTerminal"]>[0],
+        next: Parameters<TuiClient["subscribeTerminal"]>[1],
+      ) => {
+        onEvent = next;
+        return () => {};
+      },
+      terminalWrite: () => Promise.resolve(),
+      terminalResize: () => Promise.resolve(),
+      terminalClose: () => Promise.resolve(),
+    } as unknown as TuiClient;
+    const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
+      (() => string) | null
+    >;
+    const scrollRef = React.createRef<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >() as React.MutableRefObject<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >;
+    const t = await testRender(
+      <ThreadTerminalDrawer
+        client={eventClient}
+        info={info}
+        cols={40}
+        rows={4}
+        focused
+        copyRef={copyRef}
+        scrollRef={scrollRef}
+        tabIds={["term-1"]}
+        activeTabId="term-1"
+        onSelectTab={() => {}}
+        onNewTab={() => {}}
+        onCloseTab={() => {}}
+      />,
+      { width: 50, height: 12 },
+    );
+    await t.renderOnce();
+    await t.flush();
+
+    onEvent?.({
+      type: "output",
+      threadId: "t1",
+      terminalId: "term-1",
+      data: "$ ",
+    } as never);
+    await Bun.sleep(25);
+    await t.renderOnce();
+
+    expect(t.captureCharFrame()).toContain("$ █");
+    t.renderer.destroy();
+  });
+
   it("Given terminal output is visible, when the server clears the session, then the stale buffer disappears", async () => {
     let onEvent: Parameters<TuiClient["subscribeTerminal"]>[1] = () => {
       throw new Error("terminal subscription not ready");

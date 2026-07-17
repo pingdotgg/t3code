@@ -21,6 +21,8 @@ export interface TermSegment {
   readonly italic?: boolean;
   readonly underline?: boolean;
   readonly inverse?: boolean;
+  /** The live xterm cursor occupies this single-cell segment. */
+  readonly cursor?: boolean;
   /** Terminal-native OSC 8 hyperlink emitted for detected HTTP(S) output. */
   readonly href?: string;
 }
@@ -66,6 +68,7 @@ function styleKey(segment: TermSegment): string {
     segment.italic ? "i" : "",
     segment.underline ? "u" : "",
     segment.inverse ? "v" : "",
+    segment.cursor ? "c" : "",
     segment.href ?? "",
   ].join("|");
 }
@@ -177,7 +180,7 @@ export function readTerminalFrame(term: Terminal, scrollOffset = 0): TermFrame {
       const href = urlRanges.get(y)?.find((link) => link.start <= x && x < link.end)?.href;
       const linkedStyle = href ? { ...baseStyle, href } : baseStyle;
       const style: Omit<TermSegment, "text"> = isCursor
-        ? { ...linkedStyle, inverse: !linkedStyle.inverse }
+        ? { ...linkedStyle, inverse: !linkedStyle.inverse, cursor: true }
         : linkedStyle;
       // The cursor cell gets a unique key ("@") so it never merges with neighbours.
       const key = `${styleKey({ text: "", ...style })}${isCursor ? "@" : ""}`;

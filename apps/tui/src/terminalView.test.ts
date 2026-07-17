@@ -72,6 +72,25 @@ describe("readTerminalFrame links", () => {
   });
 });
 
+describe("readTerminalFrame cursor", () => {
+  it("Given the cursor is at the live prompt, then its blank cell is emitted separately", async () => {
+    const term = new Terminal({ cols: 20, rows: 2, allowProposedApi: true });
+    const frame = await new Promise<ReturnType<typeof readTerminalFrame>>((resolve) => {
+      term.write("$ ", () => resolve(readTerminalFrame(term)));
+    });
+    const cursorSegments = frame.rows.flat().filter((segment) => segment.cursor);
+
+    expect(frame.cursor).toEqual({ x: 2, y: 0 });
+    expect(cursorSegments).toEqual([
+      expect.objectContaining({
+        text: " ",
+        cursor: true,
+        inverse: true,
+      }),
+    ]);
+  });
+});
+
 describe("readTerminalViewport", () => {
   it("Given written rows, then it returns the on-screen text without trailing blanks", async () => {
     const term = new Terminal({ cols: 40, rows: 4, allowProposedApi: true });
