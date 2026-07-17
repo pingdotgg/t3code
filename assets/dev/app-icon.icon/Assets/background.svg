@@ -1,0 +1,51 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="paper" x1="36" y1="0" x2="92" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67C2FF"/>
+      <stop offset="0.44" stop-color="#347FF8"/>
+      <stop offset="1" stop-color="#1538D0"/>
+    </linearGradient>
+    <radialGradient id="cyanGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(92 22) rotate(137) scale(78 70)">
+      <stop stop-color="#D4F6FF" stop-opacity="0.62"/>
+      <stop offset="0.52" stop-color="#65C8FF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#276AF1" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="edgeShade" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(64 58) rotate(90) scale(77)">
+      <stop offset="0.68" stop-color="#102EBC" stop-opacity="0"/>
+      <stop offset="1" stop-color="#061A88" stop-opacity="0.48"/>
+    </radialGradient>
+    <pattern id="minorGrid" width="4" height="4" patternUnits="userSpaceOnUse">
+      <path d="M4 0H0V4" stroke="#D9F7FF" stroke-width="0.18" opacity="0.38"/>
+    </pattern>
+    <pattern id="majorGrid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="url(#minorGrid)"/>
+      <path d="M16 0H0V16" stroke="#F0FCFF" stroke-width="0.34" opacity="0.52"/>
+    </pattern>
+    <clipPath id="frame">
+      <rect width="128" height="128" rx="10"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="128" height="128" fill="url(#paper)"/>
+    <rect width="128" height="128" fill="url(#cyanGlow)"/>
+    <rect x="4" y="4" width="120" height="120" fill="url(#majorGrid)" opacity="0.96"/>
+    <path d="M64 4V124M4 64H124" stroke="#F0FCFF" stroke-width="0.3" opacity="0.46"/>
+    <rect x="5.75" y="5.75" width="116.5" height="116.5" rx="5.5" stroke="#F1FCFF" stroke-width="0.5" opacity="0.66"/>
+
+    <g stroke="#BFE9F7" stroke-linecap="round" opacity="0.2">
+      <path d="M14 19L24 12M17 22L29 13" stroke-width="0.5"/>
+      <path d="M106 25L115 18M104 30L118 20" stroke-width="0.38"/>
+      <path d="M11 108L23 101M16 113L28 105" stroke-width="0.42"/>
+      <path d="M102 113L116 104M107 116L120 108" stroke-width="0.46"/>
+    </g>
+    <g fill="#D7F4FF" opacity="0.22">
+      <circle cx="18" cy="30" r="0.45"/>
+      <circle cx="112" cy="38" r="0.35"/>
+      <circle cx="22" cy="98" r="0.3"/>
+      <circle cx="109" cy="94" r="0.5"/>
+      <circle cx="94" cy="14" r="0.32"/>
+    </g>
+    <rect width="128" height="128" fill="url(#edgeShade)"/>
+  </g>
+</svg>
