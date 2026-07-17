@@ -16,6 +16,7 @@ import * as MobileSecureStorage from "./mobile-secure-storage";
 const CONNECTIONS_KEY = "t3code.connections";
 const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
 const AGENT_AWARENESS_REGISTRATION_KEY = "t3code.agent-awareness.registration";
+const RECENT_THREAD_SHORTCUTS_KEY = "t3code.recent-thread-shortcuts";
 
 export class MobileStorageDecodeError extends Schema.TaggedErrorClass<MobileStorageDecodeError>()(
   "MobileStorageDecodeError",
@@ -54,6 +55,12 @@ export interface AgentAwarenessRegistrationRecord {
   readonly identity: string;
   readonly signature: string;
   readonly pushToStartToken?: string;
+}
+
+export interface RecentThreadShortcut {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly title: string;
 }
 
 export class MobileStorage extends Context.Service<
@@ -96,6 +103,16 @@ export class MobileStorage extends Context.Service<
     readonly clearAgentAwarenessRegistrationRecord: Effect.Effect<
       void,
       MobileSecureStorage.MobileSecureStorageError
+    >;
+    readonly loadRecentThreadShortcuts: Effect.Effect<
+      ReadonlyArray<RecentThreadShortcut>,
+      MobileSecureStorage.MobileSecureStorageError
+    >;
+    readonly saveRecentThreadShortcuts: (
+      threads: ReadonlyArray<RecentThreadShortcut>,
+    ) => Effect.Effect<
+      void,
+      MobileSecureStorage.MobileSecureStorageError | MobileStorageEncodeError
     >;
   }
 >()("@t3tools/mobile/persistence/MobileStorage") {}
@@ -208,6 +225,26 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     }),
   );
 
+  // Threads most recently opened on this device, newest first — the source
+  // for the launcher's dynamic "recent thread" app shortcuts.
+  const loadRecentThreadShortcuts = readJson<{
+    readonly threads?: ReadonlyArray<RecentThreadShortcut>;
+  }>(RECENT_THREAD_SHORTCUTS_KEY).pipe(
+    Effect.map((parsed) =>
+      pipe(
+        parsed?.threads ?? [],
+        Arr.filter(
+          (thread) =>
+            typeof thread?.environmentId === "string" &&
+            thread.environmentId.length > 0 &&
+            typeof thread.threadId === "string" &&
+            thread.threadId.length > 0 &&
+            typeof thread.title === "string",
+        ),
+      ),
+    ),
+  );
+
   return MobileStorage.of({
     loadSavedConnections,
     saveConnection,
@@ -221,6 +258,8 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
       AGENT_AWARENESS_REGISTRATION_KEY,
       "",
     ),
+    loadRecentThreadShortcuts,
+    saveRecentThreadShortcuts: (threads) => writeJson(RECENT_THREAD_SHORTCUTS_KEY, { threads }),
   });
 });
 
