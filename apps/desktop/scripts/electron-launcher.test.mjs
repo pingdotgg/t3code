@@ -1,6 +1,10 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { makeDevelopmentLauncherScript, resolveElectronBinaryPath } from "./electron-launcher.mjs";
+import {
+  makeDevelopmentLauncherScript,
+  resolveElectronBinaryPath,
+  resolveMacLauncherPaths,
+} from "./electron-launcher.mjs";
 
 describe("electron development launcher", () => {
   it("uses captured values only as fallbacks for a live runner environment", () => {
@@ -44,5 +48,34 @@ describe("electron development launcher", () => {
       "/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
     );
     assert.deepEqual(calls, ["ensure", "require:electron"]);
+  });
+
+  it("keeps the native Electron executable name inside the branded macOS bundle", () => {
+    const paths = resolveMacLauncherPaths(
+      "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app",
+      "T3 Code (Dev)",
+    );
+
+    assert.equal(paths.launcherExecutableName, "T3 Code (Dev) Launcher");
+    assert.equal(
+      paths.launcherBinaryPath,
+      "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/T3 Code (Dev) Launcher",
+    );
+    assert.equal(
+      paths.runtimeElectronBinaryPath,
+      "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/Electron",
+    );
+
+    const script = makeDevelopmentLauncherScript({
+      electronBinaryPath: paths.runtimeElectronBinaryPath,
+      mainEntryPath: "/repo/apps/desktop/dist-electron/main.cjs",
+      desktopRoot: "/repo/apps/desktop",
+      environment: {},
+    });
+    assert.include(
+      script,
+      "exec '/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/Electron'",
+    );
+    assert.notInclude(script, "node_modules/electron");
   });
 });
