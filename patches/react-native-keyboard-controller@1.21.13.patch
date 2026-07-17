@@ -1125,7 +1125,7 @@ diff --git a/src/components/KeyboardChatScrollView/useChatKeyboard/index.ts b/sr
 +          anchorToEnd.value =
 +            !inverted &&
 +            scroll.value + layout.value.height - size.value.height >=
-+              blankSpace.value - 1;
++              Math.max(blankSpace.value, padding.value + extraContentPadding.value) - 1;
 +
            if (inverted) {
              offsetBeforeScroll.value = scroll.value;
@@ -1294,7 +1294,7 @@ diff --git a/lib/module/components/KeyboardChatScrollView/useChatKeyboard/index.
        } else {
          // Android: keyboard closing — re-capture scroll position
 +        extraPaddingOnStart.value = extraContentPadding.value;
-+        anchorToEnd.value = !inverted && scroll.value + layout.value.height - size.value.height >= blankSpace.value - 1;
++        anchorToEnd.value = !inverted && scroll.value + layout.value.height - size.value.height >= Math.max(blankSpace.value, padding.value + extraContentPadding.value) - 1;
          if (inverted) {
            offsetBeforeScroll.value = scroll.value;
          } else {
@@ -1410,7 +1410,7 @@ diff --git a/lib/commonjs/components/KeyboardChatScrollView/useChatKeyboard/inde
        } else {
          // Android: keyboard closing — re-capture scroll position
 +        extraPaddingOnStart.value = extraContentPadding.value;
-+        anchorToEnd.value = !inverted && scroll.value + layout.value.height - size.value.height >= blankSpace.value - 1;
++        anchorToEnd.value = !inverted && scroll.value + layout.value.height - size.value.height >= Math.max(blankSpace.value, padding.value + extraContentPadding.value) - 1;
          if (inverted) {
            offsetBeforeScroll.value = scroll.value;
          } else {
