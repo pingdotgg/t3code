@@ -27,7 +27,6 @@ import {
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
   KEY_BACKSPACE_COMMAND,
-  PASTE_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
   DecoratorNode,
@@ -56,7 +55,6 @@ import {
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
 } from "~/composer-logic";
-import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import {
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
@@ -77,6 +75,7 @@ import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -1122,92 +1121,14 @@ function ComposerInlineTokenBackspacePlugin() {
 function ComposerInlineTokenPastePlugin() {
   const [editor] = useLexicalComposerContext();
 
-  useEffect(() => {
-    return editor.registerCommand(
-      PASTE_COMMAND,
-      (event) => {
-        if (!(event instanceof ClipboardEvent) || event.clipboardData === null) {
-          return false;
-        }
-        if (event.clipboardData.files.length > 0) {
-          return false;
-        }
-        const text = event.clipboardData.getData("text/plain");
-        if (text.length === 0) {
-          return false;
-        }
-        // Token grammar requires trailing whitespace; a virtual newline lets a
-        // mention at the very end of the pasted text still parse.
-        const mentions = collectComposerInlineTokens(`${text}\n`).filter(
-          (token) => token.type === "mention" && token.end <= text.length,
-        );
-        if (mentions.length === 0) {
-          return false;
-        }
-        let inserted = false;
-        editor.update(() => {
-          const selection = $getSelection();
-          if (!$isRangeSelection(selection)) {
-            return;
-          }
-          const nodes: LexicalNode[] = [];
-          const appendText = (value: string) => {
-            const lines = value.split("\n");
-            for (let index = 0; index < lines.length; index += 1) {
-              const line = lines[index] ?? "";
-              if (line.length > 0) {
-                nodes.push($createTextNode(line));
-              }
-              if (index < lines.length - 1) {
-                nodes.push($createLineBreakNode());
-              }
-            }
-          };
-          const firstMention = mentions[0];
-          if (firstMention && firstMention.start === 0) {
-            const startPoint = selection.isBackward() ? selection.focus : selection.anchor;
-            const insertionOffset = getExpandedAbsoluteOffsetForPoint(
-              startPoint.getNode(),
-              startPoint.offset,
-            );
-            const precedingChar = $getRoot()
-              .getTextContent()
-              .slice(insertionOffset - 1, insertionOffset);
-            if (precedingChar.length > 0 && !/\s/.test(precedingChar)) {
-              nodes.push($createTextNode(" "));
-            }
-          }
-          let cursor = 0;
-          for (const mention of mentions) {
-            if (mention.start < cursor) {
-              continue;
-            }
-            if (mention.start > cursor) {
-              appendText(text.slice(cursor, mention.start));
-            }
-            nodes.push($createComposerMentionNode(mention.value));
-            cursor = mention.end;
-          }
-          if (cursor < text.length) {
-            appendText(text.slice(cursor));
-          } else {
-            // Keep the serialized prompt valid: mention tokens need trailing
-            // whitespace, so a paste ending in a mention gets the same
-            // trailing space the autocomplete inserts.
-            nodes.push($createTextNode(" "));
-          }
-          selection.insertNodes(nodes);
-          inserted = true;
-        });
-        if (!inserted) {
-          return false;
-        }
-        event.preventDefault();
-        return true;
-      },
-      COMMAND_PRIORITY_HIGH,
-    );
-  }, [editor]);
+  useEffect(
+    () =>
+      registerComposerInlineTokenPaste(editor, {
+        createMentionNode: $createComposerMentionNode,
+        getExpandedAbsoluteOffsetForPoint,
+      }),
+    [editor],
+  );
 
   return null;
 }
