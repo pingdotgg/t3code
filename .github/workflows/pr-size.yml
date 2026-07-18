@@ -20,37 +20,16 @@ jobs:
         with:
           result-encoding: string
           script: |
+            // Only `name` is consumed by the surviving `label` job; the
+            // `sync-label-definitions` job (which used color/description) was
+            // removed as dead, so those fields are no longer carried.
             const managedLabels = [
-              {
-                name: "size:XS",
-                color: "0e8a16",
-                description: "0-9 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:S",
-                color: "5ebd3e",
-                description: "10-29 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:M",
-                color: "fbca04",
-                description: "30-99 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:L",
-                color: "fe7d37",
-                description: "100-499 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:XL",
-                color: "d93f0b",
-                description: "500-999 effective changed lines (test files excluded in mixed PRs).",
-              },
-              {
-                name: "size:XXL",
-                color: "b60205",
-                description: "1,000+ effective changed lines (test files excluded in mixed PRs).",
-              },
+              { name: "size:XS" },
+              { name: "size:S" },
+              { name: "size:M" },
+              { name: "size:L" },
+              { name: "size:XL" },
+              { name: "size:XXL" },
             ];
 
             core.setOutput("labels_json", JSON.stringify(managedLabels));
