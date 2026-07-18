@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -30,6 +30,7 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -45,6 +46,17 @@ type TraitsPersistence =
     };
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+
+function DefaultBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
+    >
+      Default
+    </Badge>
+  );
+}
 
 function replaceDescriptorCurrentValue(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
@@ -285,62 +297,90 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
 
   return (
     <>
-      {selectDescriptors.map((descriptor, index) => (
-        <div key={descriptor.id}>
-          {index > 0 ? <MenuDivider /> : null}
-          <MenuGroup>
-            <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
-              {descriptor.label}
-            </div>
-            {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
-              <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
-                option.
+      {selectDescriptors.map((descriptor, index) => {
+        const selectedValue =
+          ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
+            ? "ultrathink"
+            : (getDescriptorStringValue(descriptor) ?? "");
+
+        return (
+          <div key={descriptor.id}>
+            {index > 0 ? <MenuDivider /> : null}
+            <MenuGroup>
+              <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
+                {descriptor.label}
               </div>
-            ) : null}
-            <MenuRadioGroup
-              value={
-                ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
-                  ? "ultrathink"
-                  : (getDescriptorStringValue(descriptor) ?? "")
-              }
-              onValueChange={(value) => handleSelectChange(descriptor, value)}
-            >
-              {descriptor.options.map((option) => (
-                <MenuRadioItem
-                  key={option.id}
-                  value={option.id}
-                  disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
-                >
-                  {option.label}
-                  {option.isDefault ? " (default)" : ""}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
-        </div>
-      ))}
-      {booleanDescriptors.map((descriptor, index) => (
-        <div key={descriptor.id}>
-          {index > 0 || selectDescriptors.length > 0 ? <MenuDivider /> : null}
-          <MenuGroup>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-              {descriptor.label}
-            </div>
-            <MenuRadioGroup
-              value={descriptor.currentValue === true ? "on" : "off"}
-              onValueChange={(value) => {
-                updateDescriptors(
-                  replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
-                );
-              }}
-            >
-              <MenuRadioItem value="on">On</MenuRadioItem>
-              <MenuRadioItem value="off">Off</MenuRadioItem>
-            </MenuRadioGroup>
-          </MenuGroup>
-        </div>
-      ))}
+              {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+                  Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
+                  option.
+                </div>
+              ) : null}
+              <MenuRadioGroup
+                value={selectedValue}
+                onValueChange={(value) => handleSelectChange(descriptor, value)}
+              >
+                {descriptor.options.map((option) => (
+                  <MenuRadioItem
+                    key={option.id}
+                    value={option.id}
+                    hideIndicator
+                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
+                  >
+                    <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                      <span className="min-w-0 truncate">
+                        {option.label}
+                        {option.isDefault ? (
+                          <>
+                            {" "}
+                            <DefaultBadge />
+                          </>
+                        ) : null}
+                      </span>
+                      {option.id === selectedValue ? (
+                        <CheckIcon className="size-3.5 shrink-0 text-blue-400" />
+                      ) : null}
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+          </div>
+        );
+      })}
+      {booleanDescriptors.map((descriptor, index) => {
+        const selectedValue = descriptor.currentValue === true ? "on" : "off";
+
+        return (
+          <div key={descriptor.id}>
+            {index > 0 || selectDescriptors.length > 0 ? <MenuDivider /> : null}
+            <MenuGroup>
+              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+                {descriptor.label}
+              </div>
+              <MenuRadioGroup
+                value={selectedValue}
+                onValueChange={(value) => {
+                  updateDescriptors(
+                    replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
+                  );
+                }}
+              >
+                {(["on", "off"] as const).map((value) => (
+                  <MenuRadioItem key={value} value={value} hideIndicator>
+                    <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                      <span>{value === "on" ? "On" : "Off"}</span>
+                      {value === selectedValue ? (
+                        <CheckIcon className="size-3.5 shrink-0 text-blue-400" />
+                      ) : null}
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+          </div>
+        );
+      })}
     </>
   );
 });
