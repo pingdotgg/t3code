@@ -22,6 +22,7 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
+  timelineMessagesHaveComposerSkillReference,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -98,6 +99,27 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("timelineMessagesHaveComposerSkillReference", () => {
+  it("keeps empty drafts and unrelated messages from requesting workspace skills", () => {
+    expect(timelineMessagesHaveComposerSkillReference([])).toBe(false);
+    expect(
+      timelineMessagesHaveComposerSkillReference([
+        { role: "assistant", text: "Try $repo-skill next." },
+        { role: "user", text: "Inspect @AGENTS.md" },
+        { role: "user", text: "Maybe use $repo-skill" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("requests workspace skills when a sent user prompt contains a complete skill token", () => {
+    expect(
+      timelineMessagesHaveComposerSkillReference([
+        { role: "user", text: "Use $repo-skill to inspect this." },
+      ]),
+    ).toBe(true);
   });
 });
 

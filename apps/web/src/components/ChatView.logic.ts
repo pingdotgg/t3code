@@ -20,6 +20,7 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { promptHasComposerSkillReference } from "../composer-editor-mentions";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -162,6 +163,14 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
     previewUrls.push(attachment.previewUrl);
   }
   return previewUrls;
+}
+
+export function timelineMessagesHaveComposerSkillReference(
+  messages: ReadonlyArray<Pick<ChatMessage, "role" | "text">>,
+): boolean {
+  return messages.some(
+    (message) => message.role === "user" && promptHasComposerSkillReference(message.text ?? ""),
+  );
 }
 
 export interface PullRequestDialogState {

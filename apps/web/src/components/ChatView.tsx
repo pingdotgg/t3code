@@ -244,6 +244,7 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  timelineMessagesHaveComposerSkillReference,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -2291,11 +2292,15 @@ function ChatViewContent(props: ChatViewProps) {
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
   const activeProviderFallbackSkills = activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
+  const timelineHasSkillReference = useMemo(
+    () => timelineMessagesHaveComposerSkillReference(timelineMessages),
+    [timelineMessages],
+  );
   const activeProviderWorkspaceSkills = useProviderWorkspaceSkills({
     environmentId,
     instanceId: activeProviderStatus?.instanceId ?? null,
     cwd: gitCwd,
-    enabled: true,
+    enabled: timelineHasSkillReference,
     fallbackSkills: activeProviderFallbackSkills,
   });
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
