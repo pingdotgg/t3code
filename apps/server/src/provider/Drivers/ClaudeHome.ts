@@ -52,8 +52,9 @@ export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesC
   function* (
     config: Pick<ClaudeSettings, "binaryPath" | "homePath">,
     baseEnv: NodeJS.ProcessEnv = process.env,
+    cwd?: string,
   ): Effect.fn.Return<string, never, Path.Path> {
     const resolvedHomePath = yield* resolveClaudeHomePath(config, baseEnv);
-    return `${config.binaryPath}\0${resolvedHomePath}`;
+    return `${config.binaryPath}\0${resolvedHomePath}\0${cwd ?? ""}`;
   },
 );
