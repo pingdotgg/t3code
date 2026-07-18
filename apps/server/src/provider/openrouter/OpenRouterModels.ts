@@ -75,15 +75,74 @@ export const fetchOpenRouterModels = Effect.fn("fetchOpenRouterModels")(function
 
   const httpClient = yield* HttpClient.HttpClient;
   const url = openRouterModelsUrl(settings.baseUrl);
-  const response = yield* HttpClientRequest.get(url).pipe(
-    HttpClientRequest.bearerToken(apiKey),
-    HttpClientRequest.acceptJson,
-    httpClient.execute,
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
 
-  if (Result.isFailure(response)) {
+  // Timeout covers both headers and body consumption so a stalling response
+  // body cannot hang the provider status refresh indefinitely.
+  const fetchResult = yield* Effect.gen(function* () {
+    const httpResponse = yield* HttpClientRequest.get(url).pipe(
+      HttpClientRequest.bearerToken(apiKey),
+      HttpClientRequest.acceptJson,
+      httpClient.execute,
+    );
+
+    if (httpResponse.status === 401 || httpResponse.status === 403) {
+      return {
+        ok: false as const,
+        authFailed: true,
+        message: "OpenRouter API key is missing or invalid.",
+      } satisfies OpenRouterModelFetchResult;
+    }
+
+    if (httpResponse.status < 200 || httpResponse.status >= 300) {
+      return {
+        ok: false as const,
+        authFailed: false,
+        message: `OpenRouter models API returned HTTP ${httpResponse.status}.`,
+      } satisfies OpenRouterModelFetchResult;
+    }
+
+    const body = yield* httpResponse.json.pipe(Effect.result);
+    if (Result.isFailure(body)) {
+      return {
+        ok: false as const,
+        authFailed: false,
+        message: "OpenRouter models API returned an unreadable response.",
+      } satisfies OpenRouterModelFetchResult;
+    }
+
+    const decoded = yield* decodeOpenRouterModelsResponse(body.success).pipe(Effect.result);
+    if (Result.isFailure(decoded)) {
+      return {
+        ok: false as const,
+        authFailed: false,
+        message: "OpenRouter models API returned an unexpected payload.",
+      } satisfies OpenRouterModelFetchResult;
+    }
+
+    const models = decoded.success.data
+      .filter((model) => model.id.trim().length > 0)
+      .slice(0, MAX_DISCOVERED_MODELS)
+      .map(
+        (model): ServerProviderModel => ({
+          slug: model.id,
+          name: model.name?.trim() || model.id,
+          isCustom: false,
+          capabilities: EMPTY_OPENROUTER_CAPABILITIES,
+        }),
+      );
+
+    if (models.length === 0) {
+      return {
+        ok: false as const,
+        authFailed: false,
+        message: "OpenRouter returned an empty model catalog.",
+      } satisfies OpenRouterModelFetchResult;
+    }
+
+    return { ok: true as const, models } satisfies OpenRouterModelFetchResult;
+  }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+
+  if (Result.isFailure(fetchResult)) {
     return {
       ok: false,
       authFailed: false,
@@ -91,7 +150,7 @@ export const fetchOpenRouterModels = Effect.fn("fetchOpenRouterModels")(function
     };
   }
 
-  if (Option.isNone(response.success)) {
+  if (Option.isNone(fetchResult.success)) {
     return {
       ok: false,
       authFailed: false,
@@ -99,60 +158,5 @@ export const fetchOpenRouterModels = Effect.fn("fetchOpenRouterModels")(function
     };
   }
 
-  const httpResponse = response.success.value;
-  if (httpResponse.status === 401 || httpResponse.status === 403) {
-    return {
-      ok: false,
-      authFailed: true,
-      message: "OpenRouter API key is missing or invalid.",
-    };
-  }
-
-  if (httpResponse.status < 200 || httpResponse.status >= 300) {
-    return {
-      ok: false,
-      authFailed: false,
-      message: `OpenRouter models API returned HTTP ${httpResponse.status}.`,
-    };
-  }
-
-  const body = yield* httpResponse.json.pipe(Effect.result);
-  if (Result.isFailure(body)) {
-    return {
-      ok: false,
-      authFailed: false,
-      message: "OpenRouter models API returned an unreadable response.",
-    };
-  }
-
-  const decoded = yield* decodeOpenRouterModelsResponse(body.success).pipe(Effect.result);
-  if (Result.isFailure(decoded)) {
-    return {
-      ok: false,
-      authFailed: false,
-      message: "OpenRouter models API returned an unexpected payload.",
-    };
-  }
-
-  const models = decoded.success.data
-    .filter((model) => model.id.trim().length > 0)
-    .slice(0, MAX_DISCOVERED_MODELS)
-    .map(
-      (model): ServerProviderModel => ({
-        slug: model.id,
-        name: model.name?.trim() || model.id,
-        isCustom: false,
-        capabilities: EMPTY_OPENROUTER_CAPABILITIES,
-      }),
-    );
-
-  if (models.length === 0) {
-    return {
-      ok: false,
-      authFailed: false,
-      message: "OpenRouter returned an empty model catalog.",
-    };
-  }
-
-  return { ok: true, models };
+  return fetchResult.success.value;
 });
