@@ -250,7 +250,7 @@ importers:
         version: link:../../packages/contracts
       '@t3tools/mobile-markdown-text':
         specifier: file:./modules/t3-markdown-text
-        version: file:apps/mobile/modules/t3-markdown-text(ed3009b8f2424467288a00b38bef28fe)
+        version: file:apps/mobile/modules/t3-markdown-text(beb74b814261aa4192920293ac865a8e)
       '@t3tools/mobile-review-diff-native':
         specifier: file:./modules/t3-review-diff
         version: file:apps/mobile/modules/t3-review-diff
@@ -4515,6 +4515,7 @@ packages:
   '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text':
     resolution: {directory: apps/mobile/modules/t3-markdown-text, type: directory}
     peerDependencies:
+      '@t3tools/shared': workspace:*
       expo-asset: '*'
       expo-clipboard: '*'
       expo-haptics: '*'
@@ -14558,8 +14559,9 @@ snapshots:
     dependencies:
       defer-to-connect: 2.0.1
 
-  '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text(ed3009b8f2424467288a00b38bef28fe)':
+  '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text(beb74b814261aa4192920293ac865a8e)':
     dependencies:
+      '@t3tools/shared': link:packages/shared
       expo-asset: 56.0.17(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
       expo-clipboard: 56.0.4(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-haptics: 56.0.3(expo@56.0.12)
