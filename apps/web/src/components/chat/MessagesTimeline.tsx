@@ -1235,18 +1235,19 @@ function AssistantChangedFilesSectionInner({
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-  const changedFileCountLabel = String(checkpointFiles.length);
 
   return (
-    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-      <div className="sticky top-2 z-10 mb-1.5 flex items-center justify-between gap-2 bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:content-['']">
-        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-          <span>Changed files ({changedFileCountLabel})</span>
+    <div className="mt-4 rounded-2xl border border-input bg-background p-2 pt-4 shadow-xs/5 not-dark:bg-clip-padding dark:bg-input/32">
+      <div className="mb-3 flex items-center justify-between gap-2 px-2">
+        <p className="flex self-start items-center gap-1 font-medium text-foreground text-xs leading-4">
+          <span>{checkpointFiles.length} changed files</span>
           {hasNonZeroStat(summaryStat) && (
-            <>
-              <span className="mx-1">•</span>
-              <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
-            </>
+            <DiffStatLabel
+              additions={summaryStat.additions}
+              className="text-xs leading-4"
+              deletions={summaryStat.deletions}
+              layout="inline"
+            />
           )}
         </p>
         <div className="flex items-center gap-1.5">
@@ -1254,6 +1255,7 @@ function AssistantChangedFilesSectionInner({
             type="button"
             size="xs"
             variant="outline"
+            className="px-1.5"
             data-scroll-anchor-ignore
             onClick={() => setExpanded(routeThreadKey, turnSummary.turnId, !allDirectoriesExpanded)}
           >
@@ -1263,6 +1265,7 @@ function AssistantChangedFilesSectionInner({
             type="button"
             size="xs"
             variant="outline"
+            className="px-1.5"
             onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
           >
             View diff
