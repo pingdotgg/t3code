@@ -257,7 +257,7 @@ export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGener
     });
 
   const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
-    Effect.fn("GrokTextGeneration.generateBranchName")(function* (input) {
+    Effect.fn("StandardAcpTextGeneration.generateBranchName")(function* (input) {
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
