@@ -48,6 +48,7 @@ import {
   fileStatusLetter,
   operationPaths,
   panelChangeSets,
+  reconcileSelectedPaths,
   selectedFileStats,
   workingTreeEnrichmentRequests,
   type VersionControlChangeSet,
@@ -254,9 +255,16 @@ function PlainFileRow(props: { readonly file: VcsPanelFileChange }) {
       <Text className="w-4 text-center text-xs font-t3-bold text-foreground-muted">
         {fileStatusLetter(props.file.status)}
       </Text>
-      <Text className="min-w-0 flex-1 text-sm font-medium text-foreground" numberOfLines={1}>
-        {props.file.path}
-      </Text>
+      <View className="min-w-0 flex-1">
+        <Text className="text-sm font-medium text-foreground" numberOfLines={1}>
+          {props.file.path}
+        </Text>
+        {props.file.originalPath ? (
+          <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
+            from {props.file.originalPath}
+          </Text>
+        ) : null}
+      </View>
       <ChangeCounts insertions={props.file.insertions} deletions={props.file.deletions} />
     </View>
   );
@@ -388,33 +396,31 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
 
   const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
     const changeSets = panelChangeSets(nextSnapshot, cwd);
+    const newlyInitializedCurrentCwds = changeSets.flatMap((changeSet) => {
+      if (initializedChangeSetCwds.current.has(changeSet.cwd)) return [];
+      initializedChangeSetCwds.current.add(changeSet.cwd);
+      return changeSet.current ? [changeSet.cwd] : [];
+    });
+    const previousKnownPaths = knownPathsByCwd.current;
+    const nextKnownPaths = new Map(
+      changeSets.map(
+        (changeSet) => [changeSet.cwd, new Set(changeSet.files.map((file) => file.path))] as const,
+      ),
+    );
+    knownPathsByCwd.current = nextKnownPaths;
+
     setExpandedRows((current) => {
       const next = new Set(current);
-      for (const changeSet of changeSets) {
-        if (!initializedChangeSetCwds.current.has(changeSet.cwd)) {
-          initializedChangeSetCwds.current.add(changeSet.cwd);
-          if (changeSet.current) next.add(`changes:${changeSet.cwd}`);
-        }
-      }
+      for (const changeSetCwd of newlyInitializedCurrentCwds) next.add(`changes:${changeSetCwd}`);
       return next;
     });
-    setSelectedByCwd((current) => {
-      const next = new Map(current);
-      for (const changeSet of changeSets) {
-        const known = knownPathsByCwd.current.get(changeSet.cwd) ?? new Set<string>();
-        const visible = new Set(changeSet.files.map((file) => file.path));
-        const selected = new Set(next.get(changeSet.cwd) ?? []);
-        for (const path of visible) {
-          if (!known.has(path)) selected.add(path);
-        }
-        for (const path of selected) {
-          if (!visible.has(path)) selected.delete(path);
-        }
-        next.set(changeSet.cwd, selected);
-        knownPathsByCwd.current.set(changeSet.cwd, visible);
-      }
-      return next;
-    });
+    setSelectedByCwd((current) =>
+      reconcileSelectedPaths({
+        changeSets,
+        previousKnownPaths,
+        selectedByCwd: current,
+      }),
+    );
   }, []);
 
   const refreshSnapshot = useCallback(
@@ -431,10 +437,13 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       try {
         const rawSnapshot = await api.snapshot({ cwd: selectedThreadCwd });
         if (requestId !== snapshotRequestId.current) return;
-        const enrichmentEntries = await Promise.all(
+        const enrichmentResults = await Promise.allSettled(
           workingTreeEnrichmentRequests(rawSnapshot, selectedThreadCwd).map(
             async (request) => [request.cwd, await api.enrichWorkingTreeFiles(request)] as const,
           ),
+        );
+        const enrichmentEntries = enrichmentResults.flatMap((result) =>
+          result.status === "fulfilled" ? [result.value] : [],
         );
         if (requestId !== snapshotRequestId.current) return;
         const next = applyWorkingTreeEnrichments(
@@ -495,17 +504,20 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
     async (label: string, action: () => Promise<unknown>) => {
       setBusyAction(label);
       setError(null);
+      let succeeded = false;
+      let actionError: string | null = null;
       try {
         await action();
+        succeeded = true;
+      } catch (cause) {
+        if (!(cause instanceof VersionControlCommandInterrupted)) actionError = errorMessage(cause);
+      } finally {
         statusQuery.refresh();
         await refreshSnapshot();
-        return true;
-      } catch (cause) {
-        if (!(cause instanceof VersionControlCommandInterrupted)) setError(errorMessage(cause));
-        return false;
-      } finally {
+        if (actionError) setError(actionError);
         setBusyAction(null);
       }
+      return succeeded;
     },
     [refreshSnapshot, statusQuery],
   );
@@ -513,14 +525,18 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   useFocusEffect(
     useCallback(() => {
       if (!selectedThreadCwd) return;
+      const cwd = selectedThreadCwd;
       void refreshSnapshot();
-      if (openedCwd.current !== selectedThreadCwd) {
-        openedCwd.current = selectedThreadCwd;
+      if (openedCwd.current !== cwd) {
+        openedCwd.current = cwd;
         void api
-          .fetchAllRemotes({ cwd: selectedThreadCwd })
+          .fetchAllRemotes({ cwd })
           .then(() => refreshSnapshot())
           .catch(() => undefined);
       }
+      return () => {
+        if (openedCwd.current === cwd) openedCwd.current = null;
+      };
     }, [api, refreshSnapshot, selectedThreadCwd]),
   );
 
@@ -567,7 +583,6 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      expandedRowsRef.current = next;
       return next;
     });
   }, []);
@@ -801,7 +816,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
 
   const deleteBranch = useCallback(
     (branch: VcsRef) => {
-      if (!selectedThreadCwd || branch.current) return;
+      if (!selectedThreadCwd || branch.current || branch.worktreePath !== null) return;
       Alert.alert("Delete branch?", `Delete ${branch.name}?`, [
         { text: "Cancel", style: "cancel" },
         {
@@ -884,8 +899,8 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         className="flex-1 bg-screen"
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-        contentContainerClassName="gap-5 px-4 pb-8 pt-3"
+        contentContainerClassName="gap-5 px-4 pt-3"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1078,7 +1093,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                           label="Delete"
                           icon="trash"
                           danger
-                          disabled={busy}
+                          disabled={busy || branch.worktreePath !== null}
                           onPress={() => deleteBranch(branch)}
                         />
                       ) : null}

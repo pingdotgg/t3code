@@ -8,6 +8,7 @@ import {
   discardPathGroups,
   operationPaths,
   panelChangeSets,
+  reconcileSelectedPaths,
   selectedFileStats,
   workingTreeEnrichmentRequests,
 } from "./versionControlModel";
@@ -126,6 +127,60 @@ describe("native Version Control model", () => {
     });
   });
 
+  it("does not treat conflict-only files as unstaged discard targets", () => {
+    expect(
+      discardPathGroups([
+        {
+          path: "src/conflict.ts",
+          originalPath: null,
+          status: "conflicted",
+          insertions: 0,
+          deletions: 0,
+          hasStagedChanges: false,
+          hasUnstagedChanges: false,
+          hasConflicts: true,
+        },
+      ]),
+    ).toEqual({ staged: [], unstaged: [] });
+  });
+
+  it("selects new files and drops selection state for clean change sets", () => {
+    const [changeSet] = panelChangeSets(snapshot(), "/repo");
+    if (!changeSet) throw new Error("Expected a current working-tree fixture");
+    const next = reconcileSelectedPaths({
+      changeSets: [
+        {
+          ...changeSet,
+          files: [
+            ...changeSet.files,
+            {
+              path: "src/new.ts",
+              originalPath: null,
+              status: "untracked",
+              insertions: 1,
+              deletions: 0,
+              hasStagedChanges: false,
+              hasUnstagedChanges: true,
+              hasConflicts: false,
+            },
+          ],
+        },
+      ],
+      previousKnownPaths: new Map([
+        ["/repo", new Set(["src/a.ts"])],
+        ["/clean", new Set(["src/done.ts"])],
+      ]),
+      selectedByCwd: new Map([
+        ["/repo", new Set(["src/a.ts"])],
+        ["/clean", new Set(["src/done.ts"])],
+      ]),
+    });
+
+    expect([...next.entries()].map(([cwd, paths]) => [cwd, [...paths]])).toEqual([
+      ["/repo", ["src/a.ts", "src/new.ts"]],
+    ]);
+  });
+
   it("applies cwd-scoped untracked file enrichment", () => {
     const next: VcsPanelSnapshotResult = {
       ...snapshot(),
@@ -174,10 +229,9 @@ describe("native Version Control model", () => {
 
   it("only offers merge sync when the target cwd owns the branch", () => {
     const [current, localOnly] = snapshot().localBranches;
-    expect(current && branchOwnsOperationCwd(current)).toBe(true);
-    expect(localOnly && branchOwnsOperationCwd(localOnly)).toBe(false);
-    expect(
-      localOnly && branchOwnsOperationCwd({ ...localOnly, worktreePath: "/repo-worktree" }),
-    ).toBe(true);
+    if (!current || !localOnly) throw new Error("Expected current and local-only branch fixtures");
+    expect(branchOwnsOperationCwd(current)).toBe(true);
+    expect(branchOwnsOperationCwd(localOnly)).toBe(false);
+    expect(branchOwnsOperationCwd({ ...localOnly, worktreePath: "/repo-worktree" })).toBe(true);
   });
 });

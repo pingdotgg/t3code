@@ -53,6 +53,27 @@ export function panelChangeSets(
   );
 }
 
+export function reconcileSelectedPaths(input: {
+  readonly changeSets: readonly VersionControlChangeSet[];
+  readonly previousKnownPaths: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly selectedByCwd: ReadonlyMap<string, ReadonlySet<string>>;
+}): ReadonlyMap<string, ReadonlySet<string>> {
+  const next = new Map<string, ReadonlySet<string>>();
+  for (const changeSet of input.changeSets) {
+    const known = input.previousKnownPaths.get(changeSet.cwd) ?? new Set<string>();
+    const visible = new Set(changeSet.files.map((file) => file.path));
+    const selected = new Set(input.selectedByCwd.get(changeSet.cwd) ?? []);
+    for (const path of visible) {
+      if (!known.has(path)) selected.add(path);
+    }
+    for (const path of selected) {
+      if (!visible.has(path)) selected.delete(path);
+    }
+    next.set(changeSet.cwd, selected);
+  }
+  return next;
+}
+
 export function actionableLocalBranches(snapshot: VcsPanelSnapshotResult): VcsRef[] {
   return snapshot.localBranches.filter((branch) => {
     const { aheadCount, behindCount } = panelBranchSyncCounts(branch, snapshot);
@@ -76,9 +97,7 @@ export function discardPathGroups(files: readonly PanelChangedFile[]): {
 } {
   return {
     staged: operationPaths(files.filter((file) => file.hasStagedChanges)),
-    unstaged: operationPaths(
-      files.filter((file) => file.hasUnstagedChanges || !file.hasStagedChanges),
-    ),
+    unstaged: operationPaths(files.filter((file) => file.hasUnstagedChanges)),
   };
 }
 
@@ -119,7 +138,7 @@ function applyWorkingTreeEnrichment(
     }
     return {
       ...group,
-      files: files.toSorted((left, right) => left.path.localeCompare(right.path)),
+      files: files.sort((left, right) => left.path.localeCompare(right.path)),
     };
   });
 }
