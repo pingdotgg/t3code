@@ -582,6 +582,7 @@ private struct ChangesQuietIconButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
     }

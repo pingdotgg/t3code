@@ -117,6 +117,7 @@ struct NewSessionSplitControl<MenuContent: View>: View {
             }
             .buttonStyle(.plain)
             .help("New Session")
+            .accessibilityLabel("New Session")
             .onHover { plusHovering = $0 }
 
             Rectangle()
@@ -148,6 +149,7 @@ struct NewSessionSplitControl<MenuContent: View>: View {
             .menuStyle(.button)
             .buttonStyle(.plain)
             .help("New Session options")
+            .accessibilityLabel("New Session options")
             .onHover { chevronHovering = $0 }
         }
         .padding(.horizontal, 3)
