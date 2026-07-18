@@ -34,6 +34,7 @@ export function SelectableMarkdownText({
   skills = EMPTY_SKILLS,
   textStyle,
   highlightCode,
+  fillWidth = false,
   preserveSoftBreaks = false,
   onLinkPress,
   marginTop = 0,
@@ -63,7 +64,15 @@ export function SelectableMarkdownText({
     // shrink-to-fit containers such as user-message bubbles. Yoga then gives
     // the native text node an unbounded second pass and the parent only clips
     // the resulting single-line width instead of reflowing it.
-    <View style={{ flexShrink: 1, minWidth: 0, marginTop, marginBottom }}>
+    <View
+      style={{
+        flexShrink: 1,
+        minWidth: 0,
+        ...(fillWidth ? { alignSelf: "stretch" } : null),
+        marginTop,
+        marginBottom,
+      }}
+    >
       {chunks.map((chunk, index) => {
         const content =
           chunk.kind === "rich" ? (
