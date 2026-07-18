@@ -371,12 +371,12 @@ const make = Effect.gen(function* () {
       );
       const checkpointStatus = checkpointStatusFromRuntime(event.payload.state);
       // A diff update can capture a ready checkpoint while the turn is still running.
-      // Refresh older final captures while preserving ready refs for interrupted turns.
+      // Refresh older final captures, preserve newer placeholders, and keep real refs
+      // synchronized when interrupted completions map to a missing checkpoint.
       if (
         existingCheckpoint &&
-        existingCheckpoint.status !== "missing" &&
-        (checkpointStatus === "missing" ||
-          existingCheckpoint.completedAt.localeCompare(event.createdAt) >= 0)
+        (existingCheckpoint.completedAt.localeCompare(event.createdAt) >= 0 ||
+          (existingCheckpoint.status !== "missing" && checkpointStatus === "missing"))
       ) {
         return;
       }

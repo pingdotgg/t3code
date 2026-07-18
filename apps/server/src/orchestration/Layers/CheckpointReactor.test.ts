@@ -280,6 +280,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly startReactor?: boolean;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -350,8 +351,12 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(
       Effect.service(CheckpointStore.CheckpointStore),
     );
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    const reactorScope = await Effect.runPromise(Scope.make("sequential"));
+    scope = reactorScope;
+    const start = () => Effect.runPromise(reactor.start().pipe(Scope.provide(reactorScope)));
+    if (options?.startReactor ?? true) {
+      await start();
+    }
     const drain = () => Effect.runPromise(reactor.drain);
 
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -416,6 +421,7 @@ describe("CheckpointReactor", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
+      start,
       drain,
     };
   }
@@ -570,6 +576,65 @@ describe("CheckpointReactor", () => {
     await harness.drain();
 
     expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v3\n");
+  });
+
+  it("preserves a newer placeholder when an older completion arrives", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      startReactor: false,
+    });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-stale-completion");
+    const checkpointRef = checkpointRefForThreadTurn(threadId, 1);
+    const placeholderAt = "2026-01-01T00:02:00.000Z";
+    const dispatchPlaceholder = (commandId: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(commandId),
+          threadId,
+          turnId,
+          completedAt: placeholderAt,
+          checkpointRef,
+          status: "missing",
+          files: [],
+          checkpointTurnCount: 1,
+          createdAt: placeholderAt,
+        }),
+      );
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    await dispatchPlaceholder("cmd-placeholder-before-reactor-start");
+    await harness.start();
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-stale"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:01:00.000Z",
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const snapshotBeforeCapture = await harness.readModel();
+    const placeholder = snapshotBeforeCapture.threads
+      .find((entry) => entry.id === threadId)
+      ?.checkpoints.find((checkpoint) => checkpoint.turnId === turnId);
+    expect(placeholder?.status).toBe("missing");
+    expect(placeholder?.completedAt).toBe(placeholderAt);
+    expect(gitRefExists(harness.cwd, checkpointRef)).toBe(false);
+
+    await dispatchPlaceholder("cmd-placeholder-after-stale-completion");
+    await harness.drain();
+
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v2\n");
+    const snapshotAfterCapture = await harness.readModel();
+    const checkpoint = snapshotAfterCapture.threads
+      .find((entry) => entry.id === threadId)
+      ?.checkpoints.find((entry) => entry.turnId === turnId);
+    expect(checkpoint?.status).toBe("ready");
+    expect(checkpoint?.completedAt).toBe(placeholderAt);
   });
 
   it.each(["cancelled", "interrupted"] as const)(
