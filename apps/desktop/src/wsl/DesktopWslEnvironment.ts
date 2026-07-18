@@ -32,7 +32,11 @@ export interface EnsureWslNodePtyOptions {
 }
 
 export type EnsureWslNodePtyResult =
-  | { readonly ok: true; readonly nodePath: string; readonly resolvedPath: string }
+  | {
+      readonly ok: true;
+      readonly nodePath: string;
+      readonly resolvedPath: string;
+    }
   | {
       readonly ok: false;
       readonly reason: string;
@@ -222,6 +226,7 @@ export const formatNodePtyProbeFailureReason = (exitCode: number): string | null
 const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
+printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The server bundle externalizes its deps to node_modules, and the WSL Node
@@ -318,6 +323,16 @@ export const parseNodePath = (stdout: string): string | null => {
   return path ?? null;
 };
 
+export const parseNodeVersion = (stdout: string): string | null => {
+  const version = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("nodeVersion:"))
+    .map((line) => line.slice("nodeVersion:".length).trim())
+    .find((value) => value.length > 0);
+  return version ?? null;
+};
+
 // Captures the login-shell PATH after the shared resolver has loaded version
 // managers. Preserve the value byte-for-byte apart from a Windows-style CR so
 // paths containing spaces or apostrophes can be forwarded as one env argv.
@@ -404,7 +419,11 @@ const ensureNodePtyImpl = (
 
     const transportFailureReason = formatWslShellTransportFailureReason(probe.transportFailure);
     if (transportFailureReason !== null) {
-      return { ok: false, reason: transportFailureReason, fatal: false } as const;
+      return {
+        ok: false,
+        reason: transportFailureReason,
+        fatal: false,
+      } as const;
     }
 
     // No node at all, even after the shared resolver repaired PATH. Surface
@@ -457,12 +476,31 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    if (probe.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
+    if (probe.exitCode === 0) {
+      const rawVersion = parseNodeVersion(probe.stdout);
+      if (
+        rawVersion !== null &&
+        options.nodeEngineRange &&
+        !satisfiesSemverRange(rawVersion, options.nodeEngineRange.trim())
+      ) {
+        const range = options.nodeEngineRange.trim();
+        return {
+          ok: false,
+          reason: `WSL Node.js ${rawVersion} does not satisfy the server's required engine range (${range}). Install a compatible version, and restart the desktop app.`,
+          fatal: true,
+        } as const;
+      }
+      return { ok: true, nodePath, resolvedPath } as const;
+    }
 
     if (options.allowBuild !== true) {
       const packagedProbeFailure = formatNodePtyProbeFailureReason(probe.exitCode);
       if (packagedProbeFailure !== null) {
-        return { ok: false, reason: packagedProbeFailure, fatal: true } as const;
+        return {
+          ok: false,
+          reason: packagedProbeFailure,
+          fatal: true,
+        } as const;
       }
     }
 

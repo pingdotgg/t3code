@@ -16,6 +16,7 @@ import {
   formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
   parseNodePath,
+  parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
   probeWslDistros,
@@ -170,6 +171,29 @@ describe("parseNodePath", () => {
   it("ignores surrounding noise and trims whitespace", () => {
     const stdout = ["some preamble noise", "  nodePath:/usr/bin/node  ", "trailing"].join("\n");
     expect(parseNodePath(stdout)).toBe("/usr/bin/node");
+  });
+});
+
+describe("parseNodeVersion", () => {
+  it("extracts the node version from a nodeVersion: line", () => {
+    expect(parseNodeVersion("nodeVersion:24.10.0")).toBe("24.10.0");
+  });
+
+  it("returns null when the version value is empty", () => {
+    expect(parseNodeVersion("nodeVersion:")).toBeNull();
+  });
+
+  it("returns null when there is no nodeVersion line at all", () => {
+    expect(parseNodeVersion("nodePath:/usr/bin/node\nresolvedPath:/usr/bin")).toBeNull();
+  });
+
+  it("ignores surrounding noise and trims whitespace", () => {
+    const stdout = [
+      "some preamble noise",
+      "  nodeVersion:22.16.0  ",
+      "nodePath:/usr/bin/node",
+    ].join("\n");
+    expect(parseNodeVersion(stdout)).toBe("22.16.0");
   });
 });
 
