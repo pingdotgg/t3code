@@ -597,6 +597,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               : {}),
             ...acpNativeLoggers,
           }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
             Effect.provideService(Scope.Scope, sessionScope),
             Effect.mapError(
               (cause) =>

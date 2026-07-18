@@ -86,10 +86,15 @@ overrides:
   "@types/node": "catalog:"
   effect: "catalog:"
   expo-modules-jsi: 56.0.10
+  "expo-sharing>@expo/config-plugins": 56.0.9
+  "expo-sharing>@expo/config-types": 56.0.6
   vite: "catalog:"
   yaml: "catalog:"
 
 packageExtensions:
+  "@clerk/expo@*":
+    dependencies:
+      "@expo/config-plugins": 56.0.9
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"

@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -283,30 +284,30 @@ interface EnsureActiveAssistantSegmentResult {
 /** Keeps thought accumulation bounded for very long reasoning segments. */
 const MAX_THOUGHT_SEGMENT_CHARS = 20_000;
 
-/** Differentiates runtime instances within one process; combined with the
- * startup timestamp it makes segment item ids unique across restarts. */
-let runtimeInstanceCounter = 0;
-
 export const make = (
   options: AcpSessionRuntimeOptions,
 ): Effect.Effect<
   AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
+    const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Failed to generate an ACP assistant item runtime identifier.",
+            cause,
+          }),
+      ),
+    );
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
-    // Segment item ids must not repeat across runtimes that resume the same
-    // ACP session (e.g. after a server restart), otherwise downstream
-    // consumers derive colliding message ids and new output gets appended to
-    // messages from a previous run. The tag makes ids runtime-unique.
-    runtimeInstanceCounter += 1;
-    const runtimeTag = `${(yield* Clock.currentTimeMillis).toString(36)}-${runtimeInstanceCounter.toString(36)}`;
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
@@ -417,7 +418,7 @@ export const make = (
           modeStateRef,
           toolCallsRef,
           assistantSegmentRef,
-          runtimeTag,
+          assistantItemRuntimeId,
           params: notification,
         });
       }),
@@ -833,7 +834,7 @@ export const layer = (
 ): Layer.Layer<
   AcpSessionRuntime,
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > => Layer.effect(AcpSessionRuntime, make(options));
 
 function sessionConfigOptionsFromSetup(
@@ -865,14 +866,14 @@ const handleSessionUpdate = ({
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
-  runtimeTag,
+  assistantItemRuntimeId,
   params,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
-  readonly runtimeTag: string;
+  readonly assistantItemRuntimeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -921,8 +922,8 @@ const handleSessionUpdate = ({
           queue,
           assistantSegmentRef,
           sessionId: params.sessionId,
-          runtimeTag,
           channel: event.channel,
+          assistantItemRuntimeId,
         });
         if (event.channel === "thought") {
           yield* Ref.update(assistantSegmentRef, (current) =>
@@ -975,11 +976,11 @@ function shouldEmitToolCallUpdate(
 
 const assistantItemId = (input: {
   readonly sessionId: string;
-  readonly runtimeTag: string;
+  readonly runtimeId: string;
   readonly channel: AcpAssistantChannel;
   readonly segmentIndex: number;
 }) =>
-  `${input.channel === "thought" ? "thought" : "assistant"}:${input.sessionId}:${input.runtimeTag}:segment:${input.segmentIndex}`;
+  `${input.channel === "thought" ? "thought" : "assistant"}:${input.sessionId}:runtime:${input.runtimeId}:segment:${input.segmentIndex}`;
 
 function appendThoughtSegmentText(current: string, delta: string): string {
   if (current.length >= MAX_THOUGHT_SEGMENT_CHARS) {
@@ -1003,14 +1004,14 @@ const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
   sessionId,
-  runtimeTag,
   channel,
+  assistantItemRuntimeId,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
-  readonly runtimeTag: string;
   readonly channel: AcpAssistantChannel;
+  readonly assistantItemRuntimeId: string;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
     assistantSegmentRef,
@@ -1020,7 +1021,7 @@ const ensureActiveAssistantSegment = ({
       }
       const itemId = assistantItemId({
         sessionId,
-        runtimeTag,
+        runtimeId: assistantItemRuntimeId,
         channel,
         segmentIndex: current.nextSegmentIndex,
       });

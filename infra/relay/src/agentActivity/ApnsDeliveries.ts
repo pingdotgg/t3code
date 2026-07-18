@@ -369,6 +369,8 @@ function notificationForAggregate(input: {
     environmentId: activity.environmentId,
     threadId: activity.threadId,
     deepLink: activity.deepLink,
+    phase: activity.phase,
+    updatedAt: activity.updatedAt,
   };
 }
 
@@ -722,6 +724,87 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const stateIdentityIsCurrent = Effect.fnUntraced(function* (input: {
+    readonly userId: string;
+    readonly environmentId: string;
+    readonly threadId: string;
+    readonly phase: RelayAgentActivityAggregateState["activities"][number]["phase"];
+    readonly updatedAt: string;
+  }) {
+    return yield* activityRows
+      .getForUserThread({
+        userId: input.userId,
+        environmentId: input.environmentId,
+        threadId: input.threadId,
+      })
+      .pipe(
+        Effect.map(
+          (current) =>
+            current !== null &&
+            current.phase === input.phase &&
+            current.updatedAt === input.updatedAt,
+        ),
+        // A transient persistence failure must not permanently discard a
+        // legitimate alert. Fail open and let the signed job's retry/dedupe
+        // protections handle transport failures as usual.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
+            cause,
+            environmentId: input.environmentId,
+            threadId: input.threadId,
+          }).pipe(Effect.as(true)),
+        ),
+      );
+  });
+
+  const aggregateRowsAreCurrent = Effect.fnUntraced(function* (input: {
+    readonly userId: string;
+    readonly aggregate: RelayAgentActivityAggregateState;
+  }) {
+    return yield* activityRows.listForUser({ userId: input.userId }).pipe(
+      Effect.map((currentStates) => {
+        const currentByThread = new Map(
+          currentStates.map((current) => [
+            `${current.environmentId}\u0000${current.threadId}`,
+            current,
+          ]),
+        );
+        return input.aggregate.activities.every((row) => {
+          const current = currentByThread.get(`${row.environmentId}\u0000${row.threadId}`);
+          return (
+            current !== undefined &&
+            current.phase === row.phase &&
+            current.updatedAt === row.updatedAt
+          );
+        });
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("agent-activity aggregate recheck failed; allowing queued delivery", {
+          cause,
+          userId: input.userId,
+        }).pipe(Effect.as(true)),
+      ),
+    );
+  });
+
+  const notificationStateIsCurrent = Effect.fnUntraced(function* (input: {
+    readonly userId: string;
+    readonly notification: ApnsNotificationPayload;
+  }) {
+    // Jobs from older relay versions do not carry a state identity. Preserve
+    // backwards compatibility and only revalidate newly queued jobs.
+    if (input.notification.phase === undefined || input.notification.updatedAt === undefined) {
+      return true;
+    }
+    return yield* stateIdentityIsCurrent({
+      userId: input.userId,
+      environmentId: input.notification.environmentId,
+      threadId: input.notification.threadId,
+      phase: input.notification.phase,
+      updatedAt: input.notification.updatedAt,
+    });
+  });
+
   const isCurrentSignedJobToken = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
     readonly kind: RelayDeliveryKind;
@@ -788,6 +871,20 @@ export const make = Effect.gen(function* () {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale APNs delivery job skipped.",
+        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+      }
+      if (
+        input.kind !== "live_activity_start" &&
+        aggregate !== null &&
+        !(yield* aggregateRowsAreCurrent({
+          userId: input.target.user_id,
+          aggregate,
+        }))
+      ) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale agent activity state skipped.",
         });
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
@@ -924,6 +1021,21 @@ export const make = Effect.gen(function* () {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale APNs delivery job skipped.",
+        });
+        return staleJobResult({
+          deviceId: input.target.device_id,
+          kind: "push_notification",
+        });
+      }
+      if (
+        !(yield* notificationStateIsCurrent({
+          userId: input.target.user_id,
+          notification,
+        }))
+      ) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale agent activity state skipped.",
         });
         return staleJobResult({
           deviceId: input.target.device_id,

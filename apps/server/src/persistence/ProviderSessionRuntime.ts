@@ -1,7 +1,9 @@
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -280,16 +282,28 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rows) =>
+        // Skip rows that no longer decode (e.g. written by an older build)
+        // instead of failing the whole list — one stale row must not disable
+        // every consumer that enumerates sessions, such as the reaper.
         Effect.forEach(rows, (row) =>
           decodeRuntimeRow(row).pipe(
-            Effect.mapError((cause) =>
-              PersistenceDecodeError.fromSchemaError(
-                "ProviderSessionRuntimeRepository.list:decodeRows",
-                cause,
-                { threadId: row.threadId },
-              ),
+            Effect.map(Option.some),
+            Effect.catch((cause) =>
+              Effect.logWarning("provider.session.runtime.row-skipped", {
+                threadId: row.threadId,
+                error: PersistenceDecodeError.fromSchemaError(
+                  "ProviderSessionRuntimeRepository.list:decodeRows",
+                  cause,
+                  { threadId: row.threadId },
+                ).message,
+              }).pipe(Effect.as(Option.none<ProviderSessionRuntime>())),
             ),
           ),
+        ),
+      ),
+      Effect.map((decoded) =>
+        Arr.filterMap(decoded, (row) =>
+          Option.isSome(row) ? Result.succeed(row.value) : Result.failVoid,
         ),
       ),
     );

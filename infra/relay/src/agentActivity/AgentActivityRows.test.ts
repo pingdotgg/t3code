@@ -75,6 +75,15 @@ describe("AgentActivityRows", () => {
       const listError = yield* rows.listForUser({ userId: "user-2" }).pipe(Effect.flip);
       expect(listError).toMatchObject({ userId: "user-2", cause });
       expect(listError.message).toBe("Failed to list agent activity state for user user-2.");
+
+      const getError = yield* rows
+        .getForUserThread({
+          userId: "user-2",
+          environmentId: "env-1",
+          threadId: "thread-1",
+        })
+        .pipe(Effect.flip);
+      expect(getError).toMatchObject({ userId: "user-2", cause });
     }).pipe(
       Effect.provide(
         AgentActivityRows.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, failingDb))),

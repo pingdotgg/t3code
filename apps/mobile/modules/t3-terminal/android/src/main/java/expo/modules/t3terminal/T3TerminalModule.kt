@@ -30,6 +30,10 @@ class T3TerminalModule : Module() {
         view.focusRequest = focusRequest
       }
 
+      Prop("autoFocus") { view: T3TerminalView, autoFocus: Boolean ->
+        view.autoFocus = autoFocus
+      }
+
       Prop("appearanceScheme") { view: T3TerminalView, appearanceScheme: String ->
         view.appearanceScheme = appearanceScheme
       }
