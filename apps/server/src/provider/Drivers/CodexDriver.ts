@@ -158,6 +158,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const legacyMaintenanceCapabilities = maintenanceResolution.capabilities;
       const maintenanceEnvironment = makeCodexMaintenanceEnvironment({
         environment: processEnv,
+        effectiveHomePath: effectiveConfig.homePath || null,
         realExecutablePath:
           maintenanceResolution.realCommandPath ?? maintenanceResolution.resolvedCommandPath,
         sharedHomePath: homeLayout.sharedHomePath,
