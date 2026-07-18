@@ -2121,15 +2121,34 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       return { path: input.path, staged: false, patch };
     }
     if (source.kind === "stash") {
-      const patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
-        "stash",
-        "show",
+      let patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
+        "diff",
+        "--no-ext-diff",
         "--patch",
-        "--include-untracked",
+        "--minimal",
+        "--find-renames=20%",
+        `${source.stashRef}^1`,
         source.stashRef,
         "--",
         ...diffPaths,
       ]);
+      if (patch.trim().length === 0) {
+        patch = yield* run(
+          "vcs.panel.readStashUntrackedFileDiff",
+          input.cwd,
+          [
+            "show",
+            "--format=",
+            "--no-ext-diff",
+            "--patch",
+            "--minimal",
+            `${source.stashRef}^3`,
+            "--",
+            ...diffPaths,
+          ],
+          { allowNonZeroExit: true },
+        );
+      }
       return { path: input.path, staged: false, patch };
     }
 

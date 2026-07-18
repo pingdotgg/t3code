@@ -904,6 +904,115 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("reads tracked stash file diffs against the stash base", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/new.ts",
+        originalPath: "src/old.ts",
+        source: { kind: "stash", stashRef: "stash@{0}" },
+      });
+
+      assert.equal(result.patch, "stash patch");
+      assert.deepStrictEqual(
+        calls.map((call) => ({ operation: call.operation, args: call.args })),
+        [
+          {
+            operation: "vcs.panel.readStashFileDiff",
+            args: [
+              "diff",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              "--find-renames=20%",
+              "stash@{0}^1",
+              "stash@{0}",
+              "--",
+              "src/old.ts",
+              "src/new.ts",
+            ],
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success("stash patch");
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("falls back to the stash untracked parent for untracked files", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/untracked.ts",
+        source: { kind: "stash", stashRef: "stash@{1}" },
+      });
+
+      assert.equal(result.patch, "untracked stash patch");
+      assert.deepStrictEqual(
+        calls.map((call) => ({
+          operation: call.operation,
+          args: call.args,
+          allowNonZeroExit: call.allowNonZeroExit,
+        })),
+        [
+          {
+            operation: "vcs.panel.readStashFileDiff",
+            args: [
+              "diff",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              "--find-renames=20%",
+              "stash@{1}^1",
+              "stash@{1}",
+              "--",
+              "src/untracked.ts",
+            ],
+            allowNonZeroExit: false,
+          },
+          {
+            operation: "vcs.panel.readStashUntrackedFileDiff",
+            args: [
+              "show",
+              "--format=",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              "stash@{1}^3",
+              "--",
+              "src/untracked.ts",
+            ],
+            allowNonZeroExit: true,
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.readStashUntrackedFileDiff"
+              ? success("untracked stash patch")
+              : success("");
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("reads unstaged rename diffs with a temporary intent-to-add index", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
