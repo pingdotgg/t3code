@@ -58,6 +58,23 @@ function usageBarColor(percent: number): string {
   return "bg-foreground";
 }
 
+export function formatUsageResetDate(resetsAt: string | undefined): string | null {
+  if (!resetsAt) return null;
+  const resetDate = new Date(resetsAt);
+  if (Number.isNaN(resetDate.getTime())) return null;
+  return resetDate.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function getUsageWindowKey(window: ServerProviderUsageLimits["windows"][number]): string {
+  return `${window.kind}:${window.label}:${window.windowDurationMins ?? "unknown"}:${window.resetsAt ?? "none"}`;
+}
+
 function ProviderUsageBars(props: {
   readonly usageLimits: ServerProviderUsageLimits | undefined;
   readonly enabled: boolean;
@@ -82,17 +99,8 @@ function ProviderUsageBars(props: {
         const color = usageBarColor(window.usedPercent);
         const roundedPercent = Math.round(window.usedPercent);
         const remainingPercent = 100 - roundedPercent;
-        const windowKey = `${window.kind}:${window.windowDurationMins ?? "unknown"}:${window.resetsAt ?? "none"}`;
-
-        const resetDateStr = window.resetsAt
-          ? new Date(window.resetsAt).toLocaleString("en-GB", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : null;
+        const windowKey = getUsageWindowKey(window);
+        const resetDateStr = formatUsageResetDate(window.resetsAt);
 
         return (
           <div key={windowKey} className="grid gap-1.5">
