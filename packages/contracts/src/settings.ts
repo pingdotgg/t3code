@@ -409,6 +409,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  linear: Schema.Struct({
+    apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+    apiKeySet: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -514,6 +518,11 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  linear: Schema.optionalKey(
+    Schema.Struct({
+      apiKey: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(

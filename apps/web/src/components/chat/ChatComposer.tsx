@@ -60,7 +60,10 @@ import {
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
+import { type LinearIssueContextDraft } from "../../lib/linearIssueContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
+import { ComposerPendingLinearIssues } from "./ComposerPendingLinearIssues";
+import { ComposerLinearIssuePicker } from "./ComposerLinearIssuePicker";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
 import {
@@ -414,6 +417,7 @@ export interface ChatComposerHandle {
     images: ComposerImageAttachment[];
     terminalContexts: TerminalContextDraft[];
     elementContexts: ElementContextDraft[];
+    linearIssues: LinearIssueContextDraft[];
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
     selectedPromptEffort: string | null;
@@ -618,6 +622,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerElementContexts = composerDraft.elementContexts;
+  const composerLinearIssues = composerDraft.linearIssues;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
@@ -637,6 +642,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const removeComposerDraftElementContext = useComposerDraftStore(
     (store) => store.removeElementContext,
+  );
+  const removeComposerDraftLinearIssue = useComposerDraftStore(
+    (store) => store.removeLinearIssueContext,
   );
   const removeComposerDraftPreviewAnnotation = useComposerDraftStore(
     (store) => store.removePreviewAnnotation,
@@ -912,11 +920,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         terminalContexts: composerTerminalContexts,
         elementContextCount:
           composerElementContexts.length +
+          composerLinearIssues.length +
           composerPreviewAnnotations.length +
           composerReviewComments.length,
       }),
     [
       composerElementContexts.length,
+      composerLinearIssues.length,
       composerImages.length,
       composerPreviewAnnotations.length,
       composerReviewComments.length,
@@ -2003,6 +2013,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         images: composerImagesRef.current,
         terminalContexts: composerTerminalContextsRef.current,
         elementContexts: composerElementContextsRef.current,
+        linearIssues: composerLinearIssues,
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
         selectedPromptEffort,
@@ -2023,6 +2034,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerImagesRef,
       composerTerminalContextsRef,
       composerElementContextsRef,
+      composerLinearIssues,
       composerPreviewAnnotations,
       composerReviewComments,
       isConnecting,
@@ -2309,6 +2321,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {!isComposerCollapsedMobile &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
+              composerLinearIssues.length > 0 && (
+                <ComposerPendingLinearIssues
+                  issues={composerLinearIssues}
+                  onRemove={(contextId) =>
+                    removeComposerDraftLinearIssue(composerDraftTarget, contextId)
+                  }
+                  className="mb-3"
+                />
+              )}
+
+            {!isComposerCollapsedMobile &&
+              !isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
               composerImages.some(
                 (image) =>
                   !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
@@ -2495,6 +2520,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }}
                   getModelDisabledReason={getModelDisabledReason}
                   onInstanceModelChange={onProviderModelSelect}
+                />
+
+                <ComposerLinearIssuePicker
+                  environmentId={environmentId}
+                  composerDraftTarget={composerDraftTarget}
+                  compact={isComposerFooterCompact}
                 />
 
                 {isComposerFooterCompact ? (

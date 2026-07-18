@@ -63,6 +63,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/linear": {
+      "types": "./src/state/linear.ts",
+      "default": "./src/state/linear.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"

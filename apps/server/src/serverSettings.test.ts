@@ -589,4 +589,36 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("stores the Linear API key outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const connected = yield* serverSettings.updateSettings({
+        linear: { apiKey: "lin_api_secret" },
+      });
+
+      assert.deepEqual(connected.linear, { apiKey: "lin_api_secret", apiKeySet: true });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "lin_api_secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).linear, { apiKeySet: true });
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "lin_api_secret");
+
+      const disconnected = yield* serverSettings.updateSettings({
+        linear: { apiKey: "" },
+      });
+      assert.deepEqual(disconnected.linear, { apiKey: "", apiKeySet: false });
+
+      const rawAfter = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(rawAfter, "lin_api_secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.isUndefined(JSON.parse(rawAfter).linear);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

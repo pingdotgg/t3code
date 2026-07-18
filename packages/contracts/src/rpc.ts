@@ -142,6 +142,14 @@ import {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import {
+  LinearApiError,
+  LinearGetIssueInput,
+  LinearIssueDetail,
+  LinearSearchIssuesInput,
+  LinearSearchIssuesResult,
+  LinearStatus,
+} from "./linear.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -222,6 +230,11 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Linear methods
+  linearGetStatus: "linear.getStatus",
+  linearSearchIssues: "linear.searchIssues",
+  linearGetIssue: "linear.getIssue",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -353,6 +366,24 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsLinearGetStatusRpc = Rpc.make(WS_METHODS.linearGetStatus, {
+  payload: Schema.Struct({}),
+  success: LinearStatus,
+  error: Schema.Union([LinearApiError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearSearchIssuesRpc = Rpc.make(WS_METHODS.linearSearchIssues, {
+  payload: LinearSearchIssuesInput,
+  success: LinearSearchIssuesResult,
+  error: Schema.Union([LinearApiError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearGetIssueRpc = Rpc.make(WS_METHODS.linearGetIssue, {
+  payload: LinearGetIssueInput,
+  success: LinearIssueDetail,
+  error: Schema.Union([LinearApiError, EnvironmentAuthorizationError]),
+});
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -699,6 +730,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsLinearGetStatusRpc,
+  WsLinearSearchIssuesRpc,
+  WsLinearGetIssueRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchEntriesRpc,

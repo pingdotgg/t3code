@@ -176,6 +176,7 @@ import {
   type ElementContextDraft,
   formatElementContextLabel,
 } from "../lib/elementContext";
+import { appendLinearIssuesToPrompt } from "../lib/linearIssueContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
@@ -3895,6 +3896,7 @@ function ChatViewContent(props: ChatViewProps) {
       images: composerImages,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
+      linearIssues: composerLinearIssues,
       previewAnnotations: composerPreviewAnnotations,
       reviewComments: composerReviewComments,
       selectedProvider: ctxSelectedProvider,
@@ -3915,6 +3917,7 @@ function ChatViewContent(props: ChatViewProps) {
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
+        composerLinearIssues.length +
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
@@ -3936,6 +3939,7 @@ function ChatViewContent(props: ChatViewProps) {
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
+      composerLinearIssues.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
@@ -3986,11 +3990,15 @@ function ChatViewContent(props: ChatViewProps) {
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
+    const composerLinearIssuesSnapshot = [...composerLinearIssues];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
-    const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
-      composerElementContextsSnapshot,
+    const messageTextWithContexts = appendLinearIssuesToPrompt(
+      appendElementContextsToPrompt(
+        appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+        composerElementContextsSnapshot,
+      ),
+      composerLinearIssuesSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
       (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
@@ -4442,6 +4450,8 @@ function ChatViewContent(props: ChatViewProps) {
       if (!sendCtx) {
         return;
       }
+      // Plan-implementation send path: linearIssues from the send context are
+      // intentionally ignored in v1 (issue context rides only user messages).
       const {
         selectedProvider: ctxSelectedProvider,
         selectedModel: ctxSelectedModel,
@@ -4601,6 +4611,8 @@ function ChatViewContent(props: ChatViewProps) {
     if (!sendCtx) {
       return;
     }
+    // Plan-implementation send path: linearIssues from the send context are
+    // intentionally ignored in v1 (issue context rides only user messages).
     const {
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,

@@ -15,6 +15,31 @@ export function useRelativeTimeTick(intervalMs = 1_000) {
   return nowMs;
 }
 
+export function SettingsItemMark({
+  icon,
+  dotClassName,
+}: {
+  icon?: ReactNode;
+  dotClassName: string;
+}) {
+  if (!icon) {
+    return <span className={cn("size-2 shrink-0 rounded-full", dotClassName)} aria-hidden />;
+  }
+
+  return (
+    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+      {icon}
+      <span
+        className={cn(
+          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
+          dotClassName,
+        )}
+        aria-hidden
+      />
+    </span>
+  );
+}
+
 export function SettingsSection({
   title,
   icon,

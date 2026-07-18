@@ -616,6 +616,111 @@ describe("composerDraftStore element contexts", () => {
   });
 });
 
+describe("composerDraftStore linear issues", () => {
+  const threadId = ThreadId.make("thread-linear");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const baseIssue = {
+    id: "issue-abc",
+    identifier: "ENG-123",
+    title: "Fix login redirect",
+    url: "https://linear.app/acme/issue/ENG-123",
+    stateName: "In Progress",
+    stateType: "started",
+    teamKey: "ENG",
+    description: "The redirect loops.",
+    priorityLabel: "High",
+    assigneeName: "Jane",
+    labels: ["bug", "auth"],
+    updatedAt: "2026-05-03T18:00:00.000Z",
+    comments: [{ authorName: "John", body: "Reproduced.", createdAt: "2026-05-03T19:00:00.000Z" }],
+  } as const;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("adds a linear issue and stamps id + threadId + attachedAt", () => {
+    const accepted = useComposerDraftStore.getState().addLinearIssueContext(threadRef, baseIssue);
+    expect(accepted).toBe(true);
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.linearIssues).toHaveLength(1);
+    const entry = draft?.linearIssues[0]!;
+    expect(entry.id.startsWith("li_")).toBe(true);
+    expect(entry.threadId).toBe(threadId);
+    expect(entry.attachedAt.length).toBeGreaterThan(0);
+    expect(entry.identifier).toBe("ENG-123");
+  });
+
+  it("clamps oversized description, comment bodies, and comment count on add", () => {
+    const store = useComposerDraftStore.getState();
+    store.addLinearIssueContext(threadRef, {
+      ...baseIssue,
+      description: "x".repeat(5000),
+      comments: Array.from({ length: 20 }, (_, index) => ({
+        authorName: `author-${index}`,
+        body: "y".repeat(2000),
+        createdAt: "2026-05-03T19:00:00.000Z",
+      })),
+    });
+    const entry = draftFor(threadId, TEST_ENVIRONMENT_ID)!.linearIssues[0]!;
+    expect(entry.description!.length).toBeLessThanOrEqual(3000);
+    expect(entry.description!.endsWith("…")).toBe(true);
+    expect(entry.comments).toHaveLength(8);
+    expect(entry.comments.every((comment) => comment.body.length <= 800)).toBe(true);
+  });
+
+  it("dedupes by identifier (case-insensitive)", () => {
+    const store = useComposerDraftStore.getState();
+    expect(store.addLinearIssueContext(threadRef, baseIssue)).toBe(true);
+    expect(
+      store.addLinearIssueContext(threadRef, {
+        ...baseIssue,
+        id: "issue-x",
+        identifier: "eng-123",
+      }),
+    ).toBe(false);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.linearIssues).toHaveLength(1);
+  });
+
+  it("removeLinearIssueContext drops by id and clearComposerContent wipes the slice", () => {
+    const store = useComposerDraftStore.getState();
+    store.addLinearIssueContext(threadRef, baseIssue);
+    store.addLinearIssueContext(threadRef, { ...baseIssue, id: "issue-2", identifier: "ENG-124" });
+    const ids = draftFor(threadId, TEST_ENVIRONMENT_ID)!.linearIssues.map((entry) => entry.id);
+    store.removeLinearIssueContext(threadRef, ids[0]!);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.linearIssues.map((entry) => entry.id)).toEqual([
+      ids[1],
+    ]);
+    store.clearComposerContent(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("persists linear issues via the partializer (round-trippable)", () => {
+    useComposerDraftStore.getState().addLinearIssueContext(threadRef, baseIssue);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { linearIssues?: Array<Record<string, unknown>> }>;
+    };
+    const entry =
+      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.linearIssues?.[0];
+    expect(entry).toMatchObject({
+      identifier: baseIssue.identifier,
+      title: baseIssue.title,
+      url: baseIssue.url,
+      stateName: baseIssue.stateName,
+      labels: baseIssue.labels,
+    });
+    expect((entry?.comments as Array<Record<string, unknown>>)?.[0]).toMatchObject({
+      authorName: "John",
+      body: "Reproduced.",
+    });
+  });
+});
+
 describe("composerDraftStore review comments", () => {
   const threadId = ThreadId.make("thread-review-comment");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
