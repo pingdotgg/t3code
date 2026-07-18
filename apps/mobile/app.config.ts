@@ -1,5 +1,6 @@
 import type { ExpoConfig } from "expo/config";
 
+import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
@@ -13,6 +14,8 @@ const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
+const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
+
 if (
   isIosPersonalTeamBuild &&
   (!personalTeamBundleIdentifier ||
@@ -24,20 +27,31 @@ if (
 }
 
 const DEVELOPMENT_ASSETS = {
-  appIcon: "./assets/splash-icon-dev.png",
-  iosIcon: "./assets/icon-composer-dev.icon",
-  splashIcon: "./assets/splash-icon-dev.png",
-  androidAdaptiveForeground: "./assets/android-icon-dev-foreground.png",
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
+  androidAdaptiveForeground: fromRepoRoot(BRAND_ASSET_PATHS.developmentUniversalIconPng),
   androidAdaptiveBackgroundColor: "#00639B",
   androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
   androidNotificationColor: "#00639B",
 } as const;
 
+const PREVIEW_ASSETS = {
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
+  androidAdaptiveForeground: fromRepoRoot(BRAND_ASSET_PATHS.nightlyLinuxIconPng),
+  androidAdaptiveBackgroundColor: "#111533",
+  androidMonochromeIcon: "./assets/android-icon-mark.png",
+  androidNotificationIcon: "./assets/android-notification-icon.png",
+  androidNotificationColor: "#7565C7",
+} as const;
+
 const RELEASE_ASSETS = {
-  appIcon: "./assets/splash-icon-prod.png",
-  iosIcon: "./assets/icon-composer-prod.icon",
-  splashIcon: "./assets/splash-icon-prod.png",
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   androidAdaptiveForeground: "./assets/android-icon-mark.png",
   androidAdaptiveBackgroundColor: "#000000",
   androidMonochromeIcon: "./assets/android-icon-mark.png",
@@ -60,7 +74,7 @@ const VARIANT_CONFIG = {
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
     relyingParty: "clerk.t3.codes",
-    assets: RELEASE_ASSETS,
+    assets: PREVIEW_ASSETS,
   },
   production: {
     appName: "T3 Code",
