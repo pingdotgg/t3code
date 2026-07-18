@@ -110,6 +110,8 @@ describe("timelineMessagesHaveCompleteSkillReference", () => {
         { role: "user", text: "Inspect @AGENTS.md" },
         { role: "user", text: "$" },
         { role: "user", text: "$123invalid" },
+        { role: "user", text: "echo $HOME/.codex" },
+        { role: "user", text: "use PHP $value;" },
       ]),
     ).toBe(false);
   });

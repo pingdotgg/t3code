@@ -26,6 +26,7 @@
     "./types": "./src/SelectableMarkdownText.types.ts"
   },
   "peerDependencies": {
+    "@t3tools/shared": "workspace:*",
     "expo-asset": "*",
     "expo-clipboard": "*",
     "expo-haptics": "*",
