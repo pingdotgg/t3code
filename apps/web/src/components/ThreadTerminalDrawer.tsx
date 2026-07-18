@@ -13,7 +13,6 @@ import {
   XIcon,
 } from "lucide-react";
 import {
-  type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -71,14 +70,6 @@ import { useAtomCommand } from "../state/use-atom-command";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
-
-type TerminalSelectionActionId = "add-to-chat" | "copy";
-
-export const TERMINAL_SELECTION_ACTION_MENU_ITEMS: readonly ContextMenuItem<TerminalSelectionActionId>[] =
-  [
-    { id: "add-to-chat", label: "Add to chat" },
-    { id: "copy", label: "Copy" },
-  ];
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -483,7 +474,13 @@ export function TerminalViewport({
       const requestId = ++selectionActionRequestIdRef.current;
       selectionActionMenuOpenRef.current = true;
       const clicked = await localApi.contextMenu
-        .show(TERMINAL_SELECTION_ACTION_MENU_ITEMS, nextAction.position)
+        .show(
+          [
+            { id: "add-to-chat", label: "Add to chat" },
+            { id: "copy", label: "Copy" },
+          ],
+          nextAction.position,
+        )
         .finally(() => {
           selectionActionMenuOpenRef.current = false;
         });
