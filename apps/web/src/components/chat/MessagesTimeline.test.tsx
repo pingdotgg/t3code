@@ -305,6 +305,88 @@ describe("MessagesTimeline", () => {
     expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
   });
 
+  it("renders file attachments as chips with name and size instead of images", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = {
+      ...buildUserTimelineEntry("Please review the attached report."),
+      message: {
+        ...buildUserTimelineEntry("Please review the attached report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-file-1",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 2_048,
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("report.pdf");
+    expect(markup).toContain("2.0 KB");
+    expect(markup).toContain("lucide-file-text");
+    expect(markup).not.toContain("<img");
+  });
+
+  it("renders downloadable file attachment chips when a preview URL is available", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = {
+      ...buildUserTimelineEntry("Here is the file."),
+      message: {
+        ...buildUserTimelineEntry("Here is the file.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-file-2",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 512,
+            previewUrl: "data:text/plain;base64,aGVsbG8=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain('download="notes.txt"');
+    expect(markup).toContain('href="data:text/plain;base64,aGVsbG8="');
+    expect(markup).toContain("512 B");
+  });
+
+  it("renders image attachments in the image grid without file chips", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = {
+      ...buildUserTimelineEntry("Take a look."),
+      message: {
+        ...buildUserTimelineEntry("Take a look.").message,
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-image-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+    expect(markup).toContain('alt="screenshot.png"');
+    expect(markup).not.toContain("lucide-file-text");
+    expect(markup).not.toContain("download=");
+  });
+
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

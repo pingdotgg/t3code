@@ -46,6 +46,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  FileTextIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -61,6 +62,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
+import { formatAttachmentSizeLabel } from "~/lib/attachmentSize";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
@@ -849,7 +851,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...elementContextState.contexts,
   ];
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const regularImages = userImages.filter(
+    (image) => image.type === "image" && !image.name.startsWith("preview-annotation-"),
+  );
+  const fileAttachments = userImages.filter((attachment) => attachment.type === "file");
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
@@ -886,6 +891,38 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 )}
               </div>
             ))}
+          </div>
+        )}
+        {fileAttachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {fileAttachments.map((attachment) => {
+              const chipContent = (
+                <>
+                  <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="max-w-48 truncate">{attachment.name}</span>
+                  <span className="text-muted-foreground/70">
+                    {formatAttachmentSizeLabel(attachment.sizeBytes)}
+                  </span>
+                </>
+              );
+              const chipClassName =
+                "inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-background/70 px-2 py-1 text-[11px]";
+              return attachment.previewUrl ? (
+                <a
+                  key={attachment.id}
+                  href={attachment.previewUrl}
+                  download={attachment.name}
+                  className={`${chipClassName} hover:bg-background`}
+                  aria-label={`Download ${attachment.name}`}
+                >
+                  {chipContent}
+                </a>
+              ) : (
+                <span key={attachment.id} className={chipClassName}>
+                  {chipContent}
+                </span>
+              );
+            })}
           </div>
         )}
         {previewAnnotations.map((annotation, index) => (

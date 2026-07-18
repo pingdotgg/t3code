@@ -466,6 +466,58 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  effectIt.effect(
+    "sends only image attachments to the provider and appends file attachment prompt text",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+        const imageAttachment = {
+          type: "image" as const,
+          id: "thread-1-00000000-0000-4000-8000-000000000001",
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        };
+        const fileAttachment = {
+          type: "file" as const,
+          id: "thread-1-00000000-0000-4000-8000-000000000002",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 5,
+        };
+        const attachmentsDir = NodePath.join(harness.stateDir, "attachments");
+        const fileAttachmentPath = NodePath.join(attachmentsDir, `${fileAttachment.id}.txt`);
+        NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+        NodeFS.writeFileSync(fileAttachmentPath, "notes");
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-file-attachments"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-file-attachments"),
+            role: "user",
+            text: "hello with attachments",
+            attachments: [imageAttachment, fileAttachment],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        const request = harness.sendTurn.mock.calls[0]?.[0] as {
+          readonly input?: string;
+          readonly attachments?: ReadonlyArray<unknown>;
+        };
+        expect(request.attachments).toEqual([imageAttachment]);
+        expect(request.input).toBe(
+          `hello with attachments\n\n[Attached file: ${fileAttachmentPath} (notes.txt, text/plain, 5 B). Read it from disk when needed.]`,
+        );
+      }),
+  );
+
   it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

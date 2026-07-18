@@ -2,13 +2,13 @@ import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { Frame, MousePointerClick, Paintbrush, PenLine, X } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { ComposerImageAttachment } from "~/composerDraftStore";
+import type { ComposerAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import { cn } from "~/lib/utils";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
-  images: ReadonlyArray<ComposerImageAttachment>;
+  images: ReadonlyArray<ComposerAttachment>;
   onRemove: (annotationId: string) => void;
   onExpandImage: (imageId: string) => void;
   className?: string;

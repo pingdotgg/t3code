@@ -18,18 +18,30 @@ function messageRoleLabel(message: ChatMessage): "USER" | "ASSISTANT" {
   return message.role === "assistant" ? "ASSISTANT" : "USER";
 }
 
-function attachmentSummary(message: ChatMessage): string | null {
-  const imageAttachments = message.attachments?.filter((attachment) => attachment.type === "image");
-  const count = imageAttachments?.length ?? 0;
+function attachmentSummaryOfType(
+  message: ChatMessage,
+  type: "image" | "file",
+  label: string,
+): string | null {
+  const typedAttachments = message.attachments?.filter((attachment) => attachment.type === type);
+  const count = typedAttachments?.length ?? 0;
   if (count === 0) {
     return null;
   }
 
-  const names = imageAttachments?.slice(0, 3).map((image) => image.name) ?? [];
+  const names = typedAttachments?.slice(0, 3).map((attachment) => attachment.name) ?? [];
   const namesSummary = names.join(", ");
   const extraCount = count - names.length;
   const extraSummary = extraCount > 0 ? ` (+${extraCount} more)` : "";
-  return `[Attached image${count === 1 ? "" : "s"}: ${namesSummary}${extraSummary}]`;
+  return `[Attached ${label}${count === 1 ? "" : "s"}: ${namesSummary}${extraSummary}]`;
+}
+
+function attachmentSummary(message: ChatMessage): string | null {
+  const summaries = [
+    attachmentSummaryOfType(message, "image", "image"),
+    attachmentSummaryOfType(message, "file", "file"),
+  ].filter((summary) => summary !== null);
+  return summaries.length > 0 ? summaries.join("\n") : null;
 }
 
 function buildMessageBlock(message: ChatMessage): string {

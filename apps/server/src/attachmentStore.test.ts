@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  attachmentRelativePath,
   createAttachmentId,
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
@@ -42,6 +43,37 @@ describe("attachmentStore", () => {
       return;
     }
     expect(parseThreadSegmentFromAttachmentId(attachmentId)).toBe("thread-foo");
+  });
+
+  it("builds file attachment relative paths with the inferred file extension", () => {
+    expect(
+      attachmentRelativePath({
+        type: "file",
+        id: "thread-1-00000000-0000-4000-8000-000000000001",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 5,
+      }),
+    ).toBe("thread-1-00000000-0000-4000-8000-000000000001.pdf");
+  });
+
+  it("resolves attachment path by id for a written file attachment extension", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-store-"),
+    );
+    try {
+      const attachmentId = "thread-1-attachment";
+      const pdfPath = NodePath.join(attachmentsDir, `${attachmentId}.pdf`);
+      NodeFS.writeFileSync(pdfPath, Buffer.from("hello"));
+
+      const resolved = resolveAttachmentPathById({
+        attachmentsDir,
+        attachmentId,
+      });
+      expect(resolved).toBe(pdfPath);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
   });
 
   it("resolves attachment path by id using the extension that exists on disk", () => {

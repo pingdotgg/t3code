@@ -198,6 +198,32 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "ignored.png")).toEqual({
         kind: "file",
         path: attachmentPath,
+        download: false,
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("marks non-image attachment capabilities for download", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-1-00000000-0000-4000-8000-000000000002";
+      const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.pdf`);
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFile(attachmentPath, new Uint8Array([1, 2, 3]));
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "attachment", attachmentId },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "ignored.pdf")).toEqual({
+        kind: "file",
+        path: attachmentPath,
+        download: true,
       });
     }).pipe(Effect.provide(testLayer)),
   );

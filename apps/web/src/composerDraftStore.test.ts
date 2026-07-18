@@ -65,6 +65,7 @@ import {
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
+  type ComposerFileAttachment,
   type ComposerImageAttachment,
   useComposerDraftStore,
   DraftId,
@@ -95,6 +96,33 @@ function makeImage(input: {
   });
   return {
     type: "image",
+    id: input.id,
+    name,
+    mimeType,
+    sizeBytes: file.size,
+    previewUrl: input.previewUrl,
+    file,
+  };
+}
+
+function makeFile(input: {
+  id: string;
+  previewUrl: string;
+  name?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  lastModified?: number;
+}): ComposerFileAttachment {
+  const name = input.name ?? "report.pdf";
+  const mimeType = input.mimeType ?? "application/pdf";
+  const sizeBytes = input.sizeBytes ?? 4;
+  const lastModified = input.lastModified ?? 1_700_000_000_000;
+  const file = new File([new Uint8Array(sizeBytes).fill(1)], name, {
+    type: mimeType,
+    lastModified,
+  });
+  return {
+    type: "file",
     id: input.id,
     name,
     mimeType,
@@ -342,6 +370,123 @@ describe("composerDraftStore syncPersistedAttachments", () => {
 
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.persistedAttachments).toEqual([]);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.nonPersistedImageIds).toEqual([image.id]);
+  });
+});
+
+describe("composerDraftStore file attachments", () => {
+  const threadId = ThreadId.make("thread-file-attachments");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    removeLocalStorageItem(COMPOSER_DRAFT_STORAGE_KEY);
+    resetComposerDraftStore();
+  });
+
+  afterEach(() => {
+    removeLocalStorageItem(COMPOSER_DRAFT_STORAGE_KEY);
+  });
+
+  function mergePersistedDraft(attachment: Record<string, unknown>) {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    return persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "",
+            attachments: [attachment],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+  }
+
+  it("hydrates persisted attachments without a type as images (legacy drafts)", () => {
+    const mergedState = mergePersistedDraft({
+      id: "img-legacy",
+      name: "legacy.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      dataUrl: "data:image/png;base64,aGVsbG8=",
+    });
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.images).toMatchObject([
+      {
+        type: "image",
+        id: "img-legacy",
+        name: "legacy.png",
+        mimeType: "image/png",
+        sizeBytes: 5,
+        previewUrl: "data:image/png;base64,aGVsbG8=",
+      },
+    ]);
+  });
+
+  it("hydrates persisted attachments with type file as file attachments", () => {
+    const mergedState = mergePersistedDraft({
+      type: "file",
+      id: "file-persisted",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 5,
+      dataUrl: "data:application/pdf;base64,aGVsbG8=",
+    });
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.images).toMatchObject([
+      {
+        type: "file",
+        id: "file-persisted",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 5,
+        previewUrl: "data:application/pdf;base64,aGVsbG8=",
+      },
+    ]);
+  });
+
+  it("persists the file type for staged file attachments (round trip)", () => {
+    const attachment = makeFile({
+      id: "file-round-trip",
+      previewUrl: "data:application/pdf;base64,aGVsbG8=",
+    });
+    useComposerDraftStore.getState().addImage(threadRef, attachment);
+    useComposerDraftStore.getState().syncPersistedAttachments(threadRef, [
+      {
+        type: "file",
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        dataUrl: attachment.previewUrl,
+      },
+    ]);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { attachments?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(
+      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.attachments?.[0],
+    ).toMatchObject({
+      type: "file",
+      id: "file-round-trip",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+    });
   });
 });
 

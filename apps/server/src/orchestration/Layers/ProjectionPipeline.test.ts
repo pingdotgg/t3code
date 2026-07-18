@@ -928,6 +928,214 @@ it.layer(
   );
 });
 
+it.layer(
+  Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-file-gc-")),
+)("OrchestrationProjectionPipeline", (it) => {
+  it.effect("keeps referenced file attachments and prunes orphans when a thread is reverted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const { attachmentsDir } = yield* ServerConfig;
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("Thread Revert.Docs");
+      const keepAttachmentId = "thread-revert-docs-00000000-0000-4000-8000-000000000001";
+      const removeAttachmentId = "thread-revert-docs-00000000-0000-4000-8000-000000000002";
+      const orphanAttachmentId = "thread-revert-docs-00000000-0000-4000-8000-000000000003";
+
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-revert-docs-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-revert-docs"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-revert-docs"),
+          title: "Project Revert Docs",
+          workspaceRoot: "/tmp/project-revert-docs",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-revert-docs-2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-2"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-revert-docs"),
+          title: "Thread Revert Docs",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-revert-docs-3"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-3"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnId: TurnId.make("turn-keep"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-revert-docs/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("message-keep"),
+          completedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-revert-docs-4"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-4"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-4"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId: MessageId.make("message-keep"),
+          role: "assistant",
+          text: "Keep",
+          attachments: [
+            {
+              type: "file",
+              id: keepAttachmentId,
+              name: "keep.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 5,
+            },
+          ],
+          turnId: TurnId.make("turn-keep"),
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-revert-docs-5"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-5"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-5"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnId: TurnId.make("turn-remove"),
+          checkpointTurnCount: 2,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-revert-docs/turn/2"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("message-remove"),
+          completedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-revert-docs-6"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-6"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-6"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId: MessageId.make("message-remove"),
+          role: "assistant",
+          text: "Remove",
+          attachments: [
+            {
+              type: "file",
+              id: removeAttachmentId,
+              name: "remove.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 5,
+            },
+          ],
+          turnId: TurnId.make("turn-remove"),
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const keepPath = path.join(attachmentsDir, `${keepAttachmentId}.pdf`);
+      const removePath = path.join(attachmentsDir, `${removeAttachmentId}.pdf`);
+      const orphanPath = path.join(attachmentsDir, `${orphanAttachmentId}.pdf`);
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(keepPath, "keep");
+      yield* fileSystem.writeFileString(removePath, "remove");
+      yield* fileSystem.writeFileString(orphanPath, "orphan");
+      assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(removePath));
+      assert.isTrue(yield* exists(orphanPath));
+
+      yield* appendAndProject({
+        type: "thread.reverted",
+        eventId: EventId.make("evt-revert-docs-7"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-revert-docs-7"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-docs-7"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnCount: 1,
+        },
+      });
+
+      assert.isTrue(yield* exists(keepPath));
+      assert.isFalse(yield* exists(removePath));
+      assert.isFalse(yield* exists(orphanPath));
+    }),
+  );
+});
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-revert-")))(
   "OrchestrationProjectionPipeline",
   (it) => {
