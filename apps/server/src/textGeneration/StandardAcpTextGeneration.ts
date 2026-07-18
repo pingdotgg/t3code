@@ -207,7 +207,7 @@ export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGener
     );
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
-    Effect.fn("GrokTextGeneration.generateCommitMessage")(function* (input) {
+    Effect.fn("StandardAcpTextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({
         branch: input.branch,
         stagedSummary: input.stagedSummary,
@@ -233,7 +233,7 @@ export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGener
     });
 
   const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
-    Effect.fn("GrokTextGeneration.generatePrContent")(function* (input) {
+    Effect.fn("StandardAcpTextGeneration.generatePrContent")(function* (input) {
       const { prompt, outputSchema } = buildPrContentPrompt({
         baseBranch: input.baseBranch,
         headBranch: input.headBranch,
@@ -277,7 +277,7 @@ export const makeStandardAcpTextGeneration = Effect.fn("makeStandardAcpTextGener
     });
 
   const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
-    Effect.fn("GrokTextGeneration.generateThreadTitle")(function* (input) {
+    Effect.fn("StandardAcpTextGeneration.generateThreadTitle")(function* (input) {
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         attachments: input.attachments,

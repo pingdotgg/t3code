@@ -142,6 +142,9 @@ describe("Kimi ACP mode configuration", () => {
     expect(
       resolveKimiAcpModeId({ runtimeMode: "approval-required", interactionMode: undefined }),
     ).toBe("default");
+    expect(
+      resolveKimiAcpModeId({ runtimeMode: "auto-accept-edits", interactionMode: undefined }),
+    ).toBe("yolo");
     expect(resolveKimiAcpModeId({ runtimeMode: "full-access", interactionMode: "plan" })).toBe(
       "plan",
     );

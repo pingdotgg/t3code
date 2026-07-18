@@ -157,6 +157,20 @@ export function getKimiAcpModelOptions(
 export const KIMI_AUTH_REQUIRED_MESSAGE =
   "Kimi Code is not authenticated. Run kimi login and try again.";
 
+// JSON-RPC error code the ACP "authentication required" signal uses. A
+// signed-out Kimi CLI may reject the handshake with this code instead of
+// returning an empty model catalog.
+export const KIMI_AUTH_REQUIRED_ACP_CODE = -32000;
+
+/**
+ * True when an ACP error is the CLI's "authentication required" signal. Lets
+ * callers surface the "run kimi login" message when a signed-out session fails
+ * the handshake before its (empty) model catalog can even be read.
+ */
+export function isKimiAuthRequiredAcpError(error: EffectAcpErrors.AcpError): boolean {
+  return error._tag === "AcpRequestError" && error.code === KIMI_AUTH_REQUIRED_ACP_CODE;
+}
+
 /**
  * A logged-out Kimi CLI still creates sessions, but reports the "model"
  * select with an empty option list. Detect that state so callers can fail
@@ -172,7 +186,7 @@ export function isKimiModelCatalogEmpty(
 
 export function makeKimiAuthRequiredError(): EffectAcpErrors.AcpRequestError {
   return new EffectAcpErrors.AcpRequestError({
-    code: -32000,
+    code: KIMI_AUTH_REQUIRED_ACP_CODE,
     errorMessage: KIMI_AUTH_REQUIRED_MESSAGE,
     data: { reason: "auth_required" },
   });
@@ -205,7 +219,11 @@ export function resolveKimiAcpModeId(input: {
   if (input.interactionMode === "plan") {
     return "plan";
   }
-  return input.runtimeMode === "full-access" ? "yolo" : "default";
+  // Only approval-required is supervised. Both full-access and
+  // auto-accept-edits are unrestricted implement modes (mirroring how the
+  // Cursor ACP path maps them), so both map to yolo — otherwise auto-accept
+  // users keep hitting approval prompts despite opting out of them.
+  return input.runtimeMode === "approval-required" ? "default" : "yolo";
 }
 
 export function applyKimiAcpModeSelection<E>(input: {

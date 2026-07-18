@@ -18,6 +18,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   getKimiAcpModelOptions,
+  isKimiAuthRequiredAcpError,
   isKimiModelCatalogEmpty,
   KIMI_AUTH_REQUIRED_MESSAGE,
   makeKimiAcpRuntime,
@@ -244,7 +245,16 @@ export const discoverKimiModelsViaAcp = (
       models: buildKimiDiscoveredModelsFromConfigOptions(configOptions),
       catalogEmpty: isKimiModelCatalogEmpty(configOptions),
     };
-  }).pipe(Effect.scoped);
+  }).pipe(
+    Effect.scoped,
+    // A signed-out CLI may reject the ACP handshake with an auth-required error
+    // before the (empty) catalog can be read. Map that to the same signed-out
+    // result so the probe surfaces "run kimi login" instead of an opaque ACP
+    // startup failure.
+    Effect.catchIf(isKimiAuthRequiredAcpError, () =>
+      Effect.succeed({ models: [], catalogEmpty: true } satisfies KimiAcpDiscoveryResult),
+    ),
+  );
 
 const runKimiVersionCommand = (
   kimiSettings: KimiSettings,

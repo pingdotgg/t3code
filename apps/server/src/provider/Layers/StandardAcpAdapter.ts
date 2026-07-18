@@ -1001,7 +1001,7 @@ export function makeStandardAcpAdapter(
         if (!pending) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
-            method: "cursor/ask_question",
+            method: "respondToUserInput",
             detail: `Unknown pending user-input request: ${requestId}`,
           });
         }

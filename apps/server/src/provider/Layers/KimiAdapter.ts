@@ -51,16 +51,22 @@ function applyKimiSessionConfiguration<E>(input: {
   }) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
+    // A logged-out Kimi CLI still creates sessions but reports an empty model
+    // catalog. Detect that up front — regardless of whether this request
+    // carries a model selection — so an unauthenticated session fails with the
+    // "run kimi login" message at session start instead of slipping through to
+    // the mode write (an opaque config error) or being accepted signed-out.
+    const configOptions = yield* input.runtime.getConfigOptions;
+    if (isKimiModelCatalogEmpty(configOptions)) {
+      return yield* Effect.fail(
+        input.mapError({
+          cause: makeKimiAuthRequiredError(),
+          method: "session/set_config_option",
+        }),
+      );
+    }
+
     if (input.modelSelection) {
-      const configOptions = yield* input.runtime.getConfigOptions;
-      if (isKimiModelCatalogEmpty(configOptions)) {
-        return yield* Effect.fail(
-          input.mapError({
-            cause: makeKimiAuthRequiredError(),
-            method: "session/set_config_option",
-          }),
-        );
-      }
       yield* applyKimiAcpModelSelection({
         runtime: input.runtime,
         currentModelId: currentKimiModelIdFromConfigOptions(configOptions),
