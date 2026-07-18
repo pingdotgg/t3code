@@ -30,6 +30,7 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -45,6 +46,17 @@ type TraitsPersistence =
     };
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+
+function DefaultBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
+    >
+      Default
+    </Badge>
+  );
+}
 
 function replaceDescriptorCurrentValue(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
@@ -313,7 +325,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
                 >
                   {option.label}
-                  {option.isDefault ? " (default)" : ""}
+                  {option.isDefault ? (
+                    <>
+                      {" "}
+                      <DefaultBadge />
+                    </>
+                  ) : null}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
