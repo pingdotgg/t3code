@@ -1,6 +1,8 @@
 import type {
   VcsPanelBranchDetails,
+  VcsPanelCommitSummary,
   VcsPanelFileChange,
+  VcsPanelFileDiffInput,
   VcsPanelStashDetails,
   VcsPanelSnapshotResult,
   VcsRef,
@@ -11,19 +13,10 @@ import {
   panelBranchOperationCwd,
   panelBranchSyncCounts,
   panelBranchSyncState,
-  type PanelChangedFile,
 } from "@t3tools/shared/sourceControl";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Alert,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text as NativeText,
-  View,
-} from "react-native";
+import { Alert, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -64,13 +57,12 @@ type VersionControlRouteScreenProps = StaticScreenProps<{
   readonly threadId: string;
 }>;
 
-type FileDiffState =
-  | { readonly status: "loading" }
-  | { readonly status: "loaded"; readonly patch: string }
-  | { readonly status: "error"; readonly message: string };
+type FileDiffSource = NonNullable<VcsPanelFileDiffInput["source"]>;
 
-function fileDiffKey(changeSet: VersionControlChangeSet, file: PanelChangedFile): string {
-  return `file:${changeSet.cwd}:${file.path}`;
+interface FileDiffRequest {
+  readonly cwd: string;
+  readonly file: VcsPanelFileChange;
+  readonly source: FileDiffSource;
 }
 
 function errorMessage(error: unknown): string {
@@ -93,7 +85,7 @@ function ActionButton(props: {
   return (
     <Pressable
       className={cn(
-        "min-h-9 flex-row items-center gap-1.5 rounded-full border px-3 py-2 disabled:opacity-[0.4]",
+        "min-h-9 self-start flex-row items-center gap-1.5 rounded-full border px-3 py-2 disabled:opacity-[0.4]",
         props.danger ? "border-danger-border bg-danger" : "border-border bg-subtle",
       )}
       disabled={props.disabled}
@@ -155,73 +147,38 @@ function SectionHeader(props: {
   );
 }
 
-function PatchPreview(props: { readonly state: FileDiffState }) {
-  if (props.state.status === "loading") {
-    return <Text className="px-3 pb-3 text-xs text-foreground-muted">Loading diff…</Text>;
-  }
-  if (props.state.status === "error") {
-    return <Text className="px-3 pb-3 text-xs text-danger-foreground">{props.state.message}</Text>;
-  }
-  const lines = props.state.patch.split("\n");
-  const visible = lines.slice(0, 180);
-  return (
-    <View className="mx-3 mb-3 overflow-hidden rounded-xl border border-border bg-screen">
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <NativeText
-          selectable
-          style={{
-            fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
-            fontSize: 11,
-            lineHeight: 17,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-          }}
-          className="text-foreground"
-        >
-          {visible.join("\n") || "No textual diff available."}
-        </NativeText>
-      </ScrollView>
-      {lines.length > visible.length ? (
-        <Text className="border-t border-border px-3 py-2 text-2xs text-foreground-muted">
-          Showing the first {visible.length} of {lines.length} lines
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
 function FileRow(props: {
-  readonly file: PanelChangedFile;
-  readonly selected: boolean;
-  readonly expanded: boolean;
-  readonly diffState?: FileDiffState;
+  readonly file: VcsPanelFileChange;
+  readonly selected?: boolean;
   readonly disabled?: boolean;
-  readonly onSelect: () => void;
-  readonly onToggleDiff: () => void;
+  readonly onSelect?: () => void;
+  readonly onOpenDiff: () => void;
 }) {
   const iconColor = useThemeColor("--color-icon-subtle");
   return (
     <View className="border-t border-border/70">
       <View className="min-h-12 flex-row items-center gap-2 px-3 py-2">
-        <Pressable
-          accessibilityLabel={
-            props.selected ? `Unselect ${props.file.path}` : `Select ${props.file.path}`
-          }
-          className="h-8 w-8 items-center justify-center"
-          disabled={props.disabled}
-          onPress={props.onSelect}
-        >
-          <SymbolView
-            name={props.selected ? "checkmark.circle" : "circle"}
-            size={18}
-            tintColor={iconColor}
-            type="monochrome"
-          />
-        </Pressable>
+        {props.onSelect ? (
+          <Pressable
+            accessibilityLabel={
+              props.selected ? `Unselect ${props.file.path}` : `Select ${props.file.path}`
+            }
+            className="h-8 w-8 items-center justify-center"
+            disabled={props.disabled}
+            onPress={props.onSelect}
+          >
+            <SymbolView
+              name={props.selected ? "checkmark.circle" : "circle"}
+              size={18}
+              tintColor={iconColor}
+              type="monochrome"
+            />
+          </Pressable>
+        ) : null}
         <Pressable
           className="min-w-0 flex-1 flex-row items-center gap-2"
           disabled={props.disabled}
-          onPress={props.onToggleDiff}
+          onPress={props.onOpenDiff}
         >
           <Text className="w-4 text-center text-xs font-t3-bold text-foreground-muted">
             {fileStatusLetter(props.file.status)}
@@ -237,78 +194,108 @@ function FileRow(props: {
             ) : null}
           </View>
           <ChangeCounts insertions={props.file.insertions} deletions={props.file.deletions} />
-          <SymbolView
-            name={props.expanded ? "chevron.down" : "chevron.right"}
-            size={11}
-            tintColor={iconColor}
-            type="monochrome"
-          />
+          <SymbolView name="chevron.right" size={11} tintColor={iconColor} type="monochrome" />
         </Pressable>
       </View>
-      {props.expanded && props.diffState ? <PatchPreview state={props.diffState} /> : null}
     </View>
   );
 }
 
-function PlainFileRow(props: { readonly file: VcsPanelFileChange }) {
+function BranchCommitRow(props: {
+  readonly commit: VcsPanelCommitSummary;
+  readonly direction: "ahead" | "behind";
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly children: React.ReactNode;
+}) {
+  const iconColor = useThemeColor("--color-icon-subtle");
+  const stats = selectedFileStats(props.commit.files);
   return (
-    <View className="flex-row items-center gap-2 border-t border-border/70 px-4 py-2.5">
-      <Text className="w-4 text-center text-xs font-t3-bold text-foreground-muted">
-        {fileStatusLetter(props.file.status)}
-      </Text>
-      <View className="min-w-0 flex-1">
-        <Text className="text-sm font-medium text-foreground" numberOfLines={1}>
-          {props.file.path}
-        </Text>
-        {props.file.originalPath ? (
-          <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
-            from {props.file.originalPath}
+    <View className="border-t border-border/70">
+      <Pressable
+        className="min-h-14 flex-row items-center gap-2 px-4 py-3"
+        onPress={props.onToggle}
+      >
+        <View className="min-w-0 flex-1 gap-1">
+          <View className="flex-row items-center gap-2">
+            <Text className="min-w-0 flex-1 text-sm font-t3-bold text-foreground" numberOfLines={1}>
+              {props.commit.message}
+            </Text>
+            <Text
+              className={cn(
+                "text-xs font-t3-bold",
+                props.direction === "ahead" ? "text-emerald-500" : "text-amber-500",
+              )}
+            >
+              {props.direction === "ahead" ? "↑" : "↓"}
+            </Text>
+          </View>
+          <View className="flex-row items-center gap-2">
+            <Text className="min-w-0 flex-1 text-2xs text-foreground-muted" numberOfLines={1}>
+              {props.commit.authorName ?? "Unknown author"} · {props.commit.shortSha}
+            </Text>
+            <ChangeCounts insertions={stats.insertions} deletions={stats.deletions} />
+            <SymbolView
+              name={props.expanded ? "chevron.down" : "chevron.right"}
+              size={11}
+              tintColor={iconColor}
+              type="monochrome"
+            />
+          </View>
+        </View>
+      </Pressable>
+      {props.expanded ? (
+        props.commit.files.length > 0 ? (
+          props.children
+        ) : (
+          <Text className="border-t border-border/70 px-4 py-3 text-xs text-foreground-muted">
+            No changed files.
           </Text>
-        ) : null}
-      </View>
-      <ChangeCounts insertions={props.file.insertions} deletions={props.file.deletions} />
+        )
+      ) : null}
+    </View>
+  );
+}
+
+function CompactTag(props: { readonly label: string }) {
+  return (
+    <View className="rounded-full bg-subtle px-2 py-0.5">
+      <Text className="text-2xs font-t3-bold uppercase text-foreground-muted">{props.label}</Text>
     </View>
   );
 }
 
 function RepositorySummary(props: { readonly snapshot: VcsPanelSnapshotResult }) {
   const status = props.snapshot.status;
-  const fileCount = panelChangeSets(props.snapshot, "__summary__").find(
+  const files = panelChangeSets(props.snapshot, "__summary__").find(
     (changeSet) => changeSet.current,
-  )?.files.length;
+  )?.files;
+  const stats = selectedFileStats(files ?? []);
+  const fileCount = files?.length ?? 0;
   return (
-    <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
-      <View className="flex-row items-start gap-3">
-        <View className="min-w-0 flex-1 gap-1">
-          <Text className="text-2xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-            Repository
-          </Text>
-          <Text className="text-xl font-t3-bold text-foreground" numberOfLines={1}>
-            {status.refName ?? "Detached HEAD"}
-          </Text>
-        </View>
-        <View className="rounded-full bg-subtle px-3 py-1.5">
-          <Text className="text-xs font-t3-bold text-foreground-secondary">
-            {status.hasWorkingTreeChanges ? `${fileCount ?? 0} changed` : "Clean"}
-          </Text>
-        </View>
-      </View>
-      <View className="flex-row flex-wrap gap-x-3 gap-y-1">
+    <View className="gap-1.5 px-1 py-1">
+      <Text className="text-xl font-t3-bold text-foreground" numberOfLines={1}>
+        {status.refName ?? "Detached HEAD"}
+      </Text>
+      <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
         {status.aheadCount > 0 ? (
-          <Text className="text-xs font-t3-bold text-emerald-500">↑{status.aheadCount} ahead</Text>
+          <Text className="text-xs font-t3-bold text-emerald-500">↑{status.aheadCount}</Text>
         ) : null}
         {status.behindCount > 0 ? (
-          <Text className="text-xs font-t3-bold text-amber-500">↓{status.behindCount} behind</Text>
+          <Text className="text-xs font-t3-bold text-amber-500">↓{status.behindCount}</Text>
         ) : null}
-        {(status.aheadOfDefaultCount ?? 0) > 0 ? (
-          <Text className="text-xs font-medium text-foreground-muted">
-            {status.aheadOfDefaultCount} ahead of default
-          </Text>
+        {!status.hasUpstream ? (
+          <Text className="text-xs font-medium text-foreground-muted">No upstream</Text>
         ) : null}
-        {status.hasUpstream ? (
-          <Text className="text-xs font-medium text-foreground-muted">Tracking upstream</Text>
+        {status.hasWorkingTreeChanges ? (
+          <View className="flex-row items-center gap-2">
+            <Text className="text-xs font-medium text-foreground-muted">
+              {fileCount} {fileCount === 1 ? "file" : "files"}
+            </Text>
+            <ChangeCounts insertions={stats.insertions} deletions={stats.deletions} />
+          </View>
         ) : (
-          <Text className="text-xs font-medium text-foreground-muted">Not published</Text>
+          <Text className="text-xs font-t3-bold text-foreground-muted">Clean</Text>
         )}
       </View>
     </View>
@@ -317,6 +304,7 @@ function RepositorySummary(props: { readonly snapshot: VcsPanelSnapshotResult })
 
 export function VersionControlRouteScreen(props: VersionControlRouteScreenProps) {
   const insets = useSafeAreaInsets();
+  const subtleIconColor = useThemeColor("--color-icon-subtle");
   const navigation = useNavigation();
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const { selectedThread } = useThreadSelection();
@@ -325,7 +313,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const api = useVersionControlPanelApi(environmentId);
   const statusQuery = useEnvironmentQuery(
     selectedThreadCwd
-      ? vcsEnvironment.status({ environmentId, input: { cwd: selectedThreadCwd } })
+      ? vcsEnvironment.status({
+          environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
       : null,
   );
 
@@ -346,7 +337,6 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   );
   const knownPathsByCwd = useRef(new Map<string, Set<string>>());
   const initializedChangeSetCwds = useRef(new Set<string>());
-  const [diffs, setDiffs] = useState<ReadonlyMap<string, FileDiffState>>(new Map());
   const [branchDetails, setBranchDetails] = useState<ReadonlyMap<string, VcsPanelBranchDetails>>(
     new Map(),
   );
@@ -360,41 +350,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const snapshotRequestId = useRef(0);
   const snapshotRevision = useRef(0);
   const snapshotFingerprint = useRef<string | null>(null);
-  const nextFileDiffRequestId = useRef(0);
-  const fileDiffRequestIds = useRef(new Map<string, number>());
 
   useEffect(() => {
     expandedRowsRef.current = expandedRows;
   }, [expandedRows]);
-
-  const requestFileDiff = useCallback(
-    (changeSet: VersionControlChangeSet, file: PanelChangedFile) => {
-      const key = fileDiffKey(changeSet, file);
-      const requestId = ++nextFileDiffRequestId.current;
-      fileDiffRequestIds.current.set(key, requestId);
-      setDiffs((current) => new Map(current).set(key, { status: "loading" }));
-      void api
-        .readFileDiff({
-          cwd: changeSet.cwd,
-          path: file.path,
-          ...(file.originalPath ? { originalPath: file.originalPath } : {}),
-          source: { kind: "working-tree", staged: !file.hasUnstagedChanges },
-        })
-        .then((result) => {
-          if (fileDiffRequestIds.current.get(key) !== requestId) return;
-          setDiffs((current) =>
-            new Map(current).set(key, { status: "loaded", patch: result.patch }),
-          );
-        })
-        .catch((cause) => {
-          if (fileDiffRequestIds.current.get(key) !== requestId) return;
-          setDiffs((current) =>
-            new Map(current).set(key, { status: "error", message: errorMessage(cause) }),
-          );
-        });
-    },
-    [api],
-  );
 
   const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
     const changeSets = panelChangeSets(nextSnapshot, cwd);
@@ -457,8 +416,6 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         if (snapshotFingerprint.current !== nextFingerprint) {
           snapshotFingerprint.current = nextFingerprint;
           snapshotRevision.current += 1;
-          fileDiffRequestIds.current.clear();
-          setDiffs(new Map());
           setBranchDetails(new Map());
           setStashDetails(new Map());
           setExpandedRows(
@@ -466,21 +423,13 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
               new Set(
                 [...current].filter(
                   (key) =>
-                    !key.startsWith("file:") &&
                     !key.startsWith("branch:") &&
                     !key.startsWith("fork:") &&
+                    !key.startsWith("commit:") &&
                     !key.startsWith("stash:"),
                 ),
               ),
           );
-        } else {
-          for (const changeSet of panelChangeSets(next, selectedThreadCwd)) {
-            for (const file of changeSet.files) {
-              if (expandedRowsRef.current.has(fileDiffKey(changeSet, file))) {
-                requestFileDiff(changeSet, file);
-              }
-            }
-          }
         }
         setSnapshot(next);
         syncSelections(next, selectedThreadCwd);
@@ -499,7 +448,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         }
       }
     },
-    [api, requestFileDiff, selectedThreadCwd, syncSelections],
+    [api, selectedThreadCwd, syncSelections],
   );
 
   const runAction = useCallback(
@@ -552,7 +501,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
     if (!statusQuery.data || !statusFingerprint) return;
     const previous = lastStatusRefresh.current;
     if (previous?.data === statusQuery.data && previous.fingerprint === statusFingerprint) return;
-    lastStatusRefresh.current = { data: statusQuery.data, fingerprint: statusFingerprint };
+    lastStatusRefresh.current = {
+      data: statusQuery.data,
+      fingerprint: statusFingerprint,
+    };
     if (previous) void refreshSnapshot();
   }, [refreshSnapshot, statusFingerprint, statusQuery.data]);
 
@@ -586,22 +538,21 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      expandedRowsRef.current = next;
       return next;
     });
   }, []);
 
-  const toggleFileDiff = useCallback(
-    (changeSet: VersionControlChangeSet, file: PanelChangedFile) => {
-      const key = fileDiffKey(changeSet, file);
-      if (expandedRows.has(key)) {
-        toggleExpanded(key);
-        return;
-      }
-      toggleExpanded(key);
-      if (diffs.has(key) && diffs.get(key)?.status !== "error") return;
-      requestFileDiff(changeSet, file);
+  const openFileDiff = useCallback(
+    (request: FileDiffRequest) => {
+      navigation.navigate("VersionControlDiff", {
+        environmentId: String(environmentId),
+        cwd: request.cwd,
+        file: request.file,
+        source: request.source,
+      });
     },
-    [diffs, expandedRows, requestFileDiff, toggleExpanded],
+    [environmentId, navigation],
   );
 
   const toggleSelectedFile = useCallback((cwd: string, path: string) => {
@@ -678,7 +629,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
             onPress: () =>
               void runAction("discard", async () => {
                 if (paths.unstaged.length > 0) {
-                  await api.discardFiles({ cwd: changeSet.cwd, paths: paths.unstaged });
+                  await api.discardFiles({
+                    cwd: changeSet.cwd,
+                    paths: paths.unstaged,
+                  });
                 }
                 if (paths.staged.length > 0) {
                   await api.discardFiles({
@@ -697,8 +651,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
 
   const loadBranchDetails = useCallback(
     (branch: VcsRef, key: string, compareBaseRef?: string) => {
+      const wasExpanded = expandedRowsRef.current.has(key);
       toggleExpanded(key);
-      if (!snapshot || branchDetails.has(key) || expandedRows.has(key)) return;
+      if (!snapshot || branchDetails.has(key) || wasExpanded) return;
       const revision = snapshotRevision.current;
       void api
         .branchDetails({
@@ -715,7 +670,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
           if (revision === snapshotRevision.current) setError(errorMessage(cause));
         });
     },
-    [api, branchDetails, expandedRows, selectedThreadCwd, snapshot, toggleExpanded],
+    [api, branchDetails, selectedThreadCwd, snapshot, toggleExpanded],
   );
 
   const publishBranch = useCallback(
@@ -775,7 +730,11 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                 text: "Pull & merge",
                 onPress: () =>
                   void runAction("merge-sync", () =>
-                    api.pullBranch({ cwd: targetCwd, branchName: branch.name, merge: true }),
+                    api.pullBranch({
+                      cwd: targetCwd,
+                      branchName: branch.name,
+                      merge: true,
+                    }),
                   ),
               },
             ]
@@ -790,7 +749,11 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                 style: "destructive",
                 onPress: () =>
                   void runAction("force-pull", () =>
-                    api.pullBranch({ cwd: targetCwd, branchName: branch.name, force: true }),
+                    api.pullBranch({
+                      cwd: targetCwd,
+                      branchName: branch.name,
+                      force: true,
+                    }),
                   ),
               },
               {
@@ -798,7 +761,11 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                 style: "destructive",
                 onPress: () =>
                   void runAction("force-push", () =>
-                    api.pushBranch({ cwd: targetCwd, branchName: branch.name, force: true }),
+                    api.pushBranch({
+                      cwd: targetCwd,
+                      branchName: branch.name,
+                      force: true,
+                    }),
                   ),
               },
             ]),
@@ -827,7 +794,44 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
           style: "destructive",
           onPress: () =>
             void runAction("delete-branch", () =>
-              api.deleteBranch({ cwd: selectedThreadCwd, branchName: branch.name }),
+              api.deleteBranch({
+                cwd: selectedThreadCwd,
+                branchName: branch.name,
+              }),
+            ),
+        },
+      ]);
+    },
+    [api, runAction, selectedThreadCwd],
+  );
+
+  const mergeBranch = useCallback(
+    (refName: string) => {
+      if (!selectedThreadCwd) return;
+      Alert.alert("Merge branch?", `Merge ${refName} into the current branch?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Merge",
+          onPress: () =>
+            void runAction("merge-branch", () =>
+              api.mergeBranchIntoCurrent({ cwd: selectedThreadCwd, refName }),
+            ),
+        },
+      ]);
+    },
+    [api, runAction, selectedThreadCwd],
+  );
+
+  const rebaseBranch = useCallback(
+    (refName: string) => {
+      if (!selectedThreadCwd) return;
+      Alert.alert("Rebase branch?", `Rebase the current branch onto ${refName}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Rebase",
+          onPress: () =>
+            void runAction("rebase-branch", () =>
+              api.rebaseCurrentOnto({ cwd: selectedThreadCwd, refName }),
             ),
         },
       ]);
@@ -838,8 +842,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const loadStashDetails = useCallback(
     (stashRef: string) => {
       const key = `stash:${stashRef}`;
+      const wasExpanded = expandedRowsRef.current.has(key);
       toggleExpanded(key);
-      if (!selectedThreadCwd || stashDetails.has(stashRef) || expandedRows.has(key)) return;
+      if (!selectedThreadCwd || stashDetails.has(stashRef) || wasExpanded) return;
       const revision = snapshotRevision.current;
       void api
         .stashDetails({ cwd: selectedThreadCwd, stashRef })
@@ -851,8 +856,43 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
           if (revision === snapshotRevision.current) setError(errorMessage(cause));
         });
     },
-    [api, expandedRows, selectedThreadCwd, stashDetails, toggleExpanded],
+    [api, selectedThreadCwd, stashDetails, toggleExpanded],
   );
+
+  const renderBranchCommit = (
+    commit: VcsPanelCommitSummary,
+    direction: "ahead" | "behind",
+    parentKey: string,
+    cwd: string,
+  ) => {
+    const commitKey = `commit:${parentKey}:${commit.sha}`;
+    const expanded = expandedRows.has(commitKey);
+    return (
+      <BranchCommitRow
+        key={`${direction}:${commit.sha}`}
+        commit={commit}
+        direction={direction}
+        expanded={expanded}
+        onToggle={() => toggleExpanded(commitKey)}
+      >
+        {commit.files.map((file) => {
+          const request: FileDiffRequest = {
+            cwd,
+            file,
+            source: { kind: "commit", sha: commit.sha },
+          };
+          return (
+            <FileRow
+              key={`${commit.sha}:${file.path}:${file.originalPath ?? ""}`}
+              file={file}
+              disabled={busy}
+              onOpenDiff={() => openFileDiff(request)}
+            />
+          );
+        })}
+      </BranchCommitRow>
+    );
+  };
 
   if (!selectedThread || !selectedThreadCwd) {
     return (
@@ -903,7 +943,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         contentContainerClassName="gap-5 px-4 pt-3"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        contentContainerStyle={{
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
+        }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1022,7 +1064,14 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                           />
                         </View>
                         {changeSet.files.map((file) => {
-                          const fileKey = `file:${changeSet.cwd}:${file.path}`;
+                          const diffRequest: FileDiffRequest = {
+                            cwd: changeSet.cwd,
+                            file,
+                            source: {
+                              kind: "working-tree",
+                              staged: !file.hasUnstagedChanges,
+                            },
+                          };
                           return (
                             <FileRow
                               key={file.path}
@@ -1030,11 +1079,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                               selected={(selectedByCwd.get(changeSet.cwd) ?? new Set()).has(
                                 file.path,
                               )}
-                              expanded={expandedRows.has(fileKey)}
-                              diffState={diffs.get(fileKey)}
                               disabled={busy}
                               onSelect={() => toggleSelectedFile(changeSet.cwd, file.path)}
-                              onToggleDiff={() => toggleFileDiff(changeSet, file)}
+                              onOpenDiff={() => openFileDiff(diffRequest)}
                             />
                           );
                         })}
@@ -1083,72 +1130,78 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                         </Text>
                       ) : null}
                     </Pressable>
-                    <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
-                      {!branch.current && !branch.worktreePath ? (
-                        <ActionButton
-                          label="Switch"
-                          icon="arrow.branch"
-                          disabled={busy}
-                          onPress={() => switchBranch(branch)}
-                        />
-                      ) : null}
-                      <ActionButton
-                        label={branchSyncLabel({ state, busy })}
-                        icon="arrow.clockwise"
-                        disabled={busy}
-                        onPress={() => syncBranch(branch)}
-                      />
-                      {!branch.current ? (
-                        <ActionButton
-                          label="Delete"
-                          icon="trash"
-                          danger
-                          disabled={busy || branch.worktreePath !== null}
-                          onPress={() => deleteBranch(branch)}
-                        />
-                      ) : null}
-                    </View>
                     {expandedRows.has(key) ? (
-                      details ? (
-                        <View>
-                          <View className="border-t border-border px-4 py-3">
-                            <Text className="text-2xs font-t3-bold tracking-[0.9px] uppercase text-foreground-muted">
-                              vs.{" "}
-                              {details.baseRef ?? snapshot.defaultCompareRef ?? "default branch"}
-                            </Text>
-                            <Text className="mt-1 text-xs text-foreground-secondary">
-                              {details.aheadCommits.length} ahead · {details.behindCommits.length}{" "}
-                              behind · {details.compareFiles.length} changed
-                            </Text>
-                          </View>
-                          {details.commits.slice(0, 5).map((commit) => (
-                            <View
-                              key={commit.sha}
-                              className="border-t border-border/70 px-4 py-2.5"
-                            >
-                              <Text
-                                className="text-sm font-t3-bold text-foreground"
-                                numberOfLines={1}
-                              >
-                                {commit.message}
+                      <View>
+                        <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
+                          {!branch.current && !branch.worktreePath ? (
+                            <ActionButton
+                              label="Checkout"
+                              icon="arrow.branch"
+                              disabled={busy}
+                              onPress={() => switchBranch(branch)}
+                            />
+                          ) : null}
+                          <ActionButton
+                            label={branchSyncLabel({ state, busy })}
+                            icon="arrow.clockwise"
+                            disabled={busy}
+                            onPress={() => syncBranch(branch)}
+                          />
+                          {!branch.current ? (
+                            <>
+                              <ActionButton
+                                label="Merge"
+                                icon="point.topleft.down.curvedto.point.bottomright.up"
+                                disabled={busy}
+                                onPress={() => mergeBranch(branch.name)}
+                              />
+                              <ActionButton
+                                label="Rebase"
+                                icon="arrow.triangle.pull"
+                                disabled={busy}
+                                onPress={() => rebaseBranch(branch.name)}
+                              />
+                              <ActionButton
+                                label="Delete"
+                                icon="trash"
+                                danger
+                                disabled={busy || branch.worktreePath !== null}
+                                onPress={() => deleteBranch(branch)}
+                              />
+                            </>
+                          ) : null}
+                        </View>
+                        {details ? (
+                          <>
+                            <View className="border-t border-border px-4 py-3">
+                              <Text className="text-2xs font-t3-bold tracking-[0.9px] uppercase text-foreground-muted">
+                                vs.{" "}
+                                {details.baseRef ?? snapshot.defaultCompareRef ?? "default branch"}
                               </Text>
-                              <Text className="text-2xs text-foreground-muted">
-                                {commit.authorName ?? "Unknown author"} · {commit.shortSha}
+                              <Text className="mt-1 text-xs text-foreground-secondary">
+                                {details.aheadCommits.length} ahead · {details.behindCommits.length}{" "}
+                                behind · {details.compareFiles.length} changed
                               </Text>
                             </View>
-                          ))}
-                          {details.compareFiles.map((file) => (
-                            <PlainFileRow
-                              key={`${file.path}:${file.originalPath ?? ""}`}
-                              file={file}
-                            />
-                          ))}
-                        </View>
-                      ) : (
-                        <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
-                          Loading branch details…
-                        </Text>
-                      )
+                            {details.aheadCommits.map((commit) =>
+                              renderBranchCommit(commit, "ahead", key, selectedThreadCwd),
+                            )}
+                            {details.behindCommits.map((commit) =>
+                              renderBranchCommit(commit, "behind", key, selectedThreadCwd),
+                            )}
+                            {details.aheadCommits.length === 0 &&
+                            details.behindCommits.length === 0 ? (
+                              <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
+                                No commits differ from the comparison branch.
+                              </Text>
+                            ) : null}
+                          </>
+                        ) : (
+                          <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
+                            Loading branch details…
+                          </Text>
+                        )}
+                      </View>
                     ) : null}
                   </View>
                 );
@@ -1181,36 +1234,42 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                         ↓{fork.behindCount}
                       </Text>
                     </Pressable>
-                    <View className="border-t border-border px-3 py-3">
-                      <ActionButton
-                        label="Fetch"
-                        icon="arrow.clockwise"
-                        disabled={busy}
-                        onPress={() =>
-                          void runAction("fetch-fork", () =>
-                            api.fetchBranch({
-                              cwd: selectedThreadCwd,
-                              branchName: fork.remoteRefName,
-                            }),
-                          )
-                        }
-                      />
-                    </View>
                     {expandedRows.has(key) ? (
-                      branchDetails.get(key) ? (
-                        <View>
-                          {branchDetails.get(key)?.compareFiles.map((file) => (
-                            <PlainFileRow
-                              key={`${file.path}:${file.originalPath ?? ""}`}
-                              file={file}
-                            />
-                          ))}
+                      <View>
+                        <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
+                          <ActionButton
+                            label="Fetch"
+                            icon="arrow.clockwise"
+                            disabled={busy}
+                            onPress={() =>
+                              void runAction("fetch-fork", () =>
+                                api.fetchBranch({
+                                  cwd: selectedThreadCwd,
+                                  branchName: fork.remoteRefName,
+                                }),
+                              )
+                            }
+                          />
                         </View>
-                      ) : (
-                        <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
-                          Loading comparison…
-                        </Text>
-                      )
+                        {branchDetails.get(key) ? (
+                          <>
+                            {branchDetails
+                              .get(key)
+                              ?.aheadCommits.map((commit) =>
+                                renderBranchCommit(commit, "ahead", key, selectedThreadCwd),
+                              )}
+                            {branchDetails
+                              .get(key)
+                              ?.behindCommits.map((commit) =>
+                                renderBranchCommit(commit, "behind", key, selectedThreadCwd),
+                              )}
+                          </>
+                        ) : (
+                          <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
+                            Loading comparison…
+                          </Text>
+                        )}
+                      </View>
                     ) : null}
                   </View>
                 );
@@ -1240,63 +1299,83 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                         </Text>
                       </View>
                     </Pressable>
-                    <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
-                      <ActionButton
-                        label="Apply"
-                        icon="arrow.down.circle"
-                        disabled={busy}
-                        onPress={() =>
-                          void runAction("apply-stash", () =>
-                            api.applyStash({ cwd: selectedThreadCwd, stashRef: stash.refName }),
-                          )
-                        }
-                      />
-                      <ActionButton
-                        label="Pop"
-                        icon="arrow.down.circle"
-                        disabled={busy}
-                        onPress={() =>
-                          void runAction("pop-stash", () =>
-                            api.popStash({ cwd: selectedThreadCwd, stashRef: stash.refName }),
-                          )
-                        }
-                      />
-                      <ActionButton
-                        label="Drop"
-                        icon="trash"
-                        danger
-                        disabled={busy}
-                        onPress={() =>
-                          Alert.alert("Drop stash?", `Permanently drop ${stash.refName}?`, [
-                            { text: "Cancel", style: "cancel" },
-                            {
-                              text: "Drop",
-                              style: "destructive",
-                              onPress: () =>
-                                void runAction("drop-stash", () =>
-                                  api.dropStash({
-                                    cwd: selectedThreadCwd,
-                                    stashRef: stash.refName,
-                                  }),
-                                ),
-                            },
-                          ])
-                        }
-                      />
-                    </View>
                     {expandedRows.has(key) ? (
-                      details ? (
-                        details.files.map((file) => (
-                          <PlainFileRow
-                            key={`${file.path}:${file.originalPath ?? ""}`}
-                            file={file}
+                      <View>
+                        <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
+                          <ActionButton
+                            label="Apply"
+                            icon="arrow.down.circle"
+                            disabled={busy}
+                            onPress={() =>
+                              void runAction("apply-stash", () =>
+                                api.applyStash({
+                                  cwd: selectedThreadCwd,
+                                  stashRef: stash.refName,
+                                }),
+                              )
+                            }
                           />
-                        ))
-                      ) : (
-                        <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
-                          Loading stash details…
-                        </Text>
-                      )
+                          <ActionButton
+                            label="Pop"
+                            icon="arrow.down.circle"
+                            disabled={busy}
+                            onPress={() =>
+                              void runAction("pop-stash", () =>
+                                api.popStash({
+                                  cwd: selectedThreadCwd,
+                                  stashRef: stash.refName,
+                                }),
+                              )
+                            }
+                          />
+                          <ActionButton
+                            label="Drop"
+                            icon="trash"
+                            danger
+                            disabled={busy}
+                            onPress={() =>
+                              Alert.alert("Drop stash?", `Permanently drop ${stash.refName}?`, [
+                                { text: "Cancel", style: "cancel" },
+                                {
+                                  text: "Drop",
+                                  style: "destructive",
+                                  onPress: () =>
+                                    void runAction("drop-stash", () =>
+                                      api.dropStash({
+                                        cwd: selectedThreadCwd,
+                                        stashRef: stash.refName,
+                                      }),
+                                    ),
+                                },
+                              ])
+                            }
+                          />
+                        </View>
+                        {details ? (
+                          details.files.map((file) => {
+                            const request: FileDiffRequest = {
+                              cwd: selectedThreadCwd,
+                              file,
+                              source: {
+                                kind: "stash",
+                                stashRef: stash.refName,
+                              },
+                            };
+                            return (
+                              <FileRow
+                                key={`${file.path}:${file.originalPath ?? ""}`}
+                                file={file}
+                                disabled={busy}
+                                onOpenDiff={() => openFileDiff(request)}
+                              />
+                            );
+                          })
+                        ) : (
+                          <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
+                            Loading stash details…
+                          </Text>
+                        )}
+                      </View>
                     ) : null}
                   </View>
                 );
@@ -1378,6 +1457,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
               ) : null}
               {snapshot.remotes.map((remote) => {
                 const key = `remote:${remote.name}`;
+                const remoteExpanded = expandedRows.has(key);
                 return (
                   <View
                     key={remote.name}
@@ -1388,77 +1468,194 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                       onPress={() => toggleExpanded(key)}
                     >
                       <View className="min-w-0 flex-1 gap-0.5">
-                        <Text className="text-base font-t3-bold text-foreground">
-                          {remote.name}
-                        </Text>
+                        <View className="flex-row items-center gap-2">
+                          <SymbolView
+                            name="point.3.connected.trianglepath.dotted"
+                            size={15}
+                            tintColor={subtleIconColor}
+                            type="monochrome"
+                          />
+                          <Text className="text-base font-t3-bold text-foreground">
+                            {remote.name}
+                          </Text>
+                        </View>
                         <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                           {remote.fetchUrl ?? "No fetch URL"} · {remote.branches.length} branches
                         </Text>
                       </View>
                     </Pressable>
-                    <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
-                      <ActionButton
-                        label="Fetch"
-                        icon="arrow.clockwise"
-                        disabled={busy}
-                        onPress={() =>
-                          void runAction("fetch-remote", () =>
-                            api.fetchRemote({ cwd: selectedThreadCwd, remoteName: remote.name }),
-                          )
-                        }
-                      />
-                      <ActionButton
-                        label="Remove"
-                        icon="trash"
-                        danger
-                        disabled={busy}
-                        onPress={() =>
-                          Alert.alert(
-                            "Remove remote?",
-                            `Remove ${remote.name} from this repository?`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              {
-                                text: "Remove",
-                                style: "destructive",
-                                onPress: () =>
-                                  void runAction("remove-remote", () =>
-                                    api.removeRemote({
-                                      cwd: selectedThreadCwd,
-                                      remoteName: remote.name,
-                                    }),
-                                  ),
-                              },
-                            ],
-                          )
-                        }
-                      />
-                    </View>
-                    {expandedRows.has(key)
-                      ? remote.branches.map((branch) => (
-                          <View
-                            key={branch.fullRefName}
-                            className="flex-row items-center gap-2 border-t border-border/70 px-4 py-3"
+                    {remoteExpanded ? (
+                      <View className="flex-row flex-wrap gap-2 border-t border-border px-3 py-3">
+                        <ActionButton
+                          label="Fetch"
+                          icon="arrow.clockwise"
+                          disabled={busy}
+                          onPress={() =>
+                            void runAction("fetch-remote", () =>
+                              api.fetchRemote({
+                                cwd: selectedThreadCwd,
+                                remoteName: remote.name,
+                              }),
+                            )
+                          }
+                        />
+                        <ActionButton
+                          label="Remove"
+                          icon="trash"
+                          danger
+                          disabled={busy}
+                          onPress={() =>
+                            Alert.alert(
+                              "Remove remote?",
+                              `Remove ${remote.name} from this repository?`,
+                              [
+                                { text: "Cancel", style: "cancel" },
+                                {
+                                  text: "Remove",
+                                  style: "destructive",
+                                  onPress: () =>
+                                    void runAction("remove-remote", () =>
+                                      api.removeRemote({
+                                        cwd: selectedThreadCwd,
+                                        remoteName: remote.name,
+                                      }),
+                                    ),
+                                },
+                              ],
+                            )
+                          }
+                        />
+                      </View>
+                    ) : null}
+                    {remote.branches.map((remoteBranch) => {
+                      const localBranch = snapshot.localBranches.find(
+                        (candidate) => candidate.name === remoteBranch.name,
+                      );
+                      const branch: VcsRef = localBranch ?? {
+                        name: remoteBranch.fullRefName,
+                        isRemote: true,
+                        remoteName: remote.name,
+                        current: false,
+                        isDefault: remoteBranch.isDefaultRemoteHead,
+                        worktreePath: null,
+                        lastActivityAt: remoteBranch.lastActivityAt ?? null,
+                      };
+                      const branchKey = `remote-branch:${remote.name}:${remoteBranch.name}`;
+                      const branchExpanded = expandedRows.has(branchKey);
+                      const counts = localBranch
+                        ? panelBranchSyncCounts(localBranch, snapshot)
+                        : { aheadCount: 0, behindCount: 0 };
+                      const syncState = localBranch
+                        ? panelBranchSyncState(localBranch, snapshot)
+                        : null;
+                      return (
+                        <View key={remoteBranch.fullRefName} className="border-t border-border/70">
+                          <Pressable
+                            className="min-h-12 flex-row items-center gap-2 px-4 py-3"
+                            onPress={() => toggleExpanded(branchKey)}
                           >
-                            <Text
-                              className="min-w-0 flex-1 text-sm font-medium text-foreground"
-                              numberOfLines={1}
-                            >
-                              {branch.name}
-                            </Text>
-                            {branch.isDefaultRemoteHead ? (
-                              <Text className="text-2xs font-t3-bold text-foreground-muted">
-                                DEFAULT
+                            <SymbolView
+                              name={
+                                localBranch
+                                  ? "arrow.branch"
+                                  : "point.3.connected.trianglepath.dotted"
+                              }
+                              size={14}
+                              tintColor={subtleIconColor}
+                              type="monochrome"
+                            />
+                            <View className="min-w-0 flex-1 gap-1">
+                              <Text
+                                className="text-sm font-t3-bold text-foreground"
+                                numberOfLines={1}
+                              >
+                                {remoteBranch.name}
+                              </Text>
+                              <View className="flex-row flex-wrap items-center gap-1">
+                                <CompactTag label={localBranch ? "local" : "remote"} />
+                                {localBranch?.current ? <CompactTag label="current" /> : null}
+                                {localBranch?.worktreePath && !localBranch.current ? (
+                                  <CompactTag label="worktree" />
+                                ) : null}
+                                {remoteBranch.isDefaultRemoteHead || localBranch?.isDefault ? (
+                                  <CompactTag label="default" />
+                                ) : null}
+                              </View>
+                            </View>
+                            {counts.aheadCount > 0 ? (
+                              <Text className="text-xs font-t3-bold text-emerald-500">
+                                ↑{counts.aheadCount}
                               </Text>
                             ) : null}
-                            {relativeLabel(branch.lastActivityAt) ? (
-                              <Text className="text-xs text-foreground-muted">
-                                {relativeLabel(branch.lastActivityAt)}
+                            {counts.behindCount > 0 ? (
+                              <Text className="text-xs font-t3-bold text-amber-500">
+                                ↓{counts.behindCount}
                               </Text>
                             ) : null}
-                          </View>
-                        ))
-                      : null}
+                          </Pressable>
+                          {branchExpanded ? (
+                            <View className="flex-row flex-wrap gap-2 border-t border-border/70 px-3 py-3">
+                              {!branch.current && !branch.worktreePath ? (
+                                <ActionButton
+                                  label="Checkout"
+                                  icon="arrow.branch"
+                                  disabled={busy}
+                                  onPress={() => switchBranch(branch)}
+                                />
+                              ) : null}
+                              {localBranch && syncState ? (
+                                <ActionButton
+                                  label={branchSyncLabel({
+                                    state: syncState,
+                                    busy,
+                                  })}
+                                  icon="arrow.clockwise"
+                                  disabled={busy}
+                                  onPress={() => syncBranch(localBranch)}
+                                />
+                              ) : (
+                                <ActionButton
+                                  label="Fetch"
+                                  icon="arrow.clockwise"
+                                  disabled={busy}
+                                  onPress={() =>
+                                    void runAction("fetch-remote-branch", () =>
+                                      api.fetchBranch({
+                                        cwd: selectedThreadCwd,
+                                        branchName: remoteBranch.fullRefName,
+                                      }),
+                                    )
+                                  }
+                                />
+                              )}
+                              {!branch.current ? (
+                                <>
+                                  <ActionButton
+                                    label="Merge"
+                                    icon="point.topleft.down.curvedto.point.bottomright.up"
+                                    disabled={busy}
+                                    onPress={() => mergeBranch(branch.name)}
+                                  />
+                                  <ActionButton
+                                    label="Rebase"
+                                    icon="arrow.triangle.pull"
+                                    disabled={busy}
+                                    onPress={() => rebaseBranch(branch.name)}
+                                  />
+                                  <ActionButton
+                                    label="Delete"
+                                    icon="trash"
+                                    danger
+                                    disabled={busy || branch.worktreePath !== null}
+                                    onPress={() => deleteBranch(branch)}
+                                  />
+                                </>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
+                      );
+                    })}
                   </View>
                 );
               })}

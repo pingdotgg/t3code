@@ -57,7 +57,9 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
     },
   );
 
-  const panelStageFiles = useAtomCommand(vcsEnvironment.panelStageFiles, { reportFailure: false });
+  const panelStageFiles = useAtomCommand(vcsEnvironment.panelStageFiles, {
+    reportFailure: false,
+  });
   const panelDiscardFiles = useAtomCommand(vcsEnvironment.panelDiscardFiles, {
     reportFailure: false,
   });
@@ -73,6 +75,12 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
   const panelDeleteBranch = useAtomCommand(vcsEnvironment.panelDeleteBranch, {
     reportFailure: false,
   });
+  const panelMergeBranchIntoCurrent = useAtomCommand(vcsEnvironment.panelMergeBranchIntoCurrent, {
+    reportFailure: false,
+  });
+  const panelRebaseCurrentOnto = useAtomCommand(vcsEnvironment.panelRebaseCurrentOnto, {
+    reportFailure: false,
+  });
   const panelFetchBranch = useAtomCommand(vcsEnvironment.panelFetchBranch, {
     reportFailure: false,
   });
@@ -82,7 +90,9 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
   const panelFetchAllRemotes = useAtomCommand(vcsEnvironment.panelFetchAllRemotes, {
     reportFailure: false,
   });
-  const panelAddRemote = useAtomCommand(vcsEnvironment.panelAddRemote, { reportFailure: false });
+  const panelAddRemote = useAtomCommand(vcsEnvironment.panelAddRemote, {
+    reportFailure: false,
+  });
   const panelRemoveRemote = useAtomCommand(vcsEnvironment.panelRemoveRemote, {
     reportFailure: false,
   });
@@ -92,8 +102,12 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
   const panelApplyStash = useAtomCommand(vcsEnvironment.panelApplyStash, {
     reportFailure: false,
   });
-  const panelPopStash = useAtomCommand(vcsEnvironment.panelPopStash, { reportFailure: false });
-  const panelDropStash = useAtomCommand(vcsEnvironment.panelDropStash, { reportFailure: false });
+  const panelPopStash = useAtomCommand(vcsEnvironment.panelPopStash, {
+    reportFailure: false,
+  });
+  const panelDropStash = useAtomCommand(vcsEnvironment.panelDropStash, {
+    reportFailure: false,
+  });
 
   const runPanelCommand = useCallback(
     async <TInput extends { readonly cwd: string }, TResult>(
@@ -133,6 +147,10 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
         runPanelCommand<typeof input, void>(panelPushBranch, input),
       deleteBranch: (input: Parameters<typeof panelDeleteBranch>[0]["input"]) =>
         runPanelCommand<typeof input, void>(panelDeleteBranch, input),
+      mergeBranchIntoCurrent: (input: Parameters<typeof panelMergeBranchIntoCurrent>[0]["input"]) =>
+        runPanelCommand<typeof input, void>(panelMergeBranchIntoCurrent, input),
+      rebaseCurrentOnto: (input: Parameters<typeof panelRebaseCurrentOnto>[0]["input"]) =>
+        runPanelCommand<typeof input, void>(panelRebaseCurrentOnto, input),
       fetchBranch: (input: Parameters<typeof panelFetchBranch>[0]["input"]) =>
         runPanelCommand<typeof input, void>(panelFetchBranch, input),
       fetchRemote: (input: Parameters<typeof panelFetchRemote>[0]["input"]) =>
@@ -165,10 +183,12 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
       panelFetchAllRemotes,
       panelFetchBranch,
       panelFetchRemote,
+      panelMergeBranchIntoCurrent,
       panelPopStash,
       panelPullBranch,
       panelPushBranch,
       panelReadFileDiff,
+      panelRebaseCurrentOnto,
       panelRemoveRemote,
       panelSnapshot,
       panelStageFiles,
