@@ -109,7 +109,7 @@ describe("timelineMessagesHaveComposerSkillReference", () => {
       timelineMessagesHaveComposerSkillReference([
         { role: "assistant", text: "Try $repo-skill next." },
         { role: "user", text: "Inspect @AGENTS.md" },
-        { role: "user", text: "Maybe use $repo-skill" },
+        { role: "user", text: "Maybe use $repo-skill?" },
       ]),
     ).toBe(false);
   });
@@ -119,6 +119,9 @@ describe("timelineMessagesHaveComposerSkillReference", () => {
       timelineMessagesHaveComposerSkillReference([
         { role: "user", text: "Use $repo-skill to inspect this." },
       ]),
+    ).toBe(true);
+    expect(
+      timelineMessagesHaveComposerSkillReference([{ role: "user", text: "Use $repo-skill" }]),
     ).toBe(true);
   });
 });

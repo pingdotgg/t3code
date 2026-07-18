@@ -9,8 +9,7 @@ import {
   SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
 import { cn } from "~/lib/utils";
-
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+import { parseInlineSkillTokens } from "./skillInlineTokens";
 
 type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
@@ -18,11 +17,7 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
-  for (const match of props.text.matchAll(SKILL_TOKEN_REGEX)) {
-    const prefix = match[1] ?? "";
-    const name = match[2] ?? "";
-    const start = (match.index ?? 0) + prefix.length;
-    const rawText = `$${name}`;
+  for (const { name, rawText, start } of parseInlineSkillTokens(props.text)) {
     const skill = props.skills.find((candidate) => candidate.name === name);
     if (!skill) {
       continue;
