@@ -6,6 +6,13 @@
   - If changing native mobile code, `vp run lint:mobile` must also pass.
 - Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
 
+## PatchMD
+
+Downstream forks can record deliberate changes to T3 Code-owned behavior in
+root `PATCH.md`. When making such a customization, use
+`.agents/skills/modify-with-patch-md/SKILL.md`. Before rebasing a customized
+fork onto upstream, use `.agents/skills/update-with-patch-md/SKILL.md`.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using coding agents like Codex and Claude.
