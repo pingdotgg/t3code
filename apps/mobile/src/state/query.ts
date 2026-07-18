@@ -1,5 +1,6 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import * as Cause from "effect/Cause";
+import { causeFailureMessage } from "@t3tools/client-runtime/errors";
+import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -15,10 +16,7 @@ export interface EnvironmentQueryView<A> {
 }
 
 function formatError(cause: Cause.Cause<unknown>): string {
-  const error = Cause.squash(cause);
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "The environment request failed.";
+  return causeFailureMessage(cause, "The environment request failed.");
 }
 
 export function useEnvironmentQuery<A, E>(

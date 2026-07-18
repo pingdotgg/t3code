@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
 
+import { causeFailureMessage } from "../errors/causeMessage.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -35,10 +36,7 @@ function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): Enviro
 }
 
 function formatThreadError(cause: Cause.Cause<unknown>): string {
-  const error = Cause.squash(cause);
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "Could not synchronize the thread.";
+  return causeFailureMessage(cause, "Could not synchronize the thread.");
 }
 
 function shouldPersistThread(thread: OrchestrationThread): boolean {
@@ -106,11 +104,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     error: Option.none(),
   }));
   const setReady = SubscriptionRef.update(state, (current) =>
-    current.status === "live" || current.status === "deleted"
+    current.status === "deleted"
       ? current
       : {
           ...current,
-          status: "synchronizing" as const,
+          status: Option.isSome(current.data) ? ("live" as const) : ("synchronizing" as const),
           error: Option.none(),
         },
   );

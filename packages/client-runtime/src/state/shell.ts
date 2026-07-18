@@ -99,15 +99,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: "synchronizing" as const,
     error: Option.none(),
   }));
-  const setReady = SubscriptionRef.update(state, (current) =>
-    current.status === "live"
-      ? current
-      : {
-          ...current,
-          status: "synchronizing" as const,
-          error: Option.none(),
-        },
-  );
+  const setReady = SubscriptionRef.update(state, (current) => ({
+    ...current,
+    status: Option.isSome(current.snapshot) ? ("live" as const) : ("synchronizing" as const),
+    error: Option.none(),
+  }));
   const setStreamError = (error: unknown) =>
     Effect.logWarning("Could not synchronize the environment shell.").pipe(
       Effect.annotateLogs({
