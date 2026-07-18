@@ -169,9 +169,10 @@ const awaitSocket = Effect.fn("TestRpcSessionFactory.awaitSocket")(function* (
 
 const awaitRequest = Effect.fn("TestRpcSessionFactory.awaitRequest")(function* (
   socket: TestWebSocket,
+  index = 0,
 ) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const request = socket.sent[0];
+    const request = socket.sent[index];
     if (request) {
       return decodeRpcRequest(decodeJson(request));
     }
@@ -217,6 +218,30 @@ describe("RpcSessionFactory", () => {
       const config = yield* session.initialConfig;
       expect(config).toEqual(SERVER_CONFIG);
       expect(socket.sent).toHaveLength(1);
+
+      const probeFiber = yield* Effect.forkChild(session.probe);
+      const probeRequest = yield* awaitRequest(socket, 1);
+      expect(probeRequest).toMatchObject({
+        _tag: "Request",
+        tag: WS_METHODS.serverProbe,
+        payload: {},
+      });
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: probeRequest.id,
+          exit: {
+            _tag: "Success",
+            value: {},
+          },
+        }),
+      );
+      yield* Fiber.join(probeFiber);
+
+      expect(socket.sent.map((request) => decodeRpcRequest(decodeJson(request)).tag)).toEqual([
+        WS_METHODS.serverGetConfig,
+        WS_METHODS.serverProbe,
+      ]);
 
       socket.close(1012, "service restart");
       const error = yield* Effect.flip(session.closed);
