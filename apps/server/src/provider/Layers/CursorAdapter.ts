@@ -558,6 +558,7 @@ export function makeCursorAdapter(
               : {}),
             ...acpNativeLoggers,
           }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
             Effect.provideService(Scope.Scope, sessionScope),
             Effect.mapError(
               (cause) =>
