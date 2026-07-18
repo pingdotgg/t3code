@@ -94,13 +94,20 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
   return normalizedItems;
 }
 
+// Renderer positions arrive in CSS pixels; popup() expects window points, so
+// page zoom must be factored in or menus drift proportionally to their
+// distance from the window origin.
 const normalizePosition = (
   position: Option.Option<ElectronMenuPosition>,
+  zoomFactor: number,
 ): Option.Option<ElectronMenuPosition> =>
   Option.filter(
     position,
-    ({ x, y }) => Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0,
-  ).pipe(Option.map(({ x, y }) => ({ x: Math.floor(x), y: Math.floor(y) })));
+    ({ x, y }) =>
+      Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && Number.isFinite(zoomFactor),
+  ).pipe(
+    Option.map(({ x, y }) => ({ x: Math.floor(x * zoomFactor), y: Math.floor(y * zoomFactor) })),
+  );
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
@@ -214,7 +221,10 @@ export const make = Effect.gen(function* () {
 
         try {
           const menu = Electron.Menu.buildFromTemplate(buildTemplate(normalizedItems, complete));
-          const popupPosition = normalizePosition(input.position);
+          const popupPosition = normalizePosition(
+            input.position,
+            input.window.webContents.getZoomFactor(),
+          );
           const popupOptions = Option.match(popupPosition, {
             onNone: (): Electron.PopupOptions => ({
               window: input.window,

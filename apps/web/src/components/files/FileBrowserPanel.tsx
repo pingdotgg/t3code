@@ -1,10 +1,19 @@
+import type {
+  ContextMenuItem as TreeContextMenuItem,
+  ContextMenuOpenContext as TreeContextMenuOpenContext,
+} from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree } from "@pierre/trees/react";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
+import { toastManager } from "~/components/ui/toast";
+import { useComposerHandleContext } from "~/composerHandleContext";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
@@ -39,6 +48,7 @@ export default function FileBrowserPanel({
   onOpenFile,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
+  const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
   const entries = entriesQuery.data?.entries ?? [];
   const entryKinds = useMemo(
@@ -49,7 +59,93 @@ export default function FileBrowserPanel({
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
   const previousTreePathsRef = useRef<readonly string[]>([]);
 
+  // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
+  // capture the right-click position ourselves; contextmenu is a composed
+  // event, so a capture-phase listener sees it with viewport coordinates.
+  const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  useEffect(() => {
+    const capturePointer = (event: MouseEvent) => {
+      contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+    };
+    document.addEventListener("contextmenu", capturePointer, true);
+    return () => document.removeEventListener("contextmenu", capturePointer, true);
+  }, []);
+
+  const showEntryContextMenu = async (
+    item: TreeContextMenuItem,
+    context: TreeContextMenuOpenContext,
+  ) => {
+    const api = readLocalApi();
+    if (!api) {
+      context.close();
+      return;
+    }
+    const relativePath = item.path.replace(/\/$/, "");
+    const mention = serializeComposerFileLink(relativePath);
+    const pointer = contextMenuPointerRef.current;
+    const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
+    const anchorRect = context.anchorElement.getBoundingClientRect();
+    const position = pointerIsFresh
+      ? { x: pointer.x, y: pointer.y }
+      : { x: anchorRect.left, y: anchorRect.bottom };
+    try {
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "copy-mention", label: "Copy mention" },
+          { id: "add-to-chat", label: "Add to chat" },
+        ],
+        position,
+      );
+      if (clicked === "copy-mention") {
+        try {
+          await writeTextToClipboard(mention);
+          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to copy mention",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+        return;
+      }
+      if (clicked === "add-to-chat") {
+        const composer = composerRef?.current;
+        if (!composer) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to add to chat",
+            description: "Open a chat for this project and try again.",
+          });
+          return;
+        }
+        const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
+        if (!inserted) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to add to chat",
+            description: "The chat isn't ready to accept input right now.",
+          });
+        }
+      }
+    } finally {
+      context.close();
+    }
+  };
+  const showEntryContextMenuRef = useRef(showEntryContextMenu);
+  useEffect(() => {
+    showEntryContextMenuRef.current = showEntryContextMenu;
+  });
+
   const { model } = useFileTree({
+    composition: {
+      contextMenu: {
+        triggerMode: "right-click",
+        onOpen: (item, context) => {
+          void showEntryContextMenuRef.current(item, context);
+        },
+      },
+    },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
