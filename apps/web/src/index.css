@@ -159,11 +159,10 @@
     }
   }
 
-  /* Stage-channel sidebar art (nightly night sky / dev blueprint). The
-     backdrop overflows the header and fades into the sidebar background. */
-  /* Blend into the sidebar by painting the sidebar background color over the
-     art with an eased ramp, instead of alpha-fading the art itself. This keeps
-     the transition clean against both light and dark themes. */
+  /* Stage-channel sidebar art (nightly night sky / dev blueprint). The art
+     overflows the header and blends into the sidebar by painting the sidebar
+     background color over it with an eased ramp (::after), plus a soft alpha
+     mask so the surface grain shows through at the boundary. */
   .sidebar-stage-backdrop {
     mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
     -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
