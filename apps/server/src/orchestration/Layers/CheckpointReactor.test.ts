@@ -496,6 +496,75 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("refreshes an early checkpoint when the turn completes", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-1");
+    const checkpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-refresh"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-placeholder-refresh"),
+        threadId,
+        turnId,
+        completedAt: "2026-01-01T00:01:00.000Z",
+        checkpointRef,
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt: "2026-01-01T00:01:00.000Z",
+      }),
+    );
+    await harness.drain();
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v2\n");
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v3\n", "utf8");
+    const completedAt = "2026-01-01T00:02:00.000Z";
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-refresh"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v3\n");
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === threadId);
+    expect(thread?.checkpoints).toHaveLength(1);
+    expect(thread?.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(thread?.checkpoints[0]?.completedAt).toBe(completedAt);
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v4\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-refresh-duplicate"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v3\n");
+  });
+
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
     const harness = await createHarness({
