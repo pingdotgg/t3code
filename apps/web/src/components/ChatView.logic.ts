@@ -397,18 +397,6 @@ export interface LocalDispatchSnapshot {
   sessionUpdatedAt: string | null;
 }
 
-export function getLatestUserMessageId(
-  messages: ReadonlyArray<Pick<ChatMessage, "id" | "role">>,
-): MessageId | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === "user") {
-      return message.id;
-    }
-  }
-  return null;
-}
-
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
   options?: { preparingWorktree?: boolean; expectedUserMessageId?: MessageId },
@@ -433,7 +421,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
   session: Thread["session"] | null;
-  latestUserMessageId: MessageId | null;
+  projectedMessages: ReadonlyArray<Pick<ChatMessage, "id" | "role">>;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -449,10 +437,13 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   // apply that prompt to the existing turn without opening a new one, so the
   // latest turn/session fields may remain unchanged until the agent finishes.
   // The projected user message is the server acknowledgement in that case.
+  const expectedUserMessageId = input.localDispatch.expectedUserMessageId;
   if (
     input.localDispatch.sessionStatus === "running" &&
-    input.localDispatch.expectedUserMessageId !== null &&
-    input.localDispatch.expectedUserMessageId === input.latestUserMessageId
+    expectedUserMessageId !== null &&
+    input.projectedMessages.some(
+      (message) => message.role === "user" && message.id === expectedUserMessageId,
+    )
   ) {
     return true;
   }

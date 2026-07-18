@@ -731,7 +731,7 @@ export function findActiveCodexTurnId(
 export function resolveCodexInterruptTurnId<E>(input: {
   readonly providerThreadId: string;
   readonly requestedTurnId: TurnId | undefined;
-  readonly sessionActiveTurnId: TurnId | undefined;
+  readonly readSessionActiveTurnId: Effect.Effect<TurnId | undefined>;
   readonly readThread: (
     params: CodexRpc.ClientRequestParamsByMethod["thread/read"],
   ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["thread/read"], E>;
@@ -756,7 +756,7 @@ export function resolveCodexInterruptTurnId<E>(input: {
       ),
       // A failed lookup can still use the locally projected id. A successful
       // lookup with no active turn must not revive a stale local id.
-      Effect.orElseSucceed(() => input.sessionActiveTurnId),
+      Effect.catch(() => input.readSessionActiveTurnId),
     );
 }
 
@@ -1383,11 +1383,12 @@ export const makeCodexSessionRuntime = (
       interruptTurn: (turnId) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          const session = yield* Ref.get(sessionRef);
           const effectiveTurnId = yield* resolveCodexInterruptTurnId({
             providerThreadId,
             requestedTurnId: turnId,
-            sessionActiveTurnId: session.activeTurnId,
+            readSessionActiveTurnId: Ref.get(sessionRef).pipe(
+              Effect.map((session) => session.activeTurnId),
+            ),
             readThread: (params) => client.request("thread/read", params),
           });
           if (!effectiveTurnId) {

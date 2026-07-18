@@ -230,7 +230,6 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
-  getLatestUserMessageId,
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -453,10 +452,6 @@ function useLocalDispatchState(input: {
   threadError: string | null | undefined;
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
-  const latestUserMessageId = useMemo(
-    () => getLatestUserMessageId(input.activeThread?.messages ?? []),
-    [input.activeThread?.messages],
-  );
 
   const resetLocalDispatch = useCallback(() => {
     setLocalDispatch(null);
@@ -468,8 +463,8 @@ function useLocalDispatchState(input: {
         localDispatch,
         phase: input.phase,
         latestTurn: input.activeLatestTurn,
-        latestUserMessageId,
         session: input.activeThread?.session ?? null,
+        projectedMessages: input.activeThread?.messages ?? [],
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
         threadError: input.threadError,
@@ -478,10 +473,10 @@ function useLocalDispatchState(input: {
       input.activeLatestTurn,
       input.activePendingApproval,
       input.activePendingUserInput,
+      input.activeThread?.messages,
       input.activeThread?.session,
       input.phase,
       input.threadError,
-      latestUserMessageId,
       localDispatch,
     ],
   );

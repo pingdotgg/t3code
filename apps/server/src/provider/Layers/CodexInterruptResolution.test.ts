@@ -76,7 +76,7 @@ describe("findActiveCodexTurnId", () => {
       const turnId = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
-        sessionActiveTurnId: undefined,
+        readSessionActiveTurnId: Effect.succeed(undefined),
         readThread: (params) => {
           requestedParams = params;
           return Effect.succeed(
@@ -100,7 +100,7 @@ describe("findActiveCodexTurnId", () => {
       const turnId = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
-        sessionActiveTurnId: TurnId.make("turn-stale"),
+        readSessionActiveTurnId: Effect.succeed(TurnId.make("turn-stale")),
         readThread: () => Effect.succeed(makeThreadReadResponse([])),
       });
 
@@ -114,7 +114,7 @@ describe("findActiveCodexTurnId", () => {
       const turnId = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
-        sessionActiveTurnId: projectedTurnId,
+        readSessionActiveTurnId: Effect.succeed(projectedTurnId),
         readThread: () => Effect.fail("lookup failed"),
       });
 
@@ -128,11 +128,28 @@ describe("findActiveCodexTurnId", () => {
       const resolution = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
-        sessionActiveTurnId: projectedTurnId,
+        readSessionActiveTurnId: Effect.succeed(projectedTurnId),
         readThread: () => Effect.never,
       }).pipe(Effect.forkScoped);
 
       yield* Effect.yieldNow;
+      yield* TestClock.adjust("2 seconds");
+      NodeAssert.equal(yield* Fiber.join(resolution), projectedTurnId);
+    }),
+  );
+
+  it.effect("reads the projected fallback after a live lookup times out", () =>
+    Effect.gen(function* () {
+      let projectedTurnId = TurnId.make("turn-old");
+      const resolution = yield* resolveCodexInterruptTurnId({
+        providerThreadId: "provider-thread-1",
+        requestedTurnId: undefined,
+        readSessionActiveTurnId: Effect.sync(() => projectedTurnId),
+        readThread: () => Effect.never,
+      }).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      projectedTurnId = TurnId.make("turn-current");
       yield* TestClock.adjust("2 seconds");
       NodeAssert.equal(yield* Fiber.join(resolution), projectedTurnId);
     }),

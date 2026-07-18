@@ -367,7 +367,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: completedTurn,
         session: readySession,
-        latestUserMessageId: null,
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -393,7 +393,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: newerTurn,
         session: { ...readySession, updatedAt: newerTurn.completedAt },
-        latestUserMessageId: null,
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -424,7 +424,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           status: "running",
           activeTurnId: TurnId.make("turn-other"),
         },
-        latestUserMessageId: null,
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -440,7 +440,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           status: "running",
           activeTurnId: runningTurn.turnId,
         },
-        latestUserMessageId: null,
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -455,7 +455,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       phase: "ready" as const,
       latestTurn: null,
       session: null,
-      latestUserMessageId: null,
+      projectedMessages: [],
       hasPendingApproval: false,
       hasPendingUserInput: false,
       threadError: null,
@@ -504,7 +504,12 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         session: runningSession,
-        latestUserMessageId: initialMessageId,
+        projectedMessages: [
+          {
+            id: initialMessageId,
+            role: "user",
+          },
+        ],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -517,7 +522,34 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         session: runningSession,
-        latestUserMessageId: steerMessageId,
+        projectedMessages: [
+          {
+            id: steerMessageId,
+            role: "user",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        projectedMessages: [
+          {
+            id: steerMessageId,
+            role: "user",
+          },
+          {
+            id: MessageId.make("message-other-client"),
+            role: "user",
+          },
+        ],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -548,7 +580,12 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         session: runningSession,
-        latestUserMessageId: steerMessageId,
+        projectedMessages: [
+          {
+            id: steerMessageId,
+            role: "user",
+          },
+        ],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
