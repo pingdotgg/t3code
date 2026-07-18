@@ -10,7 +10,7 @@ Branch maintenance snapshot for the latest upstream merge resolution:
 - Merge note: the nine incoming commits from `b98233702c88fd7a4312b231e68b089d5f3b0e80` through `fdca15471d92e95e4ec5501f45dbf3ce81f8d991` fix onboarding connection status, isolate native diff syntax-highlighter grammar state, correct macOS fullscreen titlebar spacing, prevent duplicate project workspace roots, normalize over-indented Markdown list items, resolve localhost preview URLs for remote environments, send mobile composer images in the upload wire format, fix iOS terminal Enter encoding, and add native mobile share-target support. Git merged all files automatically with no conflicts. The only file touched by both the incoming range and the fork was `packages/contracts/src/ipc.ts`; its additive merge preserves the panel's VCS types, RPC-shaped environment methods, and context-menu separator while adding upstream's fullscreen bridge methods. Duplicate-root normalization improves project identity without changing the panel's active-project/owning-cwd rules, and the mobile draft/share changes remain isolated from the fork's mobile pending-task behavior and web Version Control surface. The singleton panel, live status and sibling-worktree watchers, Actionable/Remotes model, selected-file commit/stash semantics, branch/commit/stash/remote actions, comparison behavior, source-control-only monotonic thread errors, `expectedBranch` writes, and provider/process diagnostic causes remain intact. Upstream still does not provide an equivalent web panel, no customization became redundant, and the incoming code does not expose a worthwhile panel-specific refactor.
 - Pollution audit note: the complete `upstream/main...HEAD` history and 56-file tree delta exposed a stale `ChatView` terminal-session memo rewrite and declaration reorder left by earlier merge maintenance. Those terminal-only edits were restored exactly to `upstream/main`; the unrelated punctuation drift in the desktop context-menu comment was also removed. The remaining `ChatView` and desktop context-menu differences are limited to source-control metadata/error routing, cwd-specific sibling-worktree file surfaces, the singleton panel mount, and explicit separators used by panel menus.
 
-T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
+T3 Code includes Git-backed Version Control surfaces in the web right panel and the native mobile app. Both are scoped to the active environment and repository cwd, use server-owned Git operations, and reuse the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from client UI code.
 
 The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView` through `ChatView.sourceControl`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context. Server-thread branch updates include the active thread branch as `expectedBranch`, so the server preserves newer branch/worktree metadata if another update wins while the Git action is in flight. Server-thread metadata failures surface in the chat error banner through source-control-specific per-thread state. Dismissal clears that local metadata error without pretending provider session errors are dismissible, and overlapping metadata updates are sequenced per thread for the hook lifetime so stale in-flight failures cannot overwrite a newer successful checkout even if a thread is closed and reopened with the same key.
 
@@ -21,6 +21,9 @@ Primary implementation files:
 - `apps/web/src/components/source-control/SourceControlPanel.tsx`
 - `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
+- `apps/mobile/src/features/version-control/VersionControlRouteScreen.tsx`
+- `apps/mobile/src/features/version-control/versionControlModel.ts`
+- `apps/mobile/src/features/version-control/useVersionControlPanelApi.ts`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/ChatView.sourceControl.ts`, which exports source-control right-panel availability/surface helpers and `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
 - `apps/web/src/components/RightPanelTabs.tsx`
@@ -36,6 +39,8 @@ Primary implementation files:
 
 Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline. Availability is project/repository based: the surface is enabled when a thread or draft-thread ref exists for right-panel state and the active project resolves to a repository cwd.
 
+On mobile, `Version Control` is a native full-screen route over the active thread. It is available directly in the Git header menu beside the quick commit/push action and from the existing Git overview menu that contains commit and branch/worktree actions. Returning from the route closes it without changing the active workspace/thread selection.
+
 Version Control uses the shared right-panel tab shell, including the standard context menu, middle-click tab close behavior, and centralized add-surface metadata in `RightPanelTabs` for both the empty state and the add-surface menu.
 
 `ChatView` keys the mounted `SourceControlPanel` by active environment, thread, and effective Git cwd. Switching between conversations, projects, or worktrees therefore creates a fresh panel instance for that context instead of letting repository state from the previous thread bleed into the next one. The panel pairs that remount boundary with a bounded in-memory state cache keyed by environment, thread, cwd, and worktree path, so returning to a previously opened Version Control panel can render its last snapshot and UI state immediately while the normal refresh/fetch path updates it in the background.
@@ -49,6 +54,22 @@ Right-panel integration is owned by:
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/ChatView.sourceControl.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
+
+Native navigation integration is owned by:
+
+- `apps/mobile/src/Stack.tsx`
+- `apps/mobile/src/features/threads/ThreadGitControls.tsx`
+- `apps/mobile/src/features/threads/git/GitOverviewSheet.tsx`
+
+## Native Mobile Screen
+
+The mobile screen preserves the web panel's repository summary plus `Actionable` and `Remotes` information architecture, adapted to native touch interaction. Resizable desktop sections become collapsible native sections, hover-only controls become visible action pills, and pull-to-refresh complements live VCS status updates and the same best-effort fetch-on-open behavior.
+
+The native `Actionable` section includes the current and dirty sibling working trees, local branches requiring attention, same-name fork branch notices, and stashes. Working-tree cards preserve newly-added-file default selection, tri-state-style select-all behavior, aggregate staged-plus-unstaged stats, rename source paths, selected-file commit/stash/discard operations, and expandable textual diffs. Branch cards expose thread-aware switching, publish/push/pull/fetch/diverged sync choices, delete confirmation, compare-base details, recent history, and comparison files. Stash cards expose apply, pop, drop, and changed-file details.
+
+The native `Remotes` section supports fetch, add, remove, and branch inspection. All mutations use the existing panel RPC atom families; branch switching deliberately reuses the mobile thread Git action path so server-thread metadata and active checkout context continue to update together.
+
+Cross-platform panel presentation rules that affect both web and mobile live in `@t3tools/shared/sourceControl`, including staged/unstaged file merging and sync-vs-compare branch state. Mobile-only list composition and touch presentation helpers remain in `versionControlModel.ts`.
 
 ## Layout
 
@@ -258,4 +279,10 @@ If native mobile code changes in a future pass, also run:
 
 ```sh
 pnpm exec vp run lint:mobile
+```
+
+Native Version Control model coverage lives in `apps/mobile/src/features/version-control/versionControlModel.test.ts` and can be run with:
+
+```sh
+(cd apps/mobile && pnpm exec vp test run src/features/version-control/versionControlModel.test.ts)
 ```

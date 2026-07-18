@@ -1,25 +1,35 @@
 import type {
   VcsPanelChangeGroup,
-  VcsPanelFileChange,
   VcsPanelStash,
   VcsPanelSnapshotResult,
-  VcsRef,
 } from "@t3tools/contracts";
+import {
+  mergePanelChangeGroups,
+  panelBranchAttention as branchAttention,
+  panelBranchHasUpstream as branchHasUpstream,
+  panelBranchOperationCwd as branchOperationCwd,
+  panelBranchSyncCounts as branchSyncCounts,
+  panelBranchSyncState as branchSyncState,
+  type BranchAttentionKind,
+  type BranchSyncState,
+  type PanelChangedFile,
+} from "@t3tools/shared/sourceControl";
 
-export type BranchSyncState = "fetch" | "pull" | "push" | "publish" | "diverged";
+export {
+  branchAttention,
+  branchHasUpstream,
+  branchOperationCwd,
+  branchSyncCounts,
+  branchSyncState,
+};
+export type { BranchSyncState, PanelChangedFile };
 
-export type AttentionKind = "conflicts" | "diverged" | "behind" | "unpushed" | "dirty" | "stale";
+export type AttentionKind = BranchAttentionKind;
 
 export type PanelFileDiffLoadState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly patch: string }
   | { readonly status: "error"; readonly message: string };
-
-export interface PanelChangedFile extends VcsPanelFileChange {
-  readonly hasStagedChanges: boolean;
-  readonly hasUnstagedChanges: boolean;
-  readonly hasConflicts: boolean;
-}
 
 export function vcsPanelSnapshotFingerprint(cwd: string, snapshot: VcsPanelSnapshotResult): string {
   return `${cwd}\0${JSON.stringify(snapshot)}`;
@@ -54,68 +64,8 @@ export function failPanelFileDiffLoad(
   return { status: "error", message };
 }
 
-function mergedFileStatus(
-  statuses: ReadonlySet<VcsPanelFileChange["status"]>,
-): VcsPanelFileChange["status"] {
-  if (statuses.has("conflicted")) return "conflicted";
-  if (statuses.has("deleted")) return "deleted";
-  if (statuses.has("renamed")) return "renamed";
-  if (statuses.has("copied")) return "copied";
-  if (statuses.has("added")) return "added";
-  if (statuses.has("untracked")) return "untracked";
-  return "modified";
-}
-
 export function mergeChangeGroups(groups: readonly VcsPanelChangeGroup[]): PanelChangedFile[] {
-  const files = new Map<
-    string,
-    {
-      originalPath: string | null;
-      statuses: Set<VcsPanelFileChange["status"]>;
-      insertions: number;
-      deletions: number;
-      hasStagedChanges: boolean;
-      hasUnstagedChanges: boolean;
-      hasConflicts: boolean;
-    }
-  >();
-
-  for (const group of groups) {
-    for (const file of group.files) {
-      const existing = files.get(file.path) ?? {
-        originalPath: file.originalPath,
-        statuses: new Set<VcsPanelFileChange["status"]>(),
-        insertions: 0,
-        deletions: 0,
-        hasStagedChanges: false,
-        hasUnstagedChanges: false,
-        hasConflicts: false,
-      };
-      existing.originalPath ??= file.originalPath;
-      existing.statuses.add(file.status);
-      // The compact working-tree row shows aggregate staged + unstaged churn,
-      // not a de-duplicated net diff against HEAD.
-      existing.insertions += file.insertions;
-      existing.deletions += file.deletions;
-      existing.hasStagedChanges ||= group.kind === "staged";
-      existing.hasUnstagedChanges ||= group.kind === "unstaged";
-      existing.hasConflicts ||= group.kind === "conflicts";
-      files.set(file.path, existing);
-    }
-  }
-
-  return [...files.entries()]
-    .map(([path, file]) => ({
-      path,
-      originalPath: file.originalPath,
-      status: mergedFileStatus(file.statuses),
-      insertions: file.insertions,
-      deletions: file.deletions,
-      hasStagedChanges: file.hasStagedChanges,
-      hasUnstagedChanges: file.hasUnstagedChanges,
-      hasConflicts: file.hasConflicts,
-    }))
-    .toSorted((left, right) => left.path.localeCompare(right.path));
+  return mergePanelChangeGroups(groups);
 }
 
 export function formatRelativeDate(
@@ -142,61 +92,4 @@ export function formatRelativeDate(
   if (days < 365) return `${months} month${months === 1 ? "" : "s"} ago`;
   const years = Math.floor(days / 365);
   return `${years} year${years === 1 ? "" : "s"} ago`;
-}
-
-function remoteBranchName(remoteRef: string, snapshot: VcsPanelSnapshotResult): string {
-  const normalized = remoteRef.trim();
-  const remote = snapshot.remotes
-    .toSorted((left, right) => right.name.length - left.name.length)
-    .find((candidate) => normalized.startsWith(`${candidate.name}/`));
-  if (remote) return normalized.slice(remote.name.length + 1);
-
-  const separatorIndex = normalized.indexOf("/");
-  return separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized;
-}
-
-export function branchSyncCounts(
-  branch: VcsRef,
-  snapshot: VcsPanelSnapshotResult,
-): { readonly aheadCount: number; readonly behindCount: number } {
-  if (branch.current) {
-    return {
-      aheadCount: snapshot.status.aheadCount,
-      behindCount: snapshot.status.behindCount,
-    };
-  }
-  return {
-    aheadCount: branch.aheadCount ?? 0,
-    behindCount: branch.behindCount ?? 0,
-  };
-}
-
-export function branchHasUpstream(branch: VcsRef, snapshot: VcsPanelSnapshotResult): boolean {
-  const upstreamName = branch.upstreamName?.trim();
-  if (!upstreamName) return branch.current && snapshot.status.hasUpstream;
-  return remoteBranchName(upstreamName, snapshot) === branch.name;
-}
-
-export function branchSyncState(branch: VcsRef, snapshot: VcsPanelSnapshotResult): BranchSyncState {
-  const hasUpstream = branchHasUpstream(branch, snapshot);
-  const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
-  if (!hasUpstream) return "publish";
-  if (aheadCount > 0 && behindCount > 0) return "diverged";
-  if (behindCount > 0) return "pull";
-  if (aheadCount > 0) return "push";
-  return "fetch";
-}
-
-export function branchOperationCwd(branch: VcsRef, fallbackCwd: string): string {
-  return branch.worktreePath ?? fallbackCwd;
-}
-
-export function branchAttention(branch: VcsRef, snapshot: VcsPanelSnapshotResult): AttentionKind {
-  const hasUpstream = branchHasUpstream(branch, snapshot);
-  const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
-  if (!hasUpstream) return "unpushed";
-  if (aheadCount > 0 && behindCount > 0) return "diverged";
-  if (behindCount > 0) return "behind";
-  if (aheadCount > 0) return "unpushed";
-  return "stale";
 }
