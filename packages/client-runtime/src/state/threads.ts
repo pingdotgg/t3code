@@ -41,6 +41,11 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : "Could not synchronize the thread.";
 }
 
+function shouldPersistThread(thread: OrchestrationThread): boolean {
+  const status = thread.session?.status;
+  return status !== "starting" && status !== "running";
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
 ) {
@@ -128,10 +133,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       status: "live",
       error: Option.none(),
     });
-    // Persist the thread together with the sequence it reflects so the next warm
-    // cache can resume from exactly here.
-    const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
-    yield* Queue.offer(persistence, { snapshotSequence, thread });
+    // Active threads can update many times per second and retain large tool
+    // payloads. The server remains the source of truth while a turn is active;
+    // persist once it settles so cache encoding stays off the streaming path.
+    if (shouldPersistThread(thread)) {
+      const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
+      yield* Queue.offer(persistence, { snapshotSequence, thread });
+    }
   });
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
@@ -246,7 +254,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.flatMap(([current, snapshotSequence]) =>
         Option.match(current.data, {
           onNone: () => Effect.void,
-          onSome: (thread) => persist({ snapshotSequence, thread }),
+          onSome: (thread) =>
+            shouldPersistThread(thread) ? persist({ snapshotSequence, thread }) : Effect.void,
         }),
       ),
     ),
