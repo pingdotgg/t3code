@@ -2916,9 +2916,19 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, openPreview]);
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    if (planSidebarOpen) {
+      dismissPlanSidebarForCurrentTurn();
+    }
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
-  }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
+  }, [
+    activeThreadRef,
+    dismissPlanSidebarForCurrentTurn,
+    isGitRepo,
+    isServerThread,
+    onDiffPanelOpen,
+    planSidebarOpen,
+  ]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
