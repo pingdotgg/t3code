@@ -64,6 +64,12 @@ export interface ProviderMaintenanceCapabilitiesResolver {
   ) => ProviderMaintenanceCapabilities;
 }
 
+export interface ProviderMaintenanceCapabilitiesResolution {
+  readonly capabilities: ProviderMaintenanceCapabilities;
+  readonly resolvedCommandPath: string | null;
+  readonly realCommandPath: string | null;
+}
+
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
@@ -376,15 +382,19 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
-  "resolveProviderMaintenanceCapabilitiesEffect",
+export const resolveProviderMaintenanceCapabilitiesWithPathsEffect = Effect.fn(
+  "resolveProviderMaintenanceCapabilitiesWithPathsEffect",
 )(function* (
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
 ) {
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
-    return resolver.resolve(options);
+    return {
+      capabilities: resolver.resolve(options),
+      resolvedCommandPath: null,
+      realCommandPath: null,
+    } satisfies ProviderMaintenanceCapabilitiesResolution;
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
@@ -393,19 +403,37 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
       Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
     )) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
-    return resolver.resolve(options);
+    return {
+      capabilities: resolver.resolve(options),
+      resolvedCommandPath: null,
+      realCommandPath: null,
+    } satisfies ProviderMaintenanceCapabilitiesResolution;
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
   const realCommandPath = yield* fileSystem
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
-  return resolver.resolve({
-    ...options,
-    env,
+  return {
     resolvedCommandPath,
     realCommandPath,
-  });
+    capabilities: resolver.resolve({
+      ...options,
+      env,
+      resolvedCommandPath,
+      realCommandPath,
+    }),
+  } satisfies ProviderMaintenanceCapabilitiesResolution;
+});
+
+export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
+  "resolveProviderMaintenanceCapabilitiesEffect",
+)(function* (
+  resolver: ProviderMaintenanceCapabilitiesResolver,
+  options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
+) {
+  return (yield* resolveProviderMaintenanceCapabilitiesWithPathsEffect(resolver, options))
+    .capabilities;
 });
 
 function deriveVersionAdvisory(input: {

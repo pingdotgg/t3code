@@ -42,11 +42,14 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { selectCodexProviderMaintenanceCapabilities } from "../codexMaintenance.ts";
+import {
+  makeCodexMaintenanceEnvironment,
+  selectCodexProviderMaintenanceCapabilities,
+} from "../codexMaintenance.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
-  resolveProviderMaintenanceCapabilitiesEffect,
+  resolveProviderMaintenanceCapabilitiesWithPathsEffect,
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -145,17 +148,20 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
-      const legacyMaintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+      const maintenanceResolution = yield* resolveProviderMaintenanceCapabilitiesWithPathsEffect(
         UPDATE,
         {
           binaryPath: effectiveConfig.binaryPath,
           env: processEnv,
         },
       );
-      const maintenanceEnvironment = {
-        ...processEnv,
-        ...(effectiveConfig.homePath ? { CODEX_HOME: effectiveConfig.homePath } : {}),
-      };
+      const legacyMaintenanceCapabilities = maintenanceResolution.capabilities;
+      const maintenanceEnvironment = makeCodexMaintenanceEnvironment({
+        environment: processEnv,
+        realExecutablePath:
+          maintenanceResolution.realCommandPath ?? maintenanceResolution.resolvedCommandPath,
+        sharedHomePath: homeLayout.sharedHomePath,
+      });
       const resolveMaintenanceCapabilities = (snapshot: ServerProvider) =>
         selectCodexProviderMaintenanceCapabilities({
           installedVersion: snapshot.version,

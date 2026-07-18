@@ -551,7 +551,7 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("serializes different providers that share the same update lock key", () => {
+  it.effect("serializes native Codex and package-manager updates that share a lock key", () => {
     const firstStartedLatch: { resolve: () => void } = { resolve: () => {} };
     const releaseFirstLatch: { resolve: () => void } = { resolve: () => {} };
     const firstStarted = new Promise<void>((resolve) => {
@@ -570,11 +570,9 @@ describe("providerMaintenanceRunner", () => {
             makeProviderMaintenanceCapabilities({
               provider,
               packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
-              updateExecutable: "npm",
+              updateExecutable: provider === OPENCODE_DRIVER ? "npm" : "codex",
               updateArgs:
-                provider === OPENCODE_DRIVER
-                  ? ["install", "-g", "opencode-ai@latest"]
-                  : ["install", "-g", "@openai/codex@latest"],
+                provider === OPENCODE_DRIVER ? ["install", "-g", "opencode-ai@latest"] : ["update"],
               updateLockKey: "npm-global",
             }),
           ),
@@ -595,7 +593,7 @@ describe("providerMaintenanceRunner", () => {
         }
         yield* Effect.yieldNow;
       }
-      assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
+      assert.deepStrictEqual(calls, ["update"]);
       assert.strictEqual(
         providersWhileQueued.find((provider) => provider.instanceId === OPENCODE_INSTANCE_ID)
           ?.updateState?.status,
@@ -605,10 +603,7 @@ describe("providerMaintenanceRunner", () => {
       releaseFirstLatch.resolve();
       yield* Fiber.join(first);
       yield* Fiber.join(second);
-      assert.deepStrictEqual(calls, [
-        "install -g @openai/codex@latest",
-        "install -g opencode-ai@latest",
-      ]);
+      assert.deepStrictEqual(calls, ["update", "install -g opencode-ai@latest"]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
