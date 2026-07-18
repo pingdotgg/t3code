@@ -52,6 +52,7 @@ export function ComposerLinearIssuePicker({
 
   const searchRequestRef = useRef(0);
   const attachInFlightRef = useRef(false);
+  const attachRequestRef = useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -92,11 +93,16 @@ export function ComposerLinearIssuePicker({
       // Ignore concurrent selects while a detail fetch is already resolving.
       if (attachInFlightRef.current) return;
       attachInFlightRef.current = true;
+      // Tag this fetch so a resolution that lands after the popover closed (or
+      // after a reopen + newer select) is dropped instead of attaching silently.
+      const requestId = attachRequestRef.current + 1;
+      attachRequestRef.current = requestId;
       setIsAttaching(true);
       setHasAttachError(false);
       // Keep the popover open until getIssue resolves so a failed fetch doesn't
       // make the selection vanish with zero feedback.
       void runGetIssue({ environmentId, input: { issueId: issue.id } }).then((result) => {
+        if (attachRequestRef.current !== requestId) return;
         attachInFlightRef.current = false;
         setIsAttaching(false);
         if (result._tag !== "Success") {
@@ -139,6 +145,8 @@ export function ComposerLinearIssuePicker({
           setHasAttachError(false);
           setIsAttaching(false);
           attachInFlightRef.current = false;
+          // Invalidate any in-flight detail fetch so it can't attach after close.
+          attachRequestRef.current += 1;
         }
       }}
     >

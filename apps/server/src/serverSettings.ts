@@ -701,13 +701,21 @@ const make = Effect.gen(function* () {
           // no shared transaction, so the pair can never be updated atomically.
           // The file write already landed; if committing the secret fails, the
           // file would claim `apiKeySet: true` while the store holds a stale key
-          // or none. Best-effort roll the file (and cache) back to the previous
-          // persisted state so the divergence does not persist, then surface the
-          // original error. A failed rollback is logged but does not mask it.
+          // or none. Roll back ONLY the linear placeholder to the previous
+          // persisted state (`current.linear`), which still matches the
+          // untouched linear secret — the rest of this patch stays, since
+          // `persistProviderEnvironmentSecrets` already mutated the provider
+          // secret store and its placeholders must remain consistent with it.
+          // Best-effort: a failed rollback is logged; the original error always
+          // surfaces.
           yield* linearPlan.commit.pipe(
             Effect.catch((commitError) =>
-              writeSettingsAtomically(current).pipe(
-                Effect.flatMap(() => Cache.set(settingsCache, cacheKey, current)),
+              normalizeServerSettings({ ...next, linear: current.linear }).pipe(
+                Effect.flatMap((reverted) =>
+                  writeSettingsAtomically(reverted).pipe(
+                    Effect.flatMap(() => Cache.set(settingsCache, cacheKey, reverted)),
+                  ),
+                ),
                 Effect.catch((rollbackError) =>
                   Effect.logWarning(
                     "failed to roll back settings after Linear secret write failure",
