@@ -2252,12 +2252,13 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
-    gitCwd === null
+    gitStatusCwd === null
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd: gitCwd },
+          input: { cwd: gitStatusCwd },
         }),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2291,6 +2292,9 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const initialDiffPanelGitScope =
+    gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
+  const diffPanelGitStatusResolutionKey = gitStatusQuery.data ? "resolved" : "pending";
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -5136,7 +5140,12 @@ function ChatViewContent(props: ChatViewProps) {
       />
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
-        <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
+        <DiffPanel
+          key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
+          mode="embedded"
+          composerDraftTarget={composerDraftTarget}
+          initialGitScope={initialDiffPanelGitScope}
+        />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
