@@ -169,7 +169,7 @@ describe("claudeUsageProbe", () => {
       source: "claudeStatusProbe",
       available: false,
       checkedAt: "2026-04-17T10:00:00.000Z",
-      reason: "Usage limits unavailable for this Claude account.",
+      reason: "Could not read usage limits for this Claude account.",
       windows: [],
     });
   });
@@ -296,6 +296,30 @@ describe("claudeUsageProbe", () => {
     });
   });
 
+  it("parses punctuated IANA time zone identifiers", () => {
+    const parsed = parseClaudeUsageLimitsOutput({
+      checkedAt: "2026-07-18T10:00:00.000Z",
+      output: JSON.stringify({
+        result: "Current session: 25% used · resets Jul 18, 9:00am (Etc/GMT+5)",
+      }),
+    });
+
+    expect(parsed.windows[0]?.resetsAt).toBe("2026-07-18T14:00:00.000Z");
+  });
+
+  it("keeps usage available when an IANA time zone is invalid", () => {
+    const parsed = parseClaudeUsageLimitsOutput({
+      checkedAt: "2026-07-18T10:00:00.000Z",
+      output: JSON.stringify({
+        result: "Current session: 25% used · resets Jul 18, 9:00am (Not/AZone)",
+      }),
+    });
+
+    expect(parsed.available).toBe(true);
+    expect(parsed.windows[0]).toMatchObject({ usedPercent: 25 });
+    expect(parsed.windows[0]?.resetsAt).toBeUndefined();
+  });
+
   it("rolls the reset year forward when a year-less IANA-zone reset wraps into next year", () => {
     const output = JSON.stringify({
       type: "result",
@@ -309,6 +333,24 @@ describe("claudeUsageProbe", () => {
     });
 
     expect(parsed.windows[0]?.resetsAt).toBe("2027-01-03T03:30:00.000Z");
+  });
+
+  it("does not roll stale same-year or explicitly dated resets forward", () => {
+    const staleYearless = parseClaudeUsageLimitsOutput({
+      checkedAt: "2026-07-20T10:00:00.000Z",
+      output: JSON.stringify({
+        result: "Current session: 50% used · resets Jul 10, 9:00am (Asia/Kolkata)",
+      }),
+    });
+    const explicitYear = parseClaudeUsageLimitsOutput({
+      checkedAt: "2026-12-30T10:00:00.000Z",
+      output: JSON.stringify({
+        result: "Current session: 50% used · resets Jan 3, 2026, 9:00am (Asia/Kolkata)",
+      }),
+    });
+
+    expect(staleYearless.windows[0]?.resetsAt).toBe("2026-07-10T03:30:00.000Z");
+    expect(explicitYear.windows[0]?.resetsAt).toBe("2026-01-03T03:30:00.000Z");
   });
 
   it("collects Claude print-mode JSON until the process exits", async () => {

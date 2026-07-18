@@ -5,8 +5,8 @@ import * as Option from "effect/Option";
 import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
 import {
+  collectPtyProbeOutput,
   defaultProbeClock,
-  killPtyProcessQuietly,
   type ProbeClock,
   rollResetYearForward,
   stripAnsi,
@@ -91,7 +91,7 @@ export function parseClaudeRuntimeUsageLimits(input: {
         ...(resetsAt === undefined ? {} : { resetsAt }),
       },
     ],
-    unavailableReason: "Usage limits unavailable for this Claude account.",
+    unavailableReason: "Could not read usage limits for this Claude account.",
   });
 }
 
@@ -134,7 +134,7 @@ function detectClaudeUsageWindowKind(value: string): "session" | "weekly" | unde
 }
 
 /** Matches a parenthesized IANA zone id, e.g. "(Asia/Kolkata)" or "(America/Los_Angeles)". */
-const IANA_TIMEZONE_PATTERN = /\(([A-Za-z]+(?:\/[A-Za-z_]+){1,2})\)/;
+const IANA_TIMEZONE_PATTERN = /\(([^()\s]+\/[^()\s]+)\)\s*$/;
 const MONTH_ABBREVIATIONS = [
   "jan",
   "feb",
@@ -163,7 +163,9 @@ function monthNumberFromName(name: string): number | undefined {
  * `YYYY-MM-DD HH:mm:00` string DateTime can parse unambiguously.
  */
 function toCanonicalLocalDateTime(text: string, year: number): string | undefined {
-  const match = text.match(/([A-Za-z]{3,9})\s+(\d{1,2}),?\s*(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  const match = text.match(
+    /([A-Za-z]{3,9})\s+(\d{1,2}),?\s*(?:(?:19|20)\d{2},?\s*)?(\d{1,2}):(\d{2})\s*(am|pm)?/i,
+  );
   if (!match) return undefined;
   const [, monthName, dayText, hourText, minute, meridiem] = match;
   const month = monthName ? monthNumberFromName(monthName) : undefined;
@@ -308,7 +310,7 @@ export function parseClaudeUsageLimitsOutput(input: {
       source: "claudeStatusProbe",
       checkedAt: input.checkedAt,
       windows,
-      unavailableReason: "Usage limits unavailable for this Claude account.",
+      unavailableReason: "Could not read usage limits for this Claude account.",
     });
   }
 
@@ -323,7 +325,7 @@ export function parseClaudeUsageLimitsOutput(input: {
   return makeUnavailableUsageLimits({
     source: "claudeStatusProbe",
     checkedAt: input.checkedAt,
-    reason: "Usage limits unavailable for this Claude account.",
+    reason: "Could not read usage limits for this Claude account.",
   });
 }
 
@@ -391,31 +393,18 @@ function runProbeLoop(
   input: ClaudeUsageProbeInput,
   clock: ProbeClock,
 ): Promise<ClaudeUsageProbeResult> {
-  return new Promise((resolve) => {
-    let rawOutput = "";
-    let settled = false;
-    const timeout = clock.setTimeout(finish, CLAUDE_USAGE_PROBE_TIMEOUT_MS);
-
-    function finish() {
-      if (settled) return;
-      settled = true;
-      clock.clearTimeout(timeout);
-      offData();
-      offExit();
-      killPtyProcessQuietly(child);
-      resolve({
-        usageLimits: parseClaudeUsageLimitsOutput({
-          output: rawOutput,
-          checkedAt: input.checkedAt,
-        }),
-        rawOutput,
-      });
-    }
-
-    const offData = child.onData((data) => {
-      rawOutput += data;
-    });
-    const offExit = child.onExit(finish);
+  return collectPtyProbeOutput({
+    child,
+    clock,
+    timeoutMs: CLAUDE_USAGE_PROBE_TIMEOUT_MS,
+  }).then((rawOutput) => {
+    return {
+      usageLimits: parseClaudeUsageLimitsOutput({
+        output: rawOutput,
+        checkedAt: input.checkedAt,
+      }),
+      rawOutput,
+    };
   });
 }
 

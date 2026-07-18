@@ -5,8 +5,8 @@ import * as Option from "effect/Option";
 
 import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 import {
+  collectPtyProbeOutput,
   defaultProbeClock,
-  killPtyProcessQuietly,
   type ProbeClock,
   rollResetYearForward,
   stripAnsi,
@@ -84,14 +84,14 @@ export function parseGrokUsageLimitsOutput(input: {
           ...(resetsAt ? { resetsAt } : {}),
         },
       ],
-      unavailableReason: "Usage limits unavailable for this Grok account.",
+      unavailableReason: "Could not read usage limits for this Grok account.",
     });
   }
 
   return makeUnavailableUsageLimits({
     source: "grokStatusProbe",
     checkedAt: input.checkedAt,
-    reason: "Usage limits unavailable for this Grok account.",
+    reason: "Could not read usage limits for this Grok account.",
   });
 }
 
@@ -100,61 +100,29 @@ function runGrokUsageProbeLoop(
   input: GrokUsageProbeInput,
   clock: ProbeClock,
 ): Promise<GrokUsageProbeResult> {
-  return new Promise((resolve) => {
-    let rawOutput = "";
-    let settled = false;
-    let settleTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const timeout = clock.setTimeout(() => {
-      finish();
-    }, GROK_USAGE_PROBE_TIMEOUT_MS);
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clock.clearTimeout(timeout);
-      if (settleTimer) {
-        clock.clearTimeout(settleTimer);
-      }
-      offData();
-      offExit();
-      killPtyProcessQuietly(child);
-      resolve({
-        usageLimits: parseGrokUsageLimitsOutput({
-          output: rawOutput,
-          checkedAt: input.checkedAt,
-        }),
-        rawOutput,
-      });
-    };
-
-    const scheduleFinishAfterUsageOutput = () => {
-      if (settleTimer) {
-        clock.clearTimeout(settleTimer);
-      }
-      settleTimer = clock.setTimeout(() => {
-        finish();
-      }, GROK_USAGE_OUTPUT_SETTLE_MS);
-    };
-
-    const offData = child.onData((data) => {
-      rawOutput += data;
+  return collectPtyProbeOutput({
+    child,
+    clock,
+    timeoutMs: GROK_USAGE_PROBE_TIMEOUT_MS,
+    onStart: () => child.write("/usage\r"),
+    decideAfterOutput: (rawOutput) => {
       const parsed = parseGrokUsageLimitsOutput({
         output: rawOutput,
         checkedAt: input.checkedAt,
       });
       if (parsed.available && parsed.windows.every((window) => window.resetsAt)) {
-        finish();
-      } else if (parsed.available) {
-        scheduleFinishAfterUsageOutput();
+        return "finish";
       }
-    });
-
-    const offExit = child.onExit(() => {
-      finish();
-    });
-
-    child.write("/usage\r");
+      return parsed.available ? { settleAfterMs: GROK_USAGE_OUTPUT_SETTLE_MS } : "continue";
+    },
+  }).then((rawOutput) => {
+    return {
+      usageLimits: parseGrokUsageLimitsOutput({
+        output: rawOutput,
+        checkedAt: input.checkedAt,
+      }),
+      rawOutput,
+    };
   });
 }
 
