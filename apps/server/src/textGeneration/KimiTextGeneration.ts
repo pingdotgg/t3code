@@ -1,6 +1,8 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -40,6 +42,12 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // resolveKimiBinaryPath (PATH probe + ~/.kimi-code/bin fallback, reached via
+  // makeKimiAcpRuntime below) needs FileSystem/Path. Capture them at construction so
+  // each per-request runKimiJson can provide them — otherwise the requirement leaks
+  // past this service's declared R (never) and defects at runtime.
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const runKimiJson = <S extends Schema.Top>({
     operation,
@@ -67,7 +75,11 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      }).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;

@@ -592,6 +592,10 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
             Effect.provideService(Scope.Scope, sessionScope),
+            // resolveKimiBinaryPath (its PATH check + ~/.kimi-code/bin fallback)
+            // needs FileSystem/Path; provide the ones captured above.
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterProcessError({

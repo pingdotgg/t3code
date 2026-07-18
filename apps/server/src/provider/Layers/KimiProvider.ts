@@ -11,7 +11,9 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -30,7 +32,11 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeKimiAcpRuntime, resolveKimiAcpBaseModelId } from "../acp/KimiAcpSupport.ts";
+import {
+  makeKimiAcpRuntime,
+  resolveKimiAcpBaseModelId,
+  resolveKimiBinaryPath,
+} from "../acp/KimiAcpSupport.ts";
 
 const KIMI_PRESENTATION = {
   displayName: "Kimi",
@@ -42,7 +48,10 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
+// The Kimi CLI is a large single binary; cold starts on Windows (first spawn after
+// boot, antivirus scanning) can far exceed the ~1s warm-path latency, so a short
+// probe timeout would spuriously report an installed CLI as missing.
+const VERSION_PROBE_TIMEOUT_MS = 15_000;
 const KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
 const KIMI_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
@@ -105,14 +114,33 @@ function kimiModelsFromSettings(
   );
 }
 
-function buildKimiDiscoveredModelsFromSessionModelState(
+// The result of ACP model discovery, distinguishing the two "no models" shapes:
+//   - "signed-out": the session carried a `model` config option but its list was
+//     EMPTY — Kimi's signal that no account is logged in. Surfaced as "run kimi login".
+//   - "no-model-option": the session carried NO `model` option at all, which points
+//     at an incompatible/malformed CLI, NOT an auth problem, so a login prompt would
+//     mislead the user.
+export type KimiModelDiscovery =
+  | { readonly kind: "models"; readonly models: ReadonlyArray<ServerProviderModel> }
+  | { readonly kind: "signed-out" }
+  | { readonly kind: "no-model-option" };
+
+export const KIMI_SIGNED_OUT_MESSAGE =
+  "Kimi Code CLI is installed but not signed in. Run `kimi login` and try again.";
+export const KIMI_MODELS_UNAVAILABLE_MESSAGE =
+  "Kimi Code CLI is installed but returned no models. The installed CLI may be incompatible or misconfigured; check server logs for details.";
+
+export function classifyKimiSessionModels(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  if (!modelState || modelState.availableModels.length === 0) {
-    return [];
+): KimiModelDiscovery {
+  if (!modelState) {
+    return { kind: "no-model-option" };
+  }
+  if (modelState.availableModels.length === 0) {
+    return { kind: "signed-out" };
   }
   const seen = new Set<string>();
-  return modelState.availableModels
+  const models = modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
       const slug = resolveKimiAcpBaseModelId(model.modelId);
       if (!slug || seen.has(slug)) {
@@ -127,6 +155,7 @@ function buildKimiDiscoveredModelsFromSessionModelState(
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
+  return { kind: "models", models };
 }
 
 const discoverKimiModelsViaAcp = (
@@ -143,7 +172,7 @@ const discoverKimiModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildKimiDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    return classifyKimiSessionModels(started.sessionSetupResult.models);
   }).pipe(Effect.scoped);
 
 const runKimiVersionCommand = (
@@ -151,7 +180,7 @@ const runKimiVersionCommand = (
   environment: NodeJS.ProcessEnv = process.env,
 ) =>
   Effect.gen(function* () {
-    const command = kimiSettings.binaryPath || "kimi";
+    const command = yield* resolveKimiBinaryPath(kimiSettings, environment);
     const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
       env: environment,
     });
@@ -170,7 +199,7 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = kimiModelsFromSettings(kimiSettings.customModels);
@@ -297,7 +326,47 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
+  const discovery = discoveryExit.value.value;
+
+  // Signed out: the CLI is installed and healthy but has no account. Tell the user
+  // to log in rather than silently falling back to the built-in `kimi-k3` entry,
+  // which would then fail the moment they tried to use it.
+  if (discovery.kind === "signed-out") {
+    yield* Effect.logInfo("Kimi CLI is installed but signed out (empty ACP model list).");
+    return buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: kimiSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: KIMI_SIGNED_OUT_MESSAGE,
+      },
+    });
+  }
+
+  // No model option at all — an incompatible/malformed CLI, not an auth problem.
+  if (discovery.kind === "no-model-option") {
+    yield* Effect.logWarning("Kimi CLI ACP session carried no model config option.");
+    return buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: kimiSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message: KIMI_MODELS_UNAVAILABLE_MESSAGE,
+      },
+    });
+  }
+
+  const discoveredModels = discovery.models;
   const models =
     discoveredModels.length > 0
       ? kimiModelsFromSettings(kimiSettings.customModels, discoveredModels)
@@ -312,7 +381,7 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      auth: { status: "authenticated" },
     },
   });
 });

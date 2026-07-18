@@ -6,9 +6,37 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { KimiSettings } from "@t3tools/contracts";
 
-import { buildInitialKimiProviderSnapshot, checkKimiProviderStatus } from "./KimiProvider.ts";
+import {
+  buildInitialKimiProviderSnapshot,
+  checkKimiProviderStatus,
+  classifyKimiSessionModels,
+} from "./KimiProvider.ts";
 
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
+
+describe("classifyKimiSessionModels", () => {
+  it("treats a missing model option as an incompatible CLI, not a sign-in prompt", () => {
+    expect(classifyKimiSessionModels(null).kind).toBe("no-model-option");
+    expect(classifyKimiSessionModels(undefined).kind).toBe("no-model-option");
+  });
+
+  it("treats an EMPTY model list as signed-out (Kimi's logged-out signal)", () => {
+    expect(classifyKimiSessionModels({ availableModels: [] } as never).kind).toBe("signed-out");
+  });
+
+  it("returns the deduped discovered models when the list is populated", () => {
+    const result = classifyKimiSessionModels({
+      availableModels: [
+        { modelId: "kimi-k3", name: "Kimi K3" },
+        { modelId: "kimi-k3", name: "Kimi K3 (dupe)" },
+      ],
+    } as never);
+    expect(result.kind).toBe("models");
+    if (result.kind === "models") {
+      expect(result.models.map((model) => model.slug)).toEqual(["kimi-k3"]);
+    }
+  });
+});
 
 describe("buildInitialKimiProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>

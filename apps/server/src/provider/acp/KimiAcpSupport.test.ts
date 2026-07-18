@@ -1,11 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as EffectAcpErrors from "effect-acp/errors";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   applyKimiAcpModelSelection,
   buildKimiAcpSpawnInput,
   resolveKimiAcpBaseModelId,
+  resolveKimiBinaryPath,
 } from "./KimiAcpSupport.ts";
 
 describe("resolveKimiAcpBaseModelId", () => {
@@ -19,20 +25,74 @@ describe("resolveKimiAcpBaseModelId", () => {
 });
 
 describe("buildKimiAcpSpawnInput", () => {
-  it("spawns `kimi acp` and passes the environment through unchanged", () => {
-    const spawn = buildKimiAcpSpawnInput({ binaryPath: "/usr/local/bin/kimi" }, "/tmp/project", {
-      KIMI_API_KEY: "secret",
-    });
+  it.effect("spawns `kimi acp` and passes the environment through unchanged", () =>
+    Effect.gen(function* () {
+      const spawn = yield* buildKimiAcpSpawnInput(
+        { binaryPath: "/usr/local/bin/kimi" },
+        "/tmp/project",
+        { KIMI_API_KEY: "secret" },
+      );
 
-    expect(spawn).toEqual({
-      command: "/usr/local/bin/kimi",
-      args: ["acp"],
-      cwd: "/tmp/project",
-      env: {
-        KIMI_API_KEY: "secret",
-      },
-    });
-  });
+      expect(spawn).toEqual({
+        command: "/usr/local/bin/kimi",
+        args: ["acp"],
+        cwd: "/tmp/project",
+        env: {
+          KIMI_API_KEY: "secret",
+        },
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("resolveKimiBinaryPath", () => {
+  it.effect("uses an explicit binaryPath verbatim without probing PATH", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveKimiBinaryPath({ binaryPath: "/opt/kimi/bin/kimi" });
+      expect(resolved).toBe("/opt/kimi/bin/kimi");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("falls back to the well-known install path when kimi is not on PATH", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const expected = path.join(NodeOS.homedir(), ".kimi-code", "bin", "kimi.exe");
+      const fakeFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        exists: (candidate) => Effect.succeed(candidate === expected),
+      });
+
+      // Empty PATH so the bare `kimi` is not resolvable; win32 so the fallback
+      // targets kimi.exe.
+      const resolved = yield* resolveKimiBinaryPath(
+        { binaryPath: "kimi" },
+        { PATH: "", PATHEXT: ".EXE" },
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fakeFileSystem),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      expect(resolved).toBe(expected);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("returns the bare command when kimi is neither on PATH nor at the fallback", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fakeFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        exists: () => Effect.succeed(false),
+      });
+
+      const resolved = yield* resolveKimiBinaryPath({ binaryPath: "kimi" }, { PATH: "" }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fakeFileSystem),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      expect(resolved).toBe("kimi");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("applyKimiAcpModelSelection", () => {
