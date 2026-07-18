@@ -70,7 +70,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeEnvironment, resolveClaudeCodeExecutable } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -1359,9 +1359,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
-    Effect.provideService(Path.Path, path),
+  // Agent SDK requires a native binary path; unwrap npm shims (esp. Windows .cmd).
+  const resolvedBinaryPath = yield* resolveClaudeCodeExecutable(
+    claudeSettings.binaryPath,
+    options?.environment,
   );
+  const effectiveClaudeSettings = {
+    ...claudeSettings,
+    binaryPath: resolvedBinaryPath,
+  } satisfies ClaudeSettings;
+  const claudeEnvironment = yield* makeClaudeEnvironment(
+    effectiveClaudeSettings,
+    options?.environment,
+  ).pipe(Effect.provideService(Path.Path, path));
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -3422,8 +3432,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
         runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
-      const claudeBinaryPath = claudeSettings.binaryPath;
-      const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
+      const claudeBinaryPath = effectiveClaudeSettings.binaryPath;
+      const extraArgs = parseCliArgs(effectiveClaudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);

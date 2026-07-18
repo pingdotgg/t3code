@@ -1,10 +1,65 @@
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
+
+const NPM_CLAUDE_PACKAGE_BIN = ["node_modules", "@anthropic-ai", "claude-code", "bin"] as const;
+
+function isWindowsScriptShim(filePath: string): boolean {
+  const extension = NodePath.win32.extname(filePath).toLowerCase();
+  return extension === ".cmd" || extension === ".bat" || extension === ".ps1" || extension === "";
+}
+
+/**
+ * Resolve a Claude Code binary path suitable for `pathToClaudeCodeExecutable`.
+ *
+ * The Claude Agent SDK expects a native binary, not an npm PATH shim. On Windows,
+ * `npm i -g @anthropic-ai/claude-code` installs `claude.cmd` / a shell wrapper that
+ * point at `node_modules/@anthropic-ai/claude-code/bin/claude.exe` — unwrap that.
+ */
+export const resolveClaudeCodeExecutable = Effect.fn("resolveClaudeCodeExecutable")(function* (
+  binaryPath: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<string, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const configured = binaryPath.trim() || "claude";
+  const nativeBinaryName = platform === "win32" ? "claude.exe" : "claude";
+
+  const resolved = yield* resolveCommandPath(
+    configured,
+    environment ? { env: environment } : {},
+  ).pipe(Effect.catchTag("CommandResolutionError", () => Effect.succeed(configured)));
+
+  // npm global prefix layout: <prefix>/claude(.cmd) → <prefix>/node_modules/@anthropic-ai/claude-code/bin/claude[.exe]
+  const npmNativeBinary = path.join(
+    path.dirname(resolved),
+    ...NPM_CLAUDE_PACKAGE_BIN,
+    nativeBinaryName,
+  );
+  if (yield* fileSystem.exists(npmNativeBinary).pipe(Effect.orElseSucceed(() => false))) {
+    return npmNativeBinary;
+  }
+
+  const resolvedExists = yield* fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => false));
+  if (resolvedExists) {
+    // Don't hand Windows script shims to the Agent SDK — it needs the .exe.
+    if (platform === "win32" && isWindowsScriptShim(resolved)) {
+      return configured;
+    }
+    return resolved;
+  }
+
+  return configured;
+});
 
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
