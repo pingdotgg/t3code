@@ -8,8 +8,11 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -96,6 +99,57 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
     }
     return result;
   }).pipe(Effect.scoped);
+
+/**
+ * Shared `--version` (or custom-args) CLI health probe used by Claude-runtime
+ * providers (Claude, OpenRouter, …).
+ */
+export type CliVersionProbeResult =
+  | { readonly kind: "missing"; readonly cause: unknown }
+  | { readonly kind: "error"; readonly cause: unknown }
+  | { readonly kind: "timeout" }
+  | { readonly kind: "failed"; readonly version: string | null; readonly code: number }
+  | { readonly kind: "ok"; readonly version: string | null };
+
+export const probeCliVersion = Effect.fn("probeCliVersion")(function* (
+  binaryPath: string,
+  environment: NodeJS.ProcessEnv,
+  options?: {
+    readonly args?: ReadonlyArray<string>;
+    readonly timeoutMs?: number;
+  },
+): Effect.fn.Return<CliVersionProbeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const args = options?.args ?? ["--version"];
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const spawnCommand = yield* resolveSpawnCommand(binaryPath, args, {
+    env: environment,
+  });
+  const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+    env: environment,
+    shell: spawnCommand.shell,
+  });
+  const probe = yield* spawnAndCollect(binaryPath, command).pipe(
+    Effect.timeoutOption(timeoutMs),
+    Effect.result,
+  );
+
+  if (Result.isFailure(probe)) {
+    return {
+      kind: isCommandMissingCause(probe.failure) ? "missing" : "error",
+      cause: probe.failure,
+    } as const;
+  }
+  if (Option.isNone(probe.success)) {
+    return { kind: "timeout" } as const;
+  }
+
+  const version = probe.success.value;
+  const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
+  if (version.code !== 0) {
+    return { kind: "failed", version: parsedVersion, code: version.code } as const;
+  }
+  return { kind: "ok", version: parsedVersion } as const;
+});
 
 export function detailFromResult(
   result: CommandResult & { readonly timedOut?: boolean },

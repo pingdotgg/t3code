@@ -1399,8 +1399,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const nextEventId = Effect.map(randomUUIDv4, (id) => EventId.make(id));
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
+  // Always stamp the bound driver kind so OpenRouter (and similar) sessions
+  // cannot accidentally emit `claudeAgent` events from shared Claude runtime code.
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+    Queue.offer(runtimeEventQueue, { ...event, provider: providerKind }).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fn("logNativeSdkMessage")(function* (
     context: ClaudeSessionContext,

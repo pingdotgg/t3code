@@ -21,7 +21,7 @@ import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGenerat
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeOpenRouterAdapter } from "../Layers/OpenRouterAdapter.ts";
+import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkOpenRouterProviderStatus,
   makePendingOpenRouterProvider,
@@ -103,6 +103,7 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
       const eventLoggers = yield* ProviderEventLoggers;
       const baseEnv = mergeProviderInstanceEnvironment(environment);
       const effectiveConfig = { ...config, enabled } satisfies OpenRouterSettings;
+      // Build OpenRouter-owned process env once; pass through to adapter + probes.
       const processEnv = buildOpenRouterProcessEnv(effectiveConfig, baseEnv);
       const claudeSettings = toClaudeSettings(effectiveConfig);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -120,9 +121,10 @@ export const OpenRouterDriver: ProviderDriver<OpenRouterSettings, OpenRouterDriv
         env: processEnv,
       });
 
-      const adapter = yield* makeOpenRouterAdapter(effectiveConfig, {
+      const adapter = yield* makeClaudeAdapter(claudeSettings, {
         instanceId,
-        environment: baseEnv,
+        environment: processEnv,
+        provider: OPENROUTER_DRIVER_KIND,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv);

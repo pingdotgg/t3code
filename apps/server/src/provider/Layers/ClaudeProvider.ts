@@ -11,14 +11,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
@@ -30,11 +29,8 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
-  isCommandMissingCause,
-  parseGenericCliVersion,
+  probeCliVersion,
   providerModelsFromSettings,
-  spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -637,22 +633,6 @@ const probeClaudeCapabilities = (
   );
 };
 
-const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
-  claudeSettings: ClaudeSettings,
-  args: ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
-) {
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-  const spawnCommand = yield* resolveSpawnCommand(claudeSettings.binaryPath, args, {
-    env: claudeEnvironment,
-  });
-  const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-    env: claudeEnvironment,
-    shell: spawnCommand.shell,
-  });
-  return yield* spawnAndCollect(claudeSettings.binaryPath, command);
-});
-
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -689,16 +669,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const versionProbe = yield* runClaudeCommand(
-    claudeSettings,
-    ["--version"],
-    resolvedEnvironment,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment);
+  const versionProbe = yield* probeCliVersion(claudeSettings.binaryPath, claudeEnvironment);
 
-  if (Result.isFailure(versionProbe)) {
-    const error = versionProbe.failure;
+  if (versionProbe.kind === "missing" || versionProbe.kind === "error") {
     yield* Effect.logWarning("Claude Agent CLI health check failed.", {
-      errorTag: error._tag,
+      probeKind: versionProbe.kind,
     });
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
@@ -706,18 +682,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       checkedAt,
       models: allModels,
       probe: {
-        installed: !isCommandMissingCause(error),
+        installed: versionProbe.kind !== "missing",
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Claude Agent CLI (`claude`) is not installed or not on PATH."
-          : "Failed to execute Claude Agent CLI health check.",
+        message:
+          versionProbe.kind === "missing"
+            ? "Claude Agent CLI (`claude`) is not installed or not on PATH."
+            : "Failed to execute Claude Agent CLI health check.",
       },
     });
   }
 
-  if (Option.isNone(versionProbe.success)) {
+  if (versionProbe.kind === "timeout") {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -734,13 +711,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const version = versionProbe.success.value;
-  const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-  if (version.code !== 0) {
+  if (versionProbe.kind === "failed") {
     yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
-      exitCode: version.code,
-      stdoutLength: version.stdout.length,
-      stderrLength: version.stderr.length,
+      exitCode: versionProbe.code,
     });
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
@@ -749,7 +722,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       models: allModels,
       probe: {
         installed: true,
-        version: parsedVersion,
+        version: versionProbe.version,
         status: "error",
         auth: { status: "unknown" },
         message: "Claude Agent CLI is installed but failed to run.",
@@ -757,6 +730,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const parsedVersion = versionProbe.version;
   const models = providerModelsFromSettings(
     getBuiltInClaudeModelsForVersion(parsedVersion),
     PROVIDER,

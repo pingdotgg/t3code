@@ -1,4 +1,9 @@
-import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import {
+  PROVIDER_DISPLAY_NAMES,
+  type OrchestrationThreadActivity,
+  type ProviderDriverKind,
+  type ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -28,27 +33,16 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 /** Map a provider driver kind to a user-facing display name. */
 export function formatProviderDisplayName(provider: string | null | undefined): string {
   if (!provider) return "This agent";
-  switch (provider) {
-    case "claudeAgent":
-    case "claude":
-      return "Claude";
-    case "codex":
-      return "Codex";
-    case "cursor":
-      return "Cursor";
-    case "grok":
-      return "Grok";
-    case "openrouter":
-      return "OpenRouter";
-    case "opencode":
-      return "OpenCode";
-    default: {
-      // Title-case unknown driver kinds so they read reasonably.
-      const trimmed = provider.replace(/Agent$/i, "").trim();
-      if (trimmed.length === 0) return provider;
-      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-    }
-  }
+
+  // Legacy alias used in older activity payloads.
+  const driverKind = (provider === "claude" ? "claudeAgent" : provider) as ProviderDriverKind;
+  const known = PROVIDER_DISPLAY_NAMES[driverKind];
+  if (known) return known;
+
+  // Title-case unknown driver kinds so they read reasonably.
+  const trimmed = provider.replace(/Agent$/i, "").trim();
+  if (trimmed.length === 0) return provider;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
 export function deriveLatestContextWindowSnapshot(
