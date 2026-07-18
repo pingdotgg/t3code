@@ -66,6 +66,34 @@ nodeServicesIt("ClaudeHome", (it) => {
     }),
   );
 
+  it.effect("does not replace a custom exe when a sibling npm package binary exists", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const prefix = yield* Effect.sync(() =>
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-custom-")),
+      );
+      const customBinary = path.join(prefix, "claude.exe");
+      const npmNativeBinary = path.join(
+        prefix,
+        "node_modules",
+        "@anthropic-ai",
+        "claude-code",
+        "bin",
+        "claude.exe",
+      );
+      yield* Effect.sync(() => {
+        NodeFS.mkdirSync(path.dirname(npmNativeBinary), { recursive: true });
+        NodeFS.writeFileSync(customBinary, "");
+        NodeFS.writeFileSync(npmNativeBinary, "");
+      });
+
+      const resolved = yield* resolveClaudeCodeExecutable(customBinary).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      expect(resolved).toBe(customBinary);
+    }),
+  );
+
   it.effect("uses the process home when no Claude home override is configured", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

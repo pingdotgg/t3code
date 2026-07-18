@@ -40,14 +40,24 @@ export const resolveClaudeCodeExecutable = Effect.fn("resolveClaudeCodeExecutabl
     environment ? { env: environment } : {},
   ).pipe(Effect.catchTag("CommandResolutionError", () => Effect.succeed(configured)));
 
-  // npm global prefix layout: <prefix>/claude(.cmd) → <prefix>/node_modules/@anthropic-ai/claude-code/bin/claude[.exe]
-  const npmNativeBinary = path.join(
-    path.dirname(resolved),
-    ...NPM_CLAUDE_PACKAGE_BIN,
-    nativeBinaryName,
-  );
-  if (yield* fileSystem.exists(npmNativeBinary).pipe(Effect.orElseSucceed(() => false))) {
-    return npmNativeBinary;
+  // Only unwrap npm shims — never replace an explicit native/custom executable
+  // just because a sibling node_modules/@anthropic-ai/claude-code layout exists.
+  const shouldUnwrapNpmShim =
+    platform === "win32"
+      ? isWindowsScriptShim(resolved)
+      : // Bare `claude` on PATH is typically the npm/posix wrapper script.
+        configured === "claude" || configured === nativeBinaryName;
+
+  if (shouldUnwrapNpmShim) {
+    // npm global prefix: <prefix>/claude(.cmd) → <prefix>/node_modules/@anthropic-ai/claude-code/bin/claude[.exe]
+    const npmNativeBinary = path.join(
+      path.dirname(resolved),
+      ...NPM_CLAUDE_PACKAGE_BIN,
+      nativeBinaryName,
+    );
+    if (yield* fileSystem.exists(npmNativeBinary).pipe(Effect.orElseSucceed(() => false))) {
+      return npmNativeBinary;
+    }
   }
 
   const resolvedExists = yield* fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => false));
