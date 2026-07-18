@@ -66,6 +66,13 @@
             try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
 
+            // Changes panel segmented control: Files (default) then Activity.
+            toggleSection("activity")
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("1b-changes-activity", dir: dir)
+            toggleSection("files")
+            try? await Task.sleep(for: .seconds(0.5))
+
             // Subagent stability: server-driven stall badge (appears on a
             // synthetic session.health stall, clears on active), the delegated
             // sibling-agent roster, and the session.exited stderr disclosure.
@@ -1209,7 +1216,9 @@
         }
 
         private static func snapshot(_ name: String, window: NSWindow, dir: String) {
-            guard let view = window.contentView,
+            // Capture the theme frame (contentView's superview) so the window
+            // toolbar chrome is included, not just the content area.
+            guard let view = window.contentView?.superview ?? window.contentView,
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             else {
                 print("UIProbe: snapshot \(name) failed (no window)")

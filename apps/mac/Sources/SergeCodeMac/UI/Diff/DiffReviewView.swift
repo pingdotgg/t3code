@@ -290,11 +290,13 @@ public struct DiffReviewView: View {
     }
 
     private var viewModeToggle: some View {
-        Picker("View", selection: $viewMode) {
-            Text("Unified").tag(DiffViewMode.unified)
-            Text("Side by Side").tag(DiffViewMode.sideBySide)
-        }
-        .pickerStyle(.segmented)
+        AlpineSegmentedControl(
+            segments: [
+                .init(value: .unified, title: "Unified"),
+                .init(value: .sideBySide, title: "Side by Side"),
+            ],
+            selection: $viewMode
+        )
         .frame(width: 200)
         .help("Toggle unified and side-by-side")
     }

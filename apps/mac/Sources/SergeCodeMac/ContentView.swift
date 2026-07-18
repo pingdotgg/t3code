@@ -68,6 +68,7 @@ struct RootView: View {
             ToolbarItem(placement: .navigation) {
                 ConnectionStatusPill(phase: model.connection)
             }
+            .sharedBackgroundVisibility(.hidden)
             if model.subagentTaskAggregator.runningCount > 0 {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -93,10 +94,12 @@ struct RootView: View {
                             })
                     }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             ToolbarItem(placement: .primaryAction) {
                 newSessionMenu
             }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     // Deferred one runloop turn: flipping this synchronously
@@ -109,16 +112,20 @@ struct RootView: View {
                 } label: {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
+                .buttonStyle(AlpineToolbarIconButtonStyle())
                 .disabled(model.selectedThread == nil)
             }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showPassportSheet = true
                 } label: {
                     Label("Passport", systemImage: "book.closed")
                 }
+                .buttonStyle(AlpineToolbarIconButtonStyle())
                 .help("Passport")
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
@@ -147,7 +154,7 @@ struct RootView: View {
     /// reproduce the full device × project × provider tree.
     @ViewBuilder
     private var newSessionMenu: some View {
-        Menu {
+        NewSessionSplitControl(onNewSession: { showNewSessionSheet = true }) {
             Button {
                 showNewSessionSheet = true
             } label: {
@@ -186,10 +193,6 @@ struct RootView: View {
                     }
                 }
             }
-        } label: {
-            Label("New Session", systemImage: "plus")
-        } primaryAction: {
-            showNewSessionSheet = true
         }
     }
 

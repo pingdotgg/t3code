@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Toolbar chrome for the cross-thread task monitor. Like
-/// `ConnectionStatusPill`, this deliberately has no background of its own:
-/// the macOS toolbar supplies the glass container.
+/// Toolbar chrome for the cross-thread task monitor. Interactive Alpine glass
+/// chip — the system per-item capsule is suppressed on its ToolbarItem.
 @MainActor
 struct AgentsToolbarPill: View {
     let count: Int
@@ -10,7 +9,7 @@ struct AgentsToolbarPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(.green)
+                .fill(AlpineTheme.meadow)
                 .frame(width: 6, height: 6)
             Text("\(count) agent\(count == 1 ? "" : "s")")
                 .font(.caption)
@@ -18,8 +17,8 @@ struct AgentsToolbarPill: View {
                 .lineLimit(1)
                 .contentTransition(.numericText())
         }
-        .padding(.horizontal, 4)
         .fixedSize()
+        .alpineToolbarChip(interactive: true)
         .animation(Motion.ambient, value: count)
     }
 }

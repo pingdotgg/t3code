@@ -15,7 +15,10 @@ export default defineConfig({
   },
   staged: {
     // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    // Limit to file types `vp fmt` actually handles so pure-Swift commits
+    // under apps/mac (and other ignored paths) do not fail with
+    // "Expected at least one target file".
+    "*.{ts,tsx,js,jsx,mjs,cjs,json,md,css,html,yml,yaml}": "vp fmt",
   },
   fmt: {
     ignorePatterns: [

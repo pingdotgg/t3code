@@ -68,9 +68,23 @@ public struct ChangesTimelineView: View {
             await model.refreshCheckpoints(threadID: threadID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+            guard let key = note.object as? String else { return }
             // Legacy harness key: open full-thread review (rail has no collapse).
-            guard note.object as? String == "checkpoints" else { return }
-            DispatchQueue.main.async { openAllChanges() }
+            if key == "checkpoints" {
+                DispatchQueue.main.async { openAllChanges() }
+                return
+            }
+            #if DEBUG
+                if key == "activity" {
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.reveal) { mode = .activity }
+                    }
+                } else if key == "files" {
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.reveal) { mode = .files }
+                    }
+                }
+            #endif
         }
         .confirmationDialog(
             "Restore Checkpoint?",
@@ -97,32 +111,30 @@ public struct ChangesTimelineView: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Button {
-                    Task {
-                        await model.refreshDiff(threadID: threadID)
-                        await model.refreshCheckpoints(threadID: threadID)
-                        if model.threadState(threadID)?.isReviewing == true {
-                            await model.loadReviewDiff(threadID: threadID)
-                        }
-                    }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.plain)
-                .help("Refresh changes and activity")
+                refreshButton
             }
 
-            Picker("Changes view", selection: $mode) {
-                ForEach(Mode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            AlpineSegmentedControl(selection: $mode, height: 26)
+                .accessibilityLabel("Changes view")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// Quiet inspector-surface refresh control: flat hover wash, no glass.
+    private var refreshButton: some View {
+        ChangesQuietIconButton(
+            systemImage: "arrow.clockwise",
+            help: "Refresh changes and activity"
+        ) {
+            Task {
+                await model.refreshDiff(threadID: threadID)
+                await model.refreshCheckpoints(threadID: threadID)
+                if model.threadState(threadID)?.isReviewing == true {
+                    await model.loadReviewDiff(threadID: threadID)
+                }
+            }
+        }
     }
 
     // MARK: - Files
@@ -541,5 +553,37 @@ public struct ChangesTimelineView: View {
                 focusPath: focusPath
             )
         }
+    }
+}
+
+/// 26×26 icon button for inspector surfaces: transparent at rest, flat hover
+/// wash in `Corners.compact` — no glass (content surface rule).
+private struct ChangesQuietIconButton: View {
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    @UIState private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+                .background {
+                    if isHovering {
+                        RoundedRectangle(
+                            cornerRadius: AlpineTheme.Corners.compact, style: .continuous
+                        )
+                        .fill(Color.primary.opacity(0.07))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
     }
 }
