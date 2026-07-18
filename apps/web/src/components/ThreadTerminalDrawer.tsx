@@ -491,6 +491,7 @@ export function TerminalViewport({
           TERMINAL_SELECTION_ACTION_MENU_ITEMS,
           nextAction.position,
         );
+        selectionActionOpenRef.current = false;
         if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
           return;
         }
