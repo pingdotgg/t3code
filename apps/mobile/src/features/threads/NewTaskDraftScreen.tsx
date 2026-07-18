@@ -1,5 +1,5 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
@@ -35,7 +35,13 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
-import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import {
+  clearComposerDraftContent,
+  getComposerDraftSnapshot,
+  mergeComposerDraftContent,
+  restoreComposerDraftSnapshot,
+  type ComposerDraft,
+} from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -43,6 +49,7 @@ import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../sta
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
+import { useIncomingShare } from "../sharing/IncomingShareProvider";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -63,11 +70,20 @@ export function NewTaskDraftScreen(props: {
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
+  /** Durable native share inbox item to merge into this project draft. */
+  readonly incomingShareId?: string;
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
+  const {
+    consumeShare,
+    getShare,
+    isLoading: isIncomingShareInboxLoading,
+    releaseShareReservation,
+    reserveShare,
+  } = useIncomingShare();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
@@ -82,10 +98,94 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
+  const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
+  const [cancelledIncomingShareId, setCancelledIncomingShareId] = useState<string | null>(null);
+  const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
+  const [shareImportAttempt, setShareImportAttempt] = useState(0);
+  const startedShareImportKeyRef = useRef<string | null>(null);
+  const cancellingShareImportKeyRef = useRef<string | null>(null);
+  const shareImportDraftBackupRef = useRef(new Map<string, ComposerDraft>());
+  const activeShareImportTokenRef = useRef<symbol | null>(null);
+  const shareImportMountedRef = useRef(true);
+  const latestDraftKeyRef = useRef(flow.draftKey);
+  const latestIncomingShareIdRef = useRef(props.incomingShareId);
+  latestDraftKeyRef.current = flow.draftKey;
+  latestIncomingShareIdRef.current = props.incomingShareId;
+  const isImportingShare = importingShareKey !== null;
+  const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
+  const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
+  const requestedInitialProjectAvailable = Boolean(
+    props.initialProjectRef?.environmentId &&
+    props.initialProjectRef.projectId &&
+    projects.some(
+      (project) =>
+        project.environmentId === props.initialProjectRef?.environmentId &&
+        project.id === props.initialProjectRef?.projectId,
+    ),
+  );
+  const isProjectPickerReturnActive =
+    isReturningToProjectPicker && !requestedInitialProjectAvailable;
+  const isIncomingShareTransferPending = Boolean(
+    incomingShare && cancelledIncomingShareId !== props.incomingShareId,
+  );
+  usePreventRemove(
+    (isIncomingShareTransferPending && !isProjectPickerReturnActive) || isCancellingShareImport,
+    () => undefined,
+  );
+  const hasImportedIncomingShare = Boolean(
+    props.incomingShareId &&
+    flow.draftKey &&
+    getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId),
+  );
+  const isIncomingShareUnavailable = Boolean(
+    props.incomingShareId &&
+    !isIncomingShareInboxLoading &&
+    !incomingShare &&
+    !hasImportedIncomingShare,
+  );
+  const isIncomingShareReady =
+    !props.incomingShareId ||
+    (hasImportedIncomingShare && !incomingShare) ||
+    isIncomingShareUnavailable;
   const appliedInitialProjectKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (cancelledIncomingShareId === props.incomingShareId) {
+      navigation.goBack();
+    }
+  }, [cancelledIncomingShareId, navigation, props.incomingShareId]);
+  useEffect(() => {
+    if (!isReturningToProjectPicker) {
+      return;
+    }
+    if (requestedInitialProjectAvailable) {
+      setIsReturningToProjectPicker(false);
+      return;
+    }
+    // Let usePreventRemove commit its disabled state before replacing this
+    // route, otherwise the transfer guard can swallow the fallback action.
+    const frame = requestAnimationFrame(() => {
+      navigation.dispatch(
+        StackActions.replace("NewTask", { incomingShareId: props.incomingShareId }),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    isReturningToProjectPicker,
+    navigation,
+    props.incomingShareId,
+    requestedInitialProjectAvailable,
+  ]);
+  useEffect(() => {
+    if (!shareImportMountedRef.current) {
+      startedShareImportKeyRef.current = null;
+    }
+    shareImportMountedRef.current = true;
     return () => {
       appliedInitialProjectKeyRef.current = null;
+      shareImportMountedRef.current = false;
+      activeShareImportTokenRef.current = null;
+      cancellingShareImportKeyRef.current = null;
     };
   }, []);
 
@@ -163,6 +263,14 @@ export function NewTaskDraftScreen(props: {
         setProject(directProject);
         return;
       }
+
+      if (projects.length > 0) {
+        // Never fall through to the flow provider's temporary first-project
+        // default. Return to the picker with the share id intact so the user
+        // can choose an available destination.
+        setIsReturningToProjectPicker(true);
+      }
+      return;
     }
 
     if (selectedProject) {
@@ -179,6 +287,7 @@ export function NewTaskDraftScreen(props: {
     logicalProjects,
     projects,
     props.initialProjectRef,
+    props.incomingShareId,
     props.pendingTaskId,
     navigation,
     selectedProject,
@@ -197,6 +306,205 @@ export function NewTaskDraftScreen(props: {
     loadedBranchesProjectKeyRef.current = projectKey;
     void flow.loadBranches();
   }, [flow.loadBranches, selectedProject]);
+
+  useEffect(() => {
+    const shareId = props.incomingShareId;
+    const draftKey = flow.draftKey;
+    const destinationProject = selectedProject;
+    const initialEnvironmentId = props.initialProjectRef?.environmentId;
+    const initialProjectId = props.initialProjectRef?.projectId;
+    const selectedProjectMatchesRoute =
+      !initialEnvironmentId ||
+      !initialProjectId ||
+      (destinationProject?.environmentId === initialEnvironmentId &&
+        destinationProject.id === initialProjectId);
+    if (
+      !shareId ||
+      !draftKey ||
+      !destinationProject ||
+      !selectedProjectMatchesRoute ||
+      cancelledIncomingShareId === shareId
+    ) {
+      return;
+    }
+    const importKey = `${shareId}:${draftKey}`;
+    if (
+      startedShareImportKeyRef.current === importKey ||
+      cancellingShareImportKeyRef.current === importKey
+    ) {
+      return;
+    }
+
+    if (!incomingShare) {
+      if (isIncomingShareUnavailable && alertedUnavailableIncomingShareIdRef.current !== shareId) {
+        alertedUnavailableIncomingShareIdRef.current = shareId;
+        Alert.alert(
+          "Shared content unavailable",
+          "The shared content is no longer in the inbox. You can continue editing this task draft.",
+        );
+      }
+      return;
+    }
+
+    if (alertedUnavailableIncomingShareIdRef.current === shareId) {
+      alertedUnavailableIncomingShareIdRef.current = null;
+    }
+    startedShareImportKeyRef.current = importKey;
+    const draftBackup =
+      shareImportDraftBackupRef.current.get(importKey) ?? getComposerDraftSnapshot(draftKey);
+    shareImportDraftBackupRef.current.set(importKey, draftBackup);
+    const importToken = Symbol(importKey);
+    let didReserveShare = false;
+    let needsDraftRestore = false;
+    activeShareImportTokenRef.current = importToken;
+    setImportingShareKey(importKey);
+    void (async () => {
+      await reserveShare(shareId, {
+        environmentId: String(destinationProject.environmentId),
+        projectId: String(destinationProject.id),
+      });
+      didReserveShare = true;
+      if (
+        !shareImportMountedRef.current ||
+        activeShareImportTokenRef.current !== importToken ||
+        latestDraftKeyRef.current !== draftKey ||
+        latestIncomingShareIdRef.current !== shareId
+      ) {
+        return;
+      }
+      needsDraftRestore = true;
+      const { skippedAttachmentCount } = await mergeComposerDraftContent(draftKey, {
+        text: incomingShare.text,
+        attachments: incomingShare.attachments,
+        sourceShareId: shareId,
+      });
+      if (
+        !shareImportMountedRef.current ||
+        activeShareImportTokenRef.current !== importToken ||
+        latestDraftKeyRef.current !== draftKey ||
+        latestIncomingShareIdRef.current !== shareId
+      ) {
+        // The durable reservation makes an interrupted transfer resume only
+        // in this project instead of copying into a second project draft.
+        return;
+      }
+      await consumeShare(shareId);
+      if (!shareImportMountedRef.current || activeShareImportTokenRef.current !== importToken) {
+        return;
+      }
+      const warnings = [...incomingShare.warnings];
+      if (skippedAttachmentCount > 0) {
+        warnings.push(
+          `${skippedAttachmentCount} shared image${skippedAttachmentCount === 1 ? " was" : "s were"} skipped because this draft reached the attachment limit.`,
+        );
+      }
+      if (warnings.length > 0) {
+        Alert.alert("Some shared content was skipped", warnings.join("\n"));
+      }
+      shareImportDraftBackupRef.current.delete(importKey);
+    })()
+      .catch((error) => {
+        if (!shareImportMountedRef.current || activeShareImportTokenRef.current !== importToken) {
+          return;
+        }
+        Alert.alert(
+          "Could not import shared content",
+          error instanceof Error ? error.message : "The shared content could not be saved.",
+          [
+            {
+              text: "Cancel import",
+              style: "cancel",
+              onPress: () => {
+                const cancelImport = async (): Promise<void> => {
+                  if (!shareImportMountedRef.current) {
+                    return;
+                  }
+                  // Latch synchronously before restoring the draft. The
+                  // restore publishes atom state and can re-run the import
+                  // effect before React commits the cancelling state update.
+                  cancellingShareImportKeyRef.current = importKey;
+                  setIsCancellingShareImport(true);
+                  try {
+                    if (needsDraftRestore) {
+                      await restoreComposerDraftSnapshot(draftKey, draftBackup);
+                      needsDraftRestore = false;
+                    }
+                    if (didReserveShare) {
+                      await releaseShareReservation(shareId, {
+                        environmentId: String(destinationProject.environmentId),
+                        projectId: String(destinationProject.id),
+                      });
+                    }
+                    shareImportDraftBackupRef.current.delete(importKey);
+                    if (shareImportMountedRef.current) {
+                      setIsCancellingShareImport(false);
+                      setCancelledIncomingShareId(shareId);
+                    }
+                  } catch (cancelError) {
+                    if (!shareImportMountedRef.current) {
+                      return;
+                    }
+                    Alert.alert(
+                      "Could not cancel import",
+                      cancelError instanceof Error
+                        ? cancelError.message
+                        : "The shared content could not be restored safely.",
+                      [
+                        {
+                          text: "Retry import",
+                          onPress: () => {
+                            cancellingShareImportKeyRef.current = null;
+                            setIsCancellingShareImport(false);
+                            setShareImportAttempt((attempt) => attempt + 1);
+                          },
+                        },
+                        {
+                          text: "Retry cancel",
+                          onPress: () => void cancelImport(),
+                        },
+                      ],
+                      { cancelable: false },
+                    );
+                  }
+                };
+                void cancelImport();
+              },
+            },
+            {
+              text: "Retry",
+              onPress: () => setShareImportAttempt((attempt) => attempt + 1),
+            },
+          ],
+          { cancelable: false },
+        );
+      })
+      .finally(() => {
+        if (startedShareImportKeyRef.current === importKey) {
+          // Every terminal path, including an invalidated operation, must
+          // release the synchronous start latch so this transfer can retry.
+          startedShareImportKeyRef.current = null;
+        }
+        if (shareImportMountedRef.current && activeShareImportTokenRef.current === importToken) {
+          activeShareImportTokenRef.current = null;
+          setImportingShareKey(null);
+        }
+      });
+  }, [
+    consumeShare,
+    cancelledIncomingShareId,
+    flow.draftKey,
+    hasImportedIncomingShare,
+    incomingShare,
+    isIncomingShareInboxLoading,
+    isIncomingShareUnavailable,
+    props.incomingShareId,
+    props.initialProjectRef?.environmentId,
+    props.initialProjectRef?.projectId,
+    releaseShareReservation,
+    reserveShare,
+    selectedProject,
+    shareImportAttempt,
+  ]);
 
   useEffect(() => {
     // Android starts with the collapsed composer pill (like an open thread)
@@ -223,10 +531,11 @@ export function NewTaskDraftScreen(props: {
       flow.environments.map((environment) => ({
         id: `environment:${environment.environmentId}`,
         title: environment.environmentLabel,
+        attributes: isIncomingShareTransferPending ? { disabled: true } : undefined,
         state:
           flow.selectedEnvironmentId === environment.environmentId ? ("on" as const) : undefined,
       })),
-    [flow.environments, flow.selectedEnvironmentId],
+    [flow.environments, flow.selectedEnvironmentId, isIncomingShareTransferPending],
   );
 
   const modelMenuActions = useMemo(
@@ -391,20 +700,23 @@ export function NewTaskDraftScreen(props: {
     [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
   );
   function handleModelMenuAction(event: string) {
-    if (!event.startsWith("model:")) {
+    if (isIncomingShareTransferPending || !event.startsWith("model:")) {
       return;
     }
     flow.setSelectedModelKey(event.slice("model:".length));
   }
 
   function handleEnvironmentMenuAction(event: string) {
-    if (!event.startsWith("environment:")) {
+    if (isIncomingShareTransferPending || !event.startsWith("environment:")) {
       return;
     }
     flow.selectEnvironment(EnvironmentId.make(event.slice("environment:".length)));
   }
 
   function handleOptionsMenuAction(event: string) {
+    if (isIncomingShareTransferPending) {
+      return;
+    }
     const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
     if (providerOptions) {
       flow.setSelectedModelOptions(providerOptions);
@@ -424,6 +736,9 @@ export function NewTaskDraftScreen(props: {
   }
 
   function handleWorkspaceMenuAction(event: string) {
+    if (isIncomingShareTransferPending) {
+      return;
+    }
     if (event.startsWith("workspace:mode:")) {
       flow.setWorkspaceMode(
         event.slice("workspace:mode:".length) as Parameters<typeof flow.setWorkspaceMode>[0],
@@ -444,6 +759,9 @@ export function NewTaskDraftScreen(props: {
   }
 
   async function handlePickImages(): Promise<void> {
+    if (isIncomingShareTransferPending) {
+      return;
+    }
     const result = await pickComposerImages({ existingCount: flow.attachments.length });
     if (result.images.length > 0) {
       flow.appendAttachments(result.images);
@@ -526,8 +844,7 @@ export function NewTaskDraftScreen(props: {
       if (editingPendingTask) {
         flow.finishEditingPendingTask();
       } else {
-        flow.setPrompt("");
-        flow.clearAttachments();
+        clearComposerDraftContent(draftKey);
       }
       navigation.getParent()?.goBack();
       return;
@@ -585,8 +902,7 @@ export function NewTaskDraftScreen(props: {
       }
       flow.finishEditingPendingTask();
     } else {
-      flow.setPrompt("");
-      flow.clearAttachments();
+      clearComposerDraftContent(draftKey);
     }
     navigation.dispatch(
       StackActions.replace("Thread", {
@@ -620,12 +936,15 @@ export function NewTaskDraftScreen(props: {
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
+    isIncomingShareReady &&
+    !isImportingShare &&
     !flow.submitting &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
       autoFocus={!isAndroid}
+      editable={!isIncomingShareTransferPending}
       multiline
       scrollEnabled={isExpanded}
       value={flow.prompt}
@@ -660,6 +979,7 @@ export function NewTaskDraftScreen(props: {
         icon="plus"
         onPress={() => void handlePickImages()}
         showChevron={false}
+        disabled={isIncomingShareTransferPending}
       />
       <ControlPillMenu
         actions={modelMenuActions}
@@ -667,6 +987,7 @@ export function NewTaskDraftScreen(props: {
       >
         <ComposerToolbarTrigger
           accessibilityLabel="Model"
+          disabled={isIncomingShareTransferPending}
           iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
           label={flow.selectedModelOption?.label ?? "Model"}
         />
@@ -677,6 +998,7 @@ export function NewTaskDraftScreen(props: {
       >
         <ComposerToolbarTrigger
           accessibilityLabel="Configuration"
+          disabled={isIncomingShareTransferPending}
           icon="slider.horizontal.3"
           label={configurationLabel}
         />
@@ -687,6 +1009,7 @@ export function NewTaskDraftScreen(props: {
       >
         <ComposerToolbarTrigger
           accessibilityLabel="Environment"
+          disabled={isIncomingShareTransferPending}
           icon="desktopcomputer"
           label={selectedEnvironmentLabel}
         />
@@ -697,6 +1020,7 @@ export function NewTaskDraftScreen(props: {
       >
         <ComposerToolbarTrigger
           accessibilityLabel="Workspace"
+          disabled={isIncomingShareTransferPending}
           icon="point.topleft.down.curvedto.point.bottomright.up"
           label={workspaceLabel}
         />
@@ -763,7 +1087,9 @@ export function NewTaskDraftScreen(props: {
                 <View className="pb-2.5">
                   <ComposerAttachmentStrip
                     attachments={flow.attachments}
-                    onRemove={flow.removeAttachment}
+                    onRemove={
+                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
+                    }
                   />
                 </View>
               ) : null}
@@ -807,7 +1133,7 @@ export function NewTaskDraftScreen(props: {
             <View className="px-4 pt-3">
               <ComposerAttachmentStrip
                 attachments={flow.attachments}
-                onRemove={flow.removeAttachment}
+                onRemove={isIncomingShareTransferPending ? () => undefined : flow.removeAttachment}
                 imageSize={88}
                 imageBorderRadius={20}
               />

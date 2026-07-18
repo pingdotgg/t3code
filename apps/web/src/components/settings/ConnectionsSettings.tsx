@@ -1673,18 +1673,18 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 
 function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
-  savedEnvironmentIds,
+  savedEnvironments,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
-  readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
-      savedEnvironmentIds={savedEnvironmentIds}
+      savedEnvironments={savedEnvironments}
       empty={<EmptyRemoteEnvironments />}
     />
-  ) : savedEnvironmentIds.length === 0 ? (
+  ) : savedEnvironments.length === 0 ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
@@ -1713,10 +1713,6 @@ export function ConnectionsSettings() {
         .filter((environment) => environment.entry.target._tag !== "PrimaryConnectionTarget")
         .toSorted((left, right) => left.label.localeCompare(right.label)),
     [environments],
-  );
-  const savedEnvironmentIds = useMemo(
-    () => savedEnvironments.map((environment) => environment.environmentId),
-    [savedEnvironments],
   );
   const savedDesktopSshEnvironmentsByAlias = useMemo(
     () =>
@@ -3364,7 +3360,7 @@ export function ConnectionsSettings() {
         ))}
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
-          savedEnvironmentIds={savedEnvironmentIds}
+          savedEnvironments={savedEnvironments}
         />
       </SettingsSection>
     </SettingsPageContainer>

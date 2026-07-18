@@ -17,6 +17,13 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+export function shouldSubmitComposerOnEnter(input: {
+  isMobileViewport: boolean;
+  shiftKey: boolean;
+}): boolean {
+  return !input.isMobileViewport && !input.shiftKey;
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }

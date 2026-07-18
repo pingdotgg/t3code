@@ -182,7 +182,7 @@ describe("persistence error correlation", () => {
     }).pipe(Effect.provide(authPairingLinkLayer)),
   );
 
-  it.effect("correlates provider runtime SQL and per-row decode failures by thread", () =>
+  it.effect("skips undecodable provider runtime rows and correlates SQL failures by thread", () =>
     Effect.gen(function* () {
       const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
       const sql = yield* SqlClient.SqlClient;
@@ -215,16 +215,24 @@ describe("persistence error correlation", () => {
         )
       `;
 
-      const decodeError = yield* Effect.flip(runtimes.list());
-      assert.instanceOf(decodeError, PersistenceErrors.PersistenceDecodeError);
-      assert.deepStrictEqual(decodeError.correlation, { threadId });
-      assert.equal(
-        decodeError.message,
-        `Decode error in ProviderSessionRuntimeRepository.list:decodeRows: ${decodeError.issue}`,
+      const validThreadId = ThreadId.make("thread-valid");
+      yield* runtimes.upsert({
+        threadId: validThreadId,
+        providerName: "codex",
+        providerInstanceId: null,
+        adapterKey: "codex",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt,
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      const listed = yield* runtimes.list();
+      assert.deepStrictEqual(
+        listed.map((runtime) => runtime.threadId),
+        [validThreadId],
       );
-      assert.notInclude(decodeError.issue, runtimePayload);
-      assert.notInclude(decodeError.message, runtimePayload);
-      assert.notInclude(decodeError.message, lastSeenAt);
 
       yield* sql`DROP TABLE provider_session_runtime`;
       const sqlFailure = yield* Effect.flip(

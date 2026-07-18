@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, type CSSProperties, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -55,10 +55,37 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
+  const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
+    const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
+    return isMacosDesktop && typeof getWindowFullscreenState === "function"
+      ? getWindowFullscreenState()
+      : false;
+  });
   const macosWindowControlsStyle =
-    isElectron && isMacPlatform(navigator.platform)
+    isMacosDesktop && !isWindowFullscreen
       ? ({ "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET } as CSSProperties)
       : undefined;
+
+  useEffect(() => {
+    if (!isMacosDesktop) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    const { getWindowFullscreenState, onWindowFullscreenStateChange } = bridge;
+    if (
+      typeof getWindowFullscreenState !== "function" ||
+      typeof onWindowFullscreenStateChange !== "function"
+    ) {
+      return;
+    }
+
+    const unsubscribe = onWindowFullscreenStateChange(setIsWindowFullscreen);
+    setIsWindowFullscreen(getWindowFullscreenState());
+    return unsubscribe;
+  }, [isMacosDesktop]);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -68,7 +95,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
     const unsubscribe = onMenuAction((action) => {
       if (action === "open-settings") {
-        void navigate({ to: "/settings" });
+        const isSettingsRoute = /^\/settings(\/|$)/.test(pathnameRef.current);
+        if (!isSettingsRoute) {
+          void navigate({ to: "/settings" });
+        }
       }
     });
 

@@ -830,6 +830,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
+  const executeGitWithStableDiagnostics = (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    options: ExecuteGitOptions = {},
+  ): Effect.Effect<GitVcsDriver.ExecuteGitResult, GitCommandError> =>
+    executeGit(operation, cwd, args, {
+      ...options,
+      env: {
+        ...options.env,
+        LC_ALL: "C",
+      },
+    });
+
   const runGit = (
     operation: string,
     cwd: string,
@@ -1184,7 +1198,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const readStatusDetailsRemote = Effect.fn("readStatusDetailsRemote")(function* (cwd: string) {
-    const branchResult = yield* executeGit(
+    const branchResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetailsRemote.branch",
       cwd,
       ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -1304,7 +1318,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (cwd: string) {
-    const statusResult = yield* executeGit(
+    const statusResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetails.status",
       cwd,
       ["status", "--porcelain=2", "--branch"],
@@ -1524,6 +1538,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           }),
         );
         yield* runGit("GitVcsDriver.prepareCommitContext.addSelected", cwd, [
+          "--literal-pathspecs",
           "add",
           "-A",
           "--",
@@ -1985,7 +2000,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const branchRecencyPromise = readBranchRecency(input.cwd).pipe(
         Effect.orElseSucceed(() => new Map<string, number>()),
       );
-      const localBranchResult = yield* executeGit(
+      const localBranchResult = yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.listRefs.branchNoColor",
         input.cwd,
         ["branch", "--no-color", "--no-column"],
