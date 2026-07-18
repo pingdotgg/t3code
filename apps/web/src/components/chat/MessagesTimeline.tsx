@@ -1240,7 +1240,9 @@ function AssistantChangedFilesSectionInner({
     <div className="mt-4 rounded-2xl border border-input bg-background p-2 pt-4 shadow-xs/5 not-dark:bg-clip-padding dark:bg-input/32">
       <div className="mb-3 flex items-center justify-between gap-2 px-2">
         <p className="flex self-start items-center gap-1 font-medium text-foreground text-xs leading-4">
-          <span>{checkpointFiles.length} changed files</span>
+          <span>
+            {checkpointFiles.length} changed file{checkpointFiles.length === 1 ? "" : "s"}
+          </span>
           {hasNonZeroStat(summaryStat) && (
             <DiffStatLabel
               additions={summaryStat.additions}
