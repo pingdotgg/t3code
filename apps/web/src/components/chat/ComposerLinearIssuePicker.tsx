@@ -144,9 +144,13 @@ export function ComposerLinearIssuePicker({
           setResults([]);
           setHasAttachError(false);
           setIsAttaching(false);
+          setIsSearching(false);
           attachInFlightRef.current = false;
           // Invalidate any in-flight detail fetch so it can't attach after close.
           attachRequestRef.current += 1;
+          // Invalidate any in-flight search so a late resolution can't repopulate
+          // results the next time the popover opens.
+          searchRequestRef.current += 1;
         }
       }}
     >

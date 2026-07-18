@@ -680,4 +680,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(materialized.linear.apiKeySet, false);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("degrades to disconnected when the Linear secret cannot be read", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const secretFile = path.join(serverConfig.secretsDir, "linear-api-key.bin");
+
+      yield* serverSettings.updateSettings({ linear: { apiKey: "lin_unreadable" } });
+
+      // Make the stored secret unreadable so materialization's read fails.
+      yield* fileSystem.chmod(secretFile, 0o000);
+
+      // getSettings must still succeed — a linear-only read failure degrades to
+      // disconnected instead of taking down every settings read.
+      const materialized = yield* serverSettings.getSettings.pipe(
+        Effect.ensuring(fileSystem.chmod(secretFile, 0o600).pipe(Effect.ignore)),
+      );
+      assert.equal(materialized.linear.apiKey, "");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

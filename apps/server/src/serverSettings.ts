@@ -472,24 +472,17 @@ const make = Effect.gen(function* () {
       };
     });
 
-  const materializeLinearApiKey = (
-    settings: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+  // Reading the Linear secret must never take down a settings read: a failure
+  // here degrades to "disconnected" (getStatus self-heals, the user can
+  // reconnect) instead of failing every getSettings/streamChanges over a
+  // linear-only problem. Returns without an error channel by design.
+  const materializeLinearApiKey = (settings: ServerSettings): Effect.Effect<ServerSettings> =>
     Effect.gen(function* () {
       // Legacy plaintext key still on disk (not yet migrated) — use it as-is.
       if (settings.linear.apiKey.trim().length > 0 || !settings.linear.apiKeySet) {
         return settings;
       }
-      const secret = yield* secretStore.get(linearApiKeySecretName()).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ServerSettingsError({
-              settingsPath,
-              operation: "read-secret",
-              cause,
-            }),
-        ),
-      );
+      const secret = yield* secretStore.get(linearApiKeySecretName());
       return {
         ...settings,
         linear: {
@@ -497,7 +490,14 @@ const make = Effect.gen(function* () {
           apiKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         },
       };
-    });
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to materialize Linear API key", {
+          operation: "read-secret",
+          cause,
+        }).pipe(Effect.as({ ...settings, linear: { ...settings.linear, apiKey: "" } })),
+      ),
+    );
 
   const writeLinearApiKeySecret = (key: string) =>
     secretStore.set(linearApiKeySecretName(), textEncoder.encode(key)).pipe(

@@ -138,7 +138,8 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new LinearApiError({
             operation,
-            message: "Failed to read the Linear API key from server settings.",
+            reason: "request-failed",
+            detail: "Failed to read the Linear API key from server settings.",
             cause,
           }),
       ),
@@ -148,13 +149,7 @@ export const make = Effect.gen(function* () {
     readApiKey(operation).pipe(
       Effect.flatMap((apiKey) =>
         apiKey.length === 0
-          ? Effect.fail(
-              new LinearApiError({
-                operation,
-                message: "Linear is not connected.",
-                cause: "not-connected",
-              }),
-            )
+          ? Effect.fail(new LinearApiError({ operation, reason: "not-connected" }))
           : Effect.succeed(apiKey),
       ),
     );
@@ -178,7 +173,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new LinearApiError({
               operation,
-              message: "Failed to send the Linear API request.",
+              reason: "request-failed",
               cause,
             }),
         ),
@@ -190,7 +185,7 @@ export const make = Effect.gen(function* () {
                   (cause) =>
                     new LinearApiError({
                       operation,
-                      message: "Linear returned an unexpected response.",
+                      reason: "invalid-response",
                       cause,
                     }),
                 ),
@@ -199,19 +194,16 @@ export const make = Effect.gen(function* () {
                     return Effect.fail(
                       new LinearApiError({
                         operation,
-                        message: body.errors[0]?.message ?? "Linear returned a GraphQL error.",
+                        reason: "graphql-error",
+                        ...(body.errors[0]?.message !== undefined
+                          ? { detail: body.errors[0].message }
+                          : {}),
                         cause: body.errors,
                       }),
                     );
                   }
                   if (body.data === undefined || body.data === null) {
-                    return Effect.fail(
-                      new LinearApiError({
-                        operation,
-                        message: "Linear returned no data.",
-                        cause: "empty-response",
-                      }),
-                    );
+                    return Effect.fail(new LinearApiError({ operation, reason: "empty-response" }));
                   }
                   return Effect.succeed(body.data);
                 }),
@@ -222,7 +214,8 @@ export const make = Effect.gen(function* () {
                   (cause) =>
                     new LinearApiError({
                       operation,
-                      message: `Linear returned HTTP ${failed.status}.`,
+                      reason: "http-error",
+                      status: failed.status,
                       cause,
                     }),
                 ),
@@ -230,8 +223,9 @@ export const make = Effect.gen(function* () {
                   Effect.fail(
                     new LinearApiError({
                       operation,
-                      message: `Linear returned HTTP ${failed.status}.`,
-                      cause: bodyText,
+                      reason: "http-error",
+                      status: failed.status,
+                      ...(bodyText.length > 0 ? { detail: bodyText } : {}),
                     }),
                   ),
                 ),
@@ -295,8 +289,8 @@ export const make = Effect.gen(function* () {
         if (issue === null) {
           return yield* new LinearApiError({
             operation: "getIssue",
-            message: `Linear issue ${input.issueId} was not found.`,
-            cause: "not-found",
+            reason: "not-found",
+            issueId: input.issueId,
           });
         }
         return {
