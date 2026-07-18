@@ -10,6 +10,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { relativeTime } from "../../lib/time";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
@@ -22,6 +23,10 @@ export interface ArchivedThreadGroup {
 function archiveTimestamp(thread: EnvironmentThreadShell): number {
   const timestamp = Date.parse(thread.archivedAt ?? thread.updatedAt);
   return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+export function formatArchivedThreadRelativeTime(input: string): string | null {
+  return Number.isNaN(Date.parse(input)) ? null : relativeTime(input);
 }
 
 function matchesQuery(value: string | null, query: string): boolean {

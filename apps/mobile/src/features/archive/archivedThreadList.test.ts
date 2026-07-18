@@ -3,7 +3,7 @@ import type { OrchestrationProjectShell, OrchestrationThreadShell } from "@t3too
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildArchivedThreadGroups } from "./archivedThreadList";
+import { buildArchivedThreadGroups, formatArchivedThreadRelativeTime } from "./archivedThreadList";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -140,5 +140,11 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(result).toEqual([]);
+  });
+});
+
+describe("formatArchivedThreadRelativeTime", () => {
+  it("omits invalid archive timestamps instead of presenting them as recent", () => {
+    expect(formatArchivedThreadRelativeTime("not-a-timestamp")).toBeNull();
   });
 });

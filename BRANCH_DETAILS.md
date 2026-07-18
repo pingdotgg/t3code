@@ -25,10 +25,14 @@ Sidebar archive visibility is centralized across persisted and optimistic archiv
 
 Persisted web/mobile sidebar data is a fast paint only. Every WebSocket session refreshes an authoritative shell snapshot over HTTP, or requests the socket-embedded snapshot if HTTP fails, before replaying live changes. Because cold archive storage compacts per-thread orchestration events, a cached client must never depend on that compacted history to discover new conversations or remove archived/deleted ones.
 
+Mobile Archive rows omit invalid lifecycle timestamps instead of presenting corrupt or legacy values as newly archived, matching the merged web timestamp safeguards without changing general mobile time rendering.
+
+HTTP-seeded shell subscriptions preserve archive removals published while WebSocket catch-up is still reading persisted events; a server regression test exercises that exact handoff without coupling the independent cold-storage and thread-detail cache state machines.
+
 ## Upstream Integration
 
 - Generated from `upstream/main` at `1735e27d9e5106bbb35d5b1dd10363604a54b69e`, fetched and merged on 2026-07-18 by merge commit `ddff9d2e5`.
-- Relative to `upstream/main`, this branch is 15 commits ahead and 0 behind; its customization delta is 29 files, 2,395 insertions, and 206 deletions.
+- Relative to `upstream/main`, this branch is 16 commits ahead and 0 behind; its customization delta is 32 files, 2,480 insertions, and 213 deletions.
 - Upstream's initial-snapshot event replay fix (`c14a5ca49`) and deferred active-thread cache writes (`765e1b5fc`) complement rather than replace the authoritative shell refresh: replay remains lossless while every WebSocket session still reconciles archived/deleted thread shells.
 - The overlapping sidebar visibility, sorting, and Settings-panel changes merged cleanly without manual conflict resolution; no branch customizations were introduced or retired by the merge.
 

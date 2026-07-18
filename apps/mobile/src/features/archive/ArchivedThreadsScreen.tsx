@@ -26,11 +26,14 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
-import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import {
+  formatArchivedThreadRelativeTime,
+  type ArchivedThreadGroup,
+  type ArchivedThreadSortOrder,
+} from "./archivedThreadList";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 
 export interface ArchivedThreadsHeaderEnvironment {
@@ -398,7 +401,9 @@ function ArchivedThreadRow(props: {
   const cardColor = useThemeColor("--color-card");
   const iconColor = useThemeColor("--color-icon-subtle");
   const separatorColor = useThemeColor("--color-separator");
-  const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
+  const timestamp = formatArchivedThreadRelativeTime(
+    props.thread.archivedAt ?? props.thread.updatedAt,
+  );
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -458,9 +463,11 @@ function ArchivedThreadRow(props: {
               >
                 {props.thread.title}
               </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
+              {timestamp ? (
+                <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+                  {timestamp}
+                </Text>
+              ) : null}
             </View>
             {subtitle.length > 0 ? (
               <View className="flex-row items-center gap-1.5">

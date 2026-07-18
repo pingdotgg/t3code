@@ -5607,6 +5607,62 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("buffers archived shell removals published while replay catches up", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const archivedEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-archived"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: CommandId.make("command-archive"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-archive"),
+        metadata: {},
+        type: "thread.archived",
+        payload: {
+          threadId: defaultThreadId,
+          archivedAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.archived" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+            readEvents: () =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  yield* Effect.sleep("25 millis");
+                  yield* PubSub.publish(liveEvents, archivedEvent);
+                  return Stream.empty;
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            // Represents the authoritative shell snapshot already loaded over HTTP.
+            afterSequence: 1,
+          }).pipe(Stream.take(1), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      const item = items[0];
+      if (item?.kind !== "thread-removed") {
+        assert.fail(`Expected thread-removed, received ${item?.kind ?? "no item"}`);
+      }
+      assert.equal(item.sequence, 2);
+      assert.equal(item.threadId, defaultThreadId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("buffers thread events published while the initial snapshot loads", () =>
     Effect.gen(function* () {
       const thread = makeDefaultOrchestrationReadModel().threads[0]!;
