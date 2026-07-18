@@ -56,42 +56,94 @@ export type LinearSearchIssuesResult = typeof LinearSearchIssuesResult.Type;
 export const LinearApiOperation = Schema.Literals(["getStatus", "searchIssues", "getIssue"]);
 export type LinearApiOperation = typeof LinearApiOperation.Type;
 
-export const LinearApiErrorReason = Schema.Literals([
-  "not-connected",
-  "request-failed",
-  "http-error",
-  "graphql-error",
-  "invalid-response",
-  "empty-response",
-  "not-found",
-]);
-export type LinearApiErrorReason = typeof LinearApiErrorReason.Type;
+export class LinearNotConnectedError extends Schema.TaggedErrorClass<LinearNotConnectedError>()(
+  "LinearNotConnectedError",
+  {
+    operation: LinearApiOperation,
+  },
+) {
+  override get message(): string {
+    return `Linear API failed in ${this.operation}: Linear is not connected.`;
+  }
+}
 
-export class LinearApiError extends Schema.TaggedErrorClass<LinearApiError>()("LinearApiError", {
+export class LinearRequestError extends Schema.TaggedErrorClass<LinearRequestError>()(
+  "LinearRequestError",
+  {
+    operation: LinearApiOperation,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Linear API failed in ${this.operation}: Failed to send the Linear request.`;
+  }
+}
+
+export class LinearHttpError extends Schema.TaggedErrorClass<LinearHttpError>()("LinearHttpError", {
   operation: LinearApiOperation,
-  reason: LinearApiErrorReason,
-  status: Schema.optional(Schema.Int),
-  detail: Schema.optional(Schema.String),
-  issueId: Schema.optional(Schema.String),
+  status: Schema.Int,
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    const suffix = this.detail === undefined ? "" : ` ${this.detail}`;
-    switch (this.reason) {
-      case "not-connected":
-        return `Linear API failed in ${this.operation}: Linear is not connected.`;
-      case "request-failed":
-        return `Linear API failed in ${this.operation}: The Linear request could not be completed.${suffix}`;
-      case "http-error":
-        return `Linear API failed in ${this.operation}: Linear returned HTTP ${this.status ?? "?"}.${suffix}`;
-      case "graphql-error":
-        return `Linear API failed in ${this.operation}: Linear returned a GraphQL error.${suffix}`;
-      case "invalid-response":
-        return `Linear API failed in ${this.operation}: Linear returned an unexpected response.`;
-      case "empty-response":
-        return `Linear API failed in ${this.operation}: Linear returned no data.`;
-      case "not-found":
-        return `Linear API failed in ${this.operation}: Linear issue ${this.issueId ?? "?"} was not found.`;
-    }
+    return `Linear API failed in ${this.operation}: Linear returned HTTP ${this.status}.`;
   }
 }
+
+export class LinearGraphqlError extends Schema.TaggedErrorClass<LinearGraphqlError>()(
+  "LinearGraphqlError",
+  {
+    operation: LinearApiOperation,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Linear API failed in ${this.operation}: Linear returned a GraphQL error.`;
+  }
+}
+
+export class LinearResponseDecodeError extends Schema.TaggedErrorClass<LinearResponseDecodeError>()(
+  "LinearResponseDecodeError",
+  {
+    operation: LinearApiOperation,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Linear API failed in ${this.operation}: Linear returned an unexpected response.`;
+  }
+}
+
+export class LinearEmptyResponseError extends Schema.TaggedErrorClass<LinearEmptyResponseError>()(
+  "LinearEmptyResponseError",
+  {
+    operation: LinearApiOperation,
+  },
+) {
+  override get message(): string {
+    return `Linear API failed in ${this.operation}: Linear returned no data.`;
+  }
+}
+
+export class LinearIssueNotFoundError extends Schema.TaggedErrorClass<LinearIssueNotFoundError>()(
+  "LinearIssueNotFoundError",
+  {
+    operation: LinearApiOperation,
+    issueId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Linear API failed in ${this.operation}: Linear issue ${this.issueId} was not found.`;
+  }
+}
+
+export const LinearApiError = Schema.Union([
+  LinearNotConnectedError,
+  LinearRequestError,
+  LinearHttpError,
+  LinearGraphqlError,
+  LinearResponseDecodeError,
+  LinearEmptyResponseError,
+  LinearIssueNotFoundError,
+]);
+export type LinearApiError = typeof LinearApiError.Type;
+export const isLinearApiError = Schema.is(LinearApiError);

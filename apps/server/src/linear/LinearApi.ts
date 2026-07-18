@@ -3,11 +3,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import {
-  LinearApiError,
+  type LinearApiError,
   type LinearApiOperation,
+  LinearEmptyResponseError,
   type LinearGetIssueInput,
+  LinearGraphqlError,
+  LinearHttpError,
   type LinearIssueDetail,
   type LinearIssueSummary,
+  LinearIssueNotFoundError,
+  LinearNotConnectedError,
+  LinearRequestError,
+  LinearResponseDecodeError,
   type LinearSearchIssuesInput,
   type LinearSearchIssuesResult,
   type LinearStatus,
@@ -134,22 +141,14 @@ export const make = Effect.gen(function* () {
   const readApiKey = (operation: LinearApiOperation) =>
     serverSettings.getSettings.pipe(
       Effect.map((settings) => settings.linear.apiKey.trim()),
-      Effect.mapError(
-        (cause) =>
-          new LinearApiError({
-            operation,
-            reason: "request-failed",
-            detail: "Failed to read the Linear API key from server settings.",
-            cause,
-          }),
-      ),
+      Effect.mapError((cause) => new LinearRequestError({ operation, cause })),
     );
 
   const requireApiKey = (operation: LinearApiOperation) =>
     readApiKey(operation).pipe(
       Effect.flatMap((apiKey) =>
         apiKey.length === 0
-          ? Effect.fail(new LinearApiError({ operation, reason: "not-connected" }))
+          ? Effect.fail(new LinearNotConnectedError({ operation }))
           : Effect.succeed(apiKey),
       ),
     );
@@ -169,41 +168,18 @@ export const make = Effect.gen(function* () {
         ),
       )
       .pipe(
-        Effect.mapError(
-          (cause) =>
-            new LinearApiError({
-              operation,
-              reason: "request-failed",
-              cause,
-            }),
-        ),
+        Effect.mapError((cause) => new LinearRequestError({ operation, cause })),
         Effect.flatMap((response) =>
           HttpClientResponse.matchStatus({
             "2xx": (success) =>
               HttpClientResponse.schemaBodyJson(graphqlResponseSchema(dataSchema))(success).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LinearApiError({
-                      operation,
-                      reason: "invalid-response",
-                      cause,
-                    }),
-                ),
-                Effect.flatMap((body) => {
+                Effect.mapError((cause) => new LinearResponseDecodeError({ operation, cause })),
+                Effect.flatMap((body): Effect.Effect<S["Type"], LinearApiError> => {
                   if (body.errors !== undefined && body.errors.length > 0) {
-                    return Effect.fail(
-                      new LinearApiError({
-                        operation,
-                        reason: "graphql-error",
-                        ...(body.errors[0]?.message !== undefined
-                          ? { detail: body.errors[0].message }
-                          : {}),
-                        cause: body.errors,
-                      }),
-                    );
+                    return Effect.fail(new LinearGraphqlError({ operation, cause: body.errors }));
                   }
                   if (body.data === undefined || body.data === null) {
-                    return Effect.fail(new LinearApiError({ operation, reason: "empty-response" }));
+                    return Effect.fail(new LinearEmptyResponseError({ operation }));
                   }
                   return Effect.succeed(body.data);
                 }),
@@ -211,22 +187,11 @@ export const make = Effect.gen(function* () {
             orElse: (failed) =>
               failed.text.pipe(
                 Effect.mapError(
-                  (cause) =>
-                    new LinearApiError({
-                      operation,
-                      reason: "http-error",
-                      status: failed.status,
-                      cause,
-                    }),
+                  (cause) => new LinearHttpError({ operation, status: failed.status, cause }),
                 ),
                 Effect.flatMap((bodyText) =>
                   Effect.fail(
-                    new LinearApiError({
-                      operation,
-                      reason: "http-error",
-                      status: failed.status,
-                      ...(bodyText.length > 0 ? { detail: bodyText } : {}),
-                    }),
+                    new LinearHttpError({ operation, status: failed.status, cause: bodyText }),
                   ),
                 ),
               ),
@@ -287,9 +252,8 @@ export const make = Effect.gen(function* () {
         );
         const issue = data.issue;
         if (issue === null) {
-          return yield* new LinearApiError({
+          return yield* new LinearIssueNotFoundError({
             operation: "getIssue",
-            reason: "not-found",
             issueId: input.issueId,
           });
         }
