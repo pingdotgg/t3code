@@ -20,7 +20,7 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import { parseInlineSkillTokens } from "./chat/skillInlineTokens";
+import { hasInlineSkillToken } from "./chat/skillInlineTokens";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -165,12 +165,18 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   return previewUrls;
 }
 
-export function timelineMessagesHaveComposerSkillReference(
+export function timelineMessagesHaveCompleteSkillReference(
   messages: ReadonlyArray<Pick<ChatMessage, "role" | "text">>,
+  cache?: WeakMap<object, boolean>,
 ): boolean {
-  return messages.some(
-    (message) => message.role === "user" && parseInlineSkillTokens(message.text ?? "").length > 0,
-  );
+  return messages.some((message) => {
+    if (message.role !== "user") return false;
+    const cached = cache?.get(message);
+    if (cached !== undefined) return cached;
+    const hasSkillReference = hasInlineSkillToken(message.text);
+    cache?.set(message, hasSkillReference);
+    return hasSkillReference;
+  });
 }
 
 export interface PullRequestDialogState {

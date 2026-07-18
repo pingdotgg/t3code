@@ -22,7 +22,7 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
-  timelineMessagesHaveComposerSkillReference,
+  timelineMessagesHaveCompleteSkillReference,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -102,26 +102,37 @@ describe("buildThreadTurnInterruptInput", () => {
   });
 });
 
-describe("timelineMessagesHaveComposerSkillReference", () => {
+describe("timelineMessagesHaveCompleteSkillReference", () => {
   it("keeps empty drafts and unrelated messages from requesting workspace skills", () => {
-    expect(timelineMessagesHaveComposerSkillReference([])).toBe(false);
+    expect(timelineMessagesHaveCompleteSkillReference([])).toBe(false);
     expect(
-      timelineMessagesHaveComposerSkillReference([
-        { role: "assistant", text: "Try $repo-skill next." },
+      timelineMessagesHaveCompleteSkillReference([
         { role: "user", text: "Inspect @AGENTS.md" },
-        { role: "user", text: "Maybe use $repo-skill?" },
+        { role: "user", text: "$" },
+        { role: "user", text: "$123invalid" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("ignores complete skill references in assistant messages", () => {
+    expect(
+      timelineMessagesHaveCompleteSkillReference([
+        { role: "assistant", text: "Try $repo-skill next." },
       ]),
     ).toBe(false);
   });
 
   it("requests workspace skills when a sent user prompt contains a complete skill token", () => {
     expect(
-      timelineMessagesHaveComposerSkillReference([
+      timelineMessagesHaveCompleteSkillReference([
         { role: "user", text: "Use $repo-skill to inspect this." },
       ]),
     ).toBe(true);
     expect(
-      timelineMessagesHaveComposerSkillReference([{ role: "user", text: "Use $repo-skill" }]),
+      timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill" }]),
+    ).toBe(true);
+    expect(
+      timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill?" }]),
     ).toBe(true);
   });
 });

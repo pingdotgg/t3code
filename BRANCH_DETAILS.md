@@ -1,12 +1,5 @@
 # Codex Workspace Skill Loading
 
-Generated from:
-
-- Branch: `fix/codex-skills` at `6b04a4cd0731c7f114d85d9d94ed2fb99787d3af`.
-- Upstream: `upstream/main` at `1735e27d9e5106bbb35d5b1dd10363604a54b69e`.
-- Ahead/behind upstream: `55` / `0` commits.
-- Branch diff against upstream: `42 files`, `2,407 insertions`, `144 deletions` (`upstream/main...HEAD`, including this branch-details refresh).
-
 Fix Codex repo-local skill discovery in the composer by resolving skills for the active project/worktree cwd, instead of relying on the global provider status snapshot.
 
 Expected behavior:
@@ -52,15 +45,6 @@ Relevant tests live in:
 - `apps/mobile/src/features/threads/thread-composer-skill-items.test.ts`
 - `packages/client-runtime/src/state/providerWorkspaceSkills.test.ts`
 - `packages/client-runtime/src/state/runtime.test.ts`
-
-Latest upstream merge compatibility:
-
-- The merge of `upstream/main` at `1735e27d9e5106bbb35d5b1dd10363604a54b69e` completed without conflicts; the merge itself introduced no conflict-only fork customization and none of the workspace-skill behavior was retired.
-- `apps/server/src/provider/Drivers/CodexHomeLayout.ts` now shares `mcp-oauth-locks` across Codex shadow homes. Workspace skill probes continue to use the prepared Codex home, so they inherit the shared OAuth lock without a separate branch-only path.
-- `apps/server/src/ws.ts` now buffers live thread events before snapshot/replay reads. The workspace-aware `server.listProviderSkills` route remains independently wired through `ProviderSkillsLister`.
-- `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/ChatComposer.tsx`, and `apps/web/src/components/chat/MessagesTimeline.tsx` now include the upstream draft hero, active-turn send, project-selection, paste, and empty-timeline behavior while retaining workspace-skill query state, skill-token decoration, and timeline skill chips.
-- The upstream draft hero mounts `ChatView` for empty drafts; timeline skill discovery is therefore gated by complete skill references in sent user messages, while opening the composer `$` menu still starts its independent workspace lookup.
-- Upstream mobile composer and branding changes auto-merged around the shared client-runtime skill policy; mobile workspace-skill loading, feedback, and token decoration remain branch-owned behavior.
 
 Useful focused commands:
 

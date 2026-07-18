@@ -343,7 +343,7 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        timelineEntries={[buildUserTimelineEntry("$update-main $piz-git-workflow")]}
+        timelineEntries={[buildUserTimelineEntry("$update-main? $piz-git-workflow")]}
         skills={[
           {
             name: "update-main",
