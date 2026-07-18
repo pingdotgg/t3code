@@ -697,7 +697,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       providerStatuses,
       explicitSelectedInstanceId,
     ) ?? ProviderDriverKind.make("codex");
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const requestedDriverKind: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const lockedContinuationGroupKey = useMemo((): string | null => {
     if (!lockedProvider || !activeThread) return null;
     const lockedInstanceId =
@@ -750,20 +750,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     if (explicitSelectedInstanceId) {
-      // Return the raw id only for unknown instances (e.g. a custom instance
-      // not yet hydrated into providerInstanceEntries). If the id IS known
-      // but disabled, fall through so anyEnabled/byKind picks a valid one.
+      // An id missing from the entries list may be a custom instance whose
+      // snapshot has not arrived yet, so it is trusted as-is. A known-but-
+      // disabled id is abandoned only when an enabled instance satisfies
+      // the thread's driver/continuation lock; otherwise it is kept so the
+      // send fails with the server error naming the disabled provider
+      // rather than a driver switch the thread cannot make.
       const isKnownDisabled = providerInstanceEntries.some(
         (entry) => entry.instanceId === explicitSelectedInstanceId && !entry.enabled,
       );
-      if (!isKnownDisabled) {
+      const replacement = isKnownDisabled
+        ? providerInstanceEntries.find(
+            (entry) =>
+              entry.enabled &&
+              (!lockedProvider || entry.driverKind === lockedProvider) &&
+              (!lockedContinuationGroupKey ||
+                entry.continuationGroupKey === lockedContinuationGroupKey),
+          )
+        : undefined;
+      if (!isKnownDisabled || replacement === undefined) {
         return ProviderInstanceId.make(explicitSelectedInstanceId);
       }
     }
     const byKind = providerInstanceEntries.find(
       (entry) =>
         entry.enabled &&
-        entry.driverKind === selectedProvider &&
+        entry.driverKind === requestedDriverKind &&
         (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
     );
     if (byKind) return byKind.instanceId;
@@ -784,8 +796,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
-    selectedProvider,
+    requestedDriverKind,
   ]);
+
+  // Resolve the active instance's snapshot by `instanceId` so a custom
+  // instance gets its own slash commands, skills, and model list — not
+  // the first snapshot for the same driver kind.
+  const selectedProviderEntry = useMemo(
+    () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
+    [providerInstanceEntries, selectedInstanceId],
+  );
+  // The driver kind follows the instance that will actually run the turn,
+  // which can differ from the persisted selection when that selection is
+  // disabled.
+  const selectedProvider: ProviderDriverKind =
+    selectedProviderEntry?.driverKind ?? requestedDriverKind;
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -796,14 +821,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
-
-  // Resolve the active instance's snapshot by `instanceId` so a custom
-  // instance gets its own slash commands, skills, and model list — not
-  // the first snapshot for the same driver kind.
-  const selectedProviderEntry = useMemo(
-    () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
-    [providerInstanceEntries, selectedInstanceId],
-  );
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],

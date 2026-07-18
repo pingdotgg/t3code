@@ -112,8 +112,10 @@ import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons"
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
-import { resolveSelectableProviderInstance } from "../providerInstances";
-import { getDefaultServerModel } from "../providerModels";
+import {
+  getDefaultProviderInstanceModel,
+  resolveSelectableProviderInstance,
+} from "../providerInstances";
 import { resolveShortcutCommand } from "../keybindings";
 import {
   Command,
@@ -1154,9 +1156,6 @@ function OpenCommandPaletteDialog(props: {
       const projectId = newProjectId();
       const defaultInstanceId =
         resolveSelectableProviderInstance(providers, undefined) ?? ProviderInstanceId.make("codex");
-      const defaultDriver = providers.find(
-        (snapshot) => snapshot.instanceId === defaultInstanceId,
-      )?.driver;
       const createResult = await createProject({
         environmentId: input.environmentId,
         input: {
@@ -1166,7 +1165,7 @@ function OpenCommandPaletteDialog(props: {
           createWorkspaceRootIfMissing: true,
           defaultModelSelection: {
             instanceId: defaultInstanceId,
-            model: defaultDriver ? getDefaultServerModel(providers, defaultDriver) : DEFAULT_MODEL,
+            model: getDefaultProviderInstanceModel(providers, defaultInstanceId) ?? DEFAULT_MODEL,
           },
         },
       });

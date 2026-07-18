@@ -13,6 +13,7 @@
  * @module providerInstances
  */
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
   type ProviderDriverKind,
@@ -254,6 +255,26 @@ export function getProviderInstanceModels(
 }
 
 /**
+ * Default model slug for a specific instance: its first built-in model,
+ * then any model it reports, then the driver-level default. Custom
+ * instances can serve a different model list than the default instance of
+ * the same driver kind, so the lookup must be instance-scoped rather than
+ * kind-scoped.
+ */
+export function getDefaultProviderInstanceModel(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+): string | undefined {
+  const entry = getProviderInstanceEntry(providers, instanceId);
+  if (!entry) return undefined;
+  return (
+    entry.models.find((model) => !model.isCustom)?.slug ??
+    entry.models[0]?.slug ??
+    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+  );
+}
+
+/**
  * Resolve the routing key for a selection that may reference an instance
  * id that no longer exists (e.g. a persisted thread selection after the
  * user deleted the custom instance). Returns the first enabled instance
@@ -270,13 +291,16 @@ export function resolveSelectableProviderInstance(
       return instanceId;
     }
   }
-  // Prefer an instance that can actually start a session. An enabled entry
-  // whose driver binary is missing (e.g. the default codex instance on a
-  // machine without the Codex CLI) is "selectable" but every turn on it
-  // fails, so it only wins when nothing is ready.
+  // "ready" instances can start a session right now. "warning" instances
+  // (not probed yet this session, or probed with a degraded result) may
+  // still work. "error" (e.g. the driver CLI is not installed) almost
+  // never starts, so a broken instance is chosen only when nothing else
+  // is configured.
+  const selectable = (entry: ProviderInstanceEntry) => entry.enabled && entry.isAvailable;
   return (
     entries.find(isProviderInstancePickerReady)?.instanceId ??
-    entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId
+    entries.find((entry) => selectable(entry) && entry.status !== "error")?.instanceId ??
+    entries.find(selectable)?.instanceId
   );
 }
 
