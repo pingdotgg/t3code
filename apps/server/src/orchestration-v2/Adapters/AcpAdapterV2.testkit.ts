@@ -3,6 +3,7 @@ import {
   ProviderReplayEntry,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -179,7 +180,10 @@ export function makeAcpReplayRuntime(input: {
           authMethodId: "replay",
         }).pipe(
           Layer.provide(
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+            Layer.mergeAll(
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+              NodeCrypto.layer,
+            ),
           ),
         ),
       );

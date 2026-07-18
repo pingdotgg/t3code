@@ -5,6 +5,7 @@ import type {
   OrchestrationReadModel,
   OrchestrationThread,
 } from "@t3tools/contracts/legacy-orchestration";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -66,6 +67,30 @@ export function requireProjectAbsent(input: {
     invariantError(
       input.command.type,
       `Project '${input.projectId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireActiveProjectWorkspaceRootAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workspaceRoot: string;
+  readonly exceptProjectId?: ProjectId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const normalizedWorkspaceRoot = normalizeProjectPathForComparison(input.workspaceRoot);
+  const existingProject = input.readModel.projects.find(
+    (project) =>
+      project.deletedAt === null &&
+      normalizeProjectPathForComparison(project.workspaceRoot) === normalizedWorkspaceRoot &&
+      project.id !== input.exceptProjectId,
+  );
+  if (existingProject === undefined) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Active project '${existingProject.id}' already exists for workspace root '${normalizedWorkspaceRoot}'.`,
     ),
   );
 }

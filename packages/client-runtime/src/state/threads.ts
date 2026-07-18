@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
 
+import { causeFailureMessage } from "../errors/causeMessage.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -38,10 +39,11 @@ function statusWithoutLiveData(
 }
 
 function formatThreadError(cause: Cause.Cause<unknown>): string {
-  const error = Cause.squash(cause);
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "Could not synchronize the thread.";
+  return causeFailureMessage(cause, "Could not synchronize the thread.");
+}
+
+function shouldPersistThread(projection: OrchestrationV2ThreadProjection): boolean {
+  return !projection.runs.some((run) => run.status === "starting" || run.status === "running");
 }
 
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
@@ -126,7 +128,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       if (waiting) {
         return {
           ...current,
-          status: "synchronizing" as const,
+          status: Option.isSome(current.data) ? ("live" as const) : ("synchronizing" as const),
           error: Option.none(),
         };
       }
@@ -166,10 +168,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       status: waiting ? ("synchronizing" as const) : ("live" as const),
       error: Option.none(),
     });
-    // Persist the thread together with the sequence it reflects so the next warm
-    // cache can resume from exactly here.
-    const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
-    yield* Queue.offer(persistence, { snapshotSequence, projection: thread });
+    // Active threads can update many times per second and retain large tool
+    // payloads. The server remains the source of truth while a turn is active;
+    // persist once it settles so cache encoding stays off the streaming path.
+    if (shouldPersistThread(thread)) {
+      const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
+      yield* Queue.offer(persistence, { snapshotSequence, projection: thread });
+    }
   });
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
@@ -321,7 +326,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.flatMap(([current, snapshotSequence]) =>
         Option.match(current.data, {
           onNone: () => Effect.void,
-          onSome: (projection) => persist({ snapshotSequence, projection }),
+          onSome: (projection) =>
+            shouldPersistThread(projection)
+              ? persist({ snapshotSequence, projection })
+              : Effect.void,
         }),
       ),
     ),

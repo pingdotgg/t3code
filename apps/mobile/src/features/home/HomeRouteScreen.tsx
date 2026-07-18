@@ -4,6 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useCallback, useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { renderCompactBrandTitle } from "../../components/CompactBrandTitle";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -19,8 +20,6 @@ import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 
 const EMPTY_HOME_TITLE_OPTIONS = { title: "", headerTitle: "" } as const;
-const THREADS_HOME_TITLE_OPTIONS = { title: "Threads", headerTitle: "Threads" } as const;
-
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export function HomeRouteScreen() {
@@ -91,7 +90,9 @@ export function HomeRouteScreen() {
     <AndroidHomeFabLayout onStartNewTask={openNewTask}>
       <>
         {/* Restore the compact title in case the split branch blanked it. */}
-        <NativeStackScreenOptions options={THREADS_HOME_TITLE_OPTIONS} />
+        <NativeStackScreenOptions
+          options={{ title: "T3 Code", headerTitle: renderCompactBrandTitle }}
+        />
         <HomeHeader
           environments={environments}
           searchQuery={searchQuery}

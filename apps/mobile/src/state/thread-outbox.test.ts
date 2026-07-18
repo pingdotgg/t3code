@@ -294,6 +294,31 @@ describe("thread outbox", () => {
     registry.dispose();
   });
 
+  it("replaces an existing message when an enqueue retry uses the same id", async () => {
+    const registry = AtomRegistry.make();
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => undefined,
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const retried = { ...message, text: "retried" };
+
+    await manager.enqueue(message);
+    await manager.enqueue(retried);
+
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [retried],
+    });
+    registry.dispose();
+  });
+
   it("updates a queued message in place but never resurrects a removed one", async () => {
     const registry = AtomRegistry.make();
     const stored = new Map<MessageId, QueuedThreadMessage>();

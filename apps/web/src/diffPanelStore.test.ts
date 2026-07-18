@@ -9,9 +9,23 @@ const THREAD_REF = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.
 describe("diffPanelStore", () => {
   beforeEach(() => useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} }));
 
-  it("defaults each thread to branch changes with automatic base selection", () => {
+  it("defaults each thread to branch changes when the working tree is clean", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: null });
+  });
+
+  it("defaults each thread to working changes when the working tree is dirty", () => {
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF, true),
+    ).toEqual({ kind: "unstaged" });
+  });
+
+  it("preserves an explicit scope selection when the working tree state changes", () => {
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF, true),
     ).toEqual({ kind: "branch", baseRef: null });
   });
 

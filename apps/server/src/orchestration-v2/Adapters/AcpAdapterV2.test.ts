@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -82,7 +83,10 @@ function makeMockRuntime(input: {
           authMethodId: "test",
         }).pipe(
           Layer.provide(
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+            Layer.mergeAll(
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+              NodeCrypto.layer,
+            ),
           ),
         ),
       );

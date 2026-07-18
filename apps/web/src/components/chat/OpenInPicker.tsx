@@ -44,107 +44,134 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
+type OpenInOption = {
+  label: string;
+  Icon: Icon;
+  value: EditorId;
+  kind: "brand" | "generic";
+};
+
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
-  const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
+  const baseOptions: ReadonlyArray<OpenInOption> = [
     {
       label: "Cursor",
       Icon: CursorIcon,
       value: "cursor",
+      kind: "brand",
     },
     {
       label: "Trae",
       Icon: TraeIcon,
       value: "trae",
+      kind: "brand",
     },
     {
       label: "Kiro",
       Icon: KiroIcon,
       value: "kiro",
+      kind: "brand",
     },
     {
       label: "VS Code",
       Icon: VisualStudioCode,
       value: "vscode",
+      kind: "brand",
     },
     {
       label: "VS Code Insiders",
       Icon: VisualStudioCodeInsiders,
       value: "vscode-insiders",
+      kind: "brand",
     },
     {
       label: "VSCodium",
       Icon: VSCodium,
       value: "vscodium",
+      kind: "brand",
     },
     {
       label: "Zed",
       Icon: Zed,
       value: "zed",
+      kind: "brand",
     },
     {
       label: "Antigravity",
       Icon: AntigravityIcon,
       value: "antigravity",
+      kind: "brand",
     },
     {
       label: "IntelliJ IDEA",
       Icon: IntelliJIdeaIcon,
       value: "idea",
+      kind: "brand",
     },
     {
       label: "Aqua",
       Icon: AquaIcon,
       value: "aqua",
+      kind: "brand",
     },
     {
       label: "CLion",
       Icon: CLionIcon,
       value: "clion",
+      kind: "brand",
     },
     {
       label: "DataGrip",
       Icon: DataGripIcon,
       value: "datagrip",
+      kind: "brand",
     },
     {
       label: "DataSpell",
       Icon: DataSpellIcon,
       value: "dataspell",
+      kind: "brand",
     },
     {
       label: "GoLand",
       Icon: GoLandIcon,
       value: "goland",
+      kind: "brand",
     },
     {
       label: "PhpStorm",
       Icon: PhpStormIcon,
       value: "phpstorm",
+      kind: "brand",
     },
     {
       label: "PyCharm",
       Icon: PyCharmIcon,
       value: "pycharm",
+      kind: "brand",
     },
     {
       label: "Rider",
       Icon: RiderIcon,
       value: "rider",
+      kind: "brand",
     },
     {
       label: "RubyMine",
       Icon: RubyMineIcon,
       value: "rubymine",
+      kind: "brand",
     },
     {
       label: "RustRover",
       Icon: RustRoverIcon,
       value: "rustrover",
+      kind: "brand",
     },
     {
       label: "WebStorm",
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
     },
     {
       label: isMacPlatform(platform)
@@ -154,11 +181,16 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
           : "Files",
       Icon: FolderClosedIcon,
       value: "file-manager",
+      kind: "generic",
     },
   ];
   const availableEditorSet = new Set(availableEditors);
   return baseOptions.filter((option) => availableEditorSet.has(option.value));
 };
+
+function getOpenInIconClass(kind: OpenInOption["kind"]) {
+  return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
+}
 
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
@@ -229,7 +261,10 @@ export const OpenInPicker = memo(function OpenInPicker({
         {primaryOption?.Icon && (
           <primaryOption.Icon
             aria-hidden="true"
-            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5"}
+            className={cn(
+              isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
+              getOpenInIconClass(primaryOption.kind),
+            )}
           />
         )}
         <span
@@ -270,9 +305,9 @@ export const OpenInPicker = memo(function OpenInPicker({
           className={isPanel ? THREAD_DETAILS_PANEL_ROW_POPUP_CLASS : undefined}
         >
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
+          {options.map(({ label, Icon, value, kind }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
+              <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               {label}
               {value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>

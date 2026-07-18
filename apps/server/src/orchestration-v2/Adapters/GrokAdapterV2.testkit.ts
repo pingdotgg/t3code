@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { GrokSettings } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -34,6 +35,7 @@ export function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplay
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
       const replayDir = yield* fileSystem
@@ -50,6 +52,7 @@ export function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplay
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
         childProcessSpawner,
+        crypto,
         fileSystem,
         idAllocator,
         serverConfig,

@@ -255,6 +255,23 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
   const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight;
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(estimatedOverlayHeight);
+  const estimatedOverlayHeightRef = useRef(estimatedOverlayHeight);
+  useEffect(() => {
+    estimatedOverlayHeightRef.current = estimatedOverlayHeight;
+  }, [estimatedOverlayHeight]);
+  useEffect(() => {
+    // A measured overlay can include approval or input cards that are not part
+    // of this baseline estimate. Keep that larger measurement until layout
+    // reports a new height, while ensuring chrome changes never under-estimate
+    // the composer inset.
+    setComposerOverlayHeight((current) => Math.max(current, estimatedOverlayHeight));
+  }, [estimatedOverlayHeight]);
+  useEffect(() => {
+    // Layout callbacks from the previous thread can arrive after navigation.
+    // Reset their larger measurement to this thread's known baseline; its own
+    // overlay layout will immediately replace it if it contains extra cards.
+    setComposerOverlayHeight(estimatedOverlayHeightRef.current);
+  }, [selectedThreadKey]);
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
