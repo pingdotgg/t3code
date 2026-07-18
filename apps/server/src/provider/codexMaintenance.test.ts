@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
-import { selectCodexProviderMaintenanceCapabilities } from "./codexMaintenance.ts";
+import {
+  makeCodexMaintenanceEnvironment,
+  selectCodexProviderMaintenanceCapabilities,
+} from "./codexMaintenance.ts";
 import {
   createProviderVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -38,7 +41,7 @@ describe("codexMaintenance", () => {
         command: "codex update",
         executable: "codex",
         args: ["update"],
-        lockKey: "codex-native",
+        lockKey: "npm-global",
       },
     });
   });
@@ -91,7 +94,70 @@ describe("codexMaintenance", () => {
       command: "/custom/tools/codex update",
       executable: "/custom/tools/codex",
       args: ["update"],
+      lockKey: "codex-native",
     });
+  });
+
+  it.each([
+    [
+      "/home/test/.local/share/pnpm/codex",
+      "pnpm",
+      ["add", "-g", "@openai/codex@latest"],
+      "pnpm-global",
+    ],
+    ["/home/test/.vite-plus/bin/codex", "vp", ["i", "-g", "@openai/codex"], "vite-plus-global"],
+  ])(
+    "retains the legacy %s update above the native version boundary",
+    (binaryPath, executable, args, lockKey) => {
+      expect(select("0.129.0", binaryPath).update).toMatchObject({
+        executable,
+        args,
+        lockKey,
+      });
+    },
+  );
+
+  it.each([
+    ["/usr/local/lib/node_modules/@openai/codex/bin/codex.js", "npm-global"],
+    ["/home/test/.bun/bin/codex", "bun-global"],
+    ["/opt/homebrew/bin/codex", "homebrew"],
+  ])("retains the legacy manager lock for native updates through %s", (binaryPath, lockKey) => {
+    expect(select("0.129.0", binaryPath).update).toMatchObject({
+      executable: binaryPath,
+      args: ["update"],
+      lockKey,
+    });
+  });
+
+  it("uses the shared install home instead of an auth-overlay home for standalone updates", () => {
+    const environment = {
+      PATH: "/test/bin",
+      CODEX_HOME: "/home/test/.codex-work",
+    };
+    expect(
+      makeCodexMaintenanceEnvironment({
+        environment,
+        realExecutablePath: "/home/test/.codex/packages/standalone/releases/0.129.0/codex",
+        sharedHomePath: "/home/test/.codex",
+      }),
+    ).toEqual({
+      PATH: "/test/bin",
+      CODEX_HOME: "/home/test/.codex",
+    });
+  });
+
+  it("does not override CODEX_HOME for non-standalone installations", () => {
+    const environment = {
+      PATH: "/test/bin",
+      CODEX_HOME: "/home/test/.codex-work",
+    };
+    expect(
+      makeCodexMaintenanceEnvironment({
+        environment,
+        realExecutablePath: "/opt/homebrew/bin/codex",
+        sharedHomePath: "/home/test/.codex",
+      }),
+    ).toBe(environment);
   });
 
   it("derives the displayed update command and availability from the selected capability", () => {
