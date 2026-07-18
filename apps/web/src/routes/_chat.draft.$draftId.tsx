@@ -8,6 +8,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
+import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useThread, useThreadRefs } from "../state/entities";
 
@@ -40,11 +41,22 @@ function DraftChatThreadRouteView() {
     if (!canonicalThreadRef) {
       return;
     }
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(canonicalThreadRef),
-      replace: true,
+
+    let cancelled = false;
+    void waitForDraftHeroTransition().then(() => {
+      if (cancelled) {
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(canonicalThreadRef),
+        replace: true,
+      });
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [canonicalThreadRef, navigate]);
 
   useEffect(() => {
@@ -53,18 +65,6 @@ function DraftChatThreadRouteView() {
     }
     void navigate({ to: "/", replace: true });
   }, [canonicalThreadRef, draftSession, navigate]);
-
-  if (canonicalThreadRef) {
-    return (
-      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-        <ChatView
-          environmentId={canonicalThreadRef.environmentId}
-          threadId={canonicalThreadRef.threadId}
-          routeKind="server"
-        />
-      </SidebarInset>
-    );
-  }
 
   if (!draftSession) {
     return null;
@@ -77,6 +77,7 @@ function DraftChatThreadRouteView() {
         environmentId={draftSession.environmentId}
         threadId={draftSession.threadId}
         routeKind="draft"
+        forceExpandedMobileComposer
       />
     </SidebarInset>
   );

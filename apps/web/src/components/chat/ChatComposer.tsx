@@ -442,6 +442,8 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  forceExpandedOnMobile: boolean;
+  projectSelectionRequired: boolean;
 
   // Session phase
   phase: SessionPhase;
@@ -553,6 +555,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
+    forceExpandedOnMobile,
+    projectSelectionRequired,
     phase,
     isConnecting,
     isSendBusy,
@@ -883,7 +887,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
-  const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
+  const isComposerCollapsedMobile =
+    isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
 
   // ------------------------------------------------------------------
   // Refs
@@ -1136,7 +1141,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    projectSelectionRequired ||
+    !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
@@ -1928,6 +1937,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           isConnecting ||
           isComposerApprovalState ||
           pendingUserInputs.length > 0 ||
+          projectSelectionRequired ||
           (environmentUnavailable !== null && activePendingProgress === null)
         ) {
           return false;
@@ -2028,6 +2038,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isConnecting,
       isComposerApprovalState,
       pendingUserInputs.length,
+      projectSelectionRequired,
       environmentUnavailable,
       activePendingProgress,
       applyPromptReplacement,
@@ -2065,9 +2076,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ref={composerSurfaceRef}
           data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
           className={cn(
-            "chat-composer-glass rounded-[20px] border transition-colors duration-200 has-focus-visible:border-ring/45",
+            "chat-composer-glass rounded-[20px] border transition-[background-color] duration-200 has-focus-visible:border-ring/45",
             isDragOverComposer ? "border-primary/70 bg-accent/45" : "border-border",
-            environmentUnavailable ? "opacity-75" : null,
+            environmentUnavailable || projectSelectionRequired ? "opacity-75" : null,
             composerProviderState.composerSurfaceClassName,
           )}
           onFocusCapture={(event) => {
@@ -2179,7 +2190,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       promptHasText={false}
                       isSendBusy={isSendBusy}
                       isConnecting={isConnecting}
-                      isEnvironmentUnavailable={environmentUnavailable !== null}
+                      isEnvironmentUnavailable={
+                        environmentUnavailable !== null || projectSelectionRequired
+                      }
                       isPreparingWorktree={false}
                       hasSendableContent={false}
                       preserveComposerFocusOnPointerDown
@@ -2413,17 +2426,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? "Type your own answer, or leave this blank to use the selected option"
                       : showPlanFollowUpPrompt && activeProposedPlan
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
-                        : environmentUnavailable
-                          ? `${environmentUnavailable.label}: ${connectionStatusText(
-                              environmentUnavailable.connection,
-                            )}`
-                          : phase === "disconnected"
-                            ? "Ask for follow-up changes or attach images"
-                            : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                        : projectSelectionRequired
+                          ? "Choose a project above to start a thread"
+                          : environmentUnavailable
+                            ? `${environmentUnavailable.label}: ${connectionStatusText(
+                                environmentUnavailable.connection,
+                              )}`
+                            : phase === "disconnected"
+                              ? "Ask for follow-up changes or attach images"
+                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={
                   isConnecting ||
                   isComposerApprovalState ||
+                  projectSelectionRequired ||
                   (environmentUnavailable !== null && activePendingProgress === null)
                 }
               />
@@ -2440,7 +2456,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     promptHasText={false}
                     isSendBusy={isSendBusy}
                     isConnecting={isConnecting}
-                    isEnvironmentUnavailable={environmentUnavailable !== null}
+                    isEnvironmentUnavailable={
+                      environmentUnavailable !== null || projectSelectionRequired
+                    }
                     isPreparingWorktree={false}
                     hasSendableContent={false}
                     preserveComposerFocusOnPointerDown
@@ -2551,7 +2569,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   promptHasText={prompt.trim().length > 0}
                   isSendBusy={isSendBusy}
                   isConnecting={isConnecting}
-                  isEnvironmentUnavailable={environmentUnavailable !== null}
+                  isEnvironmentUnavailable={
+                    environmentUnavailable !== null || projectSelectionRequired
+                  }
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
                   preserveComposerFocusOnPointerDown={isMobileViewport}

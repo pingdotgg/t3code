@@ -19,6 +19,7 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -1064,5 +1065,75 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+describe("sortScopedProjectsForSidebar", () => {
+  it("keeps identical project ids in different environments separate", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const sharedProjectId = ProjectId.make("shared-project");
+    const projects = [
+      makeProject({
+        environmentId: localEnvironmentId,
+        id: sharedProjectId,
+        title: "Local project",
+      }),
+      makeProject({
+        environmentId: remoteEnvironmentId,
+        id: sharedProjectId,
+        title: "Remote project",
+      }),
+    ];
+    const threads = [
+      makeThread({
+        environmentId: localEnvironmentId,
+        projectId: sharedProjectId,
+        updatedAt: "2026-03-09T10:02:00.000Z",
+      }),
+      makeThread({
+        environmentId: remoteEnvironmentId,
+        projectId: sharedProjectId,
+        updatedAt: "2026-03-09T10:10:00.000Z",
+      }),
+    ];
+
+    const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
+
+    expect(sorted.map((project) => project.title)).toEqual(["Remote project", "Local project"]);
+  });
+
+  it("does not use archived threads as project activity", () => {
+    const projects = [
+      makeProject({
+        id: ProjectId.make("project-visible"),
+        title: "Visible project",
+        updatedAt: "2026-03-09T10:01:00.000Z",
+      }),
+      makeProject({
+        id: ProjectId.make("project-archived"),
+        title: "Archived-only project",
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      }),
+    ];
+    const threads = [
+      makeThread({
+        id: ThreadId.make("thread-visible"),
+        projectId: ProjectId.make("project-visible"),
+        updatedAt: "2026-03-09T10:02:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-archived"),
+        projectId: ProjectId.make("project-archived"),
+        updatedAt: "2026-03-09T10:10:00.000Z",
+        archivedAt: "2026-03-09T10:11:00.000Z",
+      }),
+    ];
+
+    const sorted = sortScopedProjectsForSidebar(projects, threads, "updated_at");
+
+    expect(sorted.map((project) => project.title)).toEqual([
+      "Visible project",
+      "Archived-only project",
+    ]);
   });
 });
