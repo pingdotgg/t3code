@@ -165,18 +165,19 @@ export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
 }): string {
-  const sharedDisplayNames = uniqueNonEmptyValues(
-    input.members.map((member) => member.repositoryIdentity?.displayName),
-  );
-  if (sharedDisplayNames.length === 1) {
-    return sharedDisplayNames[0]!;
-  }
-
+  // Prefer the short repository name before falling back to the qualified owner/repository label.
   const sharedRepositoryNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.name),
   );
   if (sharedRepositoryNames.length === 1) {
     return sharedRepositoryNames[0]!;
+  }
+
+  const sharedDisplayNames = uniqueNonEmptyValues(
+    input.members.map((member) => member.repositoryIdentity?.displayName),
+  );
+  if (sharedDisplayNames.length === 1) {
+    return sharedDisplayNames[0]!;
   }
 
   return input.representative.title;
