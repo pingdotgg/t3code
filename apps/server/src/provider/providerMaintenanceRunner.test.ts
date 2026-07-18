@@ -48,7 +48,7 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
     return makeProviderMaintenanceCapabilities({
       provider,
       packageName: null,
-      updateExecutable: "agent",
+      updateExecutable: "cursor-agent",
       updateArgs: ["update"],
       updateLockKey: "cursor-agent",
     });
@@ -226,7 +226,7 @@ describe("providerMaintenanceRunner", () => {
       const result = yield* updater.updateProvider(CURSOR_DRIVER);
       assert.deepStrictEqual(calls, [
         {
-          command: "agent",
+          command: "cursor-agent",
           args: ["update"],
         },
       ]);
