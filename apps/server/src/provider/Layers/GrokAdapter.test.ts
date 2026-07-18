@@ -222,20 +222,24 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         })
         .pipe(Effect.timeout("30 seconds"));
 
-      yield* adapter.sendTurn({
-        threadId,
-        input: "hello grok",
-        attachments: [],
-      });
+      // Bounded so a regressed (dead) drain fails the test promptly instead of
+      // hanging: with the consumer gone, sendTurn wedges on the drain barrier.
+      yield* adapter
+        .sendTurn({
+          threadId,
+          input: "hello grok",
+          attachments: [],
+        })
+        .pipe(Effect.timeout("10 seconds"));
 
-      yield* Deferred.await(turnCompleted);
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("10 seconds"));
       yield* Fiber.interrupt(runtimeEventsFiber);
 
       const types = runtimeEvents.map((event) => event.type);
       assert.includeMembers(types, ["content.delta", "turn.completed"] as const);
 
       yield* adapter.stopSession(threadId);
-    }),
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("streams agent_thought_chunk as reasoning_text content deltas", () =>
