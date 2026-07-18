@@ -4,6 +4,7 @@ import type {
   VcsPanelFileDiffResult,
   VcsPanelSnapshotResult,
   VcsPanelStashDetails,
+  VcsPanelWorkingTreeFileEnrichmentResult,
 } from "@t3tools/contracts";
 import {
   type AtomCommandResult,
@@ -48,6 +49,13 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
     forceRefresh: true,
     reportFailure: false,
   });
+  const panelEnrichWorkingTreeFiles = useAtomQueryRunner(
+    vcsEnvironment.panelEnrichWorkingTreeFiles,
+    {
+      forceRefresh: true,
+      reportFailure: false,
+    },
+  );
 
   const panelStageFiles = useAtomCommand(vcsEnvironment.panelStageFiles, { reportFailure: false });
   const panelDiscardFiles = useAtomCommand(vcsEnvironment.panelDiscardFiles, {
@@ -108,6 +116,11 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
         runPanelCommand<typeof input, VcsPanelStashDetails>(panelStashDetails, input),
       readFileDiff: (input: Parameters<typeof panelReadFileDiff>[0]["input"]) =>
         runPanelCommand<typeof input, VcsPanelFileDiffResult>(panelReadFileDiff, input),
+      enrichWorkingTreeFiles: (input: Parameters<typeof panelEnrichWorkingTreeFiles>[0]["input"]) =>
+        runPanelCommand<typeof input, VcsPanelWorkingTreeFileEnrichmentResult>(
+          panelEnrichWorkingTreeFiles,
+          input,
+        ),
       stageFiles: (input: Parameters<typeof panelStageFiles>[0]["input"]) =>
         runPanelCommand<typeof input, void>(panelStageFiles, input),
       discardFiles: (input: Parameters<typeof panelDiscardFiles>[0]["input"]) =>
@@ -148,6 +161,7 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
       panelDeleteBranch,
       panelDiscardFiles,
       panelDropStash,
+      panelEnrichWorkingTreeFiles,
       panelFetchAllRemotes,
       panelFetchBranch,
       panelFetchRemote,

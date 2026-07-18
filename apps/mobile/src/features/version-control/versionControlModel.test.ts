@@ -3,9 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   actionableLocalBranches,
+  applyWorkingTreeEnrichments,
+  branchOwnsOperationCwd,
+  discardPathGroups,
   operationPaths,
   panelChangeSets,
   selectedFileStats,
+  workingTreeEnrichmentRequests,
 } from "./versionControlModel";
 
 function snapshot(): VcsPanelSnapshotResult {
@@ -112,5 +116,68 @@ describe("native Version Control model", () => {
         { path: "new.ts", originalPath: "old.ts" },
       ]),
     ).toEqual(["new.ts", "old.ts"]);
+  });
+
+  it("partitions mixed staged and unstaged files for complete discards", () => {
+    const files = panelChangeSets(snapshot(), "/repo")[0]?.files ?? [];
+    expect(discardPathGroups(files)).toEqual({
+      staged: ["src/a.ts"],
+      unstaged: ["src/a.ts"],
+    });
+  });
+
+  it("applies cwd-scoped untracked file enrichment", () => {
+    const next: VcsPanelSnapshotResult = {
+      ...snapshot(),
+      changeGroups: [
+        {
+          kind: "unstaged",
+          files: [
+            {
+              path: "src/new.ts",
+              originalPath: null,
+              status: "untracked",
+              insertions: 0,
+              deletions: 0,
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(workingTreeEnrichmentRequests(next, "/repo")).toEqual([
+      { cwd: "/repo", paths: ["src/new.ts"] },
+    ]);
+    const enriched = applyWorkingTreeEnrichments(
+      next,
+      "/repo",
+      new Map([
+        [
+          "/repo",
+          {
+            files: [
+              {
+                path: "src/new.ts",
+                originalPath: null,
+                status: "untracked",
+                insertions: 12,
+                deletions: 0,
+              },
+            ],
+            hiddenPaths: [],
+          },
+        ],
+      ]),
+    );
+    expect(panelChangeSets(enriched, "/repo")[0]?.files[0]?.insertions).toBe(12);
+  });
+
+  it("only offers merge sync when the target cwd owns the branch", () => {
+    const [current, localOnly] = snapshot().localBranches;
+    expect(current && branchOwnsOperationCwd(current)).toBe(true);
+    expect(localOnly && branchOwnsOperationCwd(localOnly)).toBe(false);
+    expect(
+      localOnly && branchOwnsOperationCwd({ ...localOnly, worktreePath: "/repo-worktree" }),
+    ).toBe(true);
   });
 });

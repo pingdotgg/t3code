@@ -1,6 +1,8 @@
 import type {
+  VcsPanelChangeGroup,
   VcsPanelFileChange,
   VcsPanelSnapshotResult,
+  VcsPanelWorkingTreeFileEnrichmentResult,
   VcsPanelWorktreeChangeSet,
   VcsRef,
 } from "@t3tools/contracts";
@@ -66,6 +68,82 @@ export function operationPaths(
       files.flatMap((file) => (file.originalPath ? [file.path, file.originalPath] : [file.path])),
     ),
   ];
+}
+
+export function discardPathGroups(files: readonly PanelChangedFile[]): {
+  readonly staged: readonly string[];
+  readonly unstaged: readonly string[];
+} {
+  return {
+    staged: operationPaths(files.filter((file) => file.hasStagedChanges)),
+    unstaged: operationPaths(
+      files.filter((file) => file.hasUnstagedChanges || !file.hasStagedChanges),
+    ),
+  };
+}
+
+export function workingTreeEnrichmentRequests(
+  snapshot: VcsPanelSnapshotResult,
+  cwd: string,
+): ReadonlyArray<{ readonly cwd: string; readonly paths: readonly string[] }> {
+  return panelChangeSets(snapshot, cwd).flatMap((changeSet) => {
+    const paths = changeSet.files
+      .filter(
+        (file) =>
+          file.hasUnstagedChanges && (file.status === "untracked" || file.status === "deleted"),
+      )
+      .map((file) => file.path);
+    return paths.length > 0 ? [{ cwd: changeSet.cwd, paths }] : [];
+  });
+}
+
+function applyWorkingTreeEnrichment(
+  groups: readonly VcsPanelChangeGroup[],
+  enrichment: VcsPanelWorkingTreeFileEnrichmentResult | undefined,
+): VcsPanelChangeGroup[] {
+  if (!enrichment) return groups.map((group) => ({ ...group, files: [...group.files] }));
+
+  const enrichedByPath = new Map(enrichment.files.map((file) => [file.path, file]));
+  const hiddenPaths = new Set(enrichment.hiddenPaths);
+  return groups.map((group) => {
+    if (group.kind !== "unstaged") return { ...group, files: [...group.files] };
+    const seenPaths = new Set<string>();
+    const files = group.files.flatMap((file) => {
+      if (hiddenPaths.has(file.path)) return [];
+      const enriched = enrichedByPath.get(file.path) ?? file;
+      seenPaths.add(enriched.path);
+      return [enriched];
+    });
+    for (const file of enrichment.files) {
+      if (!seenPaths.has(file.path) && !hiddenPaths.has(file.path)) files.push(file);
+    }
+    return {
+      ...group,
+      files: files.toSorted((left, right) => left.path.localeCompare(right.path)),
+    };
+  });
+}
+
+export function applyWorkingTreeEnrichments(
+  snapshot: VcsPanelSnapshotResult,
+  cwd: string,
+  enrichments: ReadonlyMap<string, VcsPanelWorkingTreeFileEnrichmentResult>,
+): VcsPanelSnapshotResult {
+  return {
+    ...snapshot,
+    changeGroups: applyWorkingTreeEnrichment(snapshot.changeGroups, enrichments.get(cwd)),
+    worktreeChangeSets: snapshot.worktreeChangeSets.map((changeSet) => ({
+      ...changeSet,
+      changeGroups: applyWorkingTreeEnrichment(
+        changeSet.changeGroups,
+        enrichments.get(changeSet.worktreePath),
+      ),
+    })),
+  };
+}
+
+export function branchOwnsOperationCwd(branch: VcsRef): boolean {
+  return branch.current || branch.worktreePath !== null;
 }
 
 export function selectedFileStats(

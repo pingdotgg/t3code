@@ -4,6 +4,7 @@ import type {
   VcsPanelStashDetails,
   VcsPanelSnapshotResult,
   VcsRef,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -40,11 +41,15 @@ import { vcsEnvironment } from "../../state/vcs";
 import { SheetActionButton } from "../threads/git/gitSheetComponents";
 import {
   actionableLocalBranches,
+  applyWorkingTreeEnrichments,
+  branchOwnsOperationCwd,
   branchSyncLabel,
+  discardPathGroups,
   fileStatusLetter,
   operationPaths,
   panelChangeSets,
   selectedFileStats,
+  workingTreeEnrichmentRequests,
   type VersionControlChangeSet,
 } from "./versionControlModel";
 import {
@@ -61,6 +66,10 @@ type FileDiffState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly patch: string }
   | { readonly status: "error"; readonly message: string };
+
+function fileDiffKey(changeSet: VersionControlChangeSet, file: PanelChangedFile): string {
+  return `file:${changeSet.cwd}:${file.path}`;
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) return error.message;
@@ -321,6 +330,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(
     () => new Set(selectedThreadCwd ? [`changes:${selectedThreadCwd}`] : []),
   );
+  const expandedRowsRef = useRef<ReadonlySet<string>>(expandedRows);
   const [selectedByCwd, setSelectedByCwd] = useState<ReadonlyMap<string, ReadonlySet<string>>>(
     new Map(),
   );
@@ -340,6 +350,41 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const snapshotRequestId = useRef(0);
   const snapshotRevision = useRef(0);
   const snapshotFingerprint = useRef<string | null>(null);
+  const nextFileDiffRequestId = useRef(0);
+  const fileDiffRequestIds = useRef(new Map<string, number>());
+
+  useEffect(() => {
+    expandedRowsRef.current = expandedRows;
+  }, [expandedRows]);
+
+  const requestFileDiff = useCallback(
+    (changeSet: VersionControlChangeSet, file: PanelChangedFile) => {
+      const key = fileDiffKey(changeSet, file);
+      const requestId = ++nextFileDiffRequestId.current;
+      fileDiffRequestIds.current.set(key, requestId);
+      setDiffs((current) => new Map(current).set(key, { status: "loading" }));
+      void api
+        .readFileDiff({
+          cwd: changeSet.cwd,
+          path: file.path,
+          ...(file.originalPath ? { originalPath: file.originalPath } : {}),
+          source: { kind: "working-tree", staged: !file.hasUnstagedChanges },
+        })
+        .then((result) => {
+          if (fileDiffRequestIds.current.get(key) !== requestId) return;
+          setDiffs((current) =>
+            new Map(current).set(key, { status: "loaded", patch: result.patch }),
+          );
+        })
+        .catch((cause) => {
+          if (fileDiffRequestIds.current.get(key) !== requestId) return;
+          setDiffs((current) =>
+            new Map(current).set(key, { status: "error", message: errorMessage(cause) }),
+          );
+        });
+    },
+    [api],
+  );
 
   const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
     const changeSets = panelChangeSets(nextSnapshot, cwd);
@@ -384,12 +429,24 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         return;
       }
       try {
-        const next = await api.snapshot({ cwd: selectedThreadCwd });
+        const rawSnapshot = await api.snapshot({ cwd: selectedThreadCwd });
         if (requestId !== snapshotRequestId.current) return;
+        const enrichmentEntries = await Promise.all(
+          workingTreeEnrichmentRequests(rawSnapshot, selectedThreadCwd).map(
+            async (request) => [request.cwd, await api.enrichWorkingTreeFiles(request)] as const,
+          ),
+        );
+        if (requestId !== snapshotRequestId.current) return;
+        const next = applyWorkingTreeEnrichments(
+          rawSnapshot,
+          selectedThreadCwd,
+          new Map(enrichmentEntries),
+        );
         const nextFingerprint = `${selectedThreadCwd}\0${JSON.stringify(next)}`;
         if (snapshotFingerprint.current !== nextFingerprint) {
           snapshotFingerprint.current = nextFingerprint;
           snapshotRevision.current += 1;
+          fileDiffRequestIds.current.clear();
           setDiffs(new Map());
           setBranchDetails(new Map());
           setStashDetails(new Map());
@@ -405,6 +462,14 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                 ),
               ),
           );
+        } else {
+          for (const changeSet of panelChangeSets(next, selectedThreadCwd)) {
+            for (const file of changeSet.files) {
+              if (expandedRowsRef.current.has(fileDiffKey(changeSet, file))) {
+                requestFileDiff(changeSet, file);
+              }
+            }
+          }
         }
         setSnapshot(next);
         syncSelections(next, selectedThreadCwd);
@@ -423,7 +488,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         }
       }
     },
-    [api, selectedThreadCwd, syncSelections],
+    [api, requestFileDiff, selectedThreadCwd, syncSelections],
   );
 
   const runAction = useCallback(
@@ -460,13 +525,17 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   );
 
   const statusFingerprint = statusQuery.data ? JSON.stringify(statusQuery.data) : null;
-  const lastStatusFingerprint = useRef<string | null>(null);
+  const lastStatusRefresh = useRef<{
+    readonly data: VcsStatusResult;
+    readonly fingerprint: string;
+  } | null>(null);
   useEffect(() => {
-    if (!statusFingerprint || lastStatusFingerprint.current === statusFingerprint) return;
-    const hadStatus = lastStatusFingerprint.current !== null;
-    lastStatusFingerprint.current = statusFingerprint;
-    if (hadStatus) void refreshSnapshot();
-  }, [refreshSnapshot, statusFingerprint]);
+    if (!statusQuery.data || !statusFingerprint) return;
+    const previous = lastStatusRefresh.current;
+    if (previous?.data === statusQuery.data && previous.fingerprint === statusFingerprint) return;
+    lastStatusRefresh.current = { data: statusQuery.data, fingerprint: statusFingerprint };
+    if (previous) void refreshSnapshot();
+  }, [refreshSnapshot, statusFingerprint, statusQuery.data]);
 
   const changeSets = useMemo(
     () => (snapshot && selectedThreadCwd ? panelChangeSets(snapshot, selectedThreadCwd) : []),
@@ -498,42 +567,23 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      expandedRowsRef.current = next;
       return next;
     });
   }, []);
 
   const toggleFileDiff = useCallback(
     (changeSet: VersionControlChangeSet, file: PanelChangedFile) => {
-      const key = `file:${changeSet.cwd}:${file.path}`;
+      const key = fileDiffKey(changeSet, file);
       if (expandedRows.has(key)) {
         toggleExpanded(key);
         return;
       }
       toggleExpanded(key);
       if (diffs.has(key) && diffs.get(key)?.status !== "error") return;
-      const revision = snapshotRevision.current;
-      setDiffs((current) => new Map(current).set(key, { status: "loading" }));
-      void api
-        .readFileDiff({
-          cwd: changeSet.cwd,
-          path: file.path,
-          ...(file.originalPath ? { originalPath: file.originalPath } : {}),
-          source: { kind: "working-tree", staged: !file.hasUnstagedChanges },
-        })
-        .then((result) => {
-          if (revision !== snapshotRevision.current) return;
-          setDiffs((current) =>
-            new Map(current).set(key, { status: "loaded", patch: result.patch }),
-          );
-        })
-        .catch((cause) => {
-          if (revision !== snapshotRevision.current) return;
-          setDiffs((current) =>
-            new Map(current).set(key, { status: "error", message: errorMessage(cause) }),
-          );
-        });
+      requestFileDiff(changeSet, file);
     },
-    [api, diffs, expandedRows, toggleExpanded],
+    [diffs, expandedRows, requestFileDiff, toggleExpanded],
   );
 
   const toggleSelectedFile = useCallback((cwd: string, path: string) => {
@@ -597,8 +647,8 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const discardSelected = useCallback(
     (changeSet: VersionControlChangeSet) => {
       const files = selectedFiles(changeSet);
-      const paths = operationPaths(files);
-      if (paths.length === 0) return;
+      const paths = discardPathGroups(files);
+      if (paths.staged.length === 0 && paths.unstaged.length === 0) return;
       Alert.alert(
         "Discard selected changes?",
         `This permanently discards changes in ${files.length} selected file${files.length === 1 ? "" : "s"}.`,
@@ -608,7 +658,18 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
             text: "Discard",
             style: "destructive",
             onPress: () =>
-              void runAction("discard", () => api.discardFiles({ cwd: changeSet.cwd, paths })),
+              void runAction("discard", async () => {
+                if (paths.unstaged.length > 0) {
+                  await api.discardFiles({ cwd: changeSet.cwd, paths: paths.unstaged });
+                }
+                if (paths.staged.length > 0) {
+                  await api.discardFiles({
+                    cwd: changeSet.cwd,
+                    paths: paths.staged,
+                    staged: true,
+                  });
+                }
+              }),
           },
         ],
       );
@@ -687,15 +748,20 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         void runAction("fetch", () => api.fetchBranch({ cwd: targetCwd, branchName: branch.name }));
         return;
       }
+      const canMerge = branchOwnsOperationCwd(branch);
       Alert.alert("Branch has diverged", "Choose how to synchronize this branch.", [
         { text: "Cancel", style: "cancel" },
-        {
-          text: "Pull & merge",
-          onPress: () =>
-            void runAction("merge-sync", () =>
-              api.pullBranch({ cwd: targetCwd, branchName: branch.name, merge: true }),
-            ),
-        },
+        ...(canMerge
+          ? [
+              {
+                text: "Pull & merge",
+                onPress: () =>
+                  void runAction("merge-sync", () =>
+                    api.pullBranch({ cwd: targetCwd, branchName: branch.name, merge: true }),
+                  ),
+              },
+            ]
+          : []),
         {
           text: "More…",
           onPress: () =>
