@@ -122,6 +122,27 @@ export function isSameOriginRendererNavigation(input: {
   }
 }
 
+export function isTrustedAudioPermissionRequest(input: {
+  readonly applicationUrl: string;
+  readonly requestingUrl: string;
+  readonly permission: string;
+  readonly mediaTypes: ReadonlyArray<string>;
+}): boolean {
+  if (input.permission !== "media") return false;
+  if (!input.mediaTypes.includes("audio") || input.mediaTypes.includes("video")) return false;
+  try {
+    const application = new URL(input.applicationUrl);
+    const requesting = new URL(input.requestingUrl);
+    return (
+      application.protocol === requesting.protocol &&
+      application.hostname === requesting.hostname &&
+      application.port === requesting.port
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isRetryableDevelopmentRendererLoadFailure(input: {
   readonly applicationUrl: string;
   readonly errorCode: number;
@@ -268,8 +289,31 @@ export const make = Effect.gen(function* () {
         nodeIntegration: false,
         sandbox: true,
         webviewTag: true,
+        backgroundThrottling: false,
       },
     });
+
+    window.webContents.session.setPermissionCheckHandler(
+      (_webContents, permission, requestingOrigin, details) =>
+        isTrustedAudioPermissionRequest({
+          applicationUrl,
+          requestingUrl: requestingOrigin,
+          permission,
+          mediaTypes: details.mediaType === "audio" ? ["audio"] : [],
+        }),
+    );
+    window.webContents.session.setPermissionRequestHandler(
+      (_webContents, permission, callback, details) => {
+        callback(
+          isTrustedAudioPermissionRequest({
+            applicationUrl,
+            requestingUrl: details.requestingUrl,
+            permission,
+            mediaTypes: permission === "media" && "mediaTypes" in details ? details.mediaTypes : [],
+          }),
+        );
+      },
+    );
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);

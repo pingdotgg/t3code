@@ -112,6 +112,7 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -347,6 +348,7 @@ const buildAppUnderTest = (options?: {
     >;
     relayClient?: Partial<RelayClient.RelayClient["Service"]>;
     cloudCliTokenManager?: Partial<CloudCliTokenManager.CloudCliTokenManager["Service"]>;
+    voiceSessionService?: Partial<VoiceSessionService.VoiceSessionService["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -797,6 +799,20 @@ const buildAppUnderTest = (options?: {
           hasCredential: Effect.succeed(false),
           clear: Effect.void,
           ...options?.layers?.cloudCliTokenManager,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VoiceSessionService.VoiceSessionService)({
+          getCredentialStatus: Effect.succeed({ configured: false }),
+          setCredential: () => Effect.succeed({ configured: true }),
+          removeCredential: Effect.succeed({ configured: false }),
+          createSession: () => Effect.die("Unexpected OpenAI Realtime session request."),
+          getParallelCredentialStatus: Effect.succeed({ configured: false }),
+          setParallelCredential: () => Effect.succeed({ configured: true }),
+          removeParallelCredential: Effect.succeed({ configured: false }),
+          searchWeb: () => Effect.die("Unexpected Parallel Search request."),
+          extractWeb: () => Effect.die("Unexpected Parallel Extract request."),
+          ...options?.layers?.voiceSessionService,
         }),
       ),
       Layer.provideMerge(makeAuthTestLayer()),

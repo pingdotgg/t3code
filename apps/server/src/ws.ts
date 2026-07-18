@@ -80,6 +80,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -296,6 +297,15 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceGetCredentialStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.voiceSetCredential, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceRemoveCredential, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceCreateSession, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceGetParallelCredentialStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.voiceSetParallelCredential, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceRemoveParallelCredential, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceSearchWeb, AuthOrchestrationOperateScope],
+  [WS_METHODS.voiceExtractWeb, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -412,6 +422,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const voiceSessionService = yield* VoiceSessionService.VoiceSessionService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1297,6 +1308,56 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.voiceGetCredentialStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceGetCredentialStatus,
+            voiceSessionService.getCredentialStatus,
+            { "rpc.aggregate": "voice" },
+          ),
+        [WS_METHODS.voiceSetCredential]: ({ apiKey }) =>
+          observeRpcEffect(
+            WS_METHODS.voiceSetCredential,
+            voiceSessionService.setCredential(apiKey),
+            { "rpc.aggregate": "voice" },
+          ),
+        [WS_METHODS.voiceRemoveCredential]: (_input) =>
+          observeRpcEffect(WS_METHODS.voiceRemoveCredential, voiceSessionService.removeCredential, {
+            "rpc.aggregate": "voice",
+          }),
+        [WS_METHODS.voiceCreateSession]: ({ model }) =>
+          observeRpcEffect(
+            WS_METHODS.voiceCreateSession,
+            voiceSessionService.createSession(model),
+            {
+              "rpc.aggregate": "voice",
+            },
+          ),
+        [WS_METHODS.voiceGetParallelCredentialStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceGetParallelCredentialStatus,
+            voiceSessionService.getParallelCredentialStatus,
+            { "rpc.aggregate": "voice" },
+          ),
+        [WS_METHODS.voiceSetParallelCredential]: ({ apiKey }) =>
+          observeRpcEffect(
+            WS_METHODS.voiceSetParallelCredential,
+            voiceSessionService.setParallelCredential(apiKey),
+            { "rpc.aggregate": "voice" },
+          ),
+        [WS_METHODS.voiceRemoveParallelCredential]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceRemoveParallelCredential,
+            voiceSessionService.removeParallelCredential,
+            { "rpc.aggregate": "voice" },
+          ),
+        [WS_METHODS.voiceSearchWeb]: (input) =>
+          observeRpcEffect(WS_METHODS.voiceSearchWeb, voiceSessionService.searchWeb(input), {
+            "rpc.aggregate": "voice",
+          }),
+        [WS_METHODS.voiceExtractWeb]: (input) =>
+          observeRpcEffect(WS_METHODS.voiceExtractWeb, voiceSessionService.extractWeb(input), {
+            "rpc.aggregate": "voice",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,

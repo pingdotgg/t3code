@@ -15,6 +15,7 @@ import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const defaultEnvironmentInput = {
+  appName: "T3 Code (Alpha)",
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
   platform: "darwin",

@@ -298,6 +298,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    voiceCredentialStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:voice:credential-status",
+      tag: WS_METHODS.voiceGetCredentialStatus,
+    }),
+    parallelCredentialStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:voice:parallel-credential-status",
+      tag: WS_METHODS.voiceGetParallelCredentialStatus,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",
@@ -338,6 +346,42 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverUpdateSettings,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    setVoiceCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:set-credential",
+      tag: WS_METHODS.voiceSetCredential,
+      concurrency: configConcurrency,
+    }),
+    removeVoiceCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:remove-credential",
+      tag: WS_METHODS.voiceRemoveCredential,
+      concurrency: configConcurrency,
+    }),
+    createVoiceSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:create-session",
+      tag: WS_METHODS.voiceCreateSession,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    setParallelCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:set-parallel-credential",
+      tag: WS_METHODS.voiceSetParallelCredential,
+      concurrency: configConcurrency,
+    }),
+    removeParallelCredential: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:remove-parallel-credential",
+      tag: WS_METHODS.voiceRemoveParallelCredential,
+      concurrency: configConcurrency,
+    }),
+    searchVoiceWeb: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:search-web",
+      tag: WS_METHODS.voiceSearchWeb,
+    }),
+    extractVoiceWeb: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice:extract-web",
+      tag: WS_METHODS.voiceExtractWeb,
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

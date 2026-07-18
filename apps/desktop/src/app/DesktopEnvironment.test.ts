@@ -8,6 +8,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 
 const defaultInput = {
+  appName: "T3 Code (Alpha)",
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
   platform: "darwin",
@@ -92,6 +93,27 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+    }),
+  );
+
+  it.effect("isolates the packaged voice variant from the installed desktop app", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {
+          appName: "T3 Code Voice",
+          isPackaged: true,
+        },
+        { T3CODE_HOME: "/tmp/t3" },
+      );
+
+      assert.isTrue(environment.isVoiceVariant);
+      assert.equal(environment.displayName, "T3 Code Voice");
+      assert.equal(environment.branding.baseName, "T3 Code Voice");
+      assert.equal(environment.baseDir, "/tmp/t3/voice");
+      assert.equal(environment.stateDir, "/tmp/t3/voice/userdata");
+      assert.equal(environment.userDataDirName, "t3code-voice");
+      assert.equal(environment.legacyUserDataDirName, "t3code-voice");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code.voice");
     }),
   );
 

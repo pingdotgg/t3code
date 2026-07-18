@@ -38,6 +38,7 @@ const decodeTraceRecordLine = Schema.decodeUnknownSync(Schema.fromJsonString(Tra
 
 const environmentInput = (baseDir: string) =>
   ({
+    appName: "T3 Code (Alpha)",
     dirname: "/repo/apps/desktop/dist-electron",
     homeDirectory: baseDir,
     platform: "darwin",

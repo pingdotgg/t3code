@@ -86,6 +86,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("switches desktop packaging product names to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17", true), "T3 Code Voice");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -373,6 +374,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.include(entitlements, "<key>com.apple.security.device.audio-input</key>");
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {
@@ -470,6 +472,38 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("isolates voice builds from the installed app and its updater", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        true,
+        4_321,
+        undefined,
+        true,
+      );
+
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(config.appId, "com.t3tools.t3code.voice");
+      assert.equal(config.productName, "T3 Code Voice");
+      assert.equal(config.artifactName, "T3-Code-Voice-${version}-${arch}.${ext}");
+      assert.deepStrictEqual(config.extraMetadata, {
+        name: "t3code-voice",
+        productName: "T3 Code Voice",
+      });
+      assert.deepStrictEqual(mac.protocols, []);
+      assert.notProperty(config, "publish");
+      assert.deepNestedInclude(mac, {
+        extendInfo: {
+          NSMicrophoneUsageDescription:
+            "T3 Code uses the microphone for user-initiated OpenAI voice conversations.",
+        },
+      });
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
