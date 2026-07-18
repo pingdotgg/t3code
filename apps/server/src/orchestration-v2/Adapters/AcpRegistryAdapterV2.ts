@@ -49,6 +49,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly resolver: AcpRegistryResolverShape;
@@ -91,7 +92,10 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
         }).pipe(
           Layer.provide(
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, options.childProcessSpawner),
+            Layer.mergeAll(
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, options.childProcessSpawner),
+              Layer.succeed(Crypto.Crypto, options.crypto),
+            ),
           ),
         ),
       );
@@ -139,6 +143,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
     function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers;
@@ -152,6 +157,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
         settings: { ...input.config, enabled: input.enabled },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         childProcessSpawner,
+        crypto,
         fileSystem,
         idAllocator,
         resolver,

@@ -17,15 +17,12 @@ import {
 } from "react";
 import type { ColorValue } from "react-native";
 
-import { buildNativeStackOptionsSignature } from "./nativeStackOptionsSignature";
-
 export {
   nativeHeaderScrollEdgeEffects,
   nativeTopScrollEdgeEffect,
   type NativeHeaderScrollEdgeEffects,
   type NativeTopScrollEdgeEffect,
 } from "./scrollEdgeEffects";
-export { buildNativeStackOptionsSignature } from "./nativeStackOptionsSignature";
 
 export type AppNativeStackNavigationOptions = Omit<
   NativeStackNavigationOptions,
@@ -65,92 +62,116 @@ function normalizeScreenOptions(
   return normalized as NativeStackNavigationOptions;
 }
 
+function optionsSignature(value: unknown, seen = new WeakSet<object>()): string {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "boolean":
+    case "number":
+    case "string":
+      return JSON.stringify(value);
+    case "undefined":
+      return "undefined";
+    case "function":
+      // Header factories are frequently recreated inline. Their source is
+      // stable across equivalent renders, while a reference comparison would
+      // make navigation.setOptions re-enter the navigator indefinitely.
+      return `function:${Function.prototype.toString.call(value)}`;
+    case "symbol":
+      return `symbol:${String(value)}`;
+    case "bigint":
+      return `bigint:${String(value)}`;
+    case "object": {
+      const object = value as object;
+      if (seen.has(object)) return "[circular]";
+      seen.add(object);
+      if (Array.isArray(value)) {
+        return `[${value.map((entry) => optionsSignature(entry, seen)).join(",")}]`;
+      }
+      // React refs carry mutable native instances that must not make static
+      // screen options appear different after every render.
+      if ("current" in object) return "[ref]";
+      return `{${Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map(
+          (key) =>
+            `${JSON.stringify(key)}:${optionsSignature((value as Record<string, unknown>)[key], seen)}`,
+        )
+        .join(",")}}`;
+    }
+  }
+  return String(value);
+}
+
+function stabilizeOptionFunctions(
+  value: unknown,
+  path: string,
+  latestFunctions: Map<string, (...args: unknown[]) => unknown>,
+  wrappers: Map<string, (...args: unknown[]) => unknown>,
+  seen = new WeakSet<object>(),
+): unknown {
+  if (typeof value === "function") {
+    latestFunctions.set(path, value as (...args: unknown[]) => unknown);
+    let wrapper = wrappers.get(path);
+    if (!wrapper) {
+      wrapper = (...args: unknown[]) => {
+        return latestFunctions.get(path)?.(...args);
+      };
+      wrappers.set(path, wrapper);
+    }
+    return wrapper;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    return value.map((entry, index) =>
+      stabilizeOptionFunctions(entry, `${path}[${index}]`, latestFunctions, wrappers, seen),
+    );
+  }
+  if (value !== null && typeof value === "object") {
+    if (seen.has(value) || "current" in value) return value;
+    seen.add(value);
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        stabilizeOptionFunctions(entry, `${path}.${key}`, latestFunctions, wrappers, seen),
+      ]),
+    );
+  }
+  return value;
+}
+
 export function NativeStackScreenOptions(props: {
   readonly options?: AppNativeStackNavigationOptions;
   readonly listeners?: Record<string, (event: never) => void>;
   readonly name?: string;
 }) {
   const navigation = useNativeStackNavigation();
-  const optionsRef = useRef(props.options);
-  optionsRef.current = props.options;
-  const lastSignatureRef = useRef<string | null>(null);
-  const signature = buildNativeStackOptionsSignature(props.options);
-
-  // Stable factories so navigation keeps one function identity while always
-  // reading the latest items from optionsRef.
-  const leftItemsFactory = useMemo(
-    () => () => {
-      const factory = optionsRef.current?.unstable_headerLeftItems;
-      return typeof factory === "function" ? factory() : [];
-    },
-    [],
-  );
-  const rightItemsFactory = useMemo(
-    () => () => {
-      const factory = optionsRef.current?.unstable_headerRightItems;
-      return typeof factory === "function" ? factory() : [];
-    },
-    [],
-  );
-  const centerItemsFactory = useMemo(
-    () => () => {
-      const factory = optionsRef.current?.unstable_headerCenterItems;
-      return typeof factory === "function" ? factory() : [];
-    },
-    [],
-  );
-  const toolbarItemsFactory = useMemo(
-    () => () => {
-      const factory = optionsRef.current?.unstable_headerToolbarItems;
-      return typeof factory === "function" ? factory() : [];
-    },
-    [],
-  );
+  const lastAppliedOptionsSignatureRef = useRef<string | undefined>(undefined);
+  const latestOptionFunctionsRef = useRef(new Map<string, (...args: unknown[]) => unknown>());
+  const optionFunctionWrappersRef = useRef(new Map<string, (...args: unknown[]) => unknown>());
+  const normalizedOptions = useMemo(() => normalizeScreenOptions(props.options), [props.options]);
+  const stableOptions = normalizedOptions
+    ? (stabilizeOptionFunctions(
+        normalizedOptions,
+        "options",
+        latestOptionFunctionsRef.current,
+        optionFunctionWrappersRef.current,
+      ) as NativeStackNavigationOptions)
+    : undefined;
 
   useLayoutEffect(() => {
-    if (!navigation || props.options === undefined) {
+    if (!navigation || !stableOptions) {
       return;
     }
-    if (lastSignatureRef.current === signature) {
+    const signature = optionsSignature(stableOptions);
+    // Avoid re-entering navigation state when semantically equal options are
+    // reapplied every layout (common when callers pass unstable object literals).
+    if (lastAppliedOptionsSignatureRef.current === signature) {
       return;
     }
-    lastSignatureRef.current = signature;
-
-    const normalized = normalizeScreenOptions(props.options);
-    if (!normalized) {
-      return;
-    }
-
-    const nextOptions = { ...normalized } as NativeStackNavigationOptions & {
-      unstable_headerCenterItems?: unknown;
-      unstable_headerLeftItems?: unknown;
-      unstable_headerRightItems?: unknown;
-      unstable_headerToolbarItems?: unknown;
-    };
-
-    if (typeof props.options.unstable_headerLeftItems === "function") {
-      nextOptions.unstable_headerLeftItems = leftItemsFactory;
-    }
-    if (typeof props.options.unstable_headerRightItems === "function") {
-      nextOptions.unstable_headerRightItems = rightItemsFactory;
-    }
-    if (typeof props.options.unstable_headerCenterItems === "function") {
-      nextOptions.unstable_headerCenterItems = centerItemsFactory;
-    }
-    if (typeof props.options.unstable_headerToolbarItems === "function") {
-      nextOptions.unstable_headerToolbarItems = toolbarItemsFactory;
-    }
-
-    navigation.setOptions(nextOptions);
-  }, [
-    centerItemsFactory,
-    leftItemsFactory,
-    navigation,
-    props.options,
-    rightItemsFactory,
-    signature,
-    toolbarItemsFactory,
-  ]);
+    lastAppliedOptionsSignatureRef.current = signature;
+    navigation.setOptions(stableOptions);
+  }, [navigation, stableOptions]);
 
   useEffect(() => {
     if (!navigation || !props.listeners) {
@@ -271,7 +292,7 @@ function convertToolbarChild(child: ReactNode): NativeStackHeaderItem | null {
   if (typeName === "NativeHeaderToolbarButton") {
     return {
       type: "button",
-      label: "",
+      label: typeof child.props.label === "string" ? child.props.label : "",
       accessibilityLabel:
         typeof child.props.accessibilityLabel === "string"
           ? child.props.accessibilityLabel
@@ -369,6 +390,7 @@ function NativeHeaderToolbarButton(_props: {
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
   readonly icon?: string;
+  readonly label?: string;
   readonly onPress?: () => void;
   readonly separateBackground?: boolean;
   readonly tintColor?: ColorValue;

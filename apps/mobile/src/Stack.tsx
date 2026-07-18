@@ -10,10 +10,12 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
+import { useEffect, useRef } from "react";
 import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
+import { renderCompactBrandTitle } from "./components/CompactBrandTitle";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
@@ -44,9 +46,20 @@ import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppea
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
+import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsWaitlistRouteScreen } from "./features/settings/SettingsWaitlistRouteScreen";
+import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
+import {
+  SettingsLegalDocumentCloseHeaderButton,
+  SettingsLegalDocumentExternalHeaderButton,
+} from "./features/settings/components/SettingsLegalDocumentRouteScreen";
 import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
+import { useIncomingShare } from "./features/sharing/IncomingShareProvider";
+import {
+  EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  transitionIncomingSharePresentation,
+} from "./features/sharing/incoming-share-presentation";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
@@ -104,6 +117,14 @@ const SOLID_HEADER_OPTIONS: AppScreenOptions = {
 const SHEET_SOLID_HEADER_OPTIONS: AppScreenOptions = {
   ...SOLID_HEADER_OPTIONS,
   unstable_navigationItemStyle: undefined,
+};
+
+const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
+  ...SHEET_SOLID_HEADER_OPTIONS,
+  headerBackVisible: false,
+  headerLeft: SettingsLegalDocumentCloseHeaderButton,
+  headerRight: () => <SettingsLegalDocumentExternalHeaderButton />,
+  presentation: "fullScreenModal",
 };
 
 const SettingsSheetStack = createNativeStackNavigator({
@@ -239,6 +260,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitConfirm",
   "GitOverview",
   "NewTaskSheet",
+  "SettingsLegal",
   "SettingsSheet",
   "ThreadReviewComment",
 ]);
@@ -261,12 +283,30 @@ function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
 }) {
+  const navigation = useNavigation();
+  const { pendingShare } = useIncomingShare();
+  const sharePresentationRef = useRef(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
   useAgentNotificationNavigation();
   useThreadOutboxDrain();
   // Presents the T3 Connect onboarding sheet after an in-session sign-in.
   useConnectOnboardingNavigation();
   // Launcher app shortcuts: routes shortcut taps and tracks opened threads.
   useAppShortcuts(props.state);
+  useEffect(() => {
+    const topRouteName = props.state.routes[props.state.index]?.name;
+    const transition = transitionIncomingSharePresentation(sharePresentationRef.current, {
+      isShareSheetPresented: topRouteName === "NewTaskSheet",
+      pendingShareId: pendingShare?.id ?? null,
+    });
+    sharePresentationRef.current = transition.state;
+    if (!transition.shareIdToPresent) {
+      return;
+    }
+    navigation.navigate("NewTaskSheet", {
+      screen: "NewTask",
+      params: { incomingShareId: transition.shareIdToPresent },
+    });
+  }, [navigation, pendingShare, props.state]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);
@@ -275,6 +315,7 @@ function RootStackLayout(props: {
 
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
+      <ShowcaseCaptureCoordinator pathname={pathname} />
       <ClerkSettingsSheetDetentProvider initiallyExpanded={false}>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>
           {props.children}
@@ -337,7 +378,8 @@ export const RootStack = createNativeStackNavigator({
         ...GLASS_HEADER_OPTIONS,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
-        title: "Threads",
+        headerTitle: renderCompactBrandTitle,
+        title: "T3 Code",
       },
     }),
     Thread: createNativeStackScreen({
@@ -436,13 +478,21 @@ export const RootStack = createNativeStackNavigator({
             }),
       },
     }),
+    SettingsLegal: createNativeStackScreen({
+      screen: SettingsLegalRouteScreen,
+      linking: "settings/legal",
+      options: {
+        ...LEGAL_DOCUMENT_HEADER_OPTIONS,
+        title: "Legal",
+      },
+    }),
     ConnectOnboarding: createNativeStackScreen({
       screen: ConnectOnboardingRouteScreen,
       linking: "connect-onboarding",
       options: {
-        // Root screenOptions hide headers; formSheets that want the native
-        // title bar opt back in with the sheet header preset.
-        ...SHEET_SOLID_HEADER_OPTIONS,
+        // A root-level Android formSheet does not host the native stack bar;
+        // the route renders an embedded AndroidSheetHeader instead.
+        ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
         title: "Set up T3 Connect",
         gestureEnabled: true,
         presentation: "formSheet",

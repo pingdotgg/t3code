@@ -167,7 +167,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
-
   const effectiveGroupDisplayStates = useMemo(() => {
     const next = new Map(groupDisplayStates);
     if (!AsyncResult.isSuccess(preferencesResult)) {

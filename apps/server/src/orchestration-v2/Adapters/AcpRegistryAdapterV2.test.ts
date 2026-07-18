@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -89,6 +90,7 @@ describe("AcpRegistryAdapterV2", () => {
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
       const path = yield* Path.Path;
@@ -113,6 +115,7 @@ describe("AcpRegistryAdapterV2", () => {
           T3_ACP_SESSION_LIFECYCLE: "1",
         },
         childProcessSpawner,
+        crypto,
         fileSystem,
         idAllocator,
         resolver: {

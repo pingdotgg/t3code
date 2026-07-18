@@ -1,7 +1,10 @@
 import {
   EnvironmentId,
   EventId,
+  MessageId,
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -27,7 +30,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
-import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
@@ -54,6 +57,28 @@ const PREPARED: PreparedConnection = {
 const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   ...v2Projection,
   thread: { ...v2Projection.thread, title: "Cached thread" },
+};
+const ACTIVE_PROJECTION: OrchestrationV2ThreadProjection = {
+  ...BASE_PROJECTION,
+  runs: [
+    {
+      id: RunId.make("run-active"),
+      threadId: THREAD_ID,
+      ordinal: 1,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      providerThreadId: null,
+      userMessageId: MessageId.make("message-active"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "running",
+      requestedAt: v2Now,
+      startedAt: v2Now,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    },
+  ],
 };
 
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
@@ -313,6 +338,38 @@ describe("EnvironmentThreads", () => {
         "Live title",
       );
       expect((yield* Ref.get(harness.savedThreads)).at(-1)?.snapshotSequence).toBe(2);
+    }),
+  );
+
+  it.effect("does not persist active thread snapshots during streaming or teardown", () =>
+    Effect.gen(function* () {
+      const savedThreads = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ cached: ACTIVE_PROJECTION });
+          yield* awaitThreadState(
+            harness.observed,
+            (value) =>
+              value.status === "live" &&
+              Option.isSome(value.data) &&
+              value.data.value.runs.some((run) => run.status === "running"),
+          );
+
+          yield* Queue.offer(harness.inputs, titleUpdated("Streaming title"));
+          yield* awaitThreadState(
+            harness.observed,
+            (value) =>
+              Option.isSome(value.data) && value.data.value.thread.title === "Streaming title",
+          );
+
+          yield* TestClock.adjust("500 millis");
+          yield* Effect.yieldNow;
+
+          expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+          return harness.savedThreads;
+        }),
+      );
+
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
     }),
   );
 
@@ -602,5 +659,40 @@ describe("EnvironmentThreads", () => {
           "Post-reconnect catch-up",
         );
       }),
+  );
+
+  it.effect("restores live status after reconnect when no new thread events arrive", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+
+      yield* SubscriptionRef.set(harness.supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connecting",
+        stage: "synchronizing",
+        attempt: 2,
+        generation: 1,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "synchronizing");
+
+      yield* SubscriptionRef.set(harness.supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connected",
+        stage: null,
+        attempt: 2,
+        generation: 2,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+
+      const latest = yield* Ref.get(harness.latest);
+      expect(latest.status).toBe("live");
+      expect(Option.getOrThrow(latest.data)).toEqual(BASE_PROJECTION);
+    }),
   );
 });

@@ -1,30 +1,30 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import {
-  createStaticNavigation,
-  DarkTheme,
-  DefaultTheme,
-  type NavigationState,
-} from "@react-navigation/native";
+import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
+import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
+import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
 import { AppearancePreferencesProvider } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
-import { recordNavigationBreadcrumb } from "./lib/navigationBreadcrumb";
 import { useThemeColor } from "./lib/useThemeColor";
 
 import "../global.css";
+
+if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
+  prepareNativeShowcaseCapture();
+}
 
 const appLinking = {
   prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
@@ -32,7 +32,10 @@ const appLinking = {
   // <scheme>://expo-development-client/?url=<packager> — that URL addresses
   // the launcher, not app navigation. Without this filter it falls through
   // to the NotFound wildcard route on every dev launch.
-  filter: (url: string) => !url.includes("expo-development-client"),
+  // expo-sharing uses a private lifecycle URL only to wake the app. The
+  // persisted share inbox below owns navigation once the payload is durable.
+  filter: (url: string) =>
+    !url.includes("expo-development-client") && !url.includes("://expo-sharing"),
 };
 
 const Navigation = createStaticNavigation(RootStack);
@@ -43,10 +46,6 @@ export default function App() {
 
   useEffect(() => {
     SplashScreen.hide();
-  }, []);
-
-  const onNavigationStateChange = useCallback((state: NavigationState | undefined) => {
-    recordNavigationBreadcrumb(state);
   }, []);
 
   return (
@@ -68,11 +67,12 @@ export default function App() {
                     the system is in dark mode. */}
                 {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
                 <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
-                  <Navigation
-                    linking={appLinking}
-                    onStateChange={onNavigationStateChange}
-                    theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-                  />
+                  <IncomingShareProvider>
+                    <Navigation
+                      linking={appLinking}
+                      theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+                    />
+                  </IncomingShareProvider>
                   <ConfirmDialogHost />
                 </BlurTargetView>
                 {/* Anchored-menu overlays render here — in-window, so the

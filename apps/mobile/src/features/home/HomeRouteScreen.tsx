@@ -4,6 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { renderCompactBrandTitle } from "../../components/CompactBrandTitle";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -86,7 +87,9 @@ export function HomeRouteScreen() {
     >
       <>
         {/* Restore the compact title in case the split branch blanked it. */}
-        <NativeStackScreenOptions options={{ title: "Threads", headerTitle: "Threads" }} />
+        <NativeStackScreenOptions
+          options={{ title: "T3 Code", headerTitle: renderCompactBrandTitle }}
+        />
         <HomeHeader
           environments={environments}
           searchQuery={searchQuery}

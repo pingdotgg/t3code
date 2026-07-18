@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, RunId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -331,6 +331,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "ready",
         latestRun: completedTurn,
+        latestUserMessageAt: localDispatch.latestUserMessageAt,
         runtime: readySession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -356,6 +357,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "ready",
         latestRun: newerTurn,
+        latestUserMessageAt: localDispatch.latestUserMessageAt,
         runtime: { ...readySession, updatedAt: newerTurn.completedAt },
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -382,6 +384,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestRun: runningTurn,
+        latestUserMessageAt: localDispatch.latestUserMessageAt,
         runtime: {
           ...readySession,
           status: "running",
@@ -397,11 +400,45 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestRun: runningTurn,
+        latestUserMessageAt: localDispatch.latestUserMessageAt,
         runtime: {
           ...readySession,
           status: "running",
           activeRunId: runningTurn.runId,
         },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("acknowledges a steering message projected onto the current running turn", () => {
+    const runningTurn = {
+      ...completedTurn,
+      status: "running" as const,
+      completedAt: null,
+    };
+    const runningSession = {
+      ...readySession,
+      status: "running" as const,
+      activeRunId: runningTurn.runId,
+    };
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        latestRun: runningTurn,
+        runtime: runningSession,
+        latestUserMessageAt: runningTurn.requestedAt,
+      }),
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestRun: runningTurn,
+        latestUserMessageAt: "2026-03-29T00:00:05.000Z",
+        runtime: runningSession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -415,6 +452,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       localDispatch,
       phase: "ready" as const,
       latestRun: null,
+      latestUserMessageAt: localDispatch.latestUserMessageAt,
       runtime: null,
       hasPendingApproval: false,
       hasPendingUserInput: false,

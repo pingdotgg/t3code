@@ -61,10 +61,12 @@ overrides:
   '@types/node': 24.12.4
   effect: 4.0.0-beta.78
   expo-modules-jsi: 56.0.10
+  expo-sharing>@expo/config-plugins: 56.0.9
+  expo-sharing>@expo/config-types: 56.0.6
   vite: npm:@voidzero-dev/vite-plus-core@0.2.2
   yaml: ^2.9.0
 
-packageExtensionsChecksum: sha256-FV3+2NW/9MFbunJaPsMxvO0LAzyfccoPtPiKoIXAwUU=
+packageExtensionsChecksum: sha256-CUzzeefpj3gNFrCKNBhV9FOaniNbrLdKyIhWQyXuaiE=
 
 patchedDependencies:
   '@effect/vitest@4.0.0-beta.78': 42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f
@@ -191,7 +193,7 @@ importers:
         version: 0.7.1(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       '@clerk/expo':
         specifier: 3.7.2
-        version: 3.7.2(expo-auth-session@56.0.14(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(expo-constants@56.0.18)(expo-crypto@56.0.4(expo@56.0.12))(expo-secure-store@56.0.4(expo@56.0.12))(expo-web-browser@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@56.0.12)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+        version: 3.7.2(expo-auth-session@56.0.14(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(expo-constants@56.0.18)(expo-crypto@56.0.4(expo@56.0.12))(expo-secure-store@56.0.4(expo@56.0.12))(expo-web-browser@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@56.0.12)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
       '@effect/atom-react':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(effect@4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5))(react@19.2.3)(scheduler@0.27.0)
@@ -336,6 +338,9 @@ importers:
       expo-secure-store:
         specifier: ~56.0.4
         version: 56.0.4(expo@56.0.12)
+      expo-sharing:
+        specifier: ~56.0.18
+        version: 56.0.18(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
       expo-splash-screen:
         specifier: ~56.0.10
         version: 56.0.10(expo@56.0.12)(typescript@6.0.3)
@@ -435,7 +440,7 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.205
-        version: 0.3.205(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+        version: 0.3.212(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@connectrpc/connect':
         specifier: 1.7.0
         version: 1.7.0(@bufbuild/protobuf@1.10.0)
@@ -906,6 +911,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5)
+      pngjs:
+        specifier: 7.0.0
+        version: 7.0.0
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -913,6 +921,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5))
+      '@types/pngjs':
+        specifier: 6.0.5
+        version: 6.0.5
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.2(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -929,52 +940,52 @@ packages:
   '@alchemy.run/node-utils@0.0.4':
     resolution: {integrity: sha512-TiIhPXCTCi3tk0zmdYJJ14CNSesSfsJxXdIOP0HTSItQ1mZWLocrF7qCuEWKyW/IEFzp6kaiOf19aIA/mbCp1g==}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.205':
-    resolution: {integrity: sha512-lrfJ4eVtzfPkCpbSkBOGSMQCBbvmW6nbPzgHE4IwMN3scZlpuFMUFqh2aaJa/X2SAcWD9H2S0t2WWvSRgM7BjA==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.212':
+    resolution: {integrity: sha512-t9t5fP94XNslh5hIWlmwE0F7hrhEpnbzM6ddF9qjqyO3zT6XZQ3U/fT2wuM8WYdSpyAsOO+3WiABe1buzNVQbA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.205':
-    resolution: {integrity: sha512-G6ETPmL5mNzJ2DFsWxG3jmsmrXgZX1N2ZCJvxaGUUpjTsKZJ4Tup1cWYvcd/m7o5fYZmx9REmgzTwsAIc1fdPQ==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.212':
+    resolution: {integrity: sha512-0dgxPaf0+9lpOOpKYRXPtcXridq27QjhLFz/7UjVANy7roqcojdnwX4Wpjf8hII/URPkjLH+9PlAgZT3Ml1YIg==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.205':
-    resolution: {integrity: sha512-91fgdG4aTnQ29sKOcUqgH4+tKCW2ut6PWGRSYmXNDbROasJm1rAlPdzC5brdu/e4c0CDSNV6TWyE5JCjaS/jlQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.212':
+    resolution: {integrity: sha512-oeQr+cQk65eost/O+ZAROQkME0o3affxfLiRWpJjb/focycvA3Z/Z1vI3z6QL+bswMcEGsHp88cXBLoDYC0nNQ==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.205':
-    resolution: {integrity: sha512-CXzySK3PV3EizCRPXnxPqeaAtgrBFDnMFOVpMe36oC3U16yDb1b1tAJGqZi/7uFrVvAiaXvnSFxhUWnDDSaO+A==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.212':
+    resolution: {integrity: sha512-laU4i0eN5yq/H/utAfHKDjyugjvSnFuAfMhHYv8idF7PQxl+6YDahDd4gqVPdIifcZvrAsi1HXfpdKayYv6dJg==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.205':
-    resolution: {integrity: sha512-vvsb7GlnA8CTSVvvTkrXjcSeRKqxSM7p/tU3Od9ICAZeWHglptekEyzLEApzLuLbI5ewfFF/F0q3NwOBbo18dg==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.212':
+    resolution: {integrity: sha512-MYs7C9UOqhwWv4GgEbGdD37BUp8C8ff6WPDupFHW6/html2wK0DAei72sWjTghoEiUJUlRcxay1nxPCiwB9w1A==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.205':
-    resolution: {integrity: sha512-siS+1iNqBSlGFZZvJY6+mhzZ/6/ec/TbX9GMuwmTF0E6fxGhIIp797jJxR1q8r6FAq7d39mEoRNhC0Ffo60uNQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.212':
+    resolution: {integrity: sha512-sUELD4LP2JLQeFZdven/7NPWS6/TIlE8aNwQJBj8+8RNF4XketoKUbmRdIBO6q8YpXFGn+4DVzirb+Cz6DIbuA==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.205':
-    resolution: {integrity: sha512-SpP5zF68weFez/6pKrGzq/UVAJDMDNphWqmkLfOpWTDBL5xy6XlIZw5Bl4EXoVnfi2VLFkwuffNeFe+9SdX7kw==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.212':
+    resolution: {integrity: sha512-fCtzLDJHy8jO4oaK/GC971f3npRWSdVhzDbh2uOQeqsWnHpGnHkxpUVBa7fVeEW5oTvXlRATgjDODjO+3CVLIg==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.205':
-    resolution: {integrity: sha512-kg2kkXyeSoFLruO3Ic2IruLxzBR0xCUtmlJHdWi3SYW7JhAKNJg4fcrdJsWcardmEw23Y2UDGDJbRyxqSVx6wg==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.212':
+    resolution: {integrity: sha512-2DCQL7ZfzpoGo4kCzu+jqOifPOKUe+Zc6OgTiSDvatz/JGWxs0kV3jOTTjtxGCCUKpdKnflRjHzOHFjIKjODxA==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.205':
-    resolution: {integrity: sha512-ft6iBw9kXudsusiXNpeybIPBJ07Z3tqp1ROSg5cEJqgA+9i+JJj2sRfQth+QD+lyenbbAU8yPieLxIimvfBhtw==}
+  '@anthropic-ai/claude-agent-sdk@0.3.212':
+    resolution: {integrity: sha512-BSowuUv7+EoeBo36oZbSox8uyY3dqyMLFolAoMyKW3uqAfZLDV8MpvjDsv+WDE+OGCkuWK60JIqfhyPhctGTgg==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -2486,14 +2497,8 @@ packages:
   '@expo/code-signing-certificates@0.0.6':
     resolution: {integrity: sha512-iNe0puxwBNEcuua9gmTGzq+SuMDa0iATai1FlFTMHJ/vUmKvN/V//drXoLJkVb5i5H3iE/n/qIJxyoBnXouD0w==}
 
-  '@expo/config-plugins@56.0.8':
-    resolution: {integrity: sha512-phTuyBhgVLfqUHMjQkAfRtbyoY6yTxoKja1awtpVnEkoJDxPJuXx1KX5uvq1eZtt4bJQ08OBJ6P95INqRSHpRg==}
-
   '@expo/config-plugins@56.0.9':
     resolution: {integrity: sha512-/6a/S9USwx8OC9tGjHxbviLFiBHyueN3aoNWMLvWDEJoZ1CIVW800ZBzwXq/FYNK2qzcN1LxFmQtzD1zeFQKNA==}
-
-  '@expo/config-types@56.0.5':
-    resolution: {integrity: sha512-GsAHO/MwW9ZRdgnmyfRXqVGLCP/zejD6rWnp5OROp8mBGRObKm4HfrjlUyT1skjMwCj1OrURx9ZfIc6yeBAkIA==}
 
   '@expo/config-types@56.0.6':
     resolution: {integrity: sha512-4Y6Aum5J4Re5NnxGVofRNe1aDwUBOmWhQYkynZsqzRtX/zEA1ADUeyHXuEckv9YD9djiyT7bKtLt5gKL3mA6VQ==}
@@ -4973,6 +4978,9 @@ packages:
   '@types/node@24.12.4':
     resolution: {integrity: sha512-GUUEShf+PBCGW2KaXwcIt3Yk+e3pkKwWKb9GSyM9WQVE+ep2jzmHdGsHzu4wgcZy5fN9FBdVzjpBQsYlpfpgLA==}
 
+  '@types/pngjs@6.0.5':
+    resolution: {integrity: sha512-0k5eKfrA83JOZPppLtS2C7OUtyNAl2wKNxfyYl9Q5g9lPkgBl/9hNyAu6HuEH2J4XmIv2znEpkDd0SaZVxW6iQ==}
+
   '@types/react-dom@19.2.3':
     resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
     peerDependencies:
@@ -6798,6 +6806,13 @@ packages:
   expo-server@56.0.5:
     resolution: {integrity: sha512-SmM2p2g3Jrktpiazcst+OxhjSzOHXKAY4BPURHYHXvApzzoybMmrNF4IEZ8DKZ145BhSe4ydAmlEFCRTsdtgUQ==}
     engines: {node: '>=20.16.0'}
+
+  expo-sharing@56.0.18:
+    resolution: {integrity: sha512-45w4BWNFmdTczp+fJX6YfwJrn9sX+VeRWz2VWLhauygcCrym44HtVDXX5yVYPB9TW9ZesLcEI+CCrCBNWL7smQ==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
 
   expo-splash-screen@56.0.10:
     resolution: {integrity: sha512-vDIlo8hzt9HlCZQ0kSY66v83D1WEXOJbVMeyPDfXDu9tbDdPMNUyDpi4WGJXikAjxnAKfbt5Mv5NnEbxINy+VA==}
@@ -10478,44 +10493,44 @@ snapshots:
 
   '@alchemy.run/node-utils@0.0.4': {}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.212':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.205(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk@0.3.212(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.93.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.212
 
   '@anthropic-ai/sdk@0.93.0(zod@4.4.3)':
     dependencies:
@@ -11546,11 +11561,12 @@ snapshots:
       electron-store: 8.2.0
       react-dom: 19.2.6(react@19.2.6)
 
-  '@clerk/expo@3.7.2(expo-auth-session@56.0.14(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(expo-constants@56.0.18)(expo-crypto@56.0.4(expo@56.0.12))(expo-secure-store@56.0.4(expo@56.0.12))(expo-web-browser@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@56.0.12)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)':
+  '@clerk/expo@3.7.2(expo-auth-session@56.0.14(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(expo-constants@56.0.18)(expo-crypto@56.0.4(expo@56.0.12))(expo-secure-store@56.0.4(expo@56.0.12))(expo-web-browser@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@56.0.12)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)':
     dependencies:
       '@clerk/clerk-js': 6.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@clerk/react': 6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@expo/config-plugins': 56.0.9(typescript@6.0.3)
       base-64: 1.0.0
       expo: 56.0.12(8895228379997a2a064f9644cda56ed0)
       react: 19.2.3
@@ -11564,6 +11580,9 @@ snapshots:
       expo-secure-store: 56.0.4(expo@56.0.12)
       expo-web-browser: 56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))
       react-dom: 19.2.3(react@19.2.3)
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
 
   '@clerk/react@6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
@@ -12342,25 +12361,6 @@ snapshots:
     dependencies:
       node-forge: 1.4.0
 
-  '@expo/config-plugins@56.0.8(typescript@6.0.3)':
-    dependencies:
-      '@expo/config-types': 56.0.5
-      '@expo/json-file': 10.2.0
-      '@expo/plist': 0.7.0
-      '@expo/require-utils': 56.1.3(typescript@6.0.3)
-      '@expo/sdk-runtime-versions': 1.0.0
-      chalk: 4.1.2
-      debug: 4.4.3
-      getenv: 2.0.0
-      glob: 13.0.6
-      semver: 7.8.5
-      slugify: 1.6.9
-      xcode: 3.0.1
-      xml2js: 0.6.0
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-
   '@expo/config-plugins@56.0.9(typescript@6.0.3)':
     dependencies:
       '@expo/config-types': 56.0.6
@@ -12380,14 +12380,12 @@ snapshots:
       - supports-color
       - typescript
 
-  '@expo/config-types@56.0.5': {}
-
   '@expo/config-types@56.0.6': {}
 
   '@expo/config@56.0.9(typescript@6.0.3)':
     dependencies:
       '@expo/config-plugins': 56.0.9(typescript@6.0.3)
-      '@expo/config-types': 56.0.5
+      '@expo/config-types': 56.0.6
       '@expo/json-file': 10.2.0
       '@expo/require-utils': 56.1.3(typescript@6.0.3)
       deepmerge: 4.3.1
@@ -15073,6 +15071,10 @@ snapshots:
     dependencies:
       undici-types: 7.16.0
 
+  '@types/pngjs@6.0.5':
+    dependencies:
+      '@types/node': 24.12.4
+
   '@types/react-dom@19.2.3(@types/react@19.2.16)':
     dependencies:
       '@types/react': 19.2.16
@@ -17168,9 +17170,21 @@ snapshots:
 
   expo-server@56.0.5: {}
 
+  expo-sharing@56.0.18(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3):
+    dependencies:
+      '@expo/config-plugins': 56.0.9(typescript@6.0.3)
+      '@expo/config-types': 56.0.6
+      '@expo/plist': 0.7.0
+      expo: 56.0.12(8895228379997a2a064f9644cda56ed0)
+      react: 19.2.3
+      react-native: 0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
   expo-splash-screen@56.0.10(expo@56.0.12)(typescript@6.0.3):
     dependencies:
-      '@expo/config-plugins': 56.0.8(typescript@6.0.3)
+      '@expo/config-plugins': 56.0.9(typescript@6.0.3)
       '@expo/image-utils': 0.10.1(typescript@6.0.3)
       expo: 56.0.12(8895228379997a2a064f9644cda56ed0)
       xml2js: 0.6.0

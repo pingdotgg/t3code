@@ -10,6 +10,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
+import { allEnvironmentShellsBootstrappedAtom } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
 
@@ -91,6 +92,10 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
+}
+
+export function useAllEnvironmentShellsBootstrapped(): boolean {
+  return useAtomValue(allEnvironmentShellsBootstrappedAtom);
 }
 
 export function useThreadShellsForProjectRefs(
