@@ -1153,14 +1153,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
-  const serverThread = useThreadShell(routeKind === "server" ? routeThreadRef : null);
-  const serverThreadProjection = useThreadProjection(
-    routeKind === "server" ? routeThreadRef : null,
-  );
+  const serverThread = useThreadShell(routeThreadRef);
+  const serverThreadProjection = useThreadProjection(routeThreadRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
-  const serverVisibleTurnItems = useThreadVisibleTurnItems(
-    routeKind === "server" ? routeThreadRef : null,
-  );
+  const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadRef);
   const committedServerMessageIds = useMemo(
     () => new Set(serverProjection?.messages.map((message) => message.id) ?? []),
     [serverProjection],
