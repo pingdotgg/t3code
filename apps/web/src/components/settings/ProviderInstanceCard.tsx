@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
+import { parseTimestampDate } from "../../timestampFormat";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
@@ -60,8 +61,8 @@ function usageBarColor(percent: number): string {
 
 export function formatUsageResetDate(resetsAt: string | undefined): string | null {
   if (!resetsAt) return null;
-  const resetDate = new Date(resetsAt);
-  if (Number.isNaN(resetDate.getTime())) return null;
+  const resetDate = parseTimestampDate(resetsAt);
+  if (!resetDate) return null;
   return resetDate.toLocaleString("en-GB", {
     day: "numeric",
     month: "short",
