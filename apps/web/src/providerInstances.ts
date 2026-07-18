@@ -263,17 +263,21 @@ export function resolveSelectableProviderInstance(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId | undefined,
 ): ProviderInstanceId | undefined {
-  if (instanceId === undefined) {
-    return deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.enabled && entry.isAvailable,
-    )?.instanceId;
-  }
   const entries = deriveProviderInstanceEntries(providers);
-  const requested = entries.find((entry) => entry.instanceId === instanceId);
-  if (requested && requested.enabled && requested.isAvailable) {
-    return instanceId;
+  if (instanceId !== undefined) {
+    const requested = entries.find((entry) => entry.instanceId === instanceId);
+    if (requested && requested.enabled && requested.isAvailable) {
+      return instanceId;
+    }
   }
-  return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
+  // Prefer an instance that can actually start a session. An enabled entry
+  // whose driver binary is missing (e.g. the default codex instance on a
+  // machine without the Codex CLI) is "selectable" but every turn on it
+  // fails, so it only wins when nothing is ready.
+  return (
+    entries.find(isProviderInstancePickerReady)?.instanceId ??
+    entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId
+  );
 }
 
 /**

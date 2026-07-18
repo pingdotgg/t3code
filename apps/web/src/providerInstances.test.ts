@@ -15,6 +15,7 @@ function provider(input: {
   enabled?: boolean;
   availability?: ServerProvider["availability"];
   displayName?: string;
+  status?: ServerProvider["status"];
 }): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
@@ -23,7 +24,7 @@ function provider(input: {
     enabled: input.enabled ?? true,
     installed: true,
     version: null,
-    status: "ready",
+    status: input.status ?? "ready",
     ...(input.availability ? { availability: input.availability } : {}),
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
@@ -144,6 +145,34 @@ describe("resolveSelectableProviderInstance", () => {
     ];
 
     expect(resolveSelectableProviderInstance(providers, disabled)).toBe(fallback);
+  });
+
+  it("prefers a ready instance over an enabled one whose driver cannot start", () => {
+    const notInstalled = ProviderInstanceId.make("codex");
+    const ready = ProviderInstanceId.make("claudeAgent");
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: notInstalled,
+        status: "error",
+      }),
+      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: ready }),
+    ];
+
+    expect(resolveSelectableProviderInstance(providers, undefined)).toBe(ready);
+  });
+
+  it("still falls back to an enabled instance when nothing is ready", () => {
+    const notInstalled = ProviderInstanceId.make("codex");
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: notInstalled,
+        status: "error",
+      }),
+    ];
+
+    expect(resolveSelectableProviderInstance(providers, undefined)).toBe(notInstalled);
   });
 
   it("does not return disabled, unavailable, or unknown instances when none are sendable", () => {

@@ -750,7 +750,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     if (explicitSelectedInstanceId) {
-      return ProviderInstanceId.make(explicitSelectedInstanceId);
+      // Return the raw id only for unknown instances (e.g. a custom instance
+      // not yet hydrated into providerInstanceEntries). If the id IS known
+      // but disabled, fall through so anyEnabled/byKind picks a valid one.
+      const isKnownDisabled = providerInstanceEntries.some(
+        (entry) => entry.instanceId === explicitSelectedInstanceId && !entry.enabled,
+      );
+      if (!isKnownDisabled) {
+        return ProviderInstanceId.make(explicitSelectedInstanceId);
+      }
     }
     const byKind = providerInstanceEntries.find(
       (entry) =>

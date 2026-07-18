@@ -111,7 +111,9 @@ import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
+import { resolveSelectableProviderInstance } from "../providerInstances";
+import { getDefaultServerModel } from "../providerModels";
 import { resolveShortcutCommand } from "../keybindings";
 import {
   Command,
@@ -476,6 +478,7 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const providers = useAtomValue(primaryServerProvidersAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -1149,6 +1152,11 @@ function OpenCommandPaletteDialog(props: {
       }
 
       const projectId = newProjectId();
+      const defaultInstanceId =
+        resolveSelectableProviderInstance(providers, undefined) ?? ProviderInstanceId.make("codex");
+      const defaultDriver = providers.find(
+        (snapshot) => snapshot.instanceId === defaultInstanceId,
+      )?.driver;
       const createResult = await createProject({
         environmentId: input.environmentId,
         input: {
@@ -1157,8 +1165,8 @@ function OpenCommandPaletteDialog(props: {
           workspaceRoot: cwd,
           createWorkspaceRootIfMissing: true,
           defaultModelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: DEFAULT_MODEL,
+            instanceId: defaultInstanceId,
+            model: defaultDriver ? getDefaultServerModel(providers, defaultDriver) : DEFAULT_MODEL,
           },
         },
       });
@@ -1197,6 +1205,7 @@ function OpenCommandPaletteDialog(props: {
       createProject,
       navigate,
       projects,
+      providers,
       setOpen,
       clientSettings.sidebarThreadSortOrder,
       threads,
