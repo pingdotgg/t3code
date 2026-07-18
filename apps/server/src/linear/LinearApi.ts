@@ -98,8 +98,12 @@ const graphqlResponseSchema = <S extends Schema.Top>(dataSchema: S) =>
     errors: Schema.optional(Schema.Array(Schema.Struct({ message: Schema.String }))),
   });
 
+const TRUNCATION_SUFFIX = "… [truncated]";
+
 function truncate(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max)}… [truncated]` : value;
+  return value.length > max
+    ? `${value.slice(0, max - TRUNCATION_SUFFIX.length)}${TRUNCATION_SUFFIX}`
+    : value;
 }
 
 function toIssueSummary(node: {
