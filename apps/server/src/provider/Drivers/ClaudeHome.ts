@@ -38,7 +38,7 @@ export const resolveClaudeCodeExecutable = Effect.fn("resolveClaudeCodeExecutabl
   const resolved = yield* resolveCommandPath(
     configured,
     environment ? { env: environment } : {},
-  ).pipe(Effect.catchTag("CommandResolutionError", () => Effect.succeed(configured)));
+  ).pipe(Effect.catchTags({ CommandResolutionError: () => Effect.succeed(configured) }));
 
   // Only unwrap npm shims — never replace an explicit native/custom executable
   // just because a sibling node_modules/@anthropic-ai/claude-code layout exists.
