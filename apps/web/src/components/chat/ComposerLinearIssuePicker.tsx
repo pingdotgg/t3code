@@ -40,6 +40,7 @@ export function ComposerLinearIssuePicker({
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<ReadonlyArray<LinearIssueSummary>>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   const addLinearIssueContext = useComposerDraftStore((store) => store.addLinearIssueContext);
   const runSearchIssues = useAtomQueryRunner(linearEnvironment.searchIssues, {
@@ -53,6 +54,7 @@ export function ComposerLinearIssuePicker({
     if (!open) return;
     const trimmed = search.trim();
     setIsSearching(true);
+    setHasError(false);
     const requestId = searchRequestRef.current + 1;
     searchRequestRef.current = requestId;
     const runQuery = () => {
@@ -61,7 +63,13 @@ export function ComposerLinearIssuePicker({
         input: { query: trimmed, first: LINEAR_SEARCH_RESULT_LIMIT },
       }).then((result) => {
         if (searchRequestRef.current !== requestId) return;
-        setResults(result._tag === "Success" ? result.value.issues : []);
+        if (result._tag === "Success") {
+          setResults(result.value.issues);
+          setHasError(false);
+        } else {
+          setResults([]);
+          setHasError(true);
+        }
         setIsSearching(false);
       });
     };
@@ -93,9 +101,11 @@ export function ComposerLinearIssuePicker({
   const trimmedSearch = search.trim();
   const emptyLabel = isSearching
     ? "Searching Linear…"
-    : trimmedSearch.length === 0
-      ? "No recent issues."
-      : "No issues found";
+    : hasError
+      ? "Couldn't load Linear issues"
+      : trimmedSearch.length === 0
+        ? "No recent issues."
+        : "No issues found";
 
   return (
     <Popover

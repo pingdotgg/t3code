@@ -144,6 +144,21 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const requireApiKey = (operation: LinearApiOperation) =>
+    readApiKey(operation).pipe(
+      Effect.flatMap((apiKey) =>
+        apiKey.length === 0
+          ? Effect.fail(
+              new LinearApiError({
+                operation,
+                message: "Linear is not connected.",
+                cause: "not-connected",
+              }),
+            )
+          : Effect.succeed(apiKey),
+      ),
+    );
+
   const graphql = <S extends Schema.Top>(
     operation: LinearApiOperation,
     apiKey: string,
@@ -240,7 +255,7 @@ export const make = Effect.gen(function* () {
     }),
     searchIssues: (input) =>
       Effect.gen(function* () {
-        const apiKey = yield* readApiKey("searchIssues");
+        const apiKey = yield* requireApiKey("searchIssues");
         const term = input.query.trim();
         const first = input.first ?? 10;
         if (term.length === 0) {
@@ -268,7 +283,7 @@ export const make = Effect.gen(function* () {
       }),
     getIssue: (input) =>
       Effect.gen(function* () {
-        const apiKey = yield* readApiKey("getIssue");
+        const apiKey = yield* requireApiKey("getIssue");
         const data = yield* graphql(
           "getIssue",
           apiKey,

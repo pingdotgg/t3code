@@ -695,6 +695,22 @@ describe("composerDraftStore linear issues", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
+  it("setLinearIssueContexts replaces the slice and clearComposerContent wipes it", () => {
+    const store = useComposerDraftStore.getState();
+    store.addLinearIssueContext(threadRef, baseIssue);
+    store.setLinearIssueContexts(threadRef, []);
+    // Fully empty draft should be removed via shouldRemoveDraft.
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+
+    store.addLinearIssueContext(threadRef, baseIssue);
+    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)!.linearIssues;
+    store.clearComposerContent(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+    // The restore path re-seeds from a pre-send snapshot.
+    store.setLinearIssueContexts(threadRef, restored);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.linearIssues).toEqual(restored);
+  });
+
   it("persists linear issues via the partializer (round-trippable)", () => {
     useComposerDraftStore.getState().addLinearIssueContext(threadRef, baseIssue);
     const persistApi = useComposerDraftStore.persist as unknown as {

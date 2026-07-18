@@ -10,8 +10,10 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -619,6 +621,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.notInclude(rawAfter, "lin_api_secret");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.isUndefined(JSON.parse(rawAfter).linear);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps the previous Linear API key when the settings write fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const settingsDir = path.dirname(serverConfig.settingsPath);
+
+      yield* serverSettings.updateSettings({ linear: { apiKey: "lin_first_key" } });
+
+      // Make the settings directory read-only so the atomic write fails while
+      // the (separate) secret store stays writable.
+      yield* fileSystem.chmod(settingsDir, 0o500);
+
+      const exit = yield* serverSettings
+        .updateSettings({ linear: { apiKey: "lin_second_key" } })
+        .pipe(
+          Effect.exit,
+          Effect.ensuring(fileSystem.chmod(settingsDir, 0o700).pipe(Effect.ignore)),
+        );
+      assert.isTrue(Exit.isFailure(exit));
+
+      // The failed connect must not have overwritten the working key.
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "lin_first_key");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

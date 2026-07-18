@@ -499,61 +499,62 @@ const make = Effect.gen(function* () {
       };
     });
 
-  const persistLinearApiKeySecret = (
+  const writeLinearApiKeySecret = (key: string) =>
+    secretStore.set(linearApiKeySecretName(), textEncoder.encode(key)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "write-secret",
+            cause,
+          }),
+      ),
+    );
+
+  const removeLinearApiKeySecret = secretStore.remove(linearApiKeySecretName()).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath,
+          operation: "remove-secret",
+          cause,
+        }),
+    ),
+  );
+
+  // Plans the on-disk placeholder plus the secret-store mutation for a patch.
+  // The mutation (`commit`) is deferred so it runs only after the settings file
+  // is written: a failed file write leaves the previous secret untouched, so a
+  // working key is never lost to a diverged secret/placeholder state.
+  const planLinearApiKeySecret = (
     next: ServerSettings,
     patch: ServerSettingsPatch,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    Effect.gen(function* () {
-      const secretName = linearApiKeySecretName();
-      const key = next.linear.apiKey.trim();
+  ): { settings: ServerSettings; commit: Effect.Effect<void, ServerSettingsError> } => {
+    const key = next.linear.apiKey.trim();
+    const connected: ServerSettings = {
+      ...next,
+      linear: { ...next.linear, apiKey: "", apiKeySet: true },
+    };
 
-      // When the patch does not touch `linear`, preserve the stored secret. A
-      // lingering plaintext key (pre-migration settings.json) is secured here.
-      if (patch.linear?.apiKey === undefined) {
-        if (key.length === 0) {
-          return next;
-        }
-        yield* secretStore.set(secretName, textEncoder.encode(key)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerSettingsError({
-                settingsPath,
-                operation: "write-secret",
-                cause,
-              }),
-          ),
-        );
-        return { ...next, linear: { ...next.linear, apiKey: "", apiKeySet: true } };
-      }
+    // When the patch does not touch `linear`, preserve the stored secret. A
+    // lingering plaintext key (pre-migration settings.json) is secured here.
+    if (patch.linear?.apiKey === undefined) {
+      return key.length === 0
+        ? { settings: next, commit: Effect.void }
+        : { settings: connected, commit: writeLinearApiKeySecret(key) };
+    }
 
-      // Connect: real key provided → store it, persist only the placeholder.
-      if (key.length > 0) {
-        yield* secretStore.set(secretName, textEncoder.encode(key)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerSettingsError({
-                settingsPath,
-                operation: "write-secret",
-                cause,
-              }),
-          ),
-        );
-        return { ...next, linear: { ...next.linear, apiKey: "", apiKeySet: true } };
-      }
+    // Connect: real key provided → store it, persist only the placeholder.
+    if (key.length > 0) {
+      return { settings: connected, commit: writeLinearApiKeySecret(key) };
+    }
 
-      // Disconnect: empty key provided → delete the stored secret.
-      yield* secretStore.remove(secretName).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ServerSettingsError({
-              settingsPath,
-              operation: "remove-secret",
-              cause,
-            }),
-        ),
-      );
-      return { ...next, linear: { ...next.linear, apiKey: "", apiKeySet: false } };
-    });
+    // Disconnect: empty key provided → delete the stored secret.
+    return {
+      settings: { ...next, linear: { ...next.linear, apiKey: "", apiKeySet: false } },
+      commit: removeLinearApiKeySecret,
+    };
+  };
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
@@ -693,9 +694,10 @@ const make = Effect.gen(function* () {
             current,
             applyServerSettingsPatch(current, patch),
           );
-          const nextWithLinear = yield* persistLinearApiKeySecret(nextPersisted, patch);
-          const next = yield* normalizeServerSettings(nextWithLinear);
+          const linearPlan = planLinearApiKeySecret(nextPersisted, patch);
+          const next = yield* normalizeServerSettings(linearPlan.settings);
           yield* writeSettingsAtomically(next);
+          yield* linearPlan.commit;
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(

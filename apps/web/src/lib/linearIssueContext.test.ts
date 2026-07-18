@@ -146,14 +146,26 @@ describe("buildLinearIssueBlock + appendLinearIssuesToPrompt", () => {
 });
 
 describe("newLinearIssueContextId", () => {
-  it("returns a non-empty string with the linear prefix", () => {
+  it("returns a prefixed id with a counter and a random suffix", () => {
     const id = newLinearIssueContextId();
     expect(id.startsWith("li_")).toBe(true);
-    expect(id.length).toBeGreaterThan(3);
+    // `li_<counter>_<randomSuffix>` — the random segment survives a reload that
+    // would reset the counter, keeping ids collision-resistant.
+    expect(id).toMatch(/^li_[0-9a-z]+_[0-9a-z]+$/);
   });
 
   it("returns unique ids on repeated calls", () => {
     const ids = new Set(Array.from({ length: 10 }, () => newLinearIssueContextId()));
     expect(ids.size).toBe(10);
+  });
+
+  it("keeps the random suffix distinct even for the same counter value", () => {
+    // Two ids minted at different sequence values still differ in their random
+    // suffix, so a counter that restarts at 1 after reload won't collide.
+    const first = newLinearIssueContextId();
+    const second = newLinearIssueContextId();
+    const firstSuffix = first.split("_")[2];
+    const secondSuffix = second.split("_")[2];
+    expect(firstSuffix).not.toBe(secondSuffix);
   });
 });

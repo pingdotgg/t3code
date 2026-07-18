@@ -31,9 +31,16 @@ export interface LinearIssueContextDraft extends LinearIssueDetail {
 const LINEAR_ISSUE_CONTEXT_ID_PREFIX = "li_";
 let nextLinearIssueContextSequence = 0;
 
+/**
+ * The `li_*` ids are persisted to localStorage, but the sequence counter resets
+ * on reload — so a bare counter would re-mint ids that collide with restored
+ * drafts (duplicate React keys, one remove killing two chips). Append a random
+ * suffix so ids stay unique across reloads.
+ */
 export function newLinearIssueContextId(): string {
   nextLinearIssueContextSequence += 1;
-  return `${LINEAR_ISSUE_CONTEXT_ID_PREFIX}${nextLinearIssueContextSequence.toString(36)}`;
+  const randomSuffix = globalThis.crypto.getRandomValues(new Uint32Array(1))[0]!.toString(36);
+  return `${LINEAR_ISSUE_CONTEXT_ID_PREFIX}${nextLinearIssueContextSequence.toString(36)}_${randomSuffix}`;
 }
 
 /**

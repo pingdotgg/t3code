@@ -509,6 +509,14 @@ interface ComposerDraftStoreState {
    * deduped against an already-attached issue with the same identifier.
    */
   addLinearIssueContext: (threadRef: ComposerThreadTarget, issue: LinearIssueDetail) => boolean;
+  /**
+   * Replace the entire linear-issues list (used by send-failure retry to
+   * restore the pre-send snapshot).
+   */
+  setLinearIssueContexts: (
+    threadRef: ComposerThreadTarget,
+    issues: ReadonlyArray<LinearIssueContextDraft>,
+  ) => void;
   removeLinearIssueContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
   clearLinearIssueContexts: (threadRef: ComposerThreadTarget) => void;
   addPreviewAnnotation: (
@@ -3329,6 +3337,24 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
           return accepted;
+        },
+        setLinearIssueContexts: (threadRef, issues) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextDraft: ComposerThreadDraftState = {
+              ...existing,
+              linearIssues: [...issues],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
         },
         removeLinearIssueContext: (threadRef, contextId) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
