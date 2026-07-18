@@ -71,18 +71,6 @@ interface AcpPendingRequest {
   readonly method: string;
 }
 
-const isRpcNumericRequestId = (requestId: string): boolean => {
-  if (requestId.length === 0) {
-    return false;
-  }
-  for (const char of requestId) {
-    if (char < "0" || char > "9") {
-      return false;
-    }
-  }
-  return true;
-};
-
 const decodeSessionUpdate = Schema.decodeUnknownEffect(AcpSchema.SessionNotification);
 const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.ElicitationCompleteNotification,
@@ -349,24 +337,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
   };
 
-  const forwardToClientProtocol = (
-    message: RpcMessage.FromServerEncoded,
-  ): Effect.Effect<void, AcpError.AcpError> => {
-    if (
-      (message._tag === "Exit" || message._tag === "Chunk") &&
-      !isRpcNumericRequestId(message.requestId)
-    ) {
-      return Effect.void;
-    }
-    return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
-  };
-
   const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
     Ref.get(extPending).pipe(
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(message.requestId);
         if (!pendingRequest) {
-          return forwardToClientProtocol(message);
+          return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -413,7 +389,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                     message.requestId,
                   ),
                 )
-              : forwardToClientProtocol(message);
+              : Queue.offer(clientQueue, message).pipe(Effect.asVoid);
           }),
         );
       case "Defect":

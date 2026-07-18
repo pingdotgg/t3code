@@ -360,19 +360,18 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimitsResponse] = yield* Effect.all(
+  const [skillsResponse, models] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
-      client.request("account/rateLimits/read", undefined).pipe(
-        // Rate limits are optional metadata and should not fail the whole provider probe.
-        Effect.catch(() => Effect.void),
-      ),
     ],
     { concurrency: "unbounded" },
   );
+  const rateLimitsResponse = yield* client
+    .request("account/rateLimits/read", undefined)
+    .pipe(Effect.catch(() => Effect.void));
 
   return {
     account: accountResponse,

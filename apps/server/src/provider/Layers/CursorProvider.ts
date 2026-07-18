@@ -45,6 +45,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
@@ -648,6 +649,15 @@ export function buildCursorProviderSnapshot(input: {
       status:
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
+      ...(input.parsed.auth.status !== "unauthenticated"
+        ? {
+            usageLimits: makeUnavailableUsageLimits({
+              source: "cursorAcp",
+              checkedAt: input.checkedAt,
+              reason: "Cursor does not expose subscription usage limits.",
+            }),
+          }
+        : {}),
       ...(message ? { message } : {}),
     },
   });

@@ -28,7 +28,6 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
-  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -389,35 +388,6 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* upsertProviders([provider], options);
     });
 
-    const patchProviderUsageLimits = Effect.fn("patchProviderUsageLimits")(function* (
-      instanceId: ProviderInstanceId,
-      usageLimits: ServerProviderUsageLimits,
-    ) {
-      const previousProviders = yield* Ref.get(providersRef);
-      let patchedProvider: ServerProvider | undefined;
-      const nextProviders = previousProviders.map((provider) => {
-        if (provider.instanceId !== instanceId || !provider.enabled) {
-          return provider;
-        }
-        if (Equal.equals(provider.usageLimits, usageLimits)) {
-          return provider;
-        }
-        patchedProvider = { ...provider, usageLimits };
-        return patchedProvider;
-      });
-
-      if (
-        patchedProvider === undefined ||
-        !haveProvidersChanged(previousProviders, nextProviders)
-      ) {
-        return;
-      }
-
-      yield* Ref.set(providersRef, nextProviders);
-      yield* persistProvider(patchedProvider);
-      yield* PubSub.publish(changesPubSub, nextProviders);
-    });
-
     const setProviderMaintenanceActionState = Effect.fn("setProviderMaintenanceActionState")(
       function* (input: {
         readonly instanceId: ProviderInstanceId;
@@ -720,7 +690,6 @@ export const ProviderRegistryLive = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
-      patchProviderUsageLimits,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

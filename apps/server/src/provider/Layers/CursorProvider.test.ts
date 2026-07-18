@@ -339,26 +339,31 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
+      usageLimits: {
+        source: "cursorAcp",
+        available: false,
+        reason: "Cursor does not expose subscription usage limits.",
+      },
     });
   });
 
   it("preserves provider error state while appending discovery warnings", () => {
-    expect(
-      buildCursorProviderSnapshot({
-        checkedAt: "2026-01-01T00:00:00.000Z",
-        cursorSettings: {
-          ...baseCursorSettings,
-          customModels: ["claude-sonnet-4-6"],
-        },
-        parsed: {
-          version: "2026.04.09-f2b0fcd",
-          status: "error",
-          auth: { status: "unauthenticated" },
-          message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
-        },
-        discoveryWarning: cursorAcpDiscoveryFailedMessage,
-      }),
-    ).toMatchObject({
+    const snapshot = buildCursorProviderSnapshot({
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      cursorSettings: {
+        ...baseCursorSettings,
+        customModels: ["claude-sonnet-4-6"],
+      },
+      parsed: {
+        version: "2026.04.09-f2b0fcd",
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
+      },
+      discoveryWarning: cursorAcpDiscoveryFailedMessage,
+    });
+
+    expect(snapshot).toMatchObject({
       status: "error",
       message: `Cursor Agent is not authenticated. Run \`agent login\` and try again. ${cursorAcpDiscoveryFailedMessage}`,
       models: [
@@ -368,6 +373,7 @@ describe("buildCursorProviderSnapshot", () => {
         },
       ],
     });
+    expect(snapshot.usageLimits).toBeUndefined();
   });
 });
 
@@ -578,28 +584,6 @@ describe("parseCursorAboutOutput", () => {
       },
       message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
     });
-  });
-});
-
-describe("buildCursorProviderSnapshot", () => {
-  it("builds a ready Cursor provider snapshot from about output", () => {
-    const snapshot = buildCursorProviderSnapshot({
-      checkedAt: "2026-04-18T00:00:00.000Z",
-      cursorSettings: {
-        enabled: true,
-        binaryPath: "agent",
-        apiEndpoint: "",
-        customModels: [],
-      } satisfies CursorSettings,
-      parsed: {
-        version: "2026.04.18-123456",
-        status: "ready",
-        auth: { status: "authenticated" },
-      },
-    });
-
-    expect(snapshot.status).toBe("ready");
-    expect(snapshot.auth.status).toBe("authenticated");
   });
 });
 

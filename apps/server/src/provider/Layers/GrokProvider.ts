@@ -145,7 +145,8 @@ interface GrokAcpDiscoveryResult {
 
 const discoverGrokProviderViaAcp = (
   grokSettings: GrokSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -153,7 +154,7 @@ const discoverGrokProviderViaAcp = (
       grokSettings,
       environment,
       childProcessSpawner,
-      cwd: process.cwd(),
+      cwd,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
@@ -205,6 +206,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
   ptyAdapter?: PtyAdapter.PtyAdapter["Service"],
+  cwd = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -295,7 +297,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokProviderViaAcp(grokSettings, environment).pipe(
+  const discoveryExit = yield* discoverGrokProviderViaAcp(grokSettings, environment, cwd).pipe(
     Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
   );
@@ -342,13 +344,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       : fallbackModels;
   const auth = resolveGrokProbeAuth(discovery.auth);
   const usageLimits =
-    auth.status !== "authenticated"
+    auth.status === "unauthenticated"
       ? undefined
       : ptyAdapter
         ? yield* probeGrokUsageLimits(
             {
               binaryPath: grokSettings.binaryPath || "grok",
-              cwd: process.cwd(),
+              cwd,
               checkedAt,
               environment,
             },

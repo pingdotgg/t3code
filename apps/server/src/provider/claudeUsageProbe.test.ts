@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { vi } from "vite-plus/test";
 
 import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 
@@ -353,121 +355,126 @@ describe("claudeUsageProbe", () => {
     expect(explicitYear.windows[0]?.resetsAt).toBe("2026-01-03T03:30:00.000Z");
   });
 
-  it("collects Claude print-mode JSON until the process exits", async () => {
-    const child = new MockPtyChild();
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          cwd: "/tmp",
-          checkedAt: "2026-07-18T10:00:00.000Z",
-        },
-        makeMockPtyAdapter(child),
-        createFakeClock(),
-      ),
-    );
-
-    child.emitData(
-      JSON.stringify({
-        result: "Current session: 12% used\nCurrent week (Fable): 34% used",
-      }),
-    );
-    child.emitExit();
-
-    const result = await probePromise;
-    expect(result.usageLimits.windows.map((window) => window.usedPercent)).toEqual([12, 34]);
-    expect(child.writes).toEqual([]);
-    expect(child.kill).toHaveBeenCalled();
-  });
-
-  it("resolves unavailable on timeout with no output", async () => {
-    const child = new MockPtyChild();
-    const clock = createFakeClock();
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          cwd: "/tmp",
-          checkedAt: "2026-07-18T10:00:00.000Z",
-        },
-        makeMockPtyAdapter(child),
-        clock,
-      ),
-    );
-
-    clock.advance(4_000);
-    const result = await probePromise;
-
-    expect(result.usageLimits.available).toBe(false);
-    expect(result.rawOutput).toBe("");
-    expect(child.kill).toHaveBeenCalled();
-  });
-
-  it("returns unavailable result when spawn fails", async () => {
-    const failingAdapter: PtyAdapter.PtyAdapter["Service"] = {
-      spawn: () =>
-        Effect.fail(
-          new PtyAdapter.PtySpawnError({
-            adapter: "mock",
-            cause: new Error("spawn failed"),
-          }),
+  it.effect("collects Claude print-mode JSON until the process exits", () =>
+    Effect.gen(function* () {
+      const child = new MockPtyChild();
+      const resultFiber = yield* Effect.forkChild(
+        probeClaudeUsageLimits(
+          {
+            binaryPath: "claude",
+            cwd: "/tmp",
+            checkedAt: "2026-07-18T10:00:00.000Z",
+          },
+          makeMockPtyAdapter(child),
+          createFakeClock(),
         ),
-    };
+        { startImmediately: true },
+      );
 
-    const result = await Effect.runPromise(
-      probeClaudeUsageLimits(
+      child.emitData('{"result":"Current session: 12% used\\nCurrent week (Fable): 34% used"}');
+      child.emitExit();
+
+      const result = yield* Fiber.join(resultFiber);
+      expect(result.usageLimits.windows.map((window) => window.usedPercent)).toEqual([12, 34]);
+      expect(child.writes).toEqual([]);
+      expect(child.kill).toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("resolves unavailable on timeout with no output", () =>
+    Effect.gen(function* () {
+      const child = new MockPtyChild();
+      const clock = createFakeClock();
+      const resultFiber = yield* Effect.forkChild(
+        probeClaudeUsageLimits(
+          {
+            binaryPath: "claude",
+            cwd: "/tmp",
+            checkedAt: "2026-07-18T10:00:00.000Z",
+          },
+          makeMockPtyAdapter(child),
+          clock,
+        ),
+        { startImmediately: true },
+      );
+
+      clock.advance(4_000);
+      const result = yield* Fiber.join(resultFiber);
+
+      expect(result.usageLimits.available).toBe(false);
+      expect(result.rawOutput).toBe("");
+      expect(child.kill).toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("returns unavailable result when spawn fails", () =>
+    Effect.gen(function* () {
+      const failingAdapter: PtyAdapter.PtyAdapter["Service"] = {
+        spawn: () =>
+          Effect.fail(
+            new PtyAdapter.PtySpawnError({
+              adapter: "mock",
+              cause: new Error("spawn failed"),
+            }),
+          ),
+      };
+
+      const result = yield* probeClaudeUsageLimits(
         {
           binaryPath: "claude",
           cwd: "/tmp",
           checkedAt: "2026-04-17T10:00:00.000Z",
         },
         failingAdapter,
-      ),
-    );
+      );
 
-    expect(result.usageLimits.available).toBe(false);
-    expect(result.usageLimits.reason).toBe("Failed to spawn Claude process for usage probe.");
-    expect(result.rawOutput).toBe("");
-  });
+      expect(result.usageLimits.available).toBe(false);
+      expect(result.usageLimits.reason).toBe("Failed to spawn Claude process for usage probe.");
+      expect(result.rawOutput).toBe("");
+    }),
+  );
 
-  it("preserves quoted launch arguments when spawning the probe process", async () => {
-    const child = new MockPtyChild();
-    let capturedSpawnInput: PtyAdapter.PtySpawnInput | undefined;
-    const ptyAdapter = makeCapturingPtyAdapter({
-      child,
-      onSpawn: (spawnInput) => {
-        capturedSpawnInput = spawnInput;
-      },
-    });
-
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          launchArgs: '--model "claude sonnet" --cwd "/tmp/with spaces" --note "say \\"hi\\""',
-          cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
+  it.effect("preserves quoted launch arguments when spawning the probe process", () =>
+    Effect.gen(function* () {
+      const child = new MockPtyChild();
+      let capturedSpawnInput: PtyAdapter.PtySpawnInput | undefined;
+      const ptyAdapter = makeCapturingPtyAdapter({
+        child,
+        onSpawn: (spawnInput) => {
+          capturedSpawnInput = spawnInput;
         },
-        ptyAdapter,
-      ),
-    );
+      });
 
-    child.emitExit();
-    await probePromise;
+      const resultFiber = yield* Effect.forkChild(
+        probeClaudeUsageLimits(
+          {
+            binaryPath: "claude",
+            launchArgs: '--model "claude sonnet" --cwd "/tmp/with spaces" --note "say \\"hi\\""',
+            cwd: "/tmp",
+            checkedAt: "2026-04-17T10:00:00.000Z",
+          },
+          ptyAdapter,
+        ),
+        { startImmediately: true },
+      );
 
-    expect(capturedSpawnInput?.args).toEqual([
-      "--model",
-      "claude sonnet",
-      "--cwd",
-      "/tmp/with spaces",
-      "--note",
-      'say "hi"',
-      "--print",
-      "/usage",
-      "--output-format",
-      "json",
-      "--permission-mode",
-      "plan",
-    ]);
-  });
+      child.emitExit();
+      yield* Fiber.join(resultFiber);
+
+      expect(capturedSpawnInput?.args).toEqual([
+        "--model",
+        "claude sonnet",
+        "--cwd",
+        "/tmp/with spaces",
+        "--note",
+        'say "hi"',
+        "--print",
+        "/usage",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "plan",
+      ]);
+    }),
+  );
 });

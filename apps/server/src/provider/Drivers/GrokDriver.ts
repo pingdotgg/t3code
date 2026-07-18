@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
@@ -56,7 +57,6 @@ export type GrokDriverEnv =
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
-  | PtyAdapter
   | ServerConfig
   | ServerSettingsService;
 
@@ -88,8 +88,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { cwd } = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
-      const ptyAdapter = yield* PtyAdapter;
+      const ptyAdapter = Option.getOrUndefined(yield* Effect.serviceOption(PtyAdapter));
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -119,8 +120,8 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const checkProvider = checkGrokProviderStatus(
         effectiveConfig,
         processEnv,
-        instanceId,
-        ptyAdapter,
+        ptyAdapter ?? undefined,
+        cwd,
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
