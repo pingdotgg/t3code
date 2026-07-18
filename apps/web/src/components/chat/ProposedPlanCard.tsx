@@ -39,12 +39,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  searchQuery,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  searchQuery?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -177,6 +179,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              {...(searchQuery ? { searchQuery } : {})}
             />
           ) : (
             <ChatMarkdown
@@ -184,6 +187,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              {...(searchQuery ? { searchQuery } : {})}
             />
           )}
           {canCollapse && !expanded ? (

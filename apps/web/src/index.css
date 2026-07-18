@@ -960,3 +960,30 @@ label:has(> select#reasoning-effort) select {
 .dark .model-picker-list::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+mark.search-highlight {
+  background: oklch(0.87 0.15 85);
+  color: inherit;
+  border-radius: 0.125rem;
+}
+
+.dark mark.search-highlight {
+  background: oklch(0.45 0.12 85);
+  color: inherit;
+}
+
+[data-search-active-match] mark.search-highlight {
+  background: oklch(0.78 0.18 85);
+  outline: 2px solid oklch(0.65 0.2 85);
+  outline-offset: 1px;
+}
+
+.dark [data-search-active-match] mark.search-highlight {
+  background: oklch(0.5 0.15 85);
+  outline: 2px solid oklch(0.6 0.18 85);
+  outline-offset: 1px;
+}
+
+[data-search-active-match] {
+  scroll-margin: 120px;
+}
