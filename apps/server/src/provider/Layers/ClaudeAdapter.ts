@@ -61,6 +61,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -491,6 +492,104 @@ function normalizeClaudeContextUsageApiSnapshot(
     compactsAutomatically: value.isAutoCompactEnabled,
   });
 }
+
+/** Prefer result/last-known usage so turn completion never waits on getContextUsage. */
+function buildTurnUsageSnapshotFromResult(input: {
+  readonly result: SDKResultMessage | undefined;
+  readonly maxTokens: number | undefined;
+  readonly accumulatedTotalProcessedTokens: number | undefined;
+  readonly lastGoodUsage: ThreadTokenUsageSnapshot | undefined;
+}): ThreadTokenUsageSnapshot | undefined {
+  const resultUsageRecord =
+    input.result?.usage &&
+    typeof input.result.usage === "object" &&
+    !Array.isArray(input.result.usage)
+      ? (input.result.usage as Record<string, unknown>)
+      : undefined;
+  const hasResultUsageIteration =
+    resultUsageRecord !== undefined && lastClaudeUsageIteration(resultUsageRecord) !== undefined;
+  const resultHasActiveUsage =
+    resultUsageRecord !== undefined &&
+    (hasResultUsageIteration ||
+      claudeUsageInputTokens(resultUsageRecord) + claudeUsageOutputTokens(resultUsageRecord) > 0);
+  const resultTotalOnly =
+    resultUsageRecord !== undefined &&
+    !resultHasActiveUsage &&
+    claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
+  const resultIterationSnapshot = resultUsageRecord
+    ? normalizeClaudeActiveTokenUsage(
+        resultUsageRecord,
+        input.maxTokens,
+        input.accumulatedTotalProcessedTokens,
+      )
+    : undefined;
+  const lastGoodUsage = input.lastGoodUsage;
+
+  if (resultTotalOnly && lastGoodUsage) {
+    return {
+      ...lastGoodUsage,
+      ...(typeof input.maxTokens === "number" &&
+      Number.isFinite(input.maxTokens) &&
+      input.maxTokens > 0
+        ? { maxTokens: input.maxTokens }
+        : {}),
+      ...(typeof input.accumulatedTotalProcessedTokens === "number" &&
+      Number.isFinite(input.accumulatedTotalProcessedTokens) &&
+      input.accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
+        ? {
+            totalProcessedTokens: input.accumulatedTotalProcessedTokens,
+          }
+        : {}),
+    };
+  }
+
+  if (resultIterationSnapshot) {
+    return resultIterationSnapshot;
+  }
+
+  if (lastGoodUsage) {
+    return {
+      ...lastGoodUsage,
+      ...(typeof input.maxTokens === "number" &&
+      Number.isFinite(input.maxTokens) &&
+      input.maxTokens > 0
+        ? { maxTokens: input.maxTokens }
+        : {}),
+      ...(typeof input.accumulatedTotalProcessedTokens === "number" &&
+      Number.isFinite(input.accumulatedTotalProcessedTokens) &&
+      input.accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
+        ? {
+            totalProcessedTokens: input.accumulatedTotalProcessedTokens,
+          }
+        : {}),
+    };
+  }
+
+  return undefined;
+}
+
+function buildTurnCompletedPayload(input: {
+  readonly status: ProviderRuntimeTurnStatus;
+  readonly result: SDKResultMessage | undefined;
+  readonly errorMessage: string | undefined;
+}) {
+  const result = input.result;
+  const stopReason =
+    typeof result?.stop_reason === "string" && result.stop_reason.length > 0
+      ? result.stop_reason
+      : undefined;
+  return {
+    state: input.status,
+    ...(stopReason !== undefined ? { stopReason } : {}),
+    ...(result?.usage ? { usage: result.usage } : {}),
+    ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
+    ...(typeof result?.total_cost_usd === "number" ? { totalCostUsd: result.total_cost_usd } : {}),
+    ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+  };
+}
+
+/** Bound post-turn context refresh so a hung control RPC cannot stall Working forever. */
+const CONTEXT_USAGE_REFRESH_TIMEOUT = "1 second";
 
 function compactBoundaryTokenUsageSnapshot(
   message: Record<string, unknown>,
@@ -1762,6 +1861,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     options?: {
       readonly rawMethod?: string;
       readonly rawPayload?: unknown;
+      /** Prefer this when emitting after turnState was cleared (post-completion refresh). */
+      readonly turnId?: TurnId;
     },
   ) {
     if (!usage) {
@@ -1772,7 +1873,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context.lastKnownTotalProcessedTokens =
       usage.totalProcessedTokens ?? context.lastKnownTotalProcessedTokens;
 
-    const turnState = context.turnState;
+    const turnId = options?.turnId ?? context.turnState?.turnId;
     const stamp = yield* makeEventStamp();
     yield* offerRuntimeEvent({
       type: "thread.token-usage.updated",
@@ -1780,7 +1881,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       provider: providerKind,
       createdAt: stamp.createdAt,
       threadId: context.session.threadId,
-      ...(turnState ? { turnId: turnState.turnId } : {}),
+      ...(turnId ? { turnId: asCanonicalTurnId(turnId) } : {}),
       payload: {
         usage,
       },
@@ -1920,64 +2021,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.lastKnownTotalProcessedTokens = accumulatedTotalProcessedTokens;
     }
 
-    const contextUsageSnapshot = yield* queryCurrentContextUsage(
-      context,
-      accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
-    );
-    const resultUsageRecord =
-      result?.usage && typeof result.usage === "object" && !Array.isArray(result.usage)
-        ? (result.usage as Record<string, unknown>)
-        : undefined;
-    const hasResultUsageIteration =
-      resultUsageRecord !== undefined && lastClaudeUsageIteration(resultUsageRecord) !== undefined;
-    const resultHasActiveUsage =
-      resultUsageRecord !== undefined &&
-      (hasResultUsageIteration ||
-        claudeUsageInputTokens(resultUsageRecord) + claudeUsageOutputTokens(resultUsageRecord) > 0);
-    const resultTotalOnly =
-      resultUsageRecord !== undefined &&
-      !resultHasActiveUsage &&
-      claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
-    const resultIterationSnapshot = resultUsageRecord
-      ? normalizeClaudeActiveTokenUsage(
-          resultUsageRecord,
-          maxTokens,
-          accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
-        )
-      : undefined;
-    const lastGoodUsage = context.lastKnownTokenUsage;
-    const usageSnapshot: ThreadTokenUsageSnapshot | undefined =
-      contextUsageSnapshot ??
-      (resultTotalOnly && lastGoodUsage
-        ? {
-            ...lastGoodUsage,
-            ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
-              ? { maxTokens }
-              : {}),
-            ...(typeof accumulatedTotalProcessedTokens === "number" &&
-            Number.isFinite(accumulatedTotalProcessedTokens) &&
-            accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
-              ? {
-                  totalProcessedTokens: accumulatedTotalProcessedTokens,
-                }
-              : {}),
-          }
-        : resultIterationSnapshot) ??
-      (lastGoodUsage
-        ? {
-            ...lastGoodUsage,
-            ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
-              ? { maxTokens }
-              : {}),
-            ...(typeof accumulatedTotalProcessedTokens === "number" &&
-            Number.isFinite(accumulatedTotalProcessedTokens) &&
-            accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
-              ? {
-                  totalProcessedTokens: accumulatedTotalProcessedTokens,
-                }
-              : {}),
-          }
-        : undefined);
+    // Never await getContextUsage before turn.completed — that RPC can hang over
+    // OpenRouter and keeps session.status "running" (Working for Xs) after text is done.
+    const usageSnapshot = buildTurnUsageSnapshotFromResult({
+      result,
+      maxTokens,
+      accumulatedTotalProcessedTokens:
+        accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
+      lastGoodUsage: context.lastKnownTokenUsage,
+    });
+    const completedPayload = buildTurnCompletedPayload({ status, result, errorMessage });
 
     const turnState = context.turnState;
     if (!turnState) {
@@ -1993,20 +2046,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: providerKind,
         createdAt: stamp.createdAt,
         threadId: context.session.threadId,
-        payload: {
-          state: status,
-          ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
-          ...(result?.usage ? { usage: result.usage } : {}),
-          ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
-          ...(typeof result?.total_cost_usd === "number"
-            ? { totalCostUsd: result.total_cost_usd }
-            : {}),
-          ...(errorMessage ? { errorMessage } : {}),
-        },
+        payload: completedPayload,
         providerRefs: {},
       });
       return;
     }
+
+    const completedTurnId = turnState.turnId;
 
     for (const [index, tool] of context.inFlightTools.entries()) {
       const toolStamp = yield* makeEventStamp();
@@ -2068,16 +2114,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       createdAt: stamp.createdAt,
       threadId: context.session.threadId,
       turnId: turnState.turnId,
-      payload: {
-        state: status,
-        ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
-        ...(result?.usage ? { usage: result.usage } : {}),
-        ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
-        ...(typeof result?.total_cost_usd === "number"
-          ? { totalCostUsd: result.total_cost_usd }
-          : {}),
-        ...(errorMessage ? { errorMessage } : {}),
-      },
+      payload: completedPayload,
       providerRefs: nativeProviderRefs(context),
     });
 
@@ -2091,6 +2128,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(status === "failed" && errorMessage ? { lastError: errorMessage } : {}),
     };
     yield* updateResumeCursor(context);
+
+    // Best-effort richer context meter after Working has already cleared. Inline
+    // (not forked) so we never stamp the next turn; timeout abandons a hung RPC.
+    if (status === "completed" && result !== undefined && context.query.getContextUsage) {
+      const refreshedUsage = yield* queryCurrentContextUsage(
+        context,
+        accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
+      ).pipe(Effect.timeoutOption(CONTEXT_USAGE_REFRESH_TIMEOUT));
+      if (Option.isSome(refreshedUsage) && refreshedUsage.value !== undefined) {
+        yield* emitThreadTokenUsage(context, refreshedUsage.value, {
+          rawMethod: "claude/getContextUsage",
+          rawPayload: { afterTurnId: String(completedTurnId) },
+          turnId: completedTurnId,
+        });
+      }
+    }
   });
 
   const handleStreamEvent = Effect.fn("handleStreamEvent")(function* (
