@@ -696,7 +696,7 @@ type CodexTurnOrderingCandidate = Pick<
   "startedAt"
 >;
 
-export function shouldPreferActiveCodexTurnCandidate(
+export function shouldReplaceActiveCodexTurnCandidate(
   candidate: CodexTurnOrderingCandidate,
   selected: CodexTurnOrderingCandidate | undefined,
 ): boolean {
@@ -721,7 +721,7 @@ export function findActiveCodexTurnId(
     if (turn.status !== "inProgress") {
       continue;
     }
-    if (shouldPreferActiveCodexTurnCandidate(turn, activeTurn)) {
+    if (shouldReplaceActiveCodexTurnCandidate(turn, activeTurn)) {
       activeTurn = turn;
     }
   }

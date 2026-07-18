@@ -389,7 +389,7 @@ export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
   expectedUserMessageId: MessageId | null;
-  latestTurnTurnId: TurnId | null;
+  latestTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
   latestTurnCompletedAt: string | null;
@@ -407,7 +407,7 @@ export function createLocalDispatchSnapshot(
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
     expectedUserMessageId: options?.expectedUserMessageId ?? null,
-    latestTurnTurnId: latestTurn?.turnId ?? null,
+    latestTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
@@ -438,20 +438,19 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   // latest turn/session fields may remain unchanged until the agent finishes.
   // The projected user message is the server acknowledgement in that case.
   const expectedUserMessageId = input.localDispatch.expectedUserMessageId;
-  if (
-    input.localDispatch.sessionStatus === "running" &&
-    expectedUserMessageId !== null &&
-    input.projectedMessages.some(
-      (message) => message.role === "user" && message.id === expectedUserMessageId,
-    )
-  ) {
-    return true;
+  if (input.localDispatch.sessionStatus === "running" && expectedUserMessageId !== null) {
+    for (let index = input.projectedMessages.length - 1; index >= 0; index -= 1) {
+      const message = input.projectedMessages[index];
+      if (message?.role === "user" && message.id === expectedUserMessageId) {
+        return true;
+      }
+    }
   }
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
   const latestTurnChanged =
-    input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
+    input.localDispatch.latestTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);

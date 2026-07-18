@@ -555,12 +555,26 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+  });
 
-    const alreadyProjected = createLocalDispatchSnapshot(
+  it("requires the next steer id after the previous steer was projected", () => {
+    const previousSteerMessageId = MessageId.make("message-steer");
+    const nextSteerMessageId = MessageId.make("message-next-steer");
+    const runningTurn = {
+      ...completedTurn,
+      state: "running" as const,
+      completedAt: null,
+    };
+    const runningSession = {
+      ...readySession,
+      status: "running" as const,
+      activeTurnId: runningTurn.turnId,
+    };
+    const localDispatch = createLocalDispatchSnapshot(
       makeThread({
         messages: [
           {
-            id: steerMessageId,
+            id: previousSteerMessageId,
             role: "user",
             text: "steer",
             turnId: runningTurn.turnId,
@@ -572,17 +586,18 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         latestTurn: runningTurn,
         session: runningSession,
       }),
-      { expectedUserMessageId: MessageId.make("message-next-steer") },
+      { expectedUserMessageId: nextSteerMessageId },
     );
+
     expect(
       hasServerAcknowledgedLocalDispatch({
-        localDispatch: alreadyProjected,
+        localDispatch,
         phase: "running",
         latestTurn: runningTurn,
         session: runningSession,
         projectedMessages: [
           {
-            id: steerMessageId,
+            id: previousSteerMessageId,
             role: "user",
           },
         ],
@@ -591,5 +606,23 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(false);
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        projectedMessages: [
+          {
+            id: nextSteerMessageId,
+            role: "user",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
   });
 });

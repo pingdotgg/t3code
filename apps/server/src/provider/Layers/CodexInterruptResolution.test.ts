@@ -1,5 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
@@ -11,7 +12,7 @@ import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 import {
   findActiveCodexTurnId,
   resolveCodexInterruptTurnId,
-  shouldPreferActiveCodexTurnCandidate,
+  shouldReplaceActiveCodexTurnCandidate,
 } from "./CodexSessionRuntime.ts";
 
 function makeThreadReadResponse(
@@ -68,9 +69,12 @@ describe("findActiveCodexTurnId", () => {
     const response = makeThreadReadResponse([]);
     NodeAssert.equal(findActiveCodexTurnId(response), undefined);
   });
+});
 
+describe("resolveCodexInterruptTurnId", () => {
   it.effect("requests turns when resolving an interrupt without a projected turn id", () => {
     let requestedParams: CodexRpc.ClientRequestParamsByMethod["thread/read"] | undefined;
+    let readThreadCallCount = 0;
 
     return Effect.gen(function* () {
       const turnId = yield* resolveCodexInterruptTurnId({
@@ -78,6 +82,7 @@ describe("findActiveCodexTurnId", () => {
         requestedTurnId: undefined,
         readSessionActiveTurnId: Effect.succeed(undefined),
         readThread: (params) => {
+          readThreadCallCount += 1;
           requestedParams = params;
           return Effect.succeed(
             makeThreadReadResponse([
@@ -91,6 +96,7 @@ describe("findActiveCodexTurnId", () => {
         threadId: "provider-thread-1",
         includeTurns: true,
       });
+      NodeAssert.equal(readThreadCallCount, 1);
       NodeAssert.equal(turnId, "turn-active");
     });
   });
@@ -125,14 +131,19 @@ describe("findActiveCodexTurnId", () => {
   it.effect("bounds the live lookup and falls back to the projected turn on timeout", () =>
     Effect.gen(function* () {
       const projectedTurnId = TurnId.make("turn-projected");
+      const lookupStarted = yield* Deferred.make<void>();
       const resolution = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
         readSessionActiveTurnId: Effect.succeed(projectedTurnId),
-        readThread: () => Effect.never,
+        readThread: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(lookupStarted, undefined);
+            return yield* Effect.never;
+          }),
       }).pipe(Effect.forkScoped);
 
-      yield* Effect.yieldNow;
+      yield* Deferred.await(lookupStarted);
       yield* TestClock.adjust("2 seconds");
       NodeAssert.equal(yield* Fiber.join(resolution), projectedTurnId);
     }),
@@ -141,14 +152,21 @@ describe("findActiveCodexTurnId", () => {
   it.effect("reads the projected fallback after a live lookup times out", () =>
     Effect.gen(function* () {
       let projectedTurnId = TurnId.make("turn-old");
+      const lookupStarted = yield* Deferred.make<void>();
       const resolution = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
         readSessionActiveTurnId: Effect.sync(() => projectedTurnId),
-        readThread: () => Effect.never,
+        readThread: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(lookupStarted, undefined);
+            return yield* Effect.never;
+          }),
       }).pipe(Effect.forkScoped);
 
-      yield* Effect.yieldNow;
+      yield* Deferred.await(lookupStarted);
+      // Mutate after the live lookup starts to verify that the fallback is
+      // evaluated lazily after the timeout instead of captured up front.
       projectedTurnId = TurnId.make("turn-current");
       yield* TestClock.adjust("2 seconds");
       NodeAssert.equal(yield* Fiber.join(resolution), projectedTurnId);
@@ -156,22 +174,22 @@ describe("findActiveCodexTurnId", () => {
   );
 });
 
-describe("shouldPreferActiveCodexTurnCandidate", () => {
+describe("shouldReplaceActiveCodexTurnCandidate", () => {
   it("selects the first candidate", () => {
-    NodeAssert.equal(shouldPreferActiveCodexTurnCandidate({ startedAt: 10 }, undefined), true);
+    NodeAssert.equal(shouldReplaceActiveCodexTurnCandidate({ startedAt: 10 }, undefined), true);
   });
 
   it("orders timestamped turns by start time and lets a later equal entry win", () => {
     NodeAssert.equal(
-      shouldPreferActiveCodexTurnCandidate({ startedAt: 20 }, { startedAt: 10 }),
+      shouldReplaceActiveCodexTurnCandidate({ startedAt: 20 }, { startedAt: 10 }),
       true,
     );
     NodeAssert.equal(
-      shouldPreferActiveCodexTurnCandidate({ startedAt: 10 }, { startedAt: 20 }),
+      shouldReplaceActiveCodexTurnCandidate({ startedAt: 10 }, { startedAt: 20 }),
       false,
     );
     NodeAssert.equal(
-      shouldPreferActiveCodexTurnCandidate({ startedAt: 10 }, { startedAt: 10 }),
+      shouldReplaceActiveCodexTurnCandidate({ startedAt: 10 }, { startedAt: 10 }),
       true,
     );
   });
@@ -183,7 +201,7 @@ describe("shouldPreferActiveCodexTurnCandidate", () => {
       [{ startedAt: 10 }, {}],
       [{ startedAt: 10 }, { startedAt: null }],
     ] as const) {
-      NodeAssert.equal(shouldPreferActiveCodexTurnCandidate(candidate, selected), true);
+      NodeAssert.equal(shouldReplaceActiveCodexTurnCandidate(candidate, selected), true);
     }
   });
 });
