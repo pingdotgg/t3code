@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -12,6 +13,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
+  ensureNodePtyImpl,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
@@ -234,4 +236,128 @@ describe("formatMissingToolsReason", () => {
     expect(reason).toContain("build-essential");
     expect(reason).not.toContain("nvm");
   });
+});
+
+describe("ensureNodePtyImpl: WSL Node engine-range preflight (#3611)", () => {
+  // Always resolves -- isolates the engine-range branch from the separate
+  // `wslpath` round trip that production windowsToWslPath performs.
+  const windowsToWslPath = () => Effect.succeed(Option.some("/home/josh/repo"));
+
+  const makeProbeSpawner = (probeStdout: string) =>
+    ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(encoder.encode(probeStdout)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      ),
+    );
+
+  it("rejects a resolved Node that does not satisfy nodeEngineRange (the reporter's exact case)", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureNodePtyImpl("Ubuntu", "C:\\repo", windowsToWslPath, {
+        nodeEngineRange: "^22.16 || ^23.11 || >=24.10",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.fatal).toBe(true);
+        expect(result.reason).toContain("18.20.8");
+        expect(result.reason).toContain("^22.16 || ^23.11 || >=24.10");
+        expect(result.reason).toContain("/home/josh/.nvm/versions/node/v18.20.8/bin/node");
+        // Deterministic mismatch: surfaced on the first attempt instead of
+        // burning the default preflight retry allowance.
+        expect(result.retryLimit).toBe(1);
+      }
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeProbeSpawner(
+          [
+            "nodePath:/home/josh/.nvm/versions/node/v18.20.8/bin/node",
+            "resolvedPath:/home/josh/.nvm/versions/node/v18.20.8/bin:/usr/bin",
+            "nodeVersion:18.20.8",
+          ].join("\n"),
+        ),
+      ),
+    ));
+
+  it("rejects (fail closed) when a range is required but the probe didn't report a version (bot-flagged fix)", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureNodePtyImpl("Ubuntu", "C:\\repo", windowsToWslPath, {
+        nodeEngineRange: "^22.16 || ^23.11 || >=24.10",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.fatal).toBe(true);
+        expect(result.reason).toContain("^22.16 || ^23.11 || >=24.10");
+        // Possibly a one-off probe hiccup: keeps the default retry allowance,
+        // unlike the deterministic version-mismatch case.
+        expect(result.retryLimit).toBeUndefined();
+      }
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeProbeSpawner(
+          // No nodeVersion: line at all -- the probe omitted/failed to
+          // report it even though node itself resolved fine.
+          [
+            "nodePath:/home/josh/.nvm/versions/node/v18.20.8/bin/node",
+            "resolvedPath:/home/josh/.nvm/versions/node/v18.20.8/bin:/usr/bin",
+          ].join("\n"),
+        ),
+      ),
+    ));
+
+  it("does not false-positive when the resolved Node satisfies nodeEngineRange (happy path unchanged)", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureNodePtyImpl("Ubuntu", "C:\\repo", windowsToWslPath, {
+        nodeEngineRange: "^22.16 || ^23.11 || >=24.10",
+      });
+      expect(result).toEqual({
+        ok: true,
+        nodePath: "/home/josh/.nvm/versions/node/v22.22.1/bin/node",
+        resolvedPath: "/home/josh/.nvm/versions/node/v22.22.1/bin:/usr/bin",
+      });
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeProbeSpawner(
+          [
+            "nodePath:/home/josh/.nvm/versions/node/v22.22.1/bin/node",
+            "resolvedPath:/home/josh/.nvm/versions/node/v22.22.1/bin:/usr/bin",
+            "nodeVersion:22.22.1",
+          ].join("\n"),
+        ),
+      ),
+    ));
+
+  it("does not check the engine range when nodeEngineRange is not configured", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureNodePtyImpl("Ubuntu", "C:\\repo", windowsToWslPath, {});
+      expect(result).toEqual({
+        ok: true,
+        nodePath: "/home/josh/.nvm/versions/node/v18.20.8/bin/node",
+        resolvedPath: "/home/josh/.nvm/versions/node/v18.20.8/bin:/usr/bin",
+      });
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeProbeSpawner(
+          [
+            "nodePath:/home/josh/.nvm/versions/node/v18.20.8/bin/node",
+            "resolvedPath:/home/josh/.nvm/versions/node/v18.20.8/bin:/usr/bin",
+            "nodeVersion:18.20.8",
+          ].join("\n"),
+        ),
+      ),
+    ));
 });
