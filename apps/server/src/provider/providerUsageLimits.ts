@@ -30,9 +30,6 @@ export function windowKindFromDuration(input: {
   ) {
     return "weekly";
   }
-  if (duration === input.shortestWindowDurationMins) {
-    return "session";
-  }
   return "session";
 }
 

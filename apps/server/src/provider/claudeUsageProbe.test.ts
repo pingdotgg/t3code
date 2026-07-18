@@ -7,7 +7,6 @@ import {
   parseClaudeRuntimeUsageLimits,
   parseClaudeUsageLimitsOutput,
   probeClaudeUsageLimits,
-  shouldRequestClaudeUsageFallback,
   type ProbeClock,
 } from "./claudeUsageProbe.ts";
 
@@ -261,144 +260,104 @@ describe("claudeUsageProbe", () => {
     ).toBeUndefined();
   });
 
-  it("requests the /usage fallback for short unavailable status output", () => {
+  it("parses Claude print-mode JSON with current session and week labels", () => {
+    const output = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: [
+        "You are currently using your subscription to power your Claude Code usage",
+        "",
+        "Current session: 0% used · resets Jul 18, 3:39pm (Asia/Kolkata)",
+        "Current week (Fable): 18% used · resets Jul 24, 2:29pm (Asia/Kolkata)",
+      ].join("\n"),
+    });
+
     expect(
-      shouldRequestClaudeUsageFallback({
-        checkedAt: "2026-04-17T10:00:00.000Z",
-        output: "Authenticated as Claude Max\n",
+      parseClaudeUsageLimitsOutput({
+        checkedAt: "2026-07-18T10:00:00.000Z",
+        output,
       }),
-    ).toBe(true);
+    ).toMatchObject({
+      available: true,
+      windows: [
+        {
+          kind: "session",
+          usedPercent: 0,
+          windowDurationMins: 300,
+          resetsAt: "2026-07-18T10:09:00.000Z",
+        },
+        {
+          kind: "weekly",
+          usedPercent: 18,
+          windowDurationMins: 10080,
+          resetsAt: "2026-07-24T08:59:00.000Z",
+        },
+      ],
+    });
   });
 
-  it("requests the /usage fallback even when output is empty", () => {
-    expect(
-      shouldRequestClaudeUsageFallback({
-        checkedAt: "2026-04-17T10:00:00.000Z",
-        output: "",
-      }),
-    ).toBe(true);
+  it("rolls the reset year forward when a year-less IANA-zone reset wraps into next year", () => {
+    const output = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "Current session: 50% used · resets Jan 3, 9:00am (Asia/Kolkata)",
+    });
+
+    const parsed = parseClaudeUsageLimitsOutput({
+      checkedAt: "2026-12-30T10:00:00.000Z",
+      output,
+    });
+
+    expect(parsed.windows[0]?.resetsAt).toBe("2027-01-03T03:30:00.000Z");
   });
 
-  it("skips the /usage fallback once usage windows are already available", () => {
-    expect(
-      shouldRequestClaudeUsageFallback({
-        checkedAt: "2026-04-17T10:00:00.000Z",
-        output: "Session usage 42% resets at 2026-04-17T14:00:00Z\n",
-      }),
-    ).toBe(false);
-  });
-
-  it("resolves immediately when /status returns usable quota output", async () => {
+  it("collects Claude print-mode JSON until the process exits", async () => {
     const child = new MockPtyChild();
-    const ptyAdapter = makeMockPtyAdapter(child);
-    const clock = createFakeClock();
-
     const probePromise = Effect.runPromise(
       probeClaudeUsageLimits(
         {
           binaryPath: "claude",
           cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
+          checkedAt: "2026-07-18T10:00:00.000Z",
         },
-        ptyAdapter,
-        clock,
+        makeMockPtyAdapter(child),
+        createFakeClock(),
       ),
     );
 
-    expect(child.writes).toEqual(["/status\r"]);
-
-    child.emitData("Session usage 42% resets at 2026-04-17T14:00:00Z\n");
-
-    const result = await probePromise;
-    expect(result.usageLimits.available).toBe(true);
-    expect(child.writes).toEqual(["/status\r"]);
-    expect(child.kill).toHaveBeenCalled();
-  });
-
-  it("sends /usage fallback when /status output is not enough", async () => {
-    const child = new MockPtyChild();
-    const ptyAdapter = makeMockPtyAdapter(child);
-    const clock = createFakeClock();
-
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
-        },
-        ptyAdapter,
-        clock,
-      ),
+    child.emitData(
+      JSON.stringify({
+        result: "Current session: 12% used\nCurrent week (Fable): 34% used",
+      }),
     );
-
-    expect(child.writes).toEqual(["/status\r"]);
-
-    child.emitData("Authenticated as Claude Max\n");
-    clock.advance(200);
-    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
-
-    child.emitData("Session usage 55% resets at 2026-04-17T15:00:00Z\n");
-    const result = await probePromise;
-    expect(result.usageLimits.available).toBe(true);
-    expect(child.kill).toHaveBeenCalled();
-  });
-
-  it("resolves unavailable when process exits with no usable data", async () => {
-    const child = new MockPtyChild();
-    const ptyAdapter = makeMockPtyAdapter(child);
-    const clock = createFakeClock();
-
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
-        },
-        ptyAdapter,
-        clock,
-      ),
-    );
-
-    expect(child.writes).toEqual(["/status\r"]);
-
-    child.emitData("Authenticated as Claude Max\n");
-    clock.advance(200);
-    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
-
     child.emitExit();
+
     const result = await probePromise;
-    expect(result.usageLimits.available).toBe(false);
+    expect(result.usageLimits.windows.map((window) => window.usedPercent)).toEqual([12, 34]);
+    expect(child.writes).toEqual([]);
     expect(child.kill).toHaveBeenCalled();
   });
 
-  it("resolves unavailable on timeout with no usable data", async () => {
+  it("resolves unavailable on timeout with no output", async () => {
     const child = new MockPtyChild();
-    const ptyAdapter = makeMockPtyAdapter(child);
     const clock = createFakeClock();
-
     const probePromise = Effect.runPromise(
       probeClaudeUsageLimits(
         {
           binaryPath: "claude",
           cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
+          checkedAt: "2026-07-18T10:00:00.000Z",
         },
-        ptyAdapter,
+        makeMockPtyAdapter(child),
         clock,
       ),
     );
-
-    clock.advance(200);
-    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
 
     clock.advance(4_000);
     const result = await probePromise;
 
     expect(result.usageLimits.available).toBe(false);
     expect(result.rawOutput).toBe("");
-    expect(child.writes.filter((entry) => entry === "/usage\r")).toHaveLength(1);
     expect(child.kill).toHaveBeenCalled();
   });
 
@@ -461,6 +420,10 @@ describe("claudeUsageProbe", () => {
       "/tmp/with spaces",
       "--note",
       'say "hi"',
+      "--print",
+      "/usage",
+      "--output-format",
+      "json",
       "--permission-mode",
       "plan",
     ]);

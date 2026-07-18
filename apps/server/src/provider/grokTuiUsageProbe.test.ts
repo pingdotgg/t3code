@@ -125,6 +125,15 @@ describe("grokTuiUsageProbe", () => {
     expect(parsed.windows[0]?.resetsAt).toBe("2026-01-11T10:10:00.000Z");
   });
 
+  it("rolls the reset year forward when a year-less reset wraps into next year", () => {
+    const parsed = parseGrokUsageLimitsOutput({
+      checkedAt: "2026-12-30T12:00:00.000Z",
+      output: "Weekly limit: 90%\nNext reset: January 3, 09:00 PT",
+    });
+
+    expect(parsed.windows[0]?.resetsAt).toBe("2027-01-03T17:00:00.000Z");
+  });
+
   it.effect("opens usage in the TUI and waits briefly for the reset line", () =>
     Effect.gen(function* () {
       const child = new MockPtyChild();

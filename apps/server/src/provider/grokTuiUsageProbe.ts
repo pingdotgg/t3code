@@ -4,13 +4,19 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as PtyAdapter from "../terminal/PtyAdapter.ts";
+import {
+  defaultProbeClock,
+  killPtyProcessQuietly,
+  type ProbeClock,
+  rollResetYearForward,
+  stripAnsi,
+} from "./ptyProbeSupport.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
+
+export type { ProbeClock } from "./ptyProbeSupport.ts";
 
 const GROK_USAGE_PROBE_TIMEOUT_MS = 10_000;
 const GROK_USAGE_OUTPUT_SETTLE_MS = 200;
-const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex
-  /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
 
 export interface GrokUsageProbeResult {
   readonly usageLimits: ServerProviderUsageLimits;
@@ -24,35 +30,24 @@ export interface GrokUsageProbeInput {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-function stripAnsi(value: string): string {
-  return value.replaceAll(ANSI_PATTERN, "");
-}
-
 function parsePercent(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function inferYearForGrokReset(checkedAt: string, resetLine: string): number {
-  const fromChecked = Number.parseInt(checkedAt.slice(0, 4), 10);
-  if (Number.isFinite(fromChecked) && fromChecked >= 2000) {
-    return fromChecked;
-  }
-  const match = resetLine.match(/\b(20\d{2})\b/);
-  if (match) {
-    return Number.parseInt(match[1]!, 10);
-  }
+function inferYearForGrokReset(checkedAt: string): number {
   // checkedAt is always an ISO timestamp from DateTime.now in production.
-  return 2000;
+  const fromChecked = Number.parseInt(checkedAt.slice(0, 4), 10);
+  return Number.isFinite(fromChecked) && fromChecked >= 2000 ? fromChecked : 2000;
 }
 
 function parseGrokNextResetIso(checkedAt: string, resetLine: string): string | undefined {
   const trimmed = resetLine.trim().replace(/\s+/g, " ");
   if (!trimmed) return undefined;
 
-  const year = inferYearForGrokReset(checkedAt, trimmed);
-  const withYear = /\b20\d{2}\b/.test(trimmed) ? trimmed : `${trimmed}, ${year}`;
+  const hasExplicitYear = /\b20\d{2}\b/.test(trimmed);
+  const withYear = hasExplicitYear ? trimmed : `${trimmed}, ${inferYearForGrokReset(checkedAt)}`;
   const pacificTime = /\b(?:pt|pdt|pst)\b/i.test(withYear)
     ? withYear.replace(/\b(?:pt|pdt|pst)\b/i, "")
     : withYear;
@@ -60,7 +55,9 @@ function parseGrokNextResetIso(checkedAt: string, resetLine: string): string | u
     timeZone: "America/Los_Angeles",
     adjustForTimeZone: true,
   });
-  return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
+  return Option.isSome(dt)
+    ? DateTime.formatIso(rollResetYearForward(dt.value, checkedAt, hasExplicitYear))
+    : undefined;
 }
 
 export function parseGrokUsageLimitsOutput(input: {
@@ -98,13 +95,6 @@ export function parseGrokUsageLimitsOutput(input: {
   });
 }
 
-export interface ProbeClock {
-  readonly setTimeout: typeof setTimeout;
-  readonly clearTimeout: typeof clearTimeout;
-}
-
-const defaultClock: ProbeClock = { setTimeout, clearTimeout };
-
 function runGrokUsageProbeLoop(
   child: PtyAdapter.PtyProcess,
   input: GrokUsageProbeInput,
@@ -128,11 +118,7 @@ function runGrokUsageProbeLoop(
       }
       offData();
       offExit();
-      try {
-        child.kill();
-      } catch {
-        // Ignore kill failures during cleanup.
-      }
+      killPtyProcessQuietly(child);
       resolve({
         usageLimits: parseGrokUsageLimitsOutput({
           output: rawOutput,
@@ -175,7 +161,7 @@ function runGrokUsageProbeLoop(
 export function probeGrokUsageLimits(
   input: GrokUsageProbeInput,
   ptyAdapter: PtyAdapter.PtyAdapter["Service"],
-  clock: ProbeClock = defaultClock,
+  clock: ProbeClock = defaultProbeClock,
 ): Effect.Effect<GrokUsageProbeResult> {
   return Effect.gen(function* () {
     const child = yield* ptyAdapter

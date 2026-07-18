@@ -4,13 +4,17 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
+import {
+  defaultProbeClock,
+  killPtyProcessQuietly,
+  type ProbeClock,
+  rollResetYearForward,
+  stripAnsi,
+} from "./ptyProbeSupport.ts";
+
+export type { ProbeClock } from "./ptyProbeSupport.ts";
 
 const CLAUDE_USAGE_PROBE_TIMEOUT_MS = 4_000;
-const CLAUDE_USAGE_FALLBACK_IDLE_MS = 150;
-const ANSI_PATTERN =
-  // Matches common CSI / OSC ANSI escape sequences.
-  // eslint-disable-next-line no-control-regex
-  /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
 
 export interface ClaudeUsageProbeResult {
   readonly usageLimits: ServerProviderUsageLimits;
@@ -91,21 +95,14 @@ export function parseClaudeRuntimeUsageLimits(input: {
   });
 }
 
-export function shouldRequestClaudeUsageFallback(input: {
-  readonly output: string;
-  readonly checkedAt: string;
-  readonly fallbackAlreadySent?: boolean;
-}): boolean {
-  if (input.fallbackAlreadySent) {
-    return false;
+function extractClaudeUsageText(value: string): string {
+  const cleaned = stripAnsi(value).trim();
+  try {
+    const result = readObjectRecord(JSON.parse(cleaned))?.result;
+    return typeof result === "string" ? result : cleaned;
+  } catch {
+    return cleaned;
   }
-
-  const parsed = parseClaudeUsageLimitsOutput(input);
-  return !parsed.available;
-}
-
-function stripAnsi(value: string): string {
-  return value.replaceAll(ANSI_PATTERN, "");
 }
 
 function parsePercent(value: string | undefined): number | undefined {
@@ -116,7 +113,7 @@ function parsePercent(value: string | undefined): number | undefined {
 
 function inferWindowDurationMins(value: string): number | undefined {
   const lower = value.toLowerCase();
-  if (/\bweekly\b|\b7\s*(?:d|day|days)\b/.test(lower)) {
+  if (/\bweek(?:ly)?\b|\b7\s*(?:d|day|days)\b/.test(lower)) {
     return 7 * 24 * 60;
   }
   if (/\b5\s*(?:h|hr|hrs|hour|hours)\b|\bsession\b/.test(lower)) {
@@ -127,7 +124,7 @@ function inferWindowDurationMins(value: string): number | undefined {
 
 function detectClaudeUsageWindowKind(value: string): "session" | "weekly" | undefined {
   const lower = value.toLowerCase();
-  if (/\bweekly\b|\b7\s*(?:d|day|days)\b/.test(lower)) {
+  if (/\bweek(?:ly)?\b|\b7\s*(?:d|day|days)\b/.test(lower)) {
     return "weekly";
   }
   if (/\b5\s*(?:h|hr|hrs|hour|hours)\b|\bsession\b/.test(lower)) {
@@ -136,7 +133,56 @@ function detectClaudeUsageWindowKind(value: string): "session" | "weekly" | unde
   return undefined;
 }
 
-function extractResetTimestamp(value: string): string | undefined {
+/** Matches a parenthesized IANA zone id, e.g. "(Asia/Kolkata)" or "(America/Los_Angeles)". */
+const IANA_TIMEZONE_PATTERN = /\(([A-Za-z]+(?:\/[A-Za-z_]+){1,2})\)/;
+const MONTH_ABBREVIATIONS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+] as const;
+
+function monthNumberFromName(name: string): number | undefined {
+  const index = MONTH_ABBREVIATIONS.indexOf(
+    name.slice(0, 3).toLowerCase() as (typeof MONTH_ABBREVIATIONS)[number],
+  );
+  return index === -1 ? undefined : index + 1;
+}
+
+/**
+ * `DateTime.make`/`DateTime.makeZoned` only understand 24-hour clock strings,
+ * but Claude's print-mode output uses "Mon D[, YYYY], h:mmam/pm". Build a
+ * `YYYY-MM-DD HH:mm:00` string DateTime can parse unambiguously.
+ */
+function toCanonicalLocalDateTime(text: string, year: number): string | undefined {
+  const match = text.match(/([A-Za-z]{3,9})\s+(\d{1,2}),?\s*(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  if (!match) return undefined;
+  const [, monthName, dayText, hourText, minute, meridiem] = match;
+  const month = monthName ? monthNumberFromName(monthName) : undefined;
+  const day = Number.parseInt(dayText ?? "", 10);
+  let hour = Number.parseInt(hourText ?? "", 10);
+  if (!month || !Number.isFinite(day) || !Number.isFinite(hour)) {
+    return undefined;
+  }
+  if (meridiem) {
+    const isPm = meridiem.toLowerCase() === "pm";
+    if (hour === 12) hour = isPm ? 12 : 0;
+    else if (isPm) hour += 12;
+  }
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ${String(
+    hour,
+  ).padStart(2, "0")}:${minute}:00`;
+}
+
+function extractResetTimestamp(value: string, checkedAt: string): string | undefined {
   const resetMatch = value.match(/\breset(?:s|ting)?(?:\s+(?:at|on|in))?[:\s-]*([^\n.;]+)/i);
   const rawCandidate = resetMatch?.[1]
     ?.trim()
@@ -151,9 +197,30 @@ function extractResetTimestamp(value: string): string | undefined {
   if (/\b(?:today|tomorrow|tonight|next)\b/i.test(candidate)) {
     return undefined;
   }
-  const hasExplicitTimezone =
-    /(?:z|[+-]\d{2}:?\d{2}|\b(?:utc|gmt|p[sd]t|m[sd]t|c[sd]t|e[sd]t)\b)/i.test(candidate);
-  if (!hasExplicitTimezone) {
+
+  const ianaZoneMatch = candidate.match(IANA_TIMEZONE_PATTERN);
+  const ianaZoneId = ianaZoneMatch?.[1];
+  if (ianaZoneMatch?.index !== undefined && ianaZoneId) {
+    const withoutZone = candidate.slice(0, ianaZoneMatch.index).trim();
+    const hasExplicitYear = /\b(?:19|20)\d{2}\b/.test(withoutZone);
+    const year = hasExplicitYear
+      ? Number.parseInt(withoutZone.match(/\b((?:19|20)\d{2})\b/)![1]!, 10)
+      : Number.parseInt(checkedAt.slice(0, 4), 10);
+    const canonical = Number.isFinite(year)
+      ? toCanonicalLocalDateTime(withoutZone, year)
+      : undefined;
+    if (!canonical) return undefined;
+    const dt = DateTime.makeZoned(canonical, { timeZone: ianaZoneId, adjustForTimeZone: true });
+    return Option.isSome(dt)
+      ? DateTime.formatIso(rollResetYearForward(dt.value, checkedAt, hasExplicitYear))
+      : undefined;
+  }
+
+  const hasExplicitOffset =
+    /\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?z\b|[+-]\d{2}:?\d{2}|\b(?:utc|gmt|p[sd]t|m[sd]t|c[sd]t|e[sd]t)\b/i.test(
+      candidate,
+    );
+  if (!hasExplicitOffset) {
     return undefined;
   }
   const dt = DateTime.make(candidate);
@@ -163,6 +230,7 @@ function extractResetTimestamp(value: string): string | undefined {
 function parseClaudeUsageWindowSegment(
   kind: "session" | "weekly",
   segment: string,
+  checkedAt: string,
 ): {
   readonly label: string;
   readonly usedPercent: number;
@@ -175,7 +243,7 @@ function parseClaudeUsageWindowSegment(
   if (usedPercent === undefined || windowDurationMins === undefined) {
     return null;
   }
-  const resetsAt = extractResetTimestamp(segment);
+  const resetsAt = extractResetTimestamp(segment, checkedAt);
 
   return {
     label: kind === "session" ? "Session" : "Weekly",
@@ -185,7 +253,10 @@ function parseClaudeUsageWindowSegment(
   };
 }
 
-function extractWindowSegments(output: string): ReadonlyArray<{
+function extractWindowSegments(
+  output: string,
+  checkedAt: string,
+): ReadonlyArray<{
   readonly label: string;
   readonly usedPercent: number;
   readonly windowDurationMins: number;
@@ -215,7 +286,7 @@ function extractWindowSegments(output: string): ReadonlyArray<{
   }
 
   return [...windows.entries()].flatMap(([kind, segment]) => {
-    const parsed = parseClaudeUsageWindowSegment(kind, segment);
+    const parsed = parseClaudeUsageWindowSegment(kind, segment, checkedAt);
     if (!parsed) {
       return [];
     }
@@ -228,9 +299,9 @@ export function parseClaudeUsageLimitsOutput(input: {
   readonly output: string;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
-  const cleanedOutput = stripAnsi(input.output);
+  const cleanedOutput = extractClaudeUsageText(input.output);
   const lowerOutput = cleanedOutput.toLowerCase();
-  const windows = extractWindowSegments(cleanedOutput);
+  const windows = extractWindowSegments(cleanedOutput, input.checkedAt);
 
   if (windows.length > 0) {
     return makeUsageLimitsSnapshot({
@@ -255,13 +326,6 @@ export function parseClaudeUsageLimitsOutput(input: {
     reason: "Usage limits unavailable for this Claude account.",
   });
 }
-
-export interface ProbeClock {
-  readonly setTimeout: typeof setTimeout;
-  readonly clearTimeout: typeof clearTimeout;
-}
-
-const defaultClock: ProbeClock = { setTimeout, clearTimeout };
 
 function splitLaunchArgs(launchArgs?: string): string[] {
   if (!launchArgs?.trim()) {
@@ -330,40 +394,15 @@ function runProbeLoop(
   return new Promise((resolve) => {
     let rawOutput = "";
     let settled = false;
-    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
-    let sentFallback = false;
+    const timeout = clock.setTimeout(finish, CLAUDE_USAGE_PROBE_TIMEOUT_MS);
 
-    const timeout = clock.setTimeout(() => {
-      finish();
-    }, CLAUDE_USAGE_PROBE_TIMEOUT_MS);
-
-    const scheduleFallback = () => {
-      if (sentFallback || settled) {
-        return;
-      }
-      if (fallbackTimer) {
-        clock.clearTimeout(fallbackTimer);
-      }
-      fallbackTimer = clock.setTimeout(() => {
-        fallbackTimer = undefined;
-        maybeRequestFallback();
-      }, CLAUDE_USAGE_FALLBACK_IDLE_MS);
-    };
-
-    const finish = () => {
+    function finish() {
       if (settled) return;
       settled = true;
       clock.clearTimeout(timeout);
-      if (fallbackTimer) {
-        clock.clearTimeout(fallbackTimer);
-      }
       offData();
       offExit();
-      try {
-        child.kill();
-      } catch {
-        // Ignore kill failures during cleanup.
-      }
+      killPtyProcessQuietly(child);
       resolve({
         usageLimits: parseClaudeUsageLimitsOutput({
           output: rawOutput,
@@ -371,54 +410,29 @@ function runProbeLoop(
         }),
         rawOutput,
       });
-    };
-
-    const maybeRequestFallback = () => {
-      if (sentFallback) return;
-      if (
-        !shouldRequestClaudeUsageFallback({
-          output: rawOutput,
-          checkedAt: input.checkedAt,
-          fallbackAlreadySent: sentFallback,
-        })
-      ) {
-        finish();
-        return;
-      }
-      sentFallback = true;
-      child.write("/usage\r");
-    };
+    }
 
     const offData = child.onData((data) => {
       rawOutput += data;
-      const parsed = parseClaudeUsageLimitsOutput({
-        output: rawOutput,
-        checkedAt: input.checkedAt,
-      });
-      if (parsed.available) {
-        finish();
-        return;
-      }
-      if (!sentFallback) {
-        scheduleFallback();
-      }
     });
-
-    const offExit = child.onExit(() => {
-      finish();
-    });
-
-    child.write("/status\r");
-    scheduleFallback();
+    const offExit = child.onExit(finish);
   });
 }
 
 export function probeClaudeUsageLimits(
   input: ClaudeUsageProbeInput,
   ptyAdapter: PtyAdapter.PtyAdapter["Service"],
-  clock: ProbeClock = defaultClock,
+  clock: ProbeClock = defaultProbeClock,
 ): Effect.Effect<ClaudeUsageProbeResult> {
-  const probeArgs = [...splitLaunchArgs(input.launchArgs), "--permission-mode", "plan"];
+  const probeArgs = [
+    ...splitLaunchArgs(input.launchArgs),
+    "--print",
+    "/usage",
+    "--output-format",
+    "json",
+    "--permission-mode",
+    "plan",
+  ];
 
   return Effect.gen(function* () {
     const child = yield* ptyAdapter
