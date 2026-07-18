@@ -1216,7 +1216,9 @@
         }
 
         private static func snapshot(_ name: String, window: NSWindow, dir: String) {
-            guard let view = window.contentView,
+            // Capture the theme frame (contentView's superview) so the window
+            // toolbar chrome is included, not just the content area.
+            guard let view = window.contentView?.superview ?? window.contentView,
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             else {
                 print("UIProbe: snapshot \(name) failed (no window)")
