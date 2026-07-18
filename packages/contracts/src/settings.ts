@@ -305,6 +305,75 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const OpenRouterSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description: "OpenRouter API key. Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "sk-or-...",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    baseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("https://openrouter.ai/api")),
+      Schema.annotateKey({
+        title: "Base URL",
+        description: "OpenRouter API base URL (Anthropic-compatible).",
+        providerSettingsForm: {
+          placeholder: "https://openrouter.ai/api",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    binaryPath: makeBinaryPathSetting("claude").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Claude Agent CLI used as the OpenRouter runtime.",
+        providerSettingsForm: { placeholder: "claude", clearWhenEmpty: "omit" },
+      }),
+    ),
+    httpReferer: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "HTTP referer",
+        description: "Optional site URL sent as HTTP-Referer for OpenRouter rankings.",
+        providerSettingsForm: {
+          placeholder: "https://your-app.example",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    appTitle: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("T3 Code")),
+      Schema.annotateKey({
+        title: "App title",
+        description: "Optional app name sent as X-Title for OpenRouter rankings.",
+        providerSettingsForm: {
+          placeholder: "T3 Code",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiKey", "baseUrl", "binaryPath", "httpReferer", "appTitle"],
+  },
+);
+export type OpenRouterSettings = typeof OpenRouterSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -398,6 +467,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -493,6 +563,16 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const OpenRouterSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  httpReferer: Schema.optionalKey(TrimmedString),
+  appTitle: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -522,6 +602,7 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
     }),
   ),
