@@ -5,6 +5,7 @@ import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
   branchOwnsOperationCwd,
+  discardableFiles,
   discardPathGroups,
   operationPaths,
   panelChangeSets,
@@ -128,20 +129,23 @@ describe("native Version Control model", () => {
   });
 
   it("does not treat conflict-only files as unstaged discard targets", () => {
-    expect(
-      discardPathGroups([
-        {
-          path: "src/conflict.ts",
-          originalPath: null,
-          status: "conflicted",
-          insertions: 0,
-          deletions: 0,
-          hasStagedChanges: false,
-          hasUnstagedChanges: false,
-          hasConflicts: true,
-        },
-      ]),
-    ).toEqual({ staged: [], unstaged: [] });
+    const conflictOnlyFile = {
+      path: "src/conflict.ts",
+      originalPath: null,
+      status: "conflicted" as const,
+      insertions: 0,
+      deletions: 0,
+      hasStagedChanges: false,
+      hasUnstagedChanges: false,
+      hasConflicts: true,
+    };
+    expect(discardPathGroups([conflictOnlyFile])).toEqual({ staged: [], unstaged: [] });
+    expect(discardableFiles([conflictOnlyFile])).toEqual([]);
+  });
+
+  it("keeps only files with discardable staged or unstaged changes", () => {
+    const files = panelChangeSets(snapshot(), "/repo")[0]?.files ?? [];
+    expect(discardableFiles(files)).toEqual(files);
   });
 
   it("selects new files and drops selection state for clean change sets", () => {

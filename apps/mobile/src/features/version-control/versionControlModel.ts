@@ -101,6 +101,10 @@ export function discardPathGroups(files: readonly PanelChangedFile[]): {
   };
 }
 
+export function discardableFiles(files: readonly PanelChangedFile[]): readonly PanelChangedFile[] {
+  return files.filter((file) => file.hasStagedChanges || file.hasUnstagedChanges);
+}
+
 export function workingTreeEnrichmentRequests(
   snapshot: VcsPanelSnapshotResult,
   cwd: string,

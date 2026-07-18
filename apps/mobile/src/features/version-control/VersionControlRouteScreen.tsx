@@ -44,6 +44,7 @@ import {
   applyWorkingTreeEnrichments,
   branchOwnsOperationCwd,
   branchSyncLabel,
+  discardableFiles,
   discardPathGroups,
   fileStatusLetter,
   operationPaths,
@@ -333,6 +334,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [actionableExpanded, setActionableExpanded] = useState(true);
   const [remotesExpanded, setRemotesExpanded] = useState(false);
   const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(
@@ -504,6 +506,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
     async (label: string, action: () => Promise<unknown>) => {
       setBusyAction(label);
       setError(null);
+      setMutationError(null);
       let succeeded = false;
       let actionError: string | null = null;
       try {
@@ -514,7 +517,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       } finally {
         statusQuery.refresh();
         await refreshSnapshot();
-        if (actionError) setError(actionError);
+        if (actionError) setMutationError(actionError);
         setBusyAction(null);
       }
       return succeeded;
@@ -661,7 +664,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
 
   const discardSelected = useCallback(
     (changeSet: VersionControlChangeSet) => {
-      const files = selectedFiles(changeSet);
+      const files = discardableFiles(selectedFiles(changeSet));
       const paths = discardPathGroups(files);
       if (paths.staged.length === 0 && paths.unstaged.length === 0) return;
       Alert.alert(
@@ -910,12 +913,18 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       >
         <RepositorySummary snapshot={snapshot} />
 
-        {error ? (
+        {(mutationError ?? error) ? (
           <View className="rounded-2xl border border-danger-border bg-danger px-4 py-3">
             <Text selectable className="text-sm font-medium text-danger-foreground">
-              {error}
+              {mutationError ?? error}
             </Text>
-            <Pressable className="mt-2 self-start" onPress={() => setError(null)}>
+            <Pressable
+              className="mt-2 self-start"
+              onPress={() => {
+                setMutationError(null);
+                setError(null);
+              }}
+            >
               <Text className="text-xs font-t3-bold text-danger-foreground">Dismiss</Text>
             </Pressable>
           </View>
@@ -953,6 +962,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                 const rowKey = `changes:${changeSet.cwd}`;
                 const expanded = expandedRows.has(rowKey);
                 const selected = selectedFiles(changeSet);
+                const discardable = discardableFiles(selected);
                 const stats = selectedFileStats(selected);
                 return (
                   <View
@@ -1007,7 +1017,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                             label="Discard"
                             icon="trash"
                             danger
-                            disabled={busy || selected.length === 0}
+                            disabled={busy || discardable.length === 0}
                             onPress={() => discardSelected(changeSet)}
                           />
                         </View>
