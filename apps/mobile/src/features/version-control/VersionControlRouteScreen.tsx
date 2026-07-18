@@ -337,6 +337,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const openedCwd = useRef<string | null>(null);
+  const snapshotRequestId = useRef(0);
+  const snapshotRevision = useRef(0);
+  const snapshotFingerprint = useRef<string | null>(null);
 
   const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
     const changeSets = panelChangeSets(nextSnapshot, cwd);
@@ -371,21 +374,53 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
 
   const refreshSnapshot = useCallback(
     async (options: { readonly pull?: boolean } = {}) => {
+      const requestId = ++snapshotRequestId.current;
+      setRefreshing(options.pull === true);
       if (!selectedThreadCwd) {
-        setLoading(false);
+        if (requestId === snapshotRequestId.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
         return;
       }
-      if (options.pull) setRefreshing(true);
       try {
         const next = await api.snapshot({ cwd: selectedThreadCwd });
+        if (requestId !== snapshotRequestId.current) return;
+        const nextFingerprint = `${selectedThreadCwd}\0${JSON.stringify(next)}`;
+        if (snapshotFingerprint.current !== nextFingerprint) {
+          snapshotFingerprint.current = nextFingerprint;
+          snapshotRevision.current += 1;
+          setDiffs(new Map());
+          setBranchDetails(new Map());
+          setStashDetails(new Map());
+          setExpandedRows(
+            (current) =>
+              new Set(
+                [...current].filter(
+                  (key) =>
+                    !key.startsWith("file:") &&
+                    !key.startsWith("branch:") &&
+                    !key.startsWith("fork:") &&
+                    !key.startsWith("stash:"),
+                ),
+              ),
+          );
+        }
         setSnapshot(next);
         syncSelections(next, selectedThreadCwd);
         setError(null);
       } catch (cause) {
-        if (!(cause instanceof VersionControlCommandInterrupted)) setError(errorMessage(cause));
+        if (
+          requestId === snapshotRequestId.current &&
+          !(cause instanceof VersionControlCommandInterrupted)
+        ) {
+          setError(errorMessage(cause));
+        }
       } finally {
-        setLoading(false);
-        if (options.pull) setRefreshing(false);
+        if (requestId === snapshotRequestId.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [api, selectedThreadCwd, syncSelections],
@@ -399,8 +434,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         await action();
         statusQuery.refresh();
         await refreshSnapshot();
+        return true;
       } catch (cause) {
         if (!(cause instanceof VersionControlCommandInterrupted)) setError(errorMessage(cause));
+        return false;
       } finally {
         setBusyAction(null);
       }
@@ -474,6 +511,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       }
       toggleExpanded(key);
       if (diffs.has(key) && diffs.get(key)?.status !== "error") return;
+      const revision = snapshotRevision.current;
       setDiffs((current) => new Map(current).set(key, { status: "loading" }));
       void api
         .readFileDiff({
@@ -483,11 +521,13 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
           source: { kind: "working-tree", staged: !file.hasUnstagedChanges },
         })
         .then((result) => {
+          if (revision !== snapshotRevision.current) return;
           setDiffs((current) =>
             new Map(current).set(key, { status: "loaded", patch: result.patch }),
           );
         })
         .catch((cause) => {
+          if (revision !== snapshotRevision.current) return;
           setDiffs((current) =>
             new Map(current).set(key, { status: "error", message: errorMessage(cause) }),
           );
@@ -580,6 +620,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
     (branch: VcsRef, key: string, compareBaseRef?: string) => {
       toggleExpanded(key);
       if (!snapshot || branchDetails.has(key) || expandedRows.has(key)) return;
+      const revision = snapshotRevision.current;
       void api
         .branchDetails({
           cwd: selectedThreadCwd ?? "",
@@ -587,8 +628,13 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
           defaultCompareRef: snapshot.defaultCompareRef,
           ...(compareBaseRef ? { compareBaseRef } : {}),
         })
-        .then((details) => setBranchDetails((current) => new Map(current).set(key, details)))
-        .catch((cause) => setError(errorMessage(cause)));
+        .then((details) => {
+          if (revision !== snapshotRevision.current) return;
+          setBranchDetails((current) => new Map(current).set(key, details));
+        })
+        .catch((cause) => {
+          if (revision === snapshotRevision.current) setError(errorMessage(cause));
+        });
     },
     [api, branchDetails, expandedRows, selectedThreadCwd, snapshot, toggleExpanded],
   );
@@ -710,10 +756,16 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       const key = `stash:${stashRef}`;
       toggleExpanded(key);
       if (!selectedThreadCwd || stashDetails.has(stashRef) || expandedRows.has(key)) return;
+      const revision = snapshotRevision.current;
       void api
         .stashDetails({ cwd: selectedThreadCwd, stashRef })
-        .then((details) => setStashDetails((current) => new Map(current).set(stashRef, details)))
-        .catch((cause) => setError(errorMessage(cause)));
+        .then((details) => {
+          if (revision !== snapshotRevision.current) return;
+          setStashDetails((current) => new Map(current).set(stashRef, details));
+        })
+        .catch((cause) => {
+          if (revision === snapshotRevision.current) setError(errorMessage(cause));
+        });
     },
     [api, expandedRows, selectedThreadCwd, stashDetails, toggleExpanded],
   );
@@ -1223,7 +1275,8 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                           name: remoteName.trim(),
                           url: remoteUrl.trim(),
                         }),
-                      ).then(() => {
+                      ).then((succeeded) => {
+                        if (!succeeded) return;
                         setRemoteName("");
                         setRemoteUrl("");
                         setShowAddRemote(false);
