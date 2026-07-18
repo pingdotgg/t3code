@@ -13,20 +13,27 @@ const LEGACY_ONLY_UPDATE_EXECUTABLES = new Set(["pnpm", "vp"]);
 
 export function makeCodexMaintenanceEnvironment(input: {
   readonly environment: NodeJS.ProcessEnv;
+  readonly effectiveHomePath: string | null;
   readonly realExecutablePath: string | null;
   readonly sharedHomePath: string;
 }): NodeJS.ProcessEnv {
+  const environment = input.effectiveHomePath
+    ? {
+        ...input.environment,
+        CODEX_HOME: input.effectiveHomePath,
+      }
+    : input.environment;
   if (!input.realExecutablePath) {
-    return input.environment;
+    return environment;
   }
   const executablePath = normalizeCommandPath(input.realExecutablePath);
   const sharedHomePath = normalizeCommandPath(input.sharedHomePath).replace(/\/+$/, "");
   const standaloneReleasesPath = `${sharedHomePath}/packages/standalone/releases/`;
   if (!executablePath.startsWith(standaloneReleasesPath)) {
-    return input.environment;
+    return environment;
   }
   return {
-    ...input.environment,
+    ...environment,
     CODEX_HOME: input.sharedHomePath,
   };
 }

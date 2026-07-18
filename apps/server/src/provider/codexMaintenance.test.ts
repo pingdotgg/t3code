@@ -136,7 +136,8 @@ describe("codexMaintenance", () => {
     };
     expect(
       makeCodexMaintenanceEnvironment({
-        environment,
+        environment: { PATH: environment.PATH },
+        effectiveHomePath: environment.CODEX_HOME,
         realExecutablePath: "/home/test/.codex/packages/standalone/releases/0.129.0/codex",
         sharedHomePath: "/home/test/.codex",
       }),
@@ -146,14 +147,33 @@ describe("codexMaintenance", () => {
     });
   });
 
-  it("does not override CODEX_HOME for non-standalone installations", () => {
+  it("uses the effective instance home for non-standalone updates", () => {
     const environment = {
       PATH: "/test/bin",
-      CODEX_HOME: "/home/test/.codex-work",
+      CODEX_HOME: "/unrelated/server/codex-home",
     };
     expect(
       makeCodexMaintenanceEnvironment({
         environment,
+        effectiveHomePath: "/home/test/.codex-work",
+        realExecutablePath: "/opt/homebrew/bin/codex",
+        sharedHomePath: "/home/test/.codex",
+      }),
+    ).toEqual({
+      PATH: "/test/bin",
+      CODEX_HOME: "/home/test/.codex-work",
+    });
+  });
+
+  it("preserves the provider environment when no home path is configured", () => {
+    const environment = {
+      PATH: "/test/bin",
+      CODEX_HOME: "/provider/environment/codex-home",
+    };
+    expect(
+      makeCodexMaintenanceEnvironment({
+        environment,
+        effectiveHomePath: null,
         realExecutablePath: "/opt/homebrew/bin/codex",
         sharedHomePath: "/home/test/.codex",
       }),
