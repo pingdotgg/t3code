@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
@@ -73,6 +74,26 @@ const BASE_THREAD: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+};
+const ACTIVE_THREAD: OrchestrationThread = {
+  ...BASE_THREAD,
+  latestTurn: {
+    turnId: TurnId.make("turn-1"),
+    state: "running",
+    requestedAt: "2026-04-01T00:01:00.000Z",
+    startedAt: "2026-04-01T00:01:00.000Z",
+    completedAt: null,
+    assistantMessageId: null,
+  },
+  session: {
+    threadId: THREAD_ID,
+    status: "running",
+    providerName: "codex",
+    runtimeMode: "full-access",
+    activeTurnId: TurnId.make("turn-1"),
+    lastError: null,
+    updatedAt: "2026-04-01T00:01:00.000Z",
+  },
 };
 
 type TestThreadInput = OrchestrationThreadStreamItem | Error;
@@ -305,6 +326,31 @@ describe("EnvironmentThreads", () => {
       expect(Option.getOrThrow(state.data).title).toBe("Live title");
       expect((yield* Ref.get(harness.savedThreads)).at(-1)?.thread.title).toBe("Live title");
       expect((yield* Ref.get(harness.savedThreads)).at(-1)?.snapshotSequence).toBe(2);
+    }),
+  );
+
+  it.effect("does not persist active thread snapshots during streaming or teardown", () =>
+    Effect.gen(function* () {
+      const savedThreads = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ cached: ACTIVE_THREAD });
+          yield* awaitThreadState(
+            harness.observed,
+            (value) =>
+              value.status === "live" &&
+              Option.isSome(value.data) &&
+              value.data.value.session?.status === "running",
+          );
+
+          yield* TestClock.adjust("500 millis");
+          yield* Effect.yieldNow;
+
+          expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+          return harness.savedThreads;
+        }),
+      );
+
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
     }),
   );
 
