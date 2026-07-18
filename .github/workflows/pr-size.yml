@@ -16,7 +16,7 @@ jobs:
     steps:
       - id: config
         name: Build PR size label config
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # actions/github-script v8.x
         with:
           result-encoding: string
           script: |
@@ -54,63 +54,6 @@ jobs:
             ];
 
             core.setOutput("labels_json", JSON.stringify(managedLabels));
-  sync-label-definitions:
-    name: Sync PR size label definitions
-    needs: prepare-config
-    if: github.event_name != 'pull_request_target'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Ensure PR size labels exist
-        uses: actions/github-script@v8
-        env:
-          PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
-        with:
-          script: |
-            const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
-
-            for (const label of managedLabels) {
-              try {
-                const { data: existing } = await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label.name,
-                });
-
-                if (
-                  existing.color !== label.color ||
-                  (existing.description ?? "") !== label.description
-                ) {
-                  await github.rest.issues.updateLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: label.name,
-                    color: label.color,
-                    description: label.description,
-                  });
-                }
-              } catch (error) {
-                if (error.status !== 404) {
-                  throw error;
-                }
-
-                try {
-                  await github.rest.issues.createLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: label.name,
-                    color: label.color,
-                    description: label.description,
-                  });
-                } catch (createError) {
-                  if (createError.status !== 422) {
-                    throw createError;
-                  }
-                }
-              }
-            }
   label:
     name: Label PR size
     needs: prepare-config
@@ -127,12 +70,18 @@ jobs:
       # This pull_request_target job may fetch untrusted PR commits only as passive
       # git data. Do not add dependency installs, build/test scripts, or cache
       # actions here; use pull_request plus workflow_run for that pattern instead.
+      # The passive/untrusted-PR safety is structural, not a v6-specific quirk:
+      # this step checks out ONLY the base default branch (no `ref:` set), and PR
+      # commits are fetched later purely as passive git data and never executed.
+      # This behavior is stable across checkout majors; when bumping to a new
+      # major, re-confirm the job still checks out the base branch and does not
+      # execute untrusted PR code.
       - name: Checkout base repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # actions/checkout v6.0.x
         with:
           fetch-depth: 0
       - name: Sync PR size label
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # actions/github-script v8.x
         env:
           PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
         with:
