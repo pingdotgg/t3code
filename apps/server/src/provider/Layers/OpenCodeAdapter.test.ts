@@ -248,6 +248,38 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("fails sendTurn for missing sessions through the typed error channel", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const result = yield* adapter
+        .sendTurn({
+          threadId: asThreadId("thread-opencode-missing-send"),
+          input: "hello",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
+      NodeAssert.equal(result.failure.provider, "opencode");
+      NodeAssert.equal(result.failure.threadId, "thread-opencode-missing-send");
+    }),
+  );
+
+  it.effect("fails stopSession for missing sessions through the typed error channel", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const result = yield* adapter
+        .stopSession(asThreadId("thread-opencode-missing-stop"))
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
+      NodeAssert.equal(result.failure.provider, "opencode");
+      NodeAssert.equal(result.failure.threadId, "thread-opencode-missing-stop");
+    }),
+  );
+
   it.effect("stops a configured-server session without trying to own server lifecycle", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
