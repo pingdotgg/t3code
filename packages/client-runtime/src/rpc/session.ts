@@ -120,8 +120,13 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("environment.initialSync"),
       ),
     );
-    const probe = client[WS_METHODS.serverProbe]({}).pipe(
-      Effect.mapError(mapSessionRpcError),
+    const probe = initialConfig.pipe(
+      Effect.flatMap((config) =>
+        (config.environment.capabilities.connectionProbe === true
+          ? client[WS_METHODS.serverProbe]({})
+          : client[WS_METHODS.serverGetConfig]({})
+        ).pipe(Effect.mapError(mapSessionRpcError)),
+      ),
       Effect.asVoid,
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),
     );
