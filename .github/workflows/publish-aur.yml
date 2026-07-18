@@ -51,6 +51,7 @@ jobs:
       - name: Build and publish
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPO: pingdotgg/t3code
           RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.release_tag }}
           PKGREL: ${{ github.event.inputs.pkgrel }}
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
