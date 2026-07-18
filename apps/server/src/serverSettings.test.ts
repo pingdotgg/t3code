@@ -651,4 +651,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(materialized.linear.apiKey, "lin_first_key");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("rolls settings.json back when the Linear secret write fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      // Make the secret store read-only so committing the secret fails while the
+      // settings file write (separate directory) still succeeds.
+      yield* fileSystem.chmod(serverConfig.secretsDir, 0o500);
+
+      const exit = yield* serverSettings
+        .updateSettings({ linear: { apiKey: "lin_uncommittable" } })
+        .pipe(
+          Effect.exit,
+          Effect.ensuring(fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(Effect.ignore)),
+        );
+      assert.isTrue(Exit.isFailure(exit));
+
+      // The file must not claim a connected account it cannot back with a secret.
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.isUndefined(JSON.parse(raw).linear);
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "");
+      assert.equal(materialized.linear.apiKeySet, false);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

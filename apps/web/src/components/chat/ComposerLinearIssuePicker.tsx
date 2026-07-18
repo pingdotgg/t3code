@@ -41,6 +41,8 @@ export function ComposerLinearIssuePicker({
   const [results, setResults] = useState<ReadonlyArray<LinearIssueSummary>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isAttaching, setIsAttaching] = useState(false);
+  const [hasAttachError, setHasAttachError] = useState(false);
 
   const addLinearIssueContext = useComposerDraftStore((store) => store.addLinearIssueContext);
   const runSearchIssues = useAtomQueryRunner(linearEnvironment.searchIssues, {
@@ -49,12 +51,14 @@ export function ComposerLinearIssuePicker({
   const runGetIssue = useAtomQueryRunner(linearEnvironment.getIssue, { reportFailure: false });
 
   const searchRequestRef = useRef(0);
+  const attachInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     const trimmed = search.trim();
     setIsSearching(true);
     setHasError(false);
+    setHasAttachError(false);
     const requestId = searchRequestRef.current + 1;
     searchRequestRef.current = requestId;
     const runQuery = () => {
@@ -85,13 +89,25 @@ export function ComposerLinearIssuePicker({
 
   const handleSelect = useCallback(
     (issue: LinearIssueSummary) => {
+      // Ignore concurrent selects while a detail fetch is already resolving.
+      if (attachInFlightRef.current) return;
+      attachInFlightRef.current = true;
+      setIsAttaching(true);
+      setHasAttachError(false);
+      // Keep the popover open until getIssue resolves so a failed fetch doesn't
+      // make the selection vanish with zero feedback.
       void runGetIssue({ environmentId, input: { issueId: issue.id } }).then((result) => {
-        if (result._tag !== "Success") return;
+        attachInFlightRef.current = false;
+        setIsAttaching(false);
+        if (result._tag !== "Success") {
+          setHasAttachError(true);
+          return;
+        }
         addLinearIssueContext(composerDraftTarget, result.value);
+        setOpen(false);
+        setSearch("");
+        setResults([]);
       });
-      setOpen(false);
-      setSearch("");
-      setResults([]);
     },
     [addLinearIssueContext, composerDraftTarget, environmentId, runGetIssue],
   );
@@ -106,6 +122,11 @@ export function ComposerLinearIssuePicker({
       : trimmedSearch.length === 0
         ? "No recent issues."
         : "No issues found";
+  const statusLine = isAttaching
+    ? "Loading issue details…"
+    : hasAttachError
+      ? "Couldn't load issue details, try again"
+      : null;
 
   return (
     <Popover
@@ -115,6 +136,9 @@ export function ComposerLinearIssuePicker({
         if (!next) {
           setSearch("");
           setResults([]);
+          setHasAttachError(false);
+          setIsAttaching(false);
+          attachInFlightRef.current = false;
         }
       }}
     >
@@ -142,7 +166,10 @@ export function ComposerLinearIssuePicker({
           <div className="overflow-hidden rounded-[20px] border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs">
             <CommandInput placeholder="Search Linear issues" />
             {results.length > 0 ? (
-              <CommandList className="max-h-72">
+              <CommandList
+                className={cn("max-h-72", isAttaching && "pointer-events-none opacity-60")}
+                aria-busy={isAttaching}
+              >
                 <CommandGroup>
                   {trimmedSearch.length === 0 ? (
                     <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
@@ -177,6 +204,18 @@ export function ComposerLinearIssuePicker({
                 <p className="text-muted-foreground/70 text-xs">{emptyLabel}</p>
               </div>
             )}
+            {statusLine ? (
+              <div className="border-border/60 border-t px-5 py-2.5">
+                <p
+                  className={cn(
+                    "text-xs",
+                    hasAttachError ? "text-destructive" : "text-muted-foreground/70",
+                  )}
+                >
+                  {statusLine}
+                </p>
+              </div>
+            ) : null}
           </div>
         </Command>
       </PopoverPopup>
