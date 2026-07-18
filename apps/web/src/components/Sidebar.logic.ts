@@ -491,10 +491,11 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   const visibleThreadIds = new Set(
     [...previewThreads, activeThread].map((thread) => getThreadId(thread)),
   );
+  const hiddenThreads = threads.filter((thread) => !visibleThreadIds.has(getThreadId(thread)));
 
   return {
-    hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(getThreadId(thread))),
+    hasHiddenThreads: hiddenThreads.length > 0,
+    hiddenThreads,
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(getThreadId(thread))),
   };
 }

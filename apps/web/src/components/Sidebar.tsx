@@ -3519,12 +3519,15 @@ export default function Sidebar() {
     ],
   );
   useLayoutEffect(() => {
-    const wasSidebarVisible = sidebarWasVisibleRef.current;
-    sidebarWasVisibleRef.current = sidebarIsVisible;
     if (!sidebarScrollTargetKey) {
       pendingInstantSidebarScrollTargetKeyRef.current = null;
+      if (!sidebarIsVisible) {
+        sidebarWasVisibleRef.current = false;
+      }
       return;
     }
+    const wasSidebarVisible = sidebarWasVisibleRef.current;
+    sidebarWasVisibleRef.current = sidebarIsVisible;
     if (!sidebarIsVisible) {
       return;
     }
@@ -3534,10 +3537,8 @@ export default function Sidebar() {
     if (!wasSidebarVisible) {
       pendingInstantSidebarScrollTargetKeyRef.current = sidebarScrollTargetKey;
     }
-    if (
-      pendingInstantSidebarScrollTargetKeyRef.current === sidebarScrollTargetKey &&
-      scrollSidebarTarget("instant", true)
-    ) {
+    if (pendingInstantSidebarScrollTargetKeyRef.current === sidebarScrollTargetKey) {
+      scrollSidebarTarget("instant", true);
       pendingInstantSidebarScrollTargetKeyRef.current = null;
     }
   }, [scrollSidebarTarget, sidebarIsVisible, sidebarScrollTargetKey]);
