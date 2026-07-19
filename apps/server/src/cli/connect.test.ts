@@ -1,18 +1,44 @@
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Terminal from "effect/Terminal";
 
 import {
   acquireRelayClientForLink,
+  formatHeadlessAuthorizationPrompt,
+  formatRelayClientReady,
+  headlessSessionConfig,
   isPublishAgentActivityEnabledValue,
+  recoverBootServiceOffer,
   reportCloudDisconnectResults,
 } from "./connect.ts";
+
+it("explains how to complete headless authorization", () => {
+  assert.equal(
+    formatHeadlessAuthorizationPrompt("https://example.test/connect"),
+    [
+      "Headless authorization",
+      "Open this URL on a device with a browser:",
+      "  https://example.test/connect",
+      "",
+      "After signing in, return here and enter the code shown in your browser.",
+    ].join("\n"),
+  );
+});
+
+it("formats relay readiness without printing its installation path", () => {
+  assert.equal(formatRelayClientReady("2026.5.2"), "✓ Relay client ready · cloudflared 2026.5.2");
+});
+
+const readHeadlessSessionConfig = (env: Record<string, string>) =>
+  headlessSessionConfig.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))));
 
 const managedExecutable = {
   status: "available",
@@ -20,6 +46,22 @@ const managedExecutable = {
   source: "managed",
   version: RelayClient.CLOUDFLARED_VERSION,
 } as const;
+
+it.effect("detects headless operation from individual SSH config values", () =>
+  Effect.gen(function* () {
+    assert.isFalse(yield* readHeadlessSessionConfig({}));
+    assert.isFalse(yield* readHeadlessSessionConfig({ CI: "true" }));
+    assert.isTrue(yield* readHeadlessSessionConfig({ SSH_CONNECTION: "client server" }));
+    assert.isTrue(yield* readHeadlessSessionConfig({ SSH_TTY: "/dev/pts/1" }));
+  }),
+);
+
+it.effect("treats cancelling optional background setup as a successful skip", () =>
+  Effect.gen(function* () {
+    const result = yield* recoverBootServiceOffer(Effect.fail(new Terminal.QuitError({})));
+    assert.isFalse(result);
+  }),
+);
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
   Effect.gen(function* () {

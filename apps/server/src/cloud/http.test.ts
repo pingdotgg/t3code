@@ -200,6 +200,7 @@ describe("reconcileDesiredCloudLink", () => {
           get: unusedSecretStoreOperation(),
           getExisting: Effect.succeed(Option.none()),
           hasCredential: unusedSecretStoreOperation(),
+          store: () => unusedSecretStoreOperation(),
           clear: unusedSecretStoreOperation(),
         }),
       ),
