@@ -52,7 +52,8 @@ import {
 export const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
-const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
+const SSH_READY_PROBE_TIMEOUT_MS = 5_000;
+const SSH_EXISTING_TUNNEL_READY_TIMEOUT_MS = 15_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 15_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
@@ -96,15 +97,6 @@ type SshEnvironmentEffectError =
   | SshReadinessError
   | SshPasswordPromptError
   | NetService.NetError;
-
-function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCommandError {
-  return new SshCommandError({
-    command: ["ssh"],
-    exitCode: null,
-    stderr: "",
-    message: `SSH environment connection was cancelled for ${target.alias || target.hostname}.`,
-  });
-}
 
 function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
   return {
@@ -1168,18 +1160,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
-  const cancelPendingTunnelEntry = Effect.fn("ssh/tunnel.cancelPendingTunnelEntry")(function* (
-    key: string,
-    target: DesktopSshEnvironmentTarget,
-  ) {
-    const pending = pendingTunnelEntries.get(key);
-    if (!pending) {
-      return;
-    }
-    pendingTunnelEntries.delete(key);
-    yield* Deferred.fail(pending, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
-  });
-
   yield* Scope.addFinalizer(
     managerScope,
     Effect.sync(() => [...tunnels.values()]).pipe(
@@ -1371,29 +1351,33 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         });
         tunnels.delete(tunnelEntry.key);
         const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
+        const stopOwnedRemoteServer =
+          tunnelEntry.remoteServerKind === "external"
+            ? Effect.void
+            : stopRemoteServer(
+                tunnelEntry.target,
+                authSecret === null
+                  ? {
+                      batchMode: "yes",
+                      interactiveAuth: false,
+                    }
+                  : {
+                      authSecret,
+                      batchMode: "no",
+                      interactiveAuth: true,
+                    },
+              ).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
+                Effect.provideService(FileSystem.FileSystem, fileSystemService),
+                Effect.provideService(Path.Path, pathService),
+              );
         yield* Effect.all(
           [
             tunnelEntry.process.kill({
               killSignal: "SIGTERM",
               forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
             }),
-            stopRemoteServer(
-              tunnelEntry.target,
-              authSecret === null
-                ? {
-                    batchMode: "yes",
-                    interactiveAuth: false,
-                  }
-                : {
-                    authSecret,
-                    batchMode: "no",
-                    interactiveAuth: true,
-                  },
-            ).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-              Effect.provideService(FileSystem.FileSystem, fileSystemService),
-              Effect.provideService(Path.Path, pathService),
-            ),
+            stopOwnedRemoteServer,
           ],
           { concurrency: "unbounded" },
         ).pipe(Effect.ignore);
@@ -1429,7 +1413,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         remotePort: entry.remotePort,
       });
       const readinessExit = yield* Effect.exit(
-        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
+        waitForHttpReady({
+          baseUrl: entry.httpBaseUrl,
+          timeoutMs: SSH_EXISTING_TUNNEL_READY_TIMEOUT_MS,
+        }),
       );
       if (Exit.isSuccess(readinessExit)) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
@@ -1448,7 +1435,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         cause: readinessExit.cause,
       });
       yield* closeTunnelEntry(entry);
-      yield* cancelPendingTunnelEntry(key, resolvedTarget);
       entry = null;
     }
 
@@ -1561,17 +1547,24 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...(target.port !== null ? { port: target.port } : {}),
     };
     const key = targetConnectionKey(resolvedTarget);
-    const entry = tunnels.get(key) ?? null;
+    const pending = pendingTunnelEntries.get(key) ?? null;
     yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
       ...sshTargetLogFields(resolvedTarget),
       key,
-      hasTunnel: entry !== null,
-      hasPendingTunnel: pendingTunnelEntries.has(key),
+      hasTunnel: tunnels.has(key),
+      hasPendingTunnel: pending !== null,
     });
+    if (pending !== null) {
+      yield* Effect.logDebug("ssh.environment.disconnect.pending.await", {
+        ...sshTargetLogFields(resolvedTarget),
+        key,
+      });
+      yield* Effect.exit(Deferred.await(pending));
+    }
+    const entry = tunnels.get(key) ?? null;
     if (entry !== null) {
       yield* closeTunnelEntry(entry);
     }
-    yield* cancelPendingTunnelEntry(key, resolvedTarget);
     if (entry === null) {
       yield* runWithSshAuth({
         key,
