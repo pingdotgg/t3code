@@ -48,31 +48,30 @@ const NIGHTLY_STARS: ReadonlyArray<{
   cy: number;
   r: number;
   opacity: number;
-  delay: number;
 }> = [
-  { cx: 14, cy: 10, r: 0.6, opacity: 0.85, delay: 0 },
-  { cx: 38, cy: 22, r: 0.4, opacity: 0.55, delay: 1.4 },
-  { cx: 58, cy: 8, r: 0.5, opacity: 0.7, delay: 2.6 },
-  { cx: 84, cy: 16, r: 0.4, opacity: 0.5, delay: 3.6 },
-  { cx: 104, cy: 7, r: 0.6, opacity: 0.8, delay: 0.8 },
-  { cx: 126, cy: 20, r: 0.4, opacity: 0.55, delay: 4.4 },
-  { cx: 148, cy: 11, r: 0.5, opacity: 0.7, delay: 3.2 },
-  { cx: 170, cy: 24, r: 0.4, opacity: 0.5, delay: 1.9 },
-  { cx: 192, cy: 9, r: 0.6, opacity: 0.8, delay: 5.1 },
-  { cx: 214, cy: 18, r: 0.4, opacity: 0.55, delay: 2.2 },
-  { cx: 236, cy: 8, r: 0.5, opacity: 0.7, delay: 0.4 },
-  { cx: 258, cy: 20, r: 0.45, opacity: 0.6, delay: 3.9 },
-  { cx: 278, cy: 11, r: 0.55, opacity: 0.75, delay: 1.1 },
-  { cx: 26, cy: 34, r: 0.4, opacity: 0.45, delay: 4.8 },
-  { cx: 118, cy: 34, r: 0.4, opacity: 0.45, delay: 2.9 },
-  { cx: 202, cy: 32, r: 0.4, opacity: 0.5, delay: 5.6 },
-  { cx: 268, cy: 34, r: 0.4, opacity: 0.45, delay: 1.7 },
+  { cx: 14, cy: 10, r: 0.6, opacity: 0.85 },
+  { cx: 38, cy: 22, r: 0.4, opacity: 0.55 },
+  { cx: 58, cy: 8, r: 0.5, opacity: 0.7 },
+  { cx: 84, cy: 16, r: 0.4, opacity: 0.5 },
+  { cx: 104, cy: 7, r: 0.6, opacity: 0.8 },
+  { cx: 126, cy: 20, r: 0.4, opacity: 0.55 },
+  { cx: 148, cy: 11, r: 0.5, opacity: 0.7 },
+  { cx: 170, cy: 24, r: 0.4, opacity: 0.5 },
+  { cx: 192, cy: 9, r: 0.6, opacity: 0.8 },
+  { cx: 214, cy: 18, r: 0.4, opacity: 0.55 },
+  { cx: 236, cy: 8, r: 0.5, opacity: 0.7 },
+  { cx: 258, cy: 20, r: 0.45, opacity: 0.6 },
+  { cx: 278, cy: 11, r: 0.55, opacity: 0.75 },
+  { cx: 26, cy: 34, r: 0.4, opacity: 0.45 },
+  { cx: 118, cy: 34, r: 0.4, opacity: 0.45 },
+  { cx: 202, cy: 32, r: 0.4, opacity: 0.5 },
+  { cx: 268, cy: 34, r: 0.4, opacity: 0.45 },
 ];
 
-const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number; delay: number }> = [
-  { x: 70, y: 28, delay: 0.6 },
-  { x: 160, y: 36, delay: 2.9 },
-  { x: 246, y: 26, delay: 1.7 },
+const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number }> = [
+  { x: 70, y: 28 },
+  { x: 160, y: 36 },
+  { x: 246, y: 26 },
 ];
 
 function NightlySkyArt() {
@@ -137,22 +136,16 @@ function NightlySkyArt() {
             {NIGHTLY_STARS.map((star) => (
               <circle
                 key={`${star.cx}-${star.cy}`}
-                className="stage-star"
                 cx={star.cx}
                 cy={star.cy}
                 r={star.r}
                 fillOpacity={star.opacity}
-                style={{ animationDelay: `${star.delay}s` }}
               />
             ))}
           </g>
           <g stroke="#C8D7FF" strokeLinecap="round" strokeOpacity="0.7" strokeWidth="0.6">
             {NIGHTLY_SPARKLES.map((sparkle) => (
-              <g
-                key={`${sparkle.x}-${sparkle.y}`}
-                className="stage-star"
-                style={{ animationDelay: `${sparkle.delay}s` }}
-              >
+              <g key={`${sparkle.x}-${sparkle.y}`}>
                 <path d={`M${sparkle.x - 1.5} ${sparkle.y}H${sparkle.x + 1.5}`} />
                 <path d={`M${sparkle.x} ${sparkle.y - 1.5}V${sparkle.y + 1.5}`} />
               </g>
@@ -168,13 +161,13 @@ function NightlySkyArt() {
       <rect width="100%" height="96" fill="url(#stage-night-glows)" />
       <rect width="100%" height="96" fill="url(#stage-night-stars)" />
 
-      <g className="stage-cloud" filter="url(#stage-night-soft)">
+      <g filter="url(#stage-night-soft)">
         <path
           d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96H-12V88Z"
           fill="url(#stage-night-cloud)"
         />
       </g>
-      <g className="stage-cloud stage-cloud-far" filter="url(#stage-night-soft)">
+      <g filter="url(#stage-night-soft)">
         <path
           d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96H150Z"
           fill="url(#stage-night-cloud)"
@@ -265,68 +258,48 @@ function DevBlueprintArt() {
         </pattern>
         <pattern id="stage-bp-annotations" width="768" height="96" patternUnits="userSpaceOnUse">
           <g stroke="#DDF7FF" strokeLinecap="round" strokeOpacity="0.6" strokeWidth="0.7">
-            <path className="stage-bp-dash" d="M180 64H264" strokeDasharray="5 4" />
+            <path d="M180 64H264" strokeDasharray="5 4" />
             <path d="M180 61V67M264 61V67" />
-            <path
-              className="stage-bp-dash"
-              d="M276 10V44"
-              strokeDasharray="4 4"
-              strokeOpacity="0.5"
-            />
+            <path d="M276 10V44" strokeDasharray="4 4" strokeOpacity="0.5" />
             <path d="M273 10H279M273 44H279" strokeOpacity="0.5" />
-            <path
-              className="stage-bp-dash"
-              d="M348 30H428"
-              strokeDasharray="3.5 5"
-              strokeOpacity="0.5"
-            />
+            <path d="M348 30H428" strokeDasharray="3.5 5" strokeOpacity="0.5" />
             <path d="M348 27V33M428 27V33" strokeOpacity="0.5" />
-            <path
-              className="stage-bp-dash"
-              d="M512 48V80"
-              strokeDasharray="5 3"
-              strokeOpacity="0.45"
-            />
+            <path d="M512 48V80" strokeDasharray="5 3" strokeOpacity="0.45" />
             <path d="M509 48H515M509 80H515" strokeOpacity="0.45" />
-            <path
-              className="stage-bp-dash"
-              d="M590 70H724"
-              strokeDasharray="7 4"
-              strokeOpacity="0.55"
-            />
+            <path d="M590 70H724" strokeDasharray="7 4" strokeOpacity="0.55" />
             <path d="M590 67V73M724 67V73" strokeOpacity="0.55" />
           </g>
 
           <g stroke="#DDF7FF" strokeLinecap="round" strokeOpacity="0.55" strokeWidth="0.6">
-            <g className="stage-bp-mark">
+            <g>
               <path d="M34 60L38 64M38 60L34 64" />
             </g>
-            <g className="stage-bp-mark" style={{ animationDelay: "2.1s" }}>
+            <g>
               <path d="M228 26H234M231 23V29" />
             </g>
-            <g className="stage-bp-mark" style={{ animationDelay: "4.3s" }}>
+            <g>
               <path d="M143 51H149M146 48V54" />
             </g>
-            <g className="stage-bp-mark" style={{ animationDelay: "1.3s" }}>
+            <g>
               <path d="M316 16L322 22M322 16L316 22" />
             </g>
-            <g className="stage-bp-mark" style={{ animationDelay: "5.2s" }}>
+            <g>
               <path d="M468 70H476M472 66V74" />
             </g>
-            <g className="stage-bp-mark" style={{ animationDelay: "3.4s" }}>
+            <g>
               <path d="M558 28L564 34M564 28L558 34" />
             </g>
-            <g className="stage-bp-mark" style={{ animationDelay: "0.7s" }}>
+            <g>
               <path d="M742 44H750M746 40V48" />
             </g>
           </g>
 
           <g stroke="#DDF7FF" strokeOpacity="0.35" strokeWidth="0.6">
-            <circle className="stage-bp-dash" cx="196" cy="38" r="13" strokeDasharray="3.5 4" />
+            <circle cx="196" cy="38" r="13" strokeDasharray="3.5 4" />
             <path d="M196 33V43M191 38H201" strokeOpacity="0.6" strokeWidth="0.4" />
-            <circle className="stage-bp-dash" cx="414" cy="64" r="10" strokeDasharray="2.5 3.5" />
+            <circle cx="414" cy="64" r="10" strokeDasharray="2.5 3.5" />
             <path d="M414 60V68M410 64H418" strokeOpacity="0.6" strokeWidth="0.4" />
-            <circle className="stage-bp-dash" cx="648" cy="32" r="15" strokeDasharray="4 5" />
+            <circle cx="648" cy="32" r="15" strokeDasharray="4 5" />
             <path d="M648 26V38M642 32H654" strokeOpacity="0.6" strokeWidth="0.4" />
           </g>
         </pattern>
