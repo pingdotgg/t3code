@@ -632,6 +632,8 @@ label:has(> select#reasoning-effort) select {
   border: 1px solid var(--border);
   padding: 0.35rem 0.45rem;
   text-align: left;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 /* Work group / tool output font size */

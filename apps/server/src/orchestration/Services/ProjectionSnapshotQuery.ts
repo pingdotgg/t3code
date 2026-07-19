@@ -60,6 +60,12 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
+   * Read the latest sequence applied by every projector without hydrating a
+   * snapshot.
+   */
+  readonly getSnapshotSequence: () => Effect.Effect<number, ProjectionRepositoryError>;
+
+  /**
    * Read aggregate projection counts without hydrating the full read model.
    */
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;

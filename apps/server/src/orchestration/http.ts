@@ -103,9 +103,9 @@ export const orchestrationThreadSnapshotRouteLayer = HttpRouter.add(
     const params = yield* HttpRouter.params;
     const threadId = ThreadId.make(params.threadId ?? "");
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const [threadDetail, shellSnapshot] = yield* Effect.all([
+    const [threadDetail, snapshotSequence] = yield* Effect.all([
       projectionSnapshotQuery.getThreadDetailById(threadId),
-      projectionSnapshotQuery.getShellSnapshot(),
+      projectionSnapshotQuery.getSnapshotSequence(),
     ]).pipe(
       Effect.mapError(
         (cause) =>
@@ -122,7 +122,7 @@ export const orchestrationThreadSnapshotRouteLayer = HttpRouter.add(
     }
     return HttpServerResponse.jsonUnsafe(
       {
-        snapshotSequence: shellSnapshot.snapshotSequence,
+        snapshotSequence,
         thread: threadDetail.value,
       } satisfies OrchestrationThreadDetailSnapshot,
       { status: 200 },

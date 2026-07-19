@@ -138,4 +138,25 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("keeps table headers from inheriting emergency word breaks", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={[
+          "| Rank | Finding | Impact / effort |",
+          "| --- | --- | --- |",
+          "| 1 | Every event fans out to every projection. | Very high / medium |",
+        ].join("\n")}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      const header = page.getByRole("columnheader", { name: "Rank" });
+      await expect.element(header).toBeInTheDocument();
+      expect(getComputedStyle(await header.element()).overflowWrap).not.toBe("anywhere");
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

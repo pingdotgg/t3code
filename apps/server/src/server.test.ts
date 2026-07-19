@@ -518,6 +518,7 @@ const buildAppUnderTest = (options?: {
               threads: [],
               updatedAt: new Date(0).toISOString(),
             }),
+          getSnapshotSequence: () => Effect.succeed(0),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
@@ -1721,6 +1722,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(snapshot.threads.length, 338);
       assert.equal(snapshot.snapshotSequence, 338);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("loads a thread detail without hydrating the shell snapshot", () =>
+    Effect.gen(function* () {
+      const detail = makeDefaultOrchestrationReadModel().threads[0];
+      if (!detail) {
+        return yield* Effect.die("Expected default thread detail.");
+      }
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: () => Effect.die("Thread detail must not load the shell snapshot"),
+            getSnapshotSequence: () => Effect.succeed(42),
+            getThreadDetailById: () => Effect.succeed(Option.some(detail)),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.get(
+        `/api/orchestration/threads/${defaultThreadId}/snapshot`,
+        {
+          headers: {
+            authorization: `Bearer ${yield* getAuthenticatedBearerSessionToken()}`,
+          },
+        },
+      );
+      const snapshot = (yield* response.json) as {
+        readonly snapshotSequence: number;
+        readonly thread: { readonly id: string };
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(snapshot.snapshotSequence, 42);
+      assert.equal(snapshot.thread.id, defaultThreadId);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
