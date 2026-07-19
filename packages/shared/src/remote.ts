@@ -81,10 +81,10 @@ const normalizeRemoteBaseUrl = (
     throw new RemoteBackendUrlMissingError();
   }
 
-  const normalizedInput =
-    /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(trimmed) || trimmed.startsWith("//")
-      ? trimmed
-      : `https://${trimmed}`;
+  const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
+  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
+    ? withoutLeadingSlashes
+    : `https://${withoutLeadingSlashes}`;
   let url: URL;
   try {
     url = new URL(normalizedInput);
