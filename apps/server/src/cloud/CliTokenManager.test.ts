@@ -3,10 +3,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Terminal from "effect/Terminal";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -88,6 +92,70 @@ class PromptRejectedError extends Schema.TaggedErrorClass<PromptRejectedError>()
   "PromptRejectedError",
   { message: Schema.String },
 ) {}
+
+it("formats loopback authorization with a headless-host fallback", () => {
+  assert.equal(
+    CliTokenManager.formatLoopbackAuthorizationPrompt("https://clerk.example.test/authorize"),
+    [
+      "Open this URL to authorize T3 Connect:",
+      "  https://clerk.example.test/authorize",
+      "",
+      "Press Enter to open it in your browser, or H to switch to `--headless`.",
+    ].join("\n"),
+  );
+});
+
+const makeTestTerminal = (queue: Queue.Queue<Terminal.UserInput>) =>
+  Terminal.make({
+    columns: Effect.succeed(80),
+    rows: Effect.succeed(24),
+    readInput: Effect.succeed(Queue.asDequeue(queue)),
+    readLine: Effect.never,
+    display: () => Effect.void,
+  });
+
+const userInput = (name: string): Terminal.UserInput => ({
+  input: Option.some(name),
+  key: { name, ctrl: false, meta: false, shift: name !== name.toLowerCase() },
+});
+
+it.effect("opens the browser on Enter and switches the active flow on H", () =>
+  Effect.gen(function* () {
+    const queue = yield* Queue.make<Terminal.UserInput>();
+    yield* Queue.offerAll(queue, [userInput("enter"), userInput("H")]);
+    const opened: Array<string> = [];
+
+    const result = yield* CliTokenManager.waitForLoopbackAuthorization({
+      authorizationUrl: "https://clerk.example.test/authorize",
+      callback: Effect.never,
+      terminal: makeTestTerminal(queue),
+      launchBrowser: (url) =>
+        Effect.sync(() => {
+          opened.push(url);
+        }),
+    });
+
+    assert.deepEqual(opened, ["https://clerk.example.test/authorize"]);
+    assert.deepEqual(result, { _tag: "HeadlessRequested" });
+  }),
+);
+
+it.effect("finishes normally when the browser callback wins", () =>
+  Effect.gen(function* () {
+    const queue = yield* Queue.make<Terminal.UserInput>();
+    const callback = yield* Deferred.make<string>();
+    yield* Deferred.succeed(callback, "clerk-code-123");
+
+    const result = yield* CliTokenManager.waitForLoopbackAuthorization({
+      authorizationUrl: "https://clerk.example.test/authorize",
+      callback: Deferred.await(callback),
+      terminal: makeTestTerminal(queue),
+      launchBrowser: () => Effect.die("browser launch should not run"),
+    });
+
+    assert.deepEqual(result, { _tag: "AuthorizationCode", code: "clerk-code-123" });
+  }),
+);
 
 it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
   it.effect("prints a hosted authorize URL and exchanges the out-of-band code with PKCE", () =>

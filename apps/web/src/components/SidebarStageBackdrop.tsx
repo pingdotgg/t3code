@@ -38,9 +38,13 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
       aria-hidden
       className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
     >
-      {variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />}
+      <StageBackdropArt variant={variant} />
     </div>
   );
+}
+
+export function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
 const NIGHTLY_STARS: ReadonlyArray<{

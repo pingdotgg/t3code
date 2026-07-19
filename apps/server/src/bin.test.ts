@@ -265,7 +265,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         readonly authenticated: boolean;
       };
 
-      assert.equal(login.output, "Signed in to T3 Connect.");
+      assert.equal(login.output, "✓ Signed in");
       assert.isFalse(decoded.desired);
       assert.isTrue(decoded.authenticated);
     }),

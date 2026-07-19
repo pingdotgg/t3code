@@ -1,6 +1,6 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
 import { encodeConnectAuthCode, readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
@@ -13,21 +13,29 @@ import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
 import { Button } from "../ui/button";
 
 function ConnectCliAuthMessage({
+  eyebrow,
   title,
   description,
 }: {
+  readonly eyebrow?: string;
   readonly title: string;
   readonly description: string;
 }) {
   return (
     <>
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
+      {eyebrow ? (
+        <p className="text-[10px] font-semibold tracking-[0.18em] text-blue-600 uppercase dark:text-blue-400">
+          {eyebrow}
+        </p>
+      ) : null}
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
     </>
   );
 }
 
 const invalidLinkMessage = {
+  eyebrow: "Authorization request",
   title: "This connect link is incomplete",
   description:
     "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
@@ -38,13 +46,13 @@ const invalidLinkMessage = {
  * forwards the CLI's PKCE request to Clerk's authorize endpoint.
  */
 export function ConnectCliAuthorizeSurface() {
-  const request = useMemo(() => readConnectAuthorizeRequest(new URL(window.location.href)), []);
+  const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
-  const [redirecting, setRedirecting] = useState(false);
+  const redirecting = useRef(false);
 
   useEffect(() => {
-    if (!request || !isLoaded || redirecting) {
+    if (!request || !isLoaded || redirecting.current) {
       return;
     }
     if (!isSignedIn) {
@@ -55,10 +63,10 @@ export function ConnectCliAuthorizeSurface() {
     if (!authorizeUrl) {
       return;
     }
-    setRedirecting(true);
+    redirecting.current = true;
     rememberConnectCliAuthState(request.state);
     window.location.assign(authorizeUrl);
-  }, [clerk, isLoaded, isSignedIn, redirecting, request]);
+  }, [clerk, isLoaded, isSignedIn, request]);
 
   if (!request) {
     return (
@@ -71,6 +79,7 @@ export function ConnectCliAuthorizeSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
+        eyebrow="Step 1 of 2 · Browser authorization"
         title="Connecting your terminal"
         description={
           isSignedIn
@@ -97,8 +106,8 @@ export function ConnectCliAuthorizeSurface() {
  * user enters in the waiting terminal.
  */
 export function ConnectCliCallbackSurface() {
-  const result = useMemo(() => readConnectCliCallbackResult(), []);
-  const expectedState = useMemo(() => readConnectCliAuthState(), []);
+  const [result] = useState(readConnectCliCallbackResult);
+  const [expectedState] = useState(readConnectCliAuthState);
   const { user } = useUser();
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "authentication code" });
 
@@ -106,6 +115,7 @@ export function ConnectCliCallbackSurface() {
     return (
       <AuthSurfaceShell>
         <ConnectCliAuthMessage
+          eyebrow="Step 2 of 2 · Terminal handoff"
           title="Authorization did not complete"
           description="No authorization code was returned. Re-run `t3 connect` in your terminal and try again."
         />
@@ -121,6 +131,7 @@ export function ConnectCliCallbackSurface() {
     return (
       <AuthSurfaceShell>
         <ConnectCliAuthMessage
+          eyebrow="Step 2 of 2 · Terminal handoff"
           title="This code belongs to a different request"
           description="This authorization response does not match a connect request started in this browser. Re-run `t3 connect` in your terminal and open the freshly printed URL in this browser."
         />
@@ -134,6 +145,7 @@ export function ConnectCliCallbackSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
+        eyebrow="Step 2 of 2 · Terminal handoff"
         title="Almost connected"
         description={
           accountLabel
@@ -142,15 +154,24 @@ export function ConnectCliCallbackSurface() {
         }
       />
 
-      <div className="mt-6 rounded-lg border border-border/80 bg-background/60 p-4">
-        <code className="block text-sm break-all select-all" data-testid="connect-auth-code">
+      <div className="mt-6 overflow-hidden rounded-xl border border-border/80 bg-background/65">
+        <div className="flex items-center justify-between border-b border-border/70 px-4 py-2.5">
+          <span className="text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
+            One-time authorization code
+          </span>
+          <span className="font-mono text-[10px] text-muted-foreground">expires shortly</span>
+        </div>
+        <code
+          className="block p-4 font-mono text-sm leading-relaxed break-all select-all"
+          data-testid="connect-auth-code"
+        >
           {authCode}
         </code>
       </div>
 
       <div className="mt-4 flex items-center gap-3">
         <Button type="button" onClick={() => copyToClipboard(authCode)}>
-          {isCopied ? "Copied!" : "Copy code"}
+          {isCopied ? "Copied!" : "Copy authorization code"}
         </Button>
       </div>
 

@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -12,8 +13,10 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Terminal from "effect/Terminal";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -29,15 +32,87 @@ import {
 } from "@t3tools/shared/connectAuth";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
 import {
   cloudCliOAuthConfig,
   hostedAppUrlConfig,
   type CloudCliOAuthConfig,
 } from "./publicConfig.ts";
+import { renderLoopbackAuthorizationCompleteHtml } from "./cliAuthHtml.ts";
 
 const CLOUD_CLI_OAUTH_TOKEN_SECRET = "cloud-cli-oauth-token";
 const CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT = Duration.minutes(10);
 const CLOUD_CLI_OAUTH_REFRESH_EARLY_MS = Duration.toMillis(Duration.minutes(5));
+
+export function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
+  return [
+    "Open this URL to authorize T3 Connect:",
+    `  ${authorizationUrl}`,
+    "",
+    "Press Enter to open it in your browser, or H to switch to `--headless`.",
+  ].join("\n");
+}
+
+export type LoopbackAuthorizationResult =
+  | { readonly _tag: "AuthorizationCode"; readonly code: string }
+  | { readonly _tag: "HeadlessRequested" };
+
+const readLoopbackAuthorizationAction = Effect.fn(
+  "cloud.cli_token.read_loopback_authorization_action",
+)(function* (input: Queue.Dequeue<Terminal.UserInput, Cause.Done>) {
+  while (true) {
+    const event = yield* Queue.take(input).pipe(Effect.mapError(() => new Terminal.QuitError({})));
+    const keyName = event.key.name.toLowerCase();
+    if (!event.key.ctrl && !event.key.meta && keyName === "h") {
+      return "headless" as const;
+    }
+    if (keyName === "enter" || keyName === "return") {
+      return "open-browser" as const;
+    }
+  }
+});
+
+export const waitForLoopbackAuthorization = Effect.fn(
+  "cloud.cli_token.wait_for_loopback_authorization",
+)(function* <E, R>(input: {
+  readonly authorizationUrl: string;
+  readonly callback: Effect.Effect<string, E, R>;
+  readonly terminal: Terminal.Terminal;
+  readonly launchBrowser: (
+    url: string,
+  ) => Effect.Effect<void, ExternalLauncher.ExternalLauncherError>;
+}) {
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const terminalInput = yield* input.terminal.readInput;
+      while (true) {
+        const result = yield* Effect.raceFirst(
+          input.callback.pipe(
+            Effect.map(
+              (code): LoopbackAuthorizationResult => ({ _tag: "AuthorizationCode", code }),
+            ),
+          ),
+          readLoopbackAuthorizationAction(terminalInput),
+        );
+        if (typeof result !== "string") {
+          return result;
+        }
+        if (result === "headless") {
+          return { _tag: "HeadlessRequested" } as const;
+        }
+        yield* input
+          .launchBrowser(input.authorizationUrl)
+          .pipe(
+            Effect.catch(() =>
+              Console.warn(
+                "Could not open a browser on this machine. Open the URL above manually, or press H for `--headless`.",
+              ),
+            ),
+          );
+      }
+    }),
+  );
+});
 
 const PersistedToken = Schema.Struct({
   accessToken: Schema.String,
@@ -143,7 +218,11 @@ export type CloudCliTokenManagerError = typeof CloudCliTokenManagerError.Type;
 export class CloudCliTokenManager extends Context.Service<
   CloudCliTokenManager,
   {
-    readonly get: Effect.Effect<PersistedToken, CloudCliTokenManagerError>;
+    readonly get: Effect.Effect<
+      | { readonly _tag: "Authorized"; readonly token: PersistedToken }
+      | { readonly _tag: "HeadlessRequested" },
+      CloudCliTokenManagerError | Terminal.QuitError
+    >;
     readonly getExisting: Effect.Effect<Option.Option<PersistedToken>, CloudCliTokenManagerError>;
     readonly hasCredential: Effect.Effect<boolean, CloudCliTokenManagerError>;
     readonly store: (token: PersistedToken) => Effect.Effect<void, CloudCliTokenManagerError>;
@@ -250,6 +329,8 @@ export const make = Effect.gen(function* () {
     Context.add(HttpClient.HttpClient, httpClient),
   );
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const terminal = yield* Terminal.Terminal;
+  const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
   const semaphore = yield* Semaphore.make(1);
   const persist = Effect.fn("cloud.cli_token.persist")(function* (token: PersistedToken) {
     const encoded = yield* encodePersistedToken(token);
@@ -294,14 +375,7 @@ export const make = Effect.gen(function* () {
           });
         }
         yield* Deferred.succeed(callback, code);
-        return yield* HttpServerResponse.html`
-<html>
-  <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-    <h1>T3 Connect authorization complete</h1>
-    <p>You can close this window and return to your terminal.</p>
-  </body>
-</html>
-`;
+        return HttpServerResponse.html(renderLoopbackAuthorizationCompleteHtml());
       }),
     );
     yield* HttpRouter.serve(callbackRoute, {
@@ -325,21 +399,29 @@ export const make = Effect.gen(function* () {
       state,
       challenge,
     });
-    yield* Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl}\n`);
-    const code = yield* Deferred.await(callback).pipe(
-      Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
-      Effect.catchTag("TimeoutError", (cause) =>
-        Effect.fail(new CloudCliAuthorizationTimeoutError({ cause })),
+    yield* Console.log(formatLoopbackAuthorizationPrompt(authorizationUrl));
+    const authorization = yield* waitForLoopbackAuthorization({
+      authorizationUrl,
+      callback: Deferred.await(callback).pipe(
+        Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
+        Effect.catchTag("TimeoutError", (cause) =>
+          Effect.fail(new CloudCliAuthorizationTimeoutError({ cause })),
+        ),
       ),
-    );
+      terminal,
+      launchBrowser: externalLauncher.launchBrowser,
+    });
+    if (authorization._tag === "HeadlessRequested") {
+      return authorization;
+    }
     const { token } = yield* exchangeToken(metadata, {
       grant_type: "authorization_code",
-      code,
+      code: authorization.code,
       redirect_uri: metadata.redirectUri,
       client_id: metadata.clientId,
       code_verifier: verifier,
     });
-    return token;
+    return { _tag: "Authorized", token } as const;
   });
 
   const getExistingNoLock = Effect.fn("cloud.cli_token.get_existing_no_lock")(function* () {
@@ -373,11 +455,17 @@ export const make = Effect.gen(function* () {
       const token = yield* getExistingNoLock().pipe(
         Effect.orElseSucceed(() => Option.none<PersistedToken>()),
       );
-      return Option.isSome(token)
-        ? token.value
-        : yield* Effect.scoped(login()).pipe(Effect.flatMap(persist));
+      if (Option.isSome(token)) {
+        return { _tag: "Authorized", token: token.value } as const;
+      }
+      const authorization = yield* Effect.scoped(login());
+      return authorization._tag === "Authorized"
+        ? ({ _tag: "Authorized", token: yield* persist(authorization.token) } as const)
+        : authorization;
     }).pipe(
-      Effect.mapError((cause) => new CloudCliAuthorizationError({ cause })),
+      Effect.mapError((cause) =>
+        Terminal.isQuitError(cause) ? cause : new CloudCliAuthorizationError({ cause }),
+      ),
       Effect.provide(services),
     ),
   );

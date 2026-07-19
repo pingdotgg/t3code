@@ -44,6 +44,7 @@ import { relayUrlConfig } from "../cloud/publicConfig.ts";
 import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -73,8 +74,10 @@ export const headlessSessionConfig = Config.all({
 
 const promptForOutOfBandOAuthCode = Effect.fn("cloud.cli.prompt_for_out_of_band_oauth_code")(
   function* ({ authorizeUrl, validate }: CliTokenManager.OutOfBandOAuthPromptInput) {
-    yield* Console.log(`To set up T3 Connect, open this URL and sign in:\n  ${authorizeUrl}\n`);
-    return yield* Prompt.run(Prompt.text({ message: "Enter your authentication code", validate }));
+    yield* Console.log(`→ Authorize on another device\n\n  ${authorizeUrl}\n`);
+    return yield* Prompt.run(
+      Prompt.text({ message: "Enter the code shown in your browser", validate }),
+    );
   },
 );
 
@@ -85,8 +88,11 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
   const useOutOfBandOAuth = options.headless || (yield* headlessSessionConfig);
   if (!useOutOfBandOAuth) {
-    yield* tokens.get;
-    return null;
+    const authorization = yield* tokens.get;
+    if (authorization._tag === "Authorized") {
+      return null;
+    }
+    yield* Console.log("\n→ Switching to out-of-band OAuth");
   }
   // A stored credential whose refresh fails (revoked, expired grant) must
   // fall through to a fresh out-of-band authorization, not dead-end the command.
@@ -436,7 +442,10 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
   const runtimeLayer = Layer.mergeAll(
     ServerSecretStore.layer,
-    CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+    CliTokenManager.layer.pipe(
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(ExternalLauncher.layer),
+    ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
     EnvironmentAuth.runtimeLayer,
     ServerEnvironment.layer,
@@ -456,6 +465,10 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
 
+export function formatRelayClientReady(version: string): string {
+  return `✓ Relay client ready · cloudflared ${version}`;
+}
+
 const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(function* (options: {
   readonly headless: boolean;
   readonly publishOnly?: boolean;
@@ -472,9 +485,7 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
       yield* Console.log("T3 Connect setup cancelled. The relay client was not installed.");
       return null;
     }
-    yield* Console.log(
-      `Using relay client ${installed.value.version} from ${installed.value.executablePath}.`,
-    );
+    yield* Console.log(formatRelayClientReady(installed.value.version));
   }
 
   const identity = yield* authorizeCli(options);
@@ -495,8 +506,9 @@ const connectLoginCommand = Command.make("login", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* Console.log("T3 Connect\n");
         const identity = yield* authorizeCli(flags);
-        yield* Console.log(`Signed in to T3 Connect${connectedAs(identity)}.`);
+        yield* Console.log(`✓ Signed in${connectedAs(identity)}`);
       }),
     ),
   ),
@@ -517,12 +529,13 @@ const connectLinkCommand = Command.make("link", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
           yield* Console.log(
             flags.publishOnly
-              ? `Authorized T3 Connect${connectedAs(linked.identity)}. This environment will publish agent activity to your mobile clients the next time T3 starts (no managed tunnel).`
-              : `Authorized T3 Connect${connectedAs(linked.identity)}. This environment will be available the next time T3 starts.`,
+              ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
+              : `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start the server with \`t3 serve\` to make this machine reachable.`,
           );
         }
       }),
@@ -700,6 +713,7 @@ export const connectCommand = Command.make("connect", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (!linked) {
           return;
@@ -707,7 +721,7 @@ export const connectCommand = Command.make("connect", {
         // Show which account was linked so an unexpected identity (an
         // authorization code for a different account) is visible before the
         // machine is brought online.
-        yield* Console.log(`\nConnected${connectedAs(linked.identity)}!`);
+        yield* Console.log(`✓ Connected${connectedAs(linked.identity)}`);
 
         // Connect itself already succeeded; a boot-service failure must not
         // fail the command, just tell the user what happened and move on.
@@ -727,8 +741,8 @@ export const connectCommand = Command.make("connect", {
         );
         yield* Console.log(
           background
-            ? "\nGreat, T3 Code is now set up and ready to go."
-            : "\nT3 Connect is set up. Start the server with `t3 serve` to make this machine reachable.",
+            ? "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out."
+            : "\nNext\n  Start the server with `t3 serve` to make this machine reachable.",
         );
       }),
     ),
