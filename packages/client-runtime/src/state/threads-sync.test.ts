@@ -451,6 +451,35 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("does not resurrect a deleted thread when the app returns to the foreground", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: BASE_THREAD,
+        completionMarker: true,
+        httpSnapshot: Option.some({
+          snapshotSequence: 4,
+          thread: { ...BASE_THREAD, title: "Stale HTTP thread" },
+        }),
+      });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, deleted());
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      yield* Queue.offer(harness.wakeups, "application-active");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      const latest = yield* Ref.get(harness.latest);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      expect(latest.status).toBe("deleted");
+      expect(Option.isNone(latest.data)).toBe(true);
+    }),
+  );
+
   it.effect("preserves data after a domain failure and resumes on a replacement session", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });

@@ -104,11 +104,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     Effect.forkScoped,
   );
 
-  const setSynchronizing = SubscriptionRef.update(state, (current) => ({
-    ...current,
-    status: "synchronizing" as const,
-    error: Option.none(),
-  }));
+  const setSynchronizing = SubscriptionRef.update(state, (current) =>
+    current.status === "deleted"
+      ? current
+      : {
+          ...current,
+          status: "synchronizing" as const,
+          error: Option.none(),
+        },
+  );
   const setReady = SubscriptionRef.update(state, (current) =>
     current.status === "live" || current.status === "deleted"
       ? current
