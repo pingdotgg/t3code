@@ -24,7 +24,7 @@ export interface CloudPublicConfig {
   };
 }
 
-function trimNonEmpty(value: string | undefined): string | null {
+export function trimNonEmpty(value: string | undefined): string | null {
   return value?.trim() || null;
 }
 
