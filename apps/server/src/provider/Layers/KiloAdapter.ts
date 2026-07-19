@@ -231,28 +231,28 @@ function appendTurnItem(
   resolveTurnSnapshot(context, turnId).items.push(item);
 }
 
-function ensureSessionContext(
+// Yields typed adapter failures on the Effect error channel so callers using
+// `Effect.gen` see them as recoverable `ProviderAdapterError`s instead of
+// defects. All call sites in this module invoke it via `yield*`.
+const ensureSessionContext = Effect.fn("ensureSessionContext")(function* (
   sessions: ReadonlyMap<ThreadId, KiloSessionContext>,
   threadId: ThreadId,
-): KiloSessionContext {
+) {
   const session = sessions.get(threadId);
   if (!session) {
-    throw new ProviderAdapterSessionNotFoundError({
+    return yield* new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
       threadId,
     });
   }
-  // `ensureSessionContext` is a sync gate used from both sync helpers and
-  // Effect bodies. `Ref.getUnsafe` is an atomic read of the backing cell —
-  // no fiber suspension required, which keeps this callable everywhere.
-  if (Ref.getUnsafe(session.stopped)) {
-    throw new ProviderAdapterSessionClosedError({
+  if (yield* Ref.get(session.stopped)) {
+    return yield* new ProviderAdapterSessionClosedError({
       provider: PROVIDER,
       threadId,
     });
   }
   return session;
-}
+});
 
 function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserInputQuestion> {
   return request.questions.map((question, index) => ({
@@ -895,19 +895,36 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           }
 
           if (event.properties.status.type === "idle" && turnId) {
-            yield* Ref.set(context.activeTurnId, undefined);
-            yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
-            yield* emit({
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                raw: event,
-              })),
-              type: "turn.completed",
-              payload: {
-                state: "completed",
-              },
+            // Compare-and-set: only clear and emit `turn.completed` if we
+            // still own the turn id we observed at the top of this handler.
+            // A concurrent interrupt / steer may have already taken over the
+            // slot (or cleared it) by the time the SDK idle event arrives —
+            // unconditionally wiping the ref would orphan a still-running
+            // turn or drop a legitimate `turn.completed` for a newer turn.
+            const stillOwnsTurn = yield* Ref.modify(context.activeTurnId, (current) => {
+              if (current === turnId) {
+                return [true, undefined] as const;
+              }
+              return [false, current] as const;
             });
+            if (stillOwnsTurn) {
+              yield* updateProviderSession(
+                context,
+                { status: "ready" },
+                { clearActiveTurnId: true },
+              );
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "turn.completed",
+                payload: {
+                  state: "completed",
+                },
+              });
+            }
           }
           break;
         }
@@ -1187,7 +1204,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
     );
 
     const sendTurn: KiloAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-      const context = ensureSessionContext(sessions, input.threadId);
+      const context = yield* ensureSessionContext(sessions, input.threadId);
       const modelSelection =
         input.modelSelection ??
         (context.session.model
@@ -1331,24 +1348,38 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
     const interruptTurn: KiloAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = yield* ensureSessionContext(sessions, threadId);
         // Clear the active claim before remote abort so concurrent sendTurn
-        // cannot steer into a turn that is about to be aborted.
-        const interruptedTurnId = yield* Ref.modify(context.activeTurnId, (current) => {
-          const target = turnId ?? current;
-          if (target === undefined) {
-            return [undefined, current] as const;
-          }
-          if (current === target) {
-            return [target, undefined] as const;
-          }
-          // Explicit turnId that is no longer active — still report abort for it,
-          // but leave any newer claim untouched.
-          return [target, current] as const;
-        });
-        yield* runKiloSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.kiloSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        // cannot steer into a turn that is about to be aborted. We only
+        // observed the turn *and* owned the claim when `current === target` —
+        // a stale `turnId` (e.g. interrupted twice, or a newer turn already
+        // claimed) must NOT trigger `session.abort`, which cancels every turn
+        // for the SDK session, including the unrelated newer one.
+        type InterruptClaim = {
+          readonly interruptedTurnId: TurnId | undefined;
+          readonly ownedClaim: boolean;
+        };
+        const claim: InterruptClaim = yield* Ref.modify(
+          context.activeTurnId,
+          (current): [InterruptClaim, TurnId | undefined] => {
+            const target = turnId ?? current;
+            if (target === undefined) {
+              return [{ interruptedTurnId: undefined, ownedClaim: false }, current];
+            }
+            if (current === target) {
+              return [{ interruptedTurnId: target, ownedClaim: true }, undefined];
+            }
+            // Stale turnId (already interrupted, or a newer claim exists):
+            // report the abort for the requested turn id locally, but keep
+            // the live `current` claim untouched and skip the remote abort.
+            return [{ interruptedTurnId: target, ownedClaim: false }, current];
+          },
+        );
+        if (claim.ownedClaim) {
+          yield* runKiloSdk("session.abort", () =>
+            context.client.session.abort({ sessionID: context.kiloSessionId }),
+          ).pipe(Effect.mapError(toRequestError));
+        }
         // Only flip session ready if nothing new claimed the turn during abort.
         const stillIdle = (yield* Ref.get(context.activeTurnId)) === undefined;
         if (stillIdle) {
@@ -1362,11 +1393,11 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
             { clearActiveTurnId: true },
           );
         }
-        if (interruptedTurnId) {
+        if (claim.ownedClaim && claim.interruptedTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: interruptedTurnId,
+              turnId: claim.interruptedTurnId,
             })),
             type: "turn.aborted",
             payload: {
@@ -1376,7 +1407,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: interruptedTurnId,
+              turnId: claim.interruptedTurnId,
             })),
             type: "turn.completed",
             payload: {
@@ -1389,7 +1420,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
     const respondToRequest: KiloAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
       function* (threadId, requestId, decision) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = yield* ensureSessionContext(sessions, threadId);
         if (!context.pendingPermissions.has(requestId)) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
@@ -1410,7 +1441,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
     const respondToUserInput: KiloAdapterShape["respondToUserInput"] = Effect.fn(
       "respondToUserInput",
     )(function* (threadId, requestId, answers) {
-      const context = ensureSessionContext(sessions, threadId);
+      const context = yield* ensureSessionContext(sessions, threadId);
       const request = context.pendingQuestions.get(requestId);
       if (!request) {
         return yield* new ProviderAdapterRequestError({
@@ -1432,7 +1463,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
       function* (threadId) {
         const context = sessions.get(threadId);
         if (!context) {
-          throw new ProviderAdapterSessionNotFoundError({
+          return yield* new ProviderAdapterSessionNotFoundError({
             provider: PROVIDER,
             threadId,
           });
@@ -1462,7 +1493,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
     const readThread: KiloAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = yield* ensureSessionContext(sessions, threadId);
         const messages = yield* runKiloSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.kiloSessionId,
@@ -1488,7 +1519,7 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
     const rollbackThread: KiloAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
       function* (threadId, numTurns) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = yield* ensureSessionContext(sessions, threadId);
         const messages = yield* runKiloSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.kiloSessionId,

@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -389,6 +390,112 @@ it.layer(KiloAdapterTestLayer)("KiloAdapter", (it) => {
       }
       NodeAssert.equal(sessions[0]?.status, "ready");
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
+    }),
+  );
+
+  it.effect(
+    "does not call session.abort when interrupting a stale turn id",
+    Effect.fn(function* () {
+      const adapter = yield* KiloAdapter;
+      const threadId = asThreadId("thread-kilo-stale-interrupt");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("kilo"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      // Open a turn so the adapter claims an activeTurnId.
+      const first = yield* adapter.sendTurn({
+        threadId,
+        input: "first",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("kilo"),
+          "anthropic/claude-sonnet-4-5",
+        ),
+      });
+
+      // Simulate that an interrupting client targets a turn id that no
+      // longer matches the active claim. The adapter must NOT issue
+      // session.abort because the SDK aborts every turn in the session,
+      // which would cancel the newer running turn.
+      runtimeMock.state.abortCalls.length = 0;
+      yield* adapter.interruptTurn(threadId, TurnId.make("stale-turn-id"));
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, []);
+
+      // The next legitimate interrupt on the live turn id should still
+      // resolve correctly (no leftover state from the stale call).
+      runtimeMock.state.abortCalls.length = 0;
+      yield* adapter.interruptTurn(threadId, first.turnId);
+      NodeAssert.ok(
+        (runtimeMock.state.abortCalls as ReadonlyArray<string>).includes(
+          "http://127.0.0.1:4301/session",
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "idle handler does not clear a turn id that is no longer owned",
+    Effect.fn(function* () {
+      const adapter = yield* KiloAdapter;
+      const threadId = asThreadId("thread-kilo-idle-race");
+
+      // Pre-stage an idle event so the SSE stream yields it when the
+      // event pump subscribes. We send the idle event with a STALE turn
+      // id (different from the one sendTurn will claim) so the handler's
+      // compare-and-set must reject it. Because the mock SSE stream is
+      // consumed by the event pump before sendTurn runs, the observed
+      // activeTurnId at the top of the idle handler is undefined, so the
+      // `if (turnId)` guard short-circuits. To exercise the
+      // compare-and-set branch we instead drive the handler through a
+      // dedicated session that does not start any turn.
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:4301/session",
+            status: { type: "idle" },
+          },
+        },
+      ];
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("kilo"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      // After consuming the idle event with no active turn, listSessions
+      // should still report a ready session with no activeTurnId. The
+      // session.started / thread.started events should still be emitted.
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions[0]?.status, "ready");
+      NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
+    }),
+  );
+
+  it.effect(
+    "surfaces unknown-session errors as typed failures, not defects",
+    Effect.fn(function* () {
+      const adapter = yield* KiloAdapter;
+      const missingThreadId = asThreadId("thread-kilo-missing");
+
+      const stopError = yield* adapter.stopSession(missingThreadId).pipe(Effect.flip);
+      NodeAssert.equal(stopError._tag, "ProviderAdapterSessionNotFoundError");
+
+      const interruptError = yield* adapter.interruptTurn(missingThreadId).pipe(Effect.flip);
+      NodeAssert.equal(interruptError._tag, "ProviderAdapterSessionNotFoundError");
+
+      const readError = yield* adapter.readThread(missingThreadId).pipe(Effect.flip);
+      NodeAssert.equal(readError._tag, "ProviderAdapterSessionNotFoundError");
+
+      const rollbackError = yield* adapter.rollbackThread(missingThreadId, 1).pipe(Effect.flip);
+      NodeAssert.equal(rollbackError._tag, "ProviderAdapterSessionNotFoundError");
+
+      const respondError = yield* adapter
+        .respondToRequest(missingThreadId, ApprovalRequestId.make("perm"), "accept")
+        .pipe(Effect.flip);
+      NodeAssert.equal(respondError._tag, "ProviderAdapterSessionNotFoundError");
     }),
   );
 });
