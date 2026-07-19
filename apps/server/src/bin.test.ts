@@ -236,7 +236,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
-  it.effect("logs in to headless connect without enabling access", () =>
+  it.effect("accepts the --headless login override without enabling access", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-login-test-"),
@@ -254,7 +254,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       );
 
       const login = yield* captureStdout(
-        runConnectCli(["connect", "login", "--base-dir", baseDir]),
+        runConnectCli(["connect", "login", "--base-dir", baseDir, "--headless"]),
       );
       const status = yield* captureStdout(
         runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
@@ -265,7 +265,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         readonly authenticated: boolean;
       };
 
-      assert.equal(login.output, "Signed in to T3 Connect.");
+      assert.equal(login.output, "✓ Signed in");
       assert.isFalse(decoded.desired);
       assert.isTrue(decoded.authenticated);
     }),
