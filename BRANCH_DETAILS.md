@@ -1,18 +1,14 @@
 # File Change And Command Activity Boxes
 
-## Current Status
-
-Branch maintenance snapshot for the latest upstream merge resolution:
-
-- Generated from `upstream/main` `1735e27d9e5106bbb35d5b1dd10363604a54b69e` with starting branch HEAD `69fc584b1daa62f93ee33ecccba05f16c52a1622`. The merge commit is `a1b98b863ed7b4e0f565cbb02f881f04c3f8cce0`; the previous upstream merge is `8423816645165c559c5baebc25d4f29d62b10e2f`, whose upstream parent is `fdca15471d92e95e4ec5501f45dbf3ce81f8d991`.
-- Shared refs at merge time: `origin/main` `2fe83d19ea2548dfaa7770aea29e5047d0b17b6e`, local `main` `cfbd1261caa08707987d2dfc2edc93caa0790d54`, and branch tracking ref `origin/split/file-command-activity-boxes` `8423816645165c559c5baebc25d4f29d62b10e2f`.
-- After the merge, activity normalization refactor, and this documentation refresh, the resulting branch is `63 ahead / 0 behind upstream/main`, `113 ahead / 505 behind origin/main`, `113 ahead / 517 behind local main`, and `55 ahead / 0 behind origin/split/file-command-activity-boxes`. The fork diff is `12 files changed, 4127 insertions(+), 683 deletions(-)` against the `upstream/main` tree.
-- Merge note: the 50 incoming commits from `8a02c71869b4a075c0d5503a428c99d9c3ab6346` through `1735e27d9e5106bbb35d5b1dd10363604a54b69e` add terminal selection copying, the draft landing hero, file-explorer mention actions, desktop updater release notes, mobile screenshot automation and refreshed branding; improve message sending, initial thread snapshots, active-thread cache writes, timestamps, remote-environment cleanup, diff navigation/defaults, terminal spawning, source-control path handling, and provider reliability; and fix desktop, mobile, server, composer, preview, context-menu, and settings edge cases. Git merged all files automatically with no conflicts.
-- Activity-box impact note: `apps/web/src/components/chat/MessagesTimeline.tsx` was the only branch-primary file touched by both histories. Its automatic additive merge preserves the customized expandable file-change and command rows while adding upstream's optional `hideEmptyPlaceholder` prop and empty-timeline suppression for the draft hero. Upstream still does not provide equivalent activity detail boxes, so no customization is retired. The incoming timestamp, message-delivery, initial-snapshot, and active-thread-cache fixes complement rather than replace the branch's work-log event normalization.
-- Refactor note: commit `1c21453bc32b743838e6e3e25cb826000f2569ff` moves provider-specific command/file payload parsing, bounded patch extraction, changed-file discovery, and cumulative output/patch merging into the directly tested `apps/web/src/lib/workLogActivity.ts` module. `apps/web/src/session-logic.ts` retains timeline ordering, lifecycle collapse, and public work-log composition, reducing its scope without changing the exported activity-box API or behavior.
-- Validation note: 169 focused unit tests passed across the work-log parser/merger, session logic, and both timeline suites; `pnpm exec vp check`, `pnpm exec vp run typecheck`, and `git diff --check` passed. The formatting/lint gate retained 10 unrelated warnings, typecheck retained existing informational Effect suggestions, and no native mobile files changed. A fixed-port Playwright startup smoke was attempted on web `5737` and server `13777`, but navigation did not reach `domcontentloaded` within 60 seconds while the server independently logged remote Git-status timeouts, so browser automation was recorded as environment-blocked rather than a product failure.
+## Current State
 
 Tool activity remains readable in long-running Codex threads without changing agent execution semantics. File-change and command activities are rendered as clickable, expandable rows in the conversation work log.
+
+Conflict guidance:
+
+- `apps/web/src/components/chat/MessagesTimeline.tsx` must preserve both the expandable file-change and command rows and the optional `hideEmptyPlaceholder` behavior that suppresses the empty timeline for the draft hero.
+- `apps/web/src/lib/workLogActivity.ts` owns provider-specific command/file payload parsing, bounded patch extraction, changed-file discovery, and cumulative output/patch merging.
+- `apps/web/src/session-logic.ts` owns timeline ordering, lifecycle collapse, and public work-log composition.
 
 Expected behavior:
 
