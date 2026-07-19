@@ -383,20 +383,6 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
 const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
 
 /**
- * Quote a token for a POSIX shell (bash/zsh, the default integrated-terminal
- * shells on macOS/Linux). Tokens made only of safe characters are left as-is
- * so the common `claude setup-token` stays readable; anything else — e.g. a
- * configured binary path containing spaces — is single-quoted so it is not
- * word-split or interpreted when the client pastes the command line.
- */
-function posixShellQuote(token: string): string {
-  if (token.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(token)) {
-    return token;
-  }
-  return `'${token.replaceAll("'", "'\\''")}'`;
-}
-
-/**
  * Build the in-app re-authentication descriptor for a Claude provider
  * instance.
  *
@@ -413,13 +399,21 @@ function posixShellQuote(token: string): string {
  * credentials of that exact instance rather than the default config dir
  * (mirroring {@link makeClaudeEnvironment} used by every other Claude
  * invocation).
+ *
+ * `command` is a plain space-join intended for the common case (`claude` on
+ * PATH, or a path without spaces) and to stay portable across the integrated
+ * terminal's shell — deliberately NOT shell-quoted, since no single quoting
+ * scheme is correct for bash/zsh (`~` expansion), `cmd.exe` (literal single
+ * quotes), and POSIX paths with spaces at once. Callers that need exact argv
+ * (e.g. spawning directly rather than pasting into a shell) should use
+ * `executable` + `args`.
  */
 export const resolveClaudeReauthentication = Effect.fn("resolveClaudeReauthentication")(function* (
   claudeSettings: ClaudeSettings,
 ): Effect.fn.Return<ServerProviderReauthentication, never, Path.Path> {
   const executable = claudeSettings.binaryPath?.trim() || "claude";
   const args = [...CLAUDE_REAUTHENTICATION_ARGS];
-  const command = [executable, ...args].map(posixShellQuote).join(" ");
+  const command = [executable, ...args].join(" ");
   const hasCustomHome = claudeSettings.homePath.trim().length > 0;
   const env = hasCustomHome
     ? { CLAUDE_CONFIG_DIR: yield* resolveClaudeHomePath(claudeSettings) }
