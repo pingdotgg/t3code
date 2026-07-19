@@ -27,6 +27,7 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderAdapterRequestError } from "../Errors.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -245,6 +246,70 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           { step: "Implement the requested change", status: "inProgress" },
         ]);
       }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not wedge the turn when an attachment fails to resolve", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-invalid-attachment-thread");
+
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 4).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const failure = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "What's in this image?",
+          attachments: [
+            {
+              type: "image",
+              id: "../escape-attachments-dir",
+              name: "photo.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.match(failure.detail, /Invalid attachment id/u);
+
+      const sessionsAfterFailure = yield* adapter.listSessions();
+      const sessionAfterFailure = sessionsAfterFailure.find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      assert.isDefined(sessionAfterFailure);
+      assert.isUndefined(sessionAfterFailure?.activeTurnId);
+
+      // A subsequent, valid turn must still work and be the only source
+      // of a turn.started event.
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello mock",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      assert.equal(turnStartedEvents.length, 1);
 
       yield* adapter.stopSession(threadId);
     }),

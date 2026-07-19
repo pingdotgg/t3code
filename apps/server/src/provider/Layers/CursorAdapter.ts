@@ -939,27 +939,11 @@ export function makeCursorAdapter(
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
-          ctx.activeTurnId = turnId;
-          if (steeringTurnId === undefined) {
-            ctx.lastPlanFingerprint = undefined;
-          }
-          ctx.session = {
-            ...ctx.session,
-            activeTurnId: turnId,
-            updatedAt: yield* nowIso,
-          };
-
-          if (steeringTurnId === undefined) {
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model: resolvedModel },
-            });
-          }
-
+          // Validate/build the prompt content BEFORE any turn-state
+          // mutation or turn.started emission below. Attachment validation
+          // can fail (e.g. an unresolvable attachment id) and must not
+          // leave the session with an active turn id and an already-emitted
+          // turn.started — that combination wedges the turn forever.
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
             promptParts.push({ type: "text", text: input.input.trim() });
@@ -1001,6 +985,27 @@ export function makeCursorAdapter(
               provider: PROVIDER,
               operation: "sendTurn",
               issue: "Turn requires non-empty text or attachments.",
+            });
+          }
+
+          ctx.activeTurnId = turnId;
+          if (steeringTurnId === undefined) {
+            ctx.lastPlanFingerprint = undefined;
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
+          };
+
+          if (steeringTurnId === undefined) {
+            yield* offerRuntimeEvent({
+              type: "turn.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: { model: resolvedModel },
             });
           }
 
