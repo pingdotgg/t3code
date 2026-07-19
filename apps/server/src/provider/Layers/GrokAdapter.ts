@@ -42,6 +42,11 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import {
+  extractElicitationQuestions,
+  makeElicitationAcceptedResponse,
+  makeElicitationDeclinedResponse,
+} from "../acp/AcpElicitation.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -736,6 +741,57 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         }
                       : ({ outcome: "cancelled" } as const),
                   };
+                }),
+              ),
+            );
+            yield* acp.handleElicitation((params) =>
+              mapAcpCallbackFailure(
+                Effect.gen(function* () {
+                  yield* logNative(input.threadId, "session/elicitation", params);
+                  // Only form-mode elicitation is renderable through the
+                  // structured user-input flow; url-mode cannot be surfaced here.
+                  if (params.mode !== "form") {
+                    return makeElicitationDeclinedResponse();
+                  }
+                  const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                  const runtimeRequestId = RuntimeRequestId.make(requestId);
+                  const resolution = yield* Deferred.make<PendingUserInputResolution>();
+                  const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                  pendingUserInputs.set(requestId, { resolution });
+                  yield* offerRuntimeEvent({
+                    type: "user-input.requested",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    requestId: runtimeRequestId,
+                    payload: { questions: extractElicitationQuestions(params) },
+                    raw: {
+                      source: "acp.jsonrpc",
+                      method: "session/elicitation",
+                      payload: params,
+                    },
+                  });
+                  const resolved = yield* Deferred.await(resolution);
+                  pendingUserInputs.delete(requestId);
+                  const resolvedAnswers = resolved._tag === "answered" ? resolved.answers : {};
+                  yield* offerRuntimeEvent({
+                    type: "user-input.resolved",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    requestId: runtimeRequestId,
+                    payload: { answers: resolvedAnswers },
+                    raw: {
+                      source: "acp.jsonrpc",
+                      method: "session/elicitation",
+                      payload: params,
+                    },
+                  });
+                  return resolved._tag === "answered"
+                    ? makeElicitationAcceptedResponse(params, resolved.answers)
+                    : makeElicitationDeclinedResponse();
                 }),
               ),
             );

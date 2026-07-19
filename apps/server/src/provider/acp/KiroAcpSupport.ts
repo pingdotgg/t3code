@@ -11,6 +11,16 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const KIRO_DRIVER_KIND = ProviderDriverKind.make("kiro");
 
+/**
+ * Kiro can pause a turn to ask the user for a decision via `session/elicitation`.
+ * Advertising the form capability lets Kiro use structured elicitation, which the
+ * shared ACP adapter surfaces through T3 Code's user-input flow. `url` mode is
+ * intentionally not advertised because the client cannot render URL elicitations.
+ */
+const KIRO_CLIENT_CAPABILITIES = {
+  elicitation: { form: {} },
+} satisfies NonNullable<EffectAcpSchema.InitializeRequest["clientCapabilities"]>;
+
 type KiroAcpRuntimeSettings = Pick<KiroSettings, "binaryPath">;
 
 interface KiroAcpRuntimeInput extends Omit<
@@ -51,6 +61,7 @@ export const makeKiroAcpRuntime = (
       AcpSessionRuntime.layer({
         ...input,
         spawn: buildKiroAcpSpawnInput(input.kiroSettings, input.cwd, input.environment),
+        clientCapabilities: KIRO_CLIENT_CAPABILITIES,
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

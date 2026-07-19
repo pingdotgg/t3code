@@ -30,7 +30,15 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+// The bundle id and product name default to the official T3 Code identity.
+// They can be overridden for personal/side-by-side builds (e.g. installing a
+// custom build alongside the official app) without changing official output:
+//   T3CODE_DESKTOP_APP_ID=com.t3tools.t3code.adi \
+//   T3CODE_DESKTOP_PRODUCT_NAME="T3 Code -Adi" \
+//   vp run dist:desktop:dmg:arm64
+// A distinct app id is required for macOS to treat the build as a separate app
+// rather than replacing the official one.
+const DESKTOP_APP_ID = process.env.T3CODE_DESKTOP_APP_ID?.trim() || "com.t3tools.t3code";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1358,6 +1366,10 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
+  const override = process.env.T3CODE_DESKTOP_PRODUCT_NAME?.trim();
+  if (override) {
+    return override;
+  }
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");

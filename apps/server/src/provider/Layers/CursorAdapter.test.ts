@@ -228,7 +228,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
-        assert.match(String(delta.itemId), /^assistant:mock-session-1:segment:0$/);
+        assert.match(String(delta.itemId), /^assistant:mock-session-1:[a-z0-9-]+:segment:0$/);
       }
 
       const assistantCompleted = runtimeEvents.find(
@@ -248,6 +248,55 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  it.effect(
+    "assigns distinct assistant message ids across runtime instances that share an ACP session id",
+    () =>
+      Effect.gen(function* () {
+        // Regression: a resumed session (session/load) keeps the same ACP
+        // session id but runs in a brand-new runtime whose assistant segment
+        // counter restarts at zero. Before the per-runtime nonce, both runtimes
+        // produced "assistant:mock-session-1:segment:0", so the resumed turn's
+        // reply upserted onto the earlier turn's message row — inheriting its
+        // stale created_at and sorting before the new prompt (reply invisible).
+        // The mock agent always negotiates "mock-session-1", so two sequential
+        // sessions reproduce that shared-session-id precondition.
+        const adapter = yield* CursorAdapter;
+        const settings = yield* ServerSettingsService;
+        const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+        const captureAssistantItemId = (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            const eventsFiber = yield* adapter.streamEvents.pipe(
+              Stream.filter((event) => event.threadId === threadId),
+              Stream.takeUntil((event) => event.type === "turn.completed"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* adapter.startSession({
+              threadId,
+              provider: ProviderDriverKind.make("cursor"),
+              cwd: process.cwd(),
+              runtimeMode: "full-access",
+              modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+            });
+            yield* adapter.sendTurn({ threadId, input: "hello mock", attachments: [] });
+            const events = Array.from(yield* Fiber.join(eventsFiber));
+            yield* adapter.stopSession(threadId);
+            const delta = events.find((event) => event.type === "content.delta");
+            assert.isDefined(delta);
+            return delta?.type === "content.delta" ? String(delta.itemId) : "";
+          });
+
+        const firstItemId = yield* captureAssistantItemId(ThreadId.make("cursor-resume-safety-1"));
+        const secondItemId = yield* captureAssistantItemId(ThreadId.make("cursor-resume-safety-2"));
+
+        assert.match(firstItemId, /^assistant:mock-session-1:[a-z0-9-]+:segment:0$/);
+        assert.match(secondItemId, /^assistant:mock-session-1:[a-z0-9-]+:segment:0$/);
+        assert.notEqual(firstItemId, secondItemId);
+      }),
   );
 
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
@@ -687,7 +736,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (contentDelta?.type === "content.delta") {
             assert.equal(String(contentDelta.turnId), String(turn.turnId));
             assert.equal(contentDelta.payload.delta, "hello from mock");
-            assert.equal(String(contentDelta.itemId), "assistant:mock-session-1:segment:0");
+            assert.match(
+              String(contentDelta.itemId),
+              /^assistant:mock-session-1:[a-z0-9-]+:segment:0$/,
+            );
           }
         });
 

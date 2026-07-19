@@ -283,6 +283,17 @@ export const make = (
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
+    // Assistant item ids are derived from the ACP session id and a per-runtime
+    // segment counter. A resumed session (session/load) keeps the same session
+    // id but a brand-new runtime resets that counter to zero, so without an
+    // instance-scoped nonce a resumed turn's assistant item id would collide
+    // with a message from an earlier turn — the projection would then upsert the
+    // reply onto the stale row, keep its old created_at, and sort it before the
+    // new prompt (making the reply invisible). currentTimeNanos disambiguates
+    // instances across process restarts; the monotonic counter disambiguates
+    // instances created within the same process (and in tests where the clock is
+    // fixed).
+    const assistantIdNonce = `${(yield* Clock.currentTimeNanos).toString(36)}-${nextAcpRuntimeInstanceId().toString(36)}`;
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
@@ -391,6 +402,7 @@ export const make = (
           modeStateRef,
           toolCallsRef,
           assistantSegmentRef,
+          assistantIdNonce,
           params: notification,
         });
       }),
@@ -840,12 +852,14 @@ const handleSessionUpdate = ({
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
+  assistantIdNonce,
   params,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+  readonly assistantIdNonce: string;
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -892,6 +906,7 @@ const handleSessionUpdate = ({
         const itemId = yield* ensureActiveAssistantSegment({
           queue,
           assistantSegmentRef,
+          assistantIdNonce,
           sessionId: params.sessionId,
         });
         yield* Queue.offer(queue, {
@@ -930,16 +945,28 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, segmentIndex: number) =>
-  `assistant:${sessionId}:segment:${segmentIndex}`;
+// Monotonic, process-scoped counter used to disambiguate assistant item id
+// nonces for runtimes created within the same process (including tests, where
+// the clock can be fixed). Combined with a wall-clock component it also stays
+// unique across process restarts.
+let acpRuntimeInstanceCounter = 0;
+const nextAcpRuntimeInstanceId = (): number => {
+  acpRuntimeInstanceCounter += 1;
+  return acpRuntimeInstanceCounter;
+};
+
+const assistantItemId = (assistantIdNonce: string, sessionId: string, segmentIndex: number) =>
+  `assistant:${sessionId}:${assistantIdNonce}:segment:${segmentIndex}`;
 
 const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
+  assistantIdNonce,
   sessionId,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+  readonly assistantIdNonce: string;
   readonly sessionId: string;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
@@ -948,7 +975,7 @@ const ensureActiveAssistantSegment = ({
       if (current.activeItemId) {
         return [{ itemId: current.activeItemId }, current] as const;
       }
-      const itemId = assistantItemId(sessionId, current.nextSegmentIndex);
+      const itemId = assistantItemId(assistantIdNonce, sessionId, current.nextSegmentIndex);
       return [
         {
           itemId,
