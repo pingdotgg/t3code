@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,7 +10,6 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import {
   HostProcessArguments,
-  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
@@ -34,6 +34,7 @@ const makeRecordingRunnerLayer = (
     ProcessRunner.ProcessRunner.of({
       run: (input) =>
         Effect.sync(() => {
+          assert.isUndefined(input.env);
           commands.push({ command: input.command, args: input.args });
           const failed = input.command === options?.failCommand;
           return {
@@ -57,7 +58,7 @@ const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
   Effect.provide(
     Layer.mergeAll(
       Layer.succeed(HostProcessPlatform, platform),
-      Layer.succeed(HostProcessEnvironment, { HOME: home, USER: "theo" }),
+      ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
     ),
   );
 

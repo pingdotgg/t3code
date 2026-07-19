@@ -5,11 +5,11 @@ import {
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Terminal from "effect/Terminal";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -64,27 +64,26 @@ const headlessFlag = Flag.boolean("headless").pipe(
  * Inside an SSH session there is no local browser to complete the loopback
  * OAuth callback, so out-of-band OAuth is the only flow that can work.
  */
-const detectHeadlessSession = Effect.map(
-  HostProcessEnvironment,
-  (env) => env.SSH_CONNECTION !== undefined || env.SSH_TTY !== undefined,
+export const headlessSessionConfig = Config.all({
+  sshConnection: Config.string("SSH_CONNECTION").pipe(Config.option),
+  sshTty: Config.string("SSH_TTY").pipe(Config.option),
+}).pipe(
+  Config.map(({ sshConnection, sshTty }) => Option.isSome(sshConnection) || Option.isSome(sshTty)),
 );
 
-const promptForOutOfBandOAuthCode = ({
-  authorizeUrl,
-  validate,
-}: CliTokenManager.OutOfBandOAuthPromptInput) =>
-  Console.log(`To set up T3 Connect, open this URL and sign in:\n  ${authorizeUrl}\n`).pipe(
-    Effect.andThen(
-      Prompt.run(Prompt.text({ message: "Enter your authentication code", validate })),
-    ),
-  );
+const promptForOutOfBandOAuthCode = Effect.fn("cloud.cli.prompt_for_out_of_band_oauth_code")(
+  function* ({ authorizeUrl, validate }: CliTokenManager.OutOfBandOAuthPromptInput) {
+    yield* Console.log(`To set up T3 Connect, open this URL and sign in:\n  ${authorizeUrl}\n`);
+    return yield* Prompt.run(Prompt.text({ message: "Enter your authentication code", validate }));
+  },
+);
 
 /** Returns the connected account identity, if the flow could determine one. */
 const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   readonly headless: boolean;
 }) {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
-  const useOutOfBandOAuth = options.headless || (yield* detectHeadlessSession);
+  const useOutOfBandOAuth = options.headless || (yield* headlessSessionConfig);
   if (!useOutOfBandOAuth) {
     yield* tokens.get;
     return null;
@@ -92,12 +91,11 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   // A stored credential whose refresh fails (revoked, expired grant) must
   // fall through to a fresh out-of-band authorization, not dead-end the command.
   const existing = yield* tokens.getExisting.pipe(
-    Effect.catchTags({
-      CloudCliCredentialRefreshError: () =>
-        Console.log(
-          "The stored T3 Connect credential could not be refreshed; signing in again.",
-        ).pipe(Effect.as(Option.none())),
-    }),
+    Effect.catchTag("CloudCliCredentialRefreshError", () =>
+      Console.log(
+        "The stored T3 Connect credential could not be refreshed; signing in again.",
+      ).pipe(Effect.as(Option.none())),
+    ),
   );
   if (Option.isSome(existing)) {
     return null;
@@ -392,9 +390,7 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
       Effect.tap((removed) =>
         removed ? Console.log("Removed the T3 Code background service.") : Effect.void,
       ),
-      Effect.catchTags({
-        BootServiceUnsupportedError: () => Effect.succeed(false),
-      }),
+      Effect.catchTag("BootServiceUnsupportedError", () => Effect.succeed(false)),
       Effect.catch((error) =>
         Console.warn(`Could not remove the background service: ${error.message}`).pipe(
           Effect.as(false),
@@ -414,7 +410,7 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
   }
 });
 
-const runCloudCommand = <A, E>(
+const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E>(
   flags: { readonly baseDir: Option.Option<string> },
   run: Effect.Effect<
     A,
@@ -434,30 +430,29 @@ const runCloudCommand = <A, E>(
   options?: {
     readonly quietLogs?: boolean;
   },
-) =>
-  Effect.gen(function* () {
-    const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveCliAuthConfig(flags, logLevel);
-    const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
-    const runtimeLayer = Layer.mergeAll(
-      ServerSecretStore.layer,
-      CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
-      RelayClient.layerCloudflared({ baseDir: config.baseDir }),
-      EnvironmentAuth.runtimeLayer,
-      ServerEnvironment.layer,
-      BootService.layer({
-        baseDir: config.baseDir,
-        logsDir: config.logsDir,
-        cliVersion: packageJson.version,
-      }).pipe(Layer.provide(ProcessRunner.layer)),
-      headlessRelayClientTracingLayer,
-    ).pipe(
-      Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provideMerge(ServerConfig.layer(config)),
-      Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
-    );
-    return yield* run.pipe(Effect.provide(runtimeLayer));
-  });
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
+  const runtimeLayer = Layer.mergeAll(
+    ServerSecretStore.layer,
+    CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+    RelayClient.layerCloudflared({ baseDir: config.baseDir }),
+    EnvironmentAuth.runtimeLayer,
+    ServerEnvironment.layer,
+    BootService.layer({
+      baseDir: config.baseDir,
+      logsDir: config.logsDir,
+      cliVersion: packageJson.version,
+    }).pipe(Layer.provide(ProcessRunner.layer)),
+    headlessRelayClientTracingLayer,
+  ).pipe(
+    Layer.provideMerge(FetchHttpClient.layer),
+    Layer.provideMerge(ServerConfig.layer(config)),
+    Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+  );
+  return yield* run.pipe(Effect.provide(runtimeLayer));
+});
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
 

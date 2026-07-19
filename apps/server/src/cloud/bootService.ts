@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -9,7 +10,6 @@ import * as Schema from "effect/Schema";
 
 import {
   HostProcessArguments,
-  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
@@ -197,12 +197,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     cliEntryPath: hostArguments[1] ?? "",
   };
   const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnvironment;
+  const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
 
-  const homeDir = env.HOME ?? "";
   const unitDir = path.join(homeDir, ".config", "systemd", "user");
   const unitPath = path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
   const logPath = path.join(input.logsDir, "boot-service.log");
@@ -227,7 +226,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     args: ReadonlyArray<string>,
     options?: { readonly timeout?: Duration.Input },
   ) {
-    return yield* runner.run({ command, args, env: { ...env }, timeout: options?.timeout }).pipe(
+    return yield* runner.run({ command, args, timeout: options?.timeout }).pipe(
       Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
       Effect.filterOrFail(
         (result) => result.code === 0,

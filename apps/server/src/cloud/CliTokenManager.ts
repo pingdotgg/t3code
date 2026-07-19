@@ -3,7 +3,6 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
-import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -221,7 +220,7 @@ export const outOfBandOAuthLogin = Effect.fn("cloud.cli_token.out_of_band_oauth_
     // Clerk authorization codes expire on this horizon anyway; matching the
     // loopback flow's timeout turns an abandoned prompt into a clear error.
     Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
-    Effect.catchIf(Cause.isTimeoutError, (cause) =>
+    Effect.catchTag("TimeoutError", (cause) =>
       Effect.fail(new CloudCliAuthorizationTimeoutError({ cause })),
     ),
   );
@@ -329,9 +328,9 @@ export const make = Effect.gen(function* () {
     yield* Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl}\n`);
     const code = yield* Deferred.await(callback).pipe(
       Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: (cause) => Effect.fail(new CloudCliAuthorizationTimeoutError({ cause })),
-      }),
+      Effect.catchTag("TimeoutError", (cause) =>
+        Effect.fail(new CloudCliAuthorizationTimeoutError({ cause })),
+      ),
     );
     const { token } = yield* exchangeToken(metadata, {
       grant_type: "authorization_code",
@@ -369,8 +368,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       // A stored credential that can't be read or refreshed (corrupt, revoked,
       // expired grant) must fall through to a fresh login rather than dead-end
-      // the command — this is the loopback counterpart of authorizeCli's
-      // out-of-band counterpart.
+      // the command — authorizeCli applies the same fallback to out-of-band
+      // authorization.
       const token = yield* getExistingNoLock().pipe(
         Effect.orElseSucceed(() => Option.none<PersistedToken>()),
       );

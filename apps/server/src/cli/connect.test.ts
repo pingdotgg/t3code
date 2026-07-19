@@ -1,6 +1,7 @@
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -10,9 +11,13 @@ import * as References from "effect/References";
 
 import {
   acquireRelayClientForLink,
+  headlessSessionConfig,
   isPublishAgentActivityEnabledValue,
   reportCloudDisconnectResults,
 } from "./connect.ts";
+
+const readHeadlessSessionConfig = (env: Record<string, string>) =>
+  headlessSessionConfig.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))));
 
 const managedExecutable = {
   status: "available",
@@ -20,6 +25,15 @@ const managedExecutable = {
   source: "managed",
   version: RelayClient.CLOUDFLARED_VERSION,
 } as const;
+
+it.effect("detects headless operation from individual SSH config values", () =>
+  Effect.gen(function* () {
+    assert.isFalse(yield* readHeadlessSessionConfig({}));
+    assert.isFalse(yield* readHeadlessSessionConfig({ CI: "true" }));
+    assert.isTrue(yield* readHeadlessSessionConfig({ SSH_CONNECTION: "client server" }));
+    assert.isTrue(yield* readHeadlessSessionConfig({ SSH_TTY: "/dev/pts/1" }));
+  }),
+);
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
   Effect.gen(function* () {
