@@ -588,9 +588,13 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  // One-time migration for settings.json files that still carry a plaintext
+  // Migration for settings.json files that still carry a plaintext
   // `linear.apiKey`: move it into the secret store and rewrite the file with
-  // the placeholder so the raw key never lingers on disk.
+  // the placeholder so the raw key never lingers on disk. Runs at startup and
+  // again on every watcher-driven reload, so a plaintext key reintroduced while
+  // the server is running (hand edit, backup restore, older client) is secured
+  // promptly rather than only at the next restart. Idempotent once the key is
+  // already a placeholder.
   const migrateLinearApiKeyToSecretStore = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
       const current = yield* getSettingsFromCache;
@@ -634,6 +638,9 @@ const make = Effect.gen(function* () {
     );
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+    const migrateLinearApiKeyToSecretStoreSafely = migrateLinearApiKeyToSecretStore.pipe(
+      Effect.ignoreCause({ log: true }),
+    );
 
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
@@ -649,11 +656,12 @@ const make = Effect.gen(function* () {
       Stream.debounce(Duration.millis(100)),
     );
 
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    yield* Stream.runForEach(debouncedSettingsEvents, () =>
+      // Revalidate first so migration reads the freshly reloaded settings, then
+      // secure any plaintext `linear.apiKey` the reload brought in. Each step
+      // takes one `writeSemaphore` permit, sequentially — never nested.
+      revalidateAndEmitSafely.pipe(Effect.andThen(migrateLinearApiKeyToSecretStoreSafely)),
+    ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
   });
 
   const start = Effect.gen(function* () {

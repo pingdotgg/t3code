@@ -702,4 +702,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(materialized.linear.apiKey, "");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("migrates a plaintext Linear API key found in settings.json", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      // A plaintext key on disk (hand edit / backup restore / older client).
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"linear":{"apiKey":"lin_plaintext"}}',
+      );
+
+      // `start` runs the same migration the file watcher invokes on reload.
+      yield* serverSettings.start;
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "lin_plaintext");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).linear, { apiKeySet: true });
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "lin_plaintext");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

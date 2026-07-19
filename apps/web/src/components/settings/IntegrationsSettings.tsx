@@ -77,29 +77,33 @@ function LinearIntegrationRow() {
     // Only act on the refetch we triggered after persisting: arming happens
     // immediately before status.refresh(), so an incidental revalidation that
     // emits stale (pre-commit) data during the persist await cannot resolve the
-    // pending state early and flash an error.
+    // pending state early and flash an error. A stale pre-arm error can't leak
+    // through either: refresh marks the result waiting synchronously, so while
+    // isPending is true this early-returns, and only the fresh settle resolves.
     if (pending === null || !resolveArmedRef.current || status.isPending) {
       return;
     }
-    // Resolve once the refetch has settled: a completed refresh re-decodes the
-    // status into a new object, so a changed identity means fresh data has
-    // arrived. This cannot miss the transition even if the pending render is
-    // coalesced away by a fast response.
-    if (status.data === refreshedFromRef.current) {
+    // Resolve once the refetch has settled. A completed refresh re-decodes the
+    // status into a new object, so a changed identity means fresh data arrived.
+    // A failed refetch keeps the previous success value (same identity) but
+    // surfaces an error, so treat a non-null error as a settle too — otherwise
+    // an errored refetch never changes identity and the pending state sticks.
+    const settledWithError = status.error !== null;
+    if (status.data === refreshedFromRef.current && !settledWithError) {
       return;
     }
     resolveArmedRef.current = false;
     const wasConnect = pending === "connect";
     setPending(null);
     if (wasConnect) {
-      if (status.data?.connected) {
+      if (!settledWithError && status.data?.connected) {
         setApiKey("");
         setError(null);
       } else {
         setError(INVALID_KEY_MESSAGE);
       }
     }
-  }, [pending, status.data, status.isPending]);
+  }, [pending, status.data, status.error, status.isPending]);
 
   // Once genuinely connected, no connect-flow error can still be valid; clear
   // any that a race left stranded. A failed disconnect keeps its own error,
