@@ -1,16 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeAssert from "node:assert/strict";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -1034,30 +1032,29 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
   it.effect("treats lexically or physically identical directories as the same", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sameDirectory = (left: string, right: string) =>
+        isSameOpenCodeDirectory(fileSystem, path, left, right);
+
       // Lexical-only differences (trailing slash, dot segments) short-circuit
       // without touching the filesystem — the paths need not exist.
-      NodeAssert.equal(yield* isSameOpenCodeDirectory("/repo/project/", "/repo/project"), true);
-      NodeAssert.equal(
-        yield* isSameOpenCodeDirectory("/repo/nested/../project", "/repo/project"),
-        true,
-      );
+      NodeAssert.equal(yield* sameDirectory("/repo/project/", "/repo/project"), true);
+      NodeAssert.equal(yield* sameDirectory("/repo/nested/../project", "/repo/project"), true);
       // Distinct nonexistent paths degrade to the lexical comparison instead
       // of failing (covers directories recorded by an external OpenCode server
       // that don't exist on this machine, or since-deleted worktrees).
-      NodeAssert.equal(yield* isSameOpenCodeDirectory("/repo/project", "/repo/other"), false);
+      NodeAssert.equal(yield* sameDirectory("/repo/project", "/repo/other"), false);
 
       // A symlinked cwd (the macOS `/tmp` → `/private/tmp` shape) resolves to
       // the directory it points at, so the two spellings compare equal.
-      const base = yield* Effect.acquireRelease(
-        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-opencode-dir-"))),
-        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
-      );
-      const real = NodePath.join(base, "real");
-      const link = NodePath.join(base, "link");
-      yield* Effect.promise(() => NodeFSP.mkdir(real));
-      yield* Effect.promise(() => NodeFSP.symlink(real, link));
-      NodeAssert.equal(yield* isSameOpenCodeDirectory(link, real), true);
-      NodeAssert.equal(yield* isSameOpenCodeDirectory(link, NodePath.join(base, "other")), false);
+      const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-opencode-dir-" });
+      const real = path.join(base, "real");
+      const link = path.join(base, "link");
+      yield* fileSystem.makeDirectory(real);
+      yield* fileSystem.symlink(real, link);
+      NodeAssert.equal(yield* sameDirectory(link, real), true);
+      NodeAssert.equal(yield* sameDirectory(link, path.join(base, "other")), false);
     }).pipe(Effect.scoped),
   );
 

@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-
 import {
   EventId,
   type OpenCodeSettings,
@@ -21,6 +17,8 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -156,23 +154,34 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
  * segment, or a symlinked cwd (macOS `/tmp` → `/private/tmp`) — and every
  * false mismatch needlessly forks the session and repoints the durable
  * cursor at the clone. Lexically equal paths short-circuit without touching
- * the filesystem; otherwise both sides are compared through `realpath`, each
+ * the filesystem; otherwise both sides are compared through `realPath`, each
  * falling back to its lexical form when resolution fails (directory since
  * deleted, or a path recorded by an external OpenCode server that doesn't
- * exist on this machine). Because the lexical check runs first, the realpath
+ * exist on this machine). Because the lexical check runs first, the realPath
  * pass can only ever turn a spurious mismatch into a match — it can never
- * split paths that compare equal today. Exported for unit testing.
+ * split paths that compare equal today. Takes the platform services as plain
+ * arguments so the adapter's methods keep their service-free signatures — the
+ * services are resolved once in `makeOpenCodeAdapter`. Exported for unit
+ * testing.
  */
-export function isSameOpenCodeDirectory(left: string, right: string): Effect.Effect<boolean> {
-  return Effect.promise(async () => {
-    const lexicalLeft = NodePath.resolve(left);
-    const lexicalRight = NodePath.resolve(right);
-    if (lexicalLeft === lexicalRight) {
-      return true;
-    }
-    const canonicalize = (lexical: string) => NodeFSP.realpath(lexical).catch(() => lexical);
-    return (await canonicalize(lexicalLeft)) === (await canonicalize(lexicalRight));
-  });
+export function isSameOpenCodeDirectory(
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  left: string,
+  right: string,
+): Effect.Effect<boolean> {
+  const lexicalLeft = path.resolve(left);
+  const lexicalRight = path.resolve(right);
+  if (lexicalLeft === lexicalRight) {
+    return Effect.succeed(true);
+  }
+  const canonicalize = (lexical: string) =>
+    fileSystem.realPath(lexical).pipe(Effect.orElseSucceed(() => lexical));
+  return Effect.zipWith(
+    canonicalize(lexicalLeft),
+    canonicalize(lexicalRight),
+    (canonicalLeft, canonicalRight) => canonicalLeft === canonicalRight,
+  );
 }
 
 interface OpenCodeTurnSnapshot {
@@ -581,6 +590,10 @@ export function makeOpenCodeAdapter(
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const crypto = yield* Crypto.Crypto;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const sameDirectory = (left: string, right: string) =>
+      isSameOpenCodeDirectory(fileSystem, path, left, right);
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -1273,8 +1286,7 @@ export function makeOpenCodeAdapter(
                 // forked into the new directory below rather than reused in place.
                 const reusable =
                   adopted &&
-                  (!adopted.directory ||
-                    (yield* isSameOpenCodeDirectory(adopted.directory, directory)))
+                  (!adopted.directory || (yield* sameDirectory(adopted.directory, directory)))
                     ? adopted
                     : undefined;
 
