@@ -5343,22 +5343,26 @@ function ChatViewContent(props: ChatViewProps) {
                 <div className="pointer-events-auto relative z-10 isolate">
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
-                      <div
-                        className="pb-8"
-                        style={
-                          forceExpandedMobileComposer
-                            ? {
-                                viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
-                              }
-                            : undefined
+                      <ComposerBannerStack
+                        className="relative z-0"
+                        header={
+                          <div
+                            style={
+                              forceExpandedMobileComposer
+                                ? {
+                                    viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+                                  }
+                                : undefined
+                            }
+                          >
+                            <DraftHeroHeadline
+                              activeProjectRef={activeProjectRef}
+                              activeProjectTitle={activeProject?.title ?? null}
+                            />
+                          </div>
                         }
-                      >
-                        <DraftHeroHeadline
-                          activeProjectRef={activeProjectRef}
-                          activeProjectTitle={activeProject?.title ?? null}
-                        />
-                      </div>
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                        items={composerBannerItems}
+                      />
                     </div>
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
