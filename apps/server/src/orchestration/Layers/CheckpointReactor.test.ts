@@ -1066,6 +1066,88 @@ describe("CheckpointReactor", () => {
     });
   });
 
+  it("rewinds legacy conversation history when no filesystem checkpoints exist", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-legacy-only-session-set"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    for (const turnNumber of [1, 2]) {
+      const turnId = asTurnId(`legacy-only-turn-${turnNumber}`);
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-legacy-only-user-${turnNumber}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`legacy-only-user-${turnNumber}`),
+            role: "user",
+            text: `User ${turnNumber}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-legacy-only-assistant-delta-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-only-assistant-${turnNumber}`),
+          delta: `Assistant ${turnNumber}`,
+          turnId,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-legacy-only-assistant-complete-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-only-assistant-${turnNumber}`),
+          turnId,
+          createdAt,
+        }),
+      );
+    }
+
+    runGit(harness.cwd, ["update-ref", "-d", checkpointRefForThreadTurn(threadId, 1)]);
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-legacy-only-revert"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId,
+      numTurns: 1,
+    });
+  });
+
   it("does not rewind conversation when a shadow filesystem checkpoint is missing", async () => {
     const workspace = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-shadow-revert-"));
     tempDirs.push(workspace);
