@@ -1,0 +1,9 @@
+[mcp_servers.xcodebuildmcp]
+enabled = true
+required = false
+command = "npx"
+args = ["--yes", "xcodebuildmcp@2.6.2", "mcp"]
+startup_timeout_sec = 20.0
+
+[mcp_servers.xcodebuildmcp.env]
+XCODEBUILDMCP_ENABLED_WORKFLOWS = "simulator,ui-automation,debugging,logging"

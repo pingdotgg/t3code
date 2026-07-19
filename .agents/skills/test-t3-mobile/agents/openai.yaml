@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test T3 Mobile"
+  short_description: "Test T3 Code on iOS or Android"
+  default_prompt: "Use $test-t3-mobile to launch T3 Code against an isolated backend and verify the affected flow on an available simulator or emulator."

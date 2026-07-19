@@ -58,6 +58,9 @@ export function ConnectionSheetButton(props: {
 
   return (
     <Pressable
+      accessibilityLabel={props.label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled ?? false }}
       className={cn(
         props.compact
           ? "min-h-[42px] flex-row items-center justify-center gap-1.5 rounded-[14px] px-3.5 py-2.5"
