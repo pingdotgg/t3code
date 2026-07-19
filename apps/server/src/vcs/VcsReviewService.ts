@@ -196,6 +196,11 @@ export const make = Effect.gen(function* () {
     "VcsReviewService.prepareReview",
   )(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": "jj",
+        "vcs.workflow": "sync",
+        "vcs.operation": "prepare-review",
+      });
       const { driver, repositoryRoot } = yield* resolveJjDriver(input.cwd);
       const bookmarkName = `t3code-review-${input.changeRequestNumber}`;
       let remoteName = input.remoteName?.trim() ?? "";

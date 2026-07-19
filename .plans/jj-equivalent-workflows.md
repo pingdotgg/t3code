@@ -1,6 +1,6 @@
 # jj Equivalent Workflows Plan
 
-Status: Phases 0-6 implemented locally; Phase 7 next
+Status: Phases 0-10 implemented locally; required repository validation passes
 
 Scope: server, shared contracts, web, mobile, provider integrations, tests, and documentation
 
@@ -299,6 +299,11 @@ Exit criteria:
 
 ### Phase 7: pull-request checkout
 
+Implementation status: implemented locally. Provider change-request checkout now routes colocated
+jj repositories through a dedicated review service. It creates a deterministic review bookmark,
+starts an empty local change or isolated workspace from the published head, reuses repeated
+checkouts, and adds fork remotes without moving the published revision.
+
 Implement review checkout without editing published history accidentally.
 
 Tasks:
@@ -318,6 +323,11 @@ Exit criteria:
 - current-workspace and isolated-workspace modes behave consistently.
 
 ### Phase 8: checkpoints and rollback
+
+Implementation status: implemented locally. JJ checkpoints snapshot `@`, retain its commit through
+hidden Git refs, store operation/revision metadata in hidden blob refs, diff recorded commits, and
+restore content plus description with jj-native commands. Capture/delete update retention anchors
+through the generic checkpoint driver contract; repository-wide operation restore is never used.
 
 Use jj’s snapshot and operation model, but keep rollback thread-local.
 
@@ -343,6 +353,11 @@ Exit criteria:
 
 ### Phase 9: client semantics and settings
 
+Implementation status: implemented locally. Shared client-runtime presentation selectors provide
+Git branch/worktree and jj bookmark/workspace language to web and mobile. PR checkout, source-control
+progress, version-control settings, and mobile ref/workspace surfaces use the detected driver while
+keeping compatibility RPC field names unchanged.
+
 Expose capabilities and jj terms without duplicating whole clients.
 
 Tasks:
@@ -365,6 +380,12 @@ Exit criteria:
 - Git terminology and behavior remain unchanged for Git repositories.
 
 ### Phase 10: rollout, observability, and documentation
+
+Implementation status: implemented locally. Workflow spans carry only safe VCS kind/workflow/operation
+attributes, user setup and recovery documentation is published, colocation limits are explicit, and
+pure/non-colocated jj support has a separate proposal. The initial mutation gate is considered
+graduated because workspace, provider, and durable-checkpoint criteria now pass; no permanent gate
+is retained in the completed implementation.
 
 Ship progressively.
 

@@ -291,6 +291,11 @@ export const make = Effect.gen(function* () {
     "VcsChangeService.prepareMessageContext",
   )(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": "jj",
+        "vcs.workflow": "change",
+        "vcs.operation": "prepare-message-context",
+      });
       const driver = yield* resolveJjDriver(input.cwd);
       const selected = yield* snapshotAndSelect({
         driver,
@@ -335,6 +340,11 @@ export const make = Effect.gen(function* () {
     "VcsChangeService.finalizeChange",
   )(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": "jj",
+        "vcs.workflow": "change",
+        "vcs.operation": "finalize",
+      });
       const message = input.message.trim();
       if (message.length === 0) {
         return yield* changeError({

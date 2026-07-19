@@ -1,6 +1,6 @@
 # jj command contract
 
-Status: Phases 0-6 implemented; pull-request checkout begins in Phase 7.
+Status: Phases 0-10 implemented for colocated Git-backed repositories.
 
 ## Compatibility
 
@@ -96,6 +96,9 @@ Commands below omit the standard `--color=never --no-pager` prefix and repositor
 | Add remote                 | `jj git remote add <name> <url>`                           | Exit status; redact URL credentials                                 |
 | Fetch                      | `jj git fetch --remote <remote>`                           | Exit status; then reread bookmarks                                  |
 | Push one bookmark          | `jj git push --remote <remote> --bookmark exact:<name>`    | Exit status; never push all bookmarks                               |
+| Prepare review bookmark    | `jj bookmark set t3code-review-<number> -r <head>`         | Deterministic local bookmark; published head remains unchanged      |
+| Start local review         | `jj new <review-head>`                                     | New empty change on the published review revision                   |
+| Retain checkpoint          | hidden `git update-ref` transaction                        | Commit anchor plus metadata blob ref; never pushed                  |
 
 ## Remote synchronization safety
 
@@ -174,10 +177,14 @@ A jj checkpoint record contains:
 ```ts
 interface JjCheckpointMetadata {
   readonly operationId: string;
-  readonly workspaceName: string;
-  readonly commitId: string;
-  readonly changeId: string;
-  readonly description: string;
+  readonly checkpointRef: string;
+  readonly revision: {
+    readonly commitId: string;
+    readonly changeId: string;
+    readonly parents: readonly string[];
+    readonly description: string;
+  };
+  readonly workingCopies: readonly unknown[];
 }
 ```
 
@@ -186,7 +193,8 @@ Capture sequence:
 1. Run `jj util snapshot`.
 2. Read `@` with the revision JSON template.
 3. Read the current operation with the operation JSON template.
-4. Persist the metadata atomically with the T3 Code checkpoint.
+4. Write the metadata as a Git object.
+5. Atomically update the hidden checkpoint commit ref and its hidden metadata ref.
 
 Restore sequence:
 
@@ -197,9 +205,21 @@ Restore sequence:
 
 Do not use `jj op restore`. It changes repository-wide operation state and can affect unrelated workspaces.
 
-The smoke test proves the recorded commit remains resolvable after process restart and `jj util gc --expire now`, then proves restore leaves a sibling workspace and publish bookmark unchanged.
+Hidden refs under `refs/t3code/` retain checkpoint commits and metadata in the colocated Git object
+store. They are local implementation refs, are not bookmarks, and are never included in jj publish
+commands. Deleting a checkpoint removes both refs together through the driver contract.
 
-Retention promise: checkpoint revisions are retained while their operation remains in jj's operation log. T3 Code must not abandon checkpoint operations during the product checkpoint retention window. External `jj op abandon` can invalidate that promise and must produce an expired-checkpoint error, never a fallback repository-wide restore.
+Retention follows the product checkpoint timeline: hidden commit and metadata refs remain until the
+checkpoint reactor expires or deletes that timeline entry. Restore ownership is still scoped by the
+thread/workspace orchestration layer. A missing ref produces an unavailable-checkpoint result, never
+a repository-wide fallback restore.
+
+## Colocation boundary
+
+T3 Code uses jj commands for repository semantics. Direct Git commands inside the jj driver are
+limited to hidden checkpoint retention refs in the shared Git object store. Provider compatibility
+may also invoke Git-aware hosting tools with explicit repository and bookmark context. Neither
+boundary may infer a current bookmark, push hidden refs, or mutate unrelated workspaces.
 
 ## Implemented evidence
 

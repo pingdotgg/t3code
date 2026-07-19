@@ -366,6 +366,11 @@ export const make = Effect.gen(function* () {
   )(
     function* (input) {
       const handle = yield* registry.resolve({ cwd: input.cwd });
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": handle.kind,
+        "vcs.workflow": "workspace",
+        "vcs.operation": "create",
+      });
       if (handle.kind === "jj") {
         return yield* createJjWorkspace(input, handle.driver, handle.repository.rootPath);
       }
@@ -441,6 +446,11 @@ export const make = Effect.gen(function* () {
     "VcsWorkspaceService.ensureThreadWorkspace",
   )(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": input.workspace.driverKind,
+        "vcs.workflow": "workspace",
+        "vcs.operation": "ensure",
+      });
       if (input.workspace.driverKind !== "jj") {
         return input.workspace;
       }
@@ -495,6 +505,11 @@ export const make = Effect.gen(function* () {
     "VcsWorkspaceService.removeThreadWorkspace",
   )(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": input.workspace.driverKind,
+        "vcs.workflow": "workspace",
+        "vcs.operation": "remove",
+      });
       if (input.workspace.driverKind === "git") {
         yield* gitWorkflow.removeWorktree({
           cwd: input.cwd,

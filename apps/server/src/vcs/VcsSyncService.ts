@@ -264,6 +264,11 @@ export const make = Effect.gen(function* () {
 
   const fetch: VcsSyncService["Service"]["fetch"] = Effect.fn("VcsSyncService.fetch")(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": "jj",
+        "vcs.workflow": "sync",
+        "vcs.operation": "fetch",
+      });
       const driver = yield* resolveJjDriver(input.cwd);
       const remoteName = yield* resolveRemoteName(driver, input.cwd, input.remoteName);
       yield* driver.execute({
@@ -379,6 +384,11 @@ export const make = Effect.gen(function* () {
 
   const publish: VcsSyncService["Service"]["publish"] = Effect.fn("VcsSyncService.publish")(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": "jj",
+        "vcs.workflow": "sync",
+        "vcs.operation": "publish",
+      });
       if (input.publishRef.kind !== "bookmark") {
         return yield* syncError({
           operation: "publish",
@@ -448,6 +458,11 @@ export const make = Effect.gen(function* () {
     "VcsSyncService.readRangeContext",
   )(
     function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.kind": "jj",
+        "vcs.workflow": "sync",
+        "vcs.operation": "read-range-context",
+      });
       const driver = yield* resolveJjDriver(input.cwd);
       const base = quoteJjSymbol(input.baseRevision);
       const target = quoteJjSymbol(input.targetRevision);
