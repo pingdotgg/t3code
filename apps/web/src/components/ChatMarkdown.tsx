@@ -42,6 +42,7 @@ import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { isExternalWebLink, showExternalLinkContextMenu } from "./chat/externalLinkContextMenu";
 import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
@@ -76,6 +77,7 @@ import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
@@ -1410,37 +1412,30 @@ function ChatMarkdown({
                 }
               }}
               onContextMenu={(event) => {
-                if (!canOpenInPreview || !href) return;
+                if (!canOpenInPreview || !href || !isExternalWebLink(href)) return;
                 event.preventDefault();
                 event.stopPropagation();
                 const api = readLocalApi();
                 if (!api) return;
-                void (async () => {
-                  let operation = "show-link-context-menu";
-                  try {
-                    const clicked = await api.contextMenu.show(
-                      [
-                        { id: "open-in-browser", label: "Open in integrated browser" },
-                        { id: "open-external", label: "Open in system browser" },
-                      ] as const,
-                      { x: event.clientX, y: event.clientY },
-                    );
-                    if (clicked === "open-in-browser") {
-                      operation = "open-link-in-preview";
-                      const result = await openExternalLinkInPreview(href);
-                      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                        reportMarkdownActionFailure({ operation, target: href }, result.cause);
-                      }
-                      return;
+                void showExternalLinkContextMenu({
+                  href,
+                  position: { x: event.clientX, y: event.clientY },
+                  showContextMenu: (items, position) => api.contextMenu.show(items, position),
+                  openInBrowser: async (target) => {
+                    const result = await openExternalLinkInPreview(target);
+                    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                      reportMarkdownActionFailure(
+                        { operation: "open-link-in-preview", target },
+                        result.cause,
+                      );
                     }
-                    if (clicked === "open-external") {
-                      operation = "open-link-external";
-                      await api.shell.openExternal(href);
-                    }
-                  } catch (cause) {
+                  },
+                  openExternal: (target) => api.shell.openExternal(target),
+                  copyLink: (target) => writeTextToClipboard(target, "link"),
+                  reportFailure: (operation, cause) => {
                     reportMarkdownActionFailure({ operation, target: href }, cause);
-                  }
-                })();
+                  },
+                });
               }}
             >
               {faviconHost ? (
