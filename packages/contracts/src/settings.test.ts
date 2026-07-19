@@ -42,6 +42,13 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.openrouter.enabled).toBe(true);
+    expect(decoded.providers.openrouter.apiKey).toBe("");
+    expect(decoded.providers.openrouter.baseUrl).toBe("https://openrouter.ai/api");
+    expect(decoded.providers.openrouter.binaryPath).toBe("claude");
+    expect(decoded.providers.openrouter.httpReferer).toBe("");
+    expect(decoded.providers.openrouter.appTitle).toBe("T3 Code");
+    expect(decoded.providers.openrouter.customModels).toEqual([]);
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
