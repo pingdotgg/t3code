@@ -652,7 +652,7 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps a healthy session when the application becomes active", () =>
+  it.effect("probes the active session without reconnecting on application activation", () =>
     Effect.gen(function* () {
       const probeCount = yield* Ref.make(0);
       const probeCalled = yield* Deferred.make<void>();
