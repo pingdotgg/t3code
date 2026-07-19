@@ -50,14 +50,6 @@ export function buildAgentAwarenessDeepLink(input: {
   return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
 }
 
-export function isTerminalAgentAwarenessPhase(phase: AgentAwarenessPhase): boolean {
-  return phase === "completed" || phase === "failed";
-}
-
-export function isInterruptiveAgentAwarenessPhase(phase: AgentAwarenessPhase): boolean {
-  return phase === "waiting_for_approval" || phase === "waiting_for_input" || phase === "failed";
-}
-
 export function projectThreadAwareness(
   input: ProjectThreadAwarenessInput,
 ): AgentAwarenessState | null {
