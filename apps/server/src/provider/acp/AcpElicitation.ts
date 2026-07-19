@@ -40,15 +40,17 @@ function truncateHeader(value: string): string {
 
 function formRequestedSchema(request: EffectAcpSchema.ElicitationRequest): {
   properties: Record<string, ElicitationPropertyLike>;
+  required: ReadonlyArray<string>;
   title?: string;
   description?: string;
 } {
   if (request.mode !== "form") {
-    return { properties: {} };
+    return { properties: {}, required: [] };
   }
   const schema = request.requestedSchema;
   return {
     properties: (schema.properties ?? {}) as Record<string, ElicitationPropertyLike>,
+    required: schema.required ?? [],
     ...(trimmed(schema.title) ? { title: trimmed(schema.title)! } : {}),
     ...(trimmed(schema.description) ? { description: trimmed(schema.description)! } : {}),
   };
@@ -104,6 +106,9 @@ export function extractElicitationQuestions(
       },
     ];
   }
+  // Fields not listed in `required` must not block submission, otherwise the
+  // user is forced to invent values for optional properties to accept the form.
+  const requiredKeys = new Set(schema.required);
   return keys.map((key) => {
     const property = schema.properties[key]!;
     return {
@@ -112,6 +117,7 @@ export function extractElicitationQuestions(
       question: trimmed(property.description) ?? trimmed(property.title) ?? key,
       options: optionsForProperty(property),
       multiSelect: false,
+      optional: !requiredKeys.has(key),
     } satisfies UserInputQuestion;
   });
 }
@@ -144,7 +150,17 @@ function coerceAnswer(
     return undefined;
   }
   if (property.type === "boolean") {
-    return value === "Yes" || value.toLowerCase() === "true";
+    // Only accept recognized boolean representations. Because the UI allows
+    // free-text answers, unrecognized input must not silently become `false` —
+    // return undefined so the key is omitted from the response instead.
+    const normalized = value.toLowerCase();
+    if (normalized === "yes" || normalized === "true") {
+      return true;
+    }
+    if (normalized === "no" || normalized === "false") {
+      return false;
+    }
+    return undefined;
   }
   if (property.type === "number" || property.type === "integer") {
     const parsed = Number(value);

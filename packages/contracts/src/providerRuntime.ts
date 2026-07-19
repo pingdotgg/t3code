@@ -446,6 +446,11 @@ export const UserInputQuestion = Schema.Struct({
   multiSelect: Schema.optional(Schema.Boolean).pipe(
     Schema.withConstructorDefault(Effect.succeed(false)),
   ),
+  // When true, the submission flow may be completed without answering this
+  // question. Defaults to false so existing (required) questions are unchanged.
+  optional: Schema.optional(Schema.Boolean).pipe(
+    Schema.withConstructorDefault(Effect.succeed(false)),
+  ),
 });
 export type UserInputQuestion = typeof UserInputQuestion.Type;
 

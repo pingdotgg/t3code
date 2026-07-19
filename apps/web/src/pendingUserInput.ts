@@ -111,6 +111,11 @@ export function buildPendingUserInputAnswers(
   for (const question of questions) {
     const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
     if (!answer) {
+      // Optional questions can be left unanswered; only required questions
+      // block submission. Unanswered optional questions are simply omitted.
+      if (question.optional) {
+        continue;
+      }
       return null;
     }
     answers[question.id] = answer;
@@ -167,6 +172,6 @@ export function derivePendingUserInputProgress(
     answeredQuestionCount,
     isLastQuestion,
     isComplete: buildPendingUserInputAnswers(questions, draftAnswers) !== null,
-    canAdvance: Boolean(resolvedAnswer),
+    canAdvance: Boolean(resolvedAnswer) || activeQuestion?.optional === true,
   };
 }

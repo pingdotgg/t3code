@@ -248,3 +248,51 @@ describe("pending user input question progress", () => {
     });
   });
 });
+
+describe("optional questions", () => {
+  const requiredQuestion = {
+    id: "required",
+    header: "Required",
+    question: "Pick a value",
+    options: [{ label: "A", description: "A" }],
+    multiSelect: false,
+  } as const;
+  const optionalQuestion = {
+    id: "optional",
+    header: "Optional",
+    question: "Extra notes",
+    options: [],
+    multiSelect: false,
+    optional: true,
+  } as const;
+
+  it("does not block submission when only optional questions are unanswered", () => {
+    const answers = buildPendingUserInputAnswers([requiredQuestion, optionalQuestion], {
+      required: { selectedOptionLabels: ["A"] },
+    });
+    // Required answered, optional omitted -> submission allowed, optional key absent.
+    expect(answers).toEqual({ required: "A" });
+  });
+
+  it("still blocks submission when a required question is unanswered", () => {
+    expect(
+      buildPendingUserInputAnswers([requiredQuestion, optionalQuestion], {
+        optional: { customAnswer: "just notes" },
+      }),
+    ).toBeNull();
+  });
+
+  it("includes optional answers when they are provided", () => {
+    expect(
+      buildPendingUserInputAnswers([requiredQuestion, optionalQuestion], {
+        required: { selectedOptionLabels: ["A"] },
+        optional: { customAnswer: "extra" },
+      }),
+    ).toEqual({ required: "A", optional: "extra" });
+  });
+
+  it("allows advancing past an unanswered optional question", () => {
+    const progress = derivePendingUserInputProgress([optionalQuestion, requiredQuestion], {}, 0);
+    expect(progress.canAdvance).toBe(true);
+  });
+});
