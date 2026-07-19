@@ -44,6 +44,7 @@ describe("ServerProvider", () => {
         executable: "claude",
         args: ["setup-token"],
         label: "Re-authenticate Claude",
+        env: { CLAUDE_CONFIG_DIR: "/home/dev/.claude_work" },
       },
       checkedAt: "2026-04-10T00:00:00.000Z",
       models: [],
@@ -53,6 +54,9 @@ describe("ServerProvider", () => {
     expect(parsed.reauthentication?.executable).toBe("claude");
     expect(parsed.reauthentication?.args).toEqual(["setup-token"]);
     expect(parsed.reauthentication?.label).toBe("Re-authenticate Claude");
+    expect(parsed.reauthentication?.env).toEqual({
+      CLAUDE_CONFIG_DIR: "/home/dev/.claude_work",
+    });
   });
 
   it("defaults re-authentication args when omitted", () => {

@@ -178,7 +178,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+          makePendingClaudeProvider(settings.provider).pipe(
+            Effect.map(stampIdentity),
+            Effect.provideService(Path.Path, path),
+          ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {

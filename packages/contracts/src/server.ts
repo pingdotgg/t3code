@@ -74,6 +74,14 @@ export const ServerProviderReauthentication = Schema.Struct({
   executable: TrimmedNonEmptyString,
   args: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   label: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Environment overrides the login command must run with so it targets the
+   * same account/config as the provider instance — e.g. `CLAUDE_CONFIG_DIR`
+   * for a Claude instance with a custom home. Only non-secret isolation
+   * variables belong here; the client layers them onto the terminal
+   * environment when launching the command.
+   */
+  env: Schema.optional(Schema.Record(TrimmedNonEmptyString, Schema.String)),
 });
 export type ServerProviderReauthentication = typeof ServerProviderReauthentication.Type;
 

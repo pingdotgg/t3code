@@ -38,7 +38,7 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeEnvironment, resolveClaudeHomePath } from "../Drivers/ClaudeHome.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -383,6 +383,20 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
 const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
 
 /**
+ * Quote a token for a POSIX shell (bash/zsh, the default integrated-terminal
+ * shells on macOS/Linux). Tokens made only of safe characters are left as-is
+ * so the common `claude setup-token` stays readable; anything else — e.g. a
+ * configured binary path containing spaces — is single-quoted so it is not
+ * word-split or interpreted when the client pastes the command line.
+ */
+function posixShellQuote(token: string): string {
+  if (token.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(token)) {
+    return token;
+  }
+  return `'${token.replaceAll("'", "'\\''")}'`;
+}
+
+/**
  * Build the in-app re-authentication descriptor for a Claude provider
  * instance.
  *
@@ -391,22 +405,33 @@ const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
  * fresh long-lived token. Surfacing this to the client lets users recover
  * from an expired Claude OAuth access token — e.g. a
  * `401 OAuth access token has expired` turn failure — from within T3 Code's
- * integrated terminal instead of dropping to an external shell. The configured
- * `binaryPath` is preserved so custom Claude installs re-authenticate the same
- * binary they run.
+ * integrated terminal instead of dropping to an external shell.
+ *
+ * The configured `binaryPath` is preserved so custom Claude installs
+ * re-authenticate the same binary they run, and `CLAUDE_CONFIG_DIR` is
+ * propagated for instances with a custom home so `setup-token` refreshes the
+ * credentials of that exact instance rather than the default config dir
+ * (mirroring {@link makeClaudeEnvironment} used by every other Claude
+ * invocation).
  */
-export function resolveClaudeReauthentication(
+export const resolveClaudeReauthentication = Effect.fn("resolveClaudeReauthentication")(function* (
   claudeSettings: ClaudeSettings,
-): ServerProviderReauthentication {
+): Effect.fn.Return<ServerProviderReauthentication, never, Path.Path> {
   const executable = claudeSettings.binaryPath?.trim() || "claude";
   const args = [...CLAUDE_REAUTHENTICATION_ARGS];
+  const command = [executable, ...args].map(posixShellQuote).join(" ");
+  const hasCustomHome = claudeSettings.homePath.trim().length > 0;
+  const env = hasCustomHome
+    ? { CLAUDE_CONFIG_DIR: yield* resolveClaudeHomePath(claudeSettings) }
+    : undefined;
   return {
-    command: [executable, ...args].join(" "),
+    command,
     executable,
     args,
     label: "Re-authenticate Claude",
-  };
-}
+    ...(env ? { env } : {}),
+  } satisfies ServerProviderReauthentication;
+});
 
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
@@ -695,7 +720,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const reauthentication = resolveClaudeReauthentication(claudeSettings);
+  const reauthentication = yield* resolveClaudeReauthentication(claudeSettings);
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
     PROVIDER,
@@ -854,7 +879,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
-): Effect.Effect<ServerProviderDraft> =>
+): Effect.Effect<ServerProviderDraft, never, Path.Path> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
@@ -880,11 +905,16 @@ export const makePendingClaudeProvider = (
       });
     }
 
+    // Expose re-authentication even on the pre-probe snapshot so a turn that
+    // fails with an auth error before the first status check completes can
+    // still offer the in-app recovery action.
+    const reauthentication = yield* resolveClaudeReauthentication(claudeSettings);
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: true,
       checkedAt,
       models,
+      reauthentication,
       probe: {
         installed: false,
         version: null,

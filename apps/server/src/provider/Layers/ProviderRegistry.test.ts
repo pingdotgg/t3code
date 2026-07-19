@@ -1498,6 +1498,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      it.effect("propagates CLAUDE_CONFIG_DIR re-auth env for a custom Claude home", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, homePath: "/tmp/t3-claude-home" },
+            claudeCapabilities(),
+          );
+          assert.strictEqual(status.reauthentication?.command, "claude setup-token");
+          assert.deepStrictEqual(status.reauthentication?.env, {
+            CLAUDE_CONFIG_DIR: "/tmp/t3-claude-home",
+          });
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("includes Claude Fable 5 on supported Claude Code versions", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(

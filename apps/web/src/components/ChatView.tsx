@@ -272,10 +272,15 @@ const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
  * provider credential — the signals that make an in-app "Re-authenticate"
  * action worth offering (e.g. Claude's
  * `401 OAuth access token has expired. Re-authenticate to continue.`).
+ *
+ * Intentionally narrow: it matches credential-specific phrasing rather than
+ * bare tokens like `401`/`oauth`/`api key`, which also appear in generic tool
+ * or HTTP failures and would otherwise surface a misleading re-authenticate
+ * action.
  */
 function isProviderAuthError(message: string | null | undefined): boolean {
   if (!message) return false;
-  return /(re-?authenticate|reauth|unauthenticated|not authenticated|authentication (failed|error|required)|oauth|access token|api key|\b401\b|\b403\b|log ?in again|sign ?in again)/i.test(
+  return /(re-?authenticate|re-?auth\b|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|access token (?:has )?expired|expired .*token|invalid (?:api key|access token|credentials)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
     message,
   );
 }
@@ -2303,6 +2308,21 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  // The thread error banner's re-authenticate action must target the provider
+  // instance that actually ran the failing turn (the thread session's
+  // provider), not whatever the composer currently has selected — otherwise
+  // switching the picker after a failure could re-authenticate the wrong
+  // Claude instance. Falls back to the active provider before a session exists.
+  const sessionProviderInstanceId = activeThread?.session?.providerInstanceId ?? null;
+  const threadErrorProviderStatus = useMemo(() => {
+    if (sessionProviderInstanceId) {
+      return (
+        providerStatuses.find((status) => status.instanceId === sessionProviderInstanceId) ??
+        activeProviderStatus
+      );
+    }
+    return activeProviderStatus;
+  }, [sessionProviderInstanceId, providerStatuses, activeProviderStatus]);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -2732,7 +2752,14 @@ function ChatViewContent(props: ChatViewProps) {
           icon: "configure",
           runOnWorktreeCreate: false,
         },
-        { preferNewTerminal: true, rememberAsLastInvoked: false },
+        {
+          preferNewTerminal: true,
+          rememberAsLastInvoked: false,
+          // Carry the provider's isolation env (e.g. CLAUDE_CONFIG_DIR for a
+          // custom Claude home) so the login refreshes the correct instance's
+          // credentials rather than the default config dir.
+          ...(reauthentication.env ? { env: { ...reauthentication.env } } : {}),
+        },
       );
     },
     [runProjectScript],
@@ -5289,7 +5316,7 @@ function ChatViewContent(props: ChatViewProps) {
           onReauthenticate={reauthenticateProvider}
         />
         {(() => {
-          const reauth = activeProviderStatus?.reauthentication;
+          const reauth = threadErrorProviderStatus?.reauthentication;
           if (!reauth || !isProviderAuthError(threadError)) {
             return (
               <ThreadErrorBanner
