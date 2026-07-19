@@ -13,14 +13,12 @@ import {
 } from "@opencode-ai/sdk/v2";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as P from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
@@ -50,15 +48,16 @@ export interface OpenCodeServerConnection {
   readonly external: boolean;
 }
 
-const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
-export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERROR_TAG)<{
-  readonly operation: string;
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {
-  static readonly is = (u: unknown): u is OpenCodeRuntimeError =>
-    P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
-}
+export class OpenCodeRuntimeError extends Schema.TaggedErrorClass<OpenCodeRuntimeError>()(
+  "OpenCodeRuntimeError",
+  {
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    detail: Schema.String,
+  },
+) {}
+
+export const isOpenCodeRuntimeError = Schema.is(OpenCodeRuntimeError);
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -66,7 +65,7 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 }
 
 export function openCodeRuntimeErrorDetail(cause: unknown): string {
-  if (OpenCodeRuntimeError.is(cause)) return cause.detail;
+  if (isOpenCodeRuntimeError(cause)) return cause.detail;
   if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
   if (cause && typeof cause === "object") {
     // SDK v2 throws { response, request, error? } shapes — extract what's useful
@@ -270,7 +269,7 @@ function ensureRuntimeError(
   detail: string,
   cause: unknown,
 ): OpenCodeRuntimeError {
-  return OpenCodeRuntimeError.is(cause)
+  return isOpenCodeRuntimeError(cause)
     ? cause
     : new OpenCodeRuntimeError({ operation, detail, cause });
 }

@@ -38,6 +38,7 @@ import {
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   buildOpenCodePermissionRules,
+  isOpenCodeRuntimeError,
   OpenCodeRuntime,
   OpenCodeRuntimeError,
   openCodeQuestionId,
@@ -131,7 +132,7 @@ const toProcessError = (threadId: ThreadId, cause: unknown): ProviderAdapterProc
   new ProviderAdapterProcessError({
     provider: PROVIDER,
     threadId,
-    detail: OpenCodeRuntimeError.is(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause),
+    detail: isOpenCodeRuntimeError(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause),
     cause,
   });
 

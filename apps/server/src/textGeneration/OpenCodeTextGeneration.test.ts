@@ -1,13 +1,13 @@
 import { OpenCodeSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
-import { beforeEach, expect } from "vite-plus/test";
+import { beforeEach } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
@@ -39,7 +39,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestLayer = Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
   startOpenCodeServerProcess: ({ binaryPath }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
@@ -57,13 +57,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         exitCode: Effect.never,
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
-    Effect.succeed({
-      url: serverUrl ?? "http://127.0.0.1:4301",
-      exitCode: null,
-      external: Boolean(serverUrl),
-    }),
-  runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
     ({
       session: {
@@ -99,15 +92,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
-  loadOpenCodeInventory: () =>
-    Effect.fail(
-      new OpenCodeRuntime.OpenCodeRuntimeError({
-        operation: "loadOpenCodeInventory",
-        detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
-        cause: null,
-      }),
-    ),
-};
+});
 
 const DEFAULT_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
@@ -123,10 +108,7 @@ const DEFAULT_COMMIT_MESSAGE_INPUT = {
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
-const OpenCodeTextGenerationTestLayer = Layer.succeed(
-  OpenCodeRuntime.OpenCodeRuntime,
-  OpenCodeRuntimeTestDouble,
-).pipe(
+const OpenCodeTextGenerationTestLayer = OpenCodeRuntimeTestLayer.pipe(
   Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-test-",
@@ -136,10 +118,7 @@ const OpenCodeTextGenerationTestLayer = Layer.succeed(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const OpenCodeTextGenerationExistingServerTestLayer = Layer.succeed(
-  OpenCodeRuntime.OpenCodeRuntime,
-  OpenCodeRuntimeTestDouble,
-).pipe(
+const OpenCodeTextGenerationExistingServerTestLayer = OpenCodeRuntimeTestLayer.pipe(
   Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-existing-server-test-",
@@ -197,16 +176,16 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
         });
 
-        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
-        expect(runtimeMock.state.promptUrls).toEqual([
+        assert.deepStrictEqual(runtimeMock.state.startCalls, ["fake-opencode"]);
+        assert.deepStrictEqual(runtimeMock.state.promptUrls, [
           "http://127.0.0.1:4301",
           "http://127.0.0.1:4301",
         ]);
-        expect(runtimeMock.state.closeCalls).toEqual([]);
+        assert.deepStrictEqual(runtimeMock.state.closeCalls, []);
 
         yield* advanceIdleClock;
 
-        expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+        assert.deepStrictEqual(runtimeMock.state.closeCalls, ["http://127.0.0.1:4301"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
@@ -232,12 +211,12 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
         });
 
-        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode", "fake-opencode"]);
-        expect(runtimeMock.state.promptUrls).toEqual([
+        assert.deepStrictEqual(runtimeMock.state.startCalls, ["fake-opencode", "fake-opencode"]);
+        assert.deepStrictEqual(runtimeMock.state.promptUrls, [
           "http://127.0.0.1:4301",
           "http://127.0.0.1:4302",
         ]);
-        expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+        assert.deepStrictEqual(runtimeMock.state.closeCalls, ["http://127.0.0.1:4301"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
@@ -252,15 +231,13 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(TextGenerationError);
-        expect(error.message).toContain("OpenCode session.create request failed.");
-        expect(error.cause).toMatchObject({
-          _tag: "OpenCodeTextGenerationSessionRequestError",
-          operation: "generateCommitMessage",
-          cwd: process.cwd(),
-          cause: sdkCause,
-        });
-        expect((error.cause as { cause: unknown }).cause).toBe(sdkCause);
+        assert.instanceOf(error, TextGenerationError);
+        assert.include(error.message, "OpenCode session.create request failed.");
+        const cause = error.cause;
+        assert.instanceOf(cause, OpenCodeTextGeneration.OpenCodeTextGenerationSessionRequestError);
+        assert.strictEqual(cause.operation, "generateCommitMessage");
+        assert.strictEqual(cause.cwd, process.cwd());
+        assert.strictEqual(cause.cause, sdkCause);
       }),
     ),
   );
@@ -274,13 +251,12 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("OpenCode session.create returned no session payload.");
-        expect(error.cause).toMatchObject({
-          _tag: "OpenCodeTextGenerationSessionPayloadError",
-          operation: "generateCommitMessage",
-          cwd: process.cwd(),
-        });
-        expect(error.cause).not.toHaveProperty("cause");
+        assert.include(error.message, "OpenCode session.create returned no session payload.");
+        const cause = error.cause;
+        assert.instanceOf(cause, OpenCodeTextGeneration.OpenCodeTextGenerationSessionPayloadError);
+        assert.strictEqual(cause.operation, "generateCommitMessage");
+        assert.strictEqual(cause.cwd, process.cwd());
+        assert.notProperty(cause, "cause");
       }),
     ),
   );
@@ -295,17 +271,15 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("OpenCode session.prompt request failed.");
-        expect(error.cause).toMatchObject({
-          _tag: "OpenCodeTextGenerationPromptRequestError",
-          operation: "generateCommitMessage",
-          cwd: process.cwd(),
-          sessionId: "http://127.0.0.1:4301/session",
-          providerId: "openai",
-          modelId: "gpt-5",
-          cause: sdkCause,
-        });
-        expect((error.cause as { cause: unknown }).cause).toBe(sdkCause);
+        assert.include(error.message, "OpenCode session.prompt request failed.");
+        const cause = error.cause;
+        assert.instanceOf(cause, OpenCodeTextGeneration.OpenCodeTextGenerationPromptRequestError);
+        assert.strictEqual(cause.operation, "generateCommitMessage");
+        assert.strictEqual(cause.cwd, process.cwd());
+        assert.strictEqual(cause.sessionId, "http://127.0.0.1:4301/session");
+        assert.strictEqual(cause.providerId, "openai");
+        assert.strictEqual(cause.modelId, "gpt-5");
+        assert.strictEqual(cause.cause, sdkCause);
       }),
     ),
   );
@@ -323,18 +297,17 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("OpenCode returned empty output.");
-        expect(error.cause).toMatchObject({
-          _tag: "OpenCodeTextGenerationEmptyOutputError",
-          operation: "generateCommitMessage",
-          cwd: process.cwd(),
-          sessionId: "http://127.0.0.1:4301/session",
-          providerId: "openai",
-          modelId: "gpt-5",
-          responsePartCount: 3,
-          textPartCount: 1,
-        });
-        expect(error.cause).not.toHaveProperty("cause");
+        assert.include(error.message, "OpenCode returned empty output.");
+        const cause = error.cause;
+        assert.instanceOf(cause, OpenCodeTextGeneration.OpenCodeTextGenerationEmptyOutputError);
+        assert.strictEqual(cause.operation, "generateCommitMessage");
+        assert.strictEqual(cause.cwd, process.cwd());
+        assert.strictEqual(cause.sessionId, "http://127.0.0.1:4301/session");
+        assert.strictEqual(cause.providerId, "openai");
+        assert.strictEqual(cause.modelId, "gpt-5");
+        assert.strictEqual(cause.responsePartCount, 3);
+        assert.strictEqual(cause.textPartCount, 1);
+        assert.notProperty(cause, "cause");
       }),
     ),
   );
@@ -361,7 +334,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
         });
 
-        expect(result).toEqual({
+        assert.deepStrictEqual(result, {
           subject: "Tighten OpenCode parsing",
           body: "Handle JSON text output locally.",
         });
@@ -390,18 +363,17 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("Model did not produce structured output");
-        expect(error.cause).toMatchObject({
-          _tag: "OpenCodeTextGenerationPromptResponseError",
-          operation: "generateCommitMessage",
-          cwd: process.cwd(),
-          sessionId: "http://127.0.0.1:4301/session",
-          providerId: "openai",
-          modelId: "gpt-5",
-          providerErrorName: "StructuredOutputError",
-          providerMessage: "Model did not produce structured output",
-        });
-        expect(error.cause).not.toHaveProperty("cause");
+        assert.include(error.message, "Model did not produce structured output");
+        const cause = error.cause;
+        assert.instanceOf(cause, OpenCodeTextGeneration.OpenCodeTextGenerationPromptResponseError);
+        assert.strictEqual(cause.operation, "generateCommitMessage");
+        assert.strictEqual(cause.cwd, process.cwd());
+        assert.strictEqual(cause.sessionId, "http://127.0.0.1:4301/session");
+        assert.strictEqual(cause.providerId, "openai");
+        assert.strictEqual(cause.modelId, "gpt-5");
+        assert.strictEqual(cause.providerErrorName, "StructuredOutputError");
+        assert.strictEqual(cause.providerMessage, "Model did not produce structured output");
+        assert.notProperty(cause, "cause");
       }),
     ),
   );
@@ -428,19 +400,19 @@ it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
 
-          expect(runtimeMock.state.startCalls).toEqual([]);
-          expect(runtimeMock.state.promptUrls).toEqual([
+          assert.deepStrictEqual(runtimeMock.state.startCalls, []);
+          assert.deepStrictEqual(runtimeMock.state.promptUrls, [
             "http://127.0.0.1:9999",
             "http://127.0.0.1:9999",
           ]);
-          expect(runtimeMock.state.authHeaders).toEqual([
+          assert.deepStrictEqual(runtimeMock.state.authHeaders, [
             `Basic ${btoa("opencode:secret-password")}`,
             `Basic ${btoa("opencode:secret-password")}`,
           ]);
 
           yield* advanceIdleClock;
 
-          expect(runtimeMock.state.closeCalls).toEqual([]);
+          assert.deepStrictEqual(runtimeMock.state.closeCalls, []);
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     );
