@@ -99,7 +99,7 @@ function ConnectionStatusDot({
       {pingClassName ? (
         <span
           className={cn(
-            "absolute inline-flex h-full w-full animate-ping rounded-full",
+            "absolute inline-flex h-full w-full animate-status-ping rounded-full",
             pingClassName,
           )}
         />

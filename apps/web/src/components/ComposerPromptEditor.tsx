@@ -925,6 +925,10 @@ function ComposerCommandKeyPlugin(props: {
       if (!props.onCommandKeyDown || !event) {
         return false;
       }
+      if (key === "Enter" && (event.isComposing || event.keyCode === 229)) {
+        event.stopPropagation();
+        return true;
+      }
       const handled = props.onCommandKeyDown(key, event);
       if (handled) {
         event.preventDefault();

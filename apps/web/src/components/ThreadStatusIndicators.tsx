@@ -99,7 +99,7 @@ export function ThreadStatusLabel({
       >
         <span
           className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
+            status.pulse ? "animate-status-pulse" : ""
           }`}
         />
         <span className="sr-only">{status.label}</span>
@@ -115,7 +115,7 @@ export function ThreadStatusLabel({
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
+          status.pulse ? "animate-status-pulse" : ""
         }`}
       />
       <span className="hidden md:inline">{status.label}</span>
@@ -219,7 +219,9 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
           title={terminalStatus.label}
           className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
         >
-          <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+          <TerminalIcon
+            className={`size-3 ${terminalStatus.pulse ? "animate-status-pulse" : ""}`}
+          />
         </span>
       ) : null}
       {isRemoteThread ? (

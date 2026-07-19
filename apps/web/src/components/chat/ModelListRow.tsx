@@ -8,6 +8,7 @@ import {
   PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
+import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -53,8 +54,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              className="mt-0.5 shrink-0 cursor-pointer opacity-40 transition-opacity group-hover:opacity-100"
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="mt-0.5 shrink-0 opacity-40 transition-opacity group-hover:opacity-100"
               onClick={(event) => {
                 event.stopPropagation();
                 props.onToggleFavorite();
@@ -62,13 +65,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
               onKeyDown={(event) => {
                 event.stopPropagation();
               }}
-              type="button"
               aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
             >
               <StarIcon
                 className={cn("size-4", props.isFavorite && "fill-current text-yellow-500")}
               />
-            </button>
+            </Button>
           }
         />
         <TooltipPopup side="top" align="center">
