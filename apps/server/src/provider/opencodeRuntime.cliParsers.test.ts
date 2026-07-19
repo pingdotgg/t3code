@@ -224,6 +224,6 @@ describe("parseAgentListCliOutput", () => {
 
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
-    NodeAssert.equal(result[1]!.hidden, undefined);
+    NodeAssert.equal(result[1]!.hidden, false);
   });
 });
