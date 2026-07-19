@@ -63,12 +63,10 @@ const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_RESUME_VERSION = 1 as const;
 
 /**
- * Decode a persisted OpenCode resume cursor back into the upstream `ses_…`
- * id. Returns `undefined` for anything that isn't a current-version cursor
- * carrying a non-empty session id, so a malformed or foreign cursor simply
- * means "no resume" instead of throwing. OpenCode has no dedicated resume
- * RPC — re-adopting the same session id *is* the resume mechanism, because
- * the server scopes a conversation's history by session id.
+ * Decode a persisted resume cursor into the upstream `ses_…` id. Anything
+ * that isn't a current-version cursor with a non-empty id means "no resume"
+ * rather than an error. Re-adopting the session id IS the resume mechanism —
+ * OpenCode scopes a conversation's history by session id.
  */
 function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -85,27 +83,15 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
 }
 
 /**
- * Whether an error definitively reports a "session not found" — an HTTP 404 or
- * an OpenCode `NotFoundError`. The SDK client is configured `throwOnError: true`
- * (see `createOpenCodeSdkClient`), so `session.get` on a missing/closed session
- * REJECTS rather than resolving; `runOpenCodeSdk` then surfaces it as a failed
- * Effect whose `cause` wraps the original thrown `Error`, which carries the
- * parsed body and HTTP status under its own `cause`. Only a confirmed miss
- * justifies silently starting a fresh session — any other failure (transport,
- * auth, server error) must propagate, so a momentary blip can't quietly reset a
- * live thread to an empty session (the #3604 class of silent context loss).
- *
- * Decided only on STRUCTURED signals — a numeric 404 (`status`/`statusCode`/
- * nested `response.status`) or an explicit `NotFoundError` `name` — found via a
- * bounded breadth-first walk over the error's `cause`/`body`/`error`/`data`. We
- * deliberately do NOT match free text (`message`/`detail`): those can carry a
- * serialized non-404 body or an unrelated "not found" phrase (e.g. a 500 whose
- * message says "upstream X not found"), which would misclassify a real failure
- * as a missing session and silently drop context. A node carrying an explicit
- * non-404 numeric status seals its entire subtree: a 500 whose serialized body
- * happens to be named `NotFoundError` (or that is itself named
- * `UpstreamNotFoundError`) is a real failure, and neither its `name` nor
- * anything it wraps may reclassify it as a miss. Exported for unit testing.
+ * Whether an error definitively reports a missing session. Only a confirmed
+ * miss may silently start a fresh session; any other failure (the SDK client
+ * is `throwOnError: true`, so `session.get` rejects on every non-2xx) must
+ * propagate, or a transient blip resets a live thread to an empty one — the
+ * #3604 silent context loss. Decides on structured signals only, never free
+ * text: a numeric 404 or a `NotFoundError` name, found via a bounded walk
+ * over `cause`/`body`/`error`/`data`. An explicit non-404 status seals its
+ * subtree so a wrapped "NotFound" name can't reclassify a real failure.
+ * Exported for unit testing.
  */
 export function isOpenCodeNotFound(cause: unknown): boolean {
   const seen = new Set<unknown>();
@@ -148,21 +134,14 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
 }
 
 /**
- * Whether the directory stored on an upstream OpenCode session and the
- * requested working directory name the same location. Raw string equality
- * produces false mismatches — a trailing slash, an unnormalized `.`/`..`
- * segment, or a symlinked cwd (macOS `/tmp` → `/private/tmp`) — and every
- * false mismatch needlessly forks the session and repoints the durable
- * cursor at the clone. Lexically equal paths short-circuit without touching
- * the filesystem; otherwise both sides are compared through `realPath`, each
- * falling back to its lexical form when resolution fails (directory since
- * deleted, or a path recorded by an external OpenCode server that doesn't
- * exist on this machine). Because the lexical check runs first, the realPath
- * pass can only ever turn a spurious mismatch into a match — it can never
- * split paths that compare equal today. Takes the platform services as plain
- * arguments so the adapter's methods keep their service-free signatures — the
- * services are resolved once in `makeOpenCodeAdapter`. Exported for unit
- * testing.
+ * Whether two directory spellings name the same location. Raw string
+ * equality misreads a trailing slash, `.`/`..` segment, or symlinked cwd
+ * (macOS `/tmp` → `/private/tmp`) as a cwd change, needlessly forking the
+ * session on every resume. Lexically equal paths short-circuit; otherwise
+ * both sides go through `realPath`, each falling back to its lexical form
+ * on failure (deleted directory, external-server path) — so the probe can
+ * only widen matches, never split them. Takes the services as arguments so
+ * adapter methods stay service-free. Exported for unit testing.
  */
 export function isSameOpenCodeDirectory(
   fileSystem: FileSystem.FileSystem,
@@ -1251,23 +1230,11 @@ export function makeOpenCodeAdapter(
                   }),
                 );
               }
-              // Resume path: when a durable cursor names a prior OpenCode
-              // session, re-adopt that `ses_…` instead of minting a new one.
-              // OpenCode scopes history by session id, so prompting the same id
-              // restores the full prior conversation.
-              //
-              // The probe distinguishes three outcomes. A request that throws
-              // (transport/network) fails the Effect in `runOpenCodeSdk` and
-              // propagates — we never silently reset a live thread on a blip.
-              // A confirmed "not found" falls back to a fresh session. Any
-              // other error response (auth, bad request, server error) is
-              // surfaced rather than masked as a brand-new empty session.
+              // Resume: re-adopt the session named by the durable cursor —
+              // OpenCode scopes history by session id. The probe recovers only
+              // a confirmed not-found (start fresh); transport/auth/server
+              // errors propagate instead of masking as a new empty session.
               const resolved = yield* Effect.gen(function* () {
-                // Probe the persisted session. With `throwOnError: true`,
-                // `session.get` rejects on any non-2xx; we recover ONLY a
-                // confirmed "not found" (the session is genuinely gone -> start
-                // fresh). A transport/auth/server error propagates instead of
-                // masquerading as a brand-new empty session (issue #3604).
                 const adopted = resumeSessionId
                   ? yield* runOpenCodeSdk("session.get", () =>
                       client.session.get({ sessionID: resumeSessionId }),
@@ -1280,10 +1247,8 @@ export function makeOpenCodeAdapter(
                     )
                   : undefined;
 
-                // Reuse the upstream session as-is only when it still matches the
-                // requested working directory. When the cwd changed (e.g. the thread
-                // moved from the project root into a git worktree), the session is
-                // forked into the new directory below rather than reused in place.
+                // Reuse in place only when the session still matches the
+                // requested cwd; on a cwd change it is forked below instead.
                 const reusable =
                   adopted &&
                   (!adopted.directory || (yield* sameDirectory(adopted.directory, directory)))
@@ -1291,11 +1256,9 @@ export function makeOpenCodeAdapter(
                     : undefined;
 
                 if (reusable) {
-                  // `session.create` is skipped on resume, so re-assert the
-                  // permission ruleset for the CURRENT runtimeMode — otherwise a
-                  // runtime-mode change (the reactor restarts with the persisted
-                  // cursor) would leave the re-adopted session on the
-                  // permissions it was originally created with.
+                  // Resume skips `session.create`, so re-assert the ruleset —
+                  // a runtime-mode change would otherwise leave the session on
+                  // its original permissions.
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
@@ -1305,14 +1268,10 @@ export function makeOpenCodeAdapter(
                   return { openCodeSession: reusable, created: false };
                 }
 
-                // The persisted session exists but was created under a DIFFERENT working
-                // directory (e.g. the thread moved from the project root into a git worktree
-                // between turns). OpenCode routes tool execution by the per-request `directory`,
-                // NOT the session's stored directory, so resuming under a new cwd does not run
-                // in the wrong tree. Fork the session INTO the requested directory instead of
-                // minting an empty one: this carries the full message history forward and binds
-                // the fork to the correct worktree, so the follow-up keeps its context (issue
-                // #3604, worktree cwd-change facet). Only a genuinely missing session starts fresh.
+                // The session lives under a different cwd (e.g. the thread
+                // moved into a git worktree). Fork it into the requested
+                // directory instead of minting an empty one — the fork carries
+                // the full history, so the follow-up keeps its context (#3604).
                 if (adopted) {
                   yield* Effect.logInfo(
                     `OpenCode session '${adopted.id}' was created under a different working directory; forking into '${directory}' to preserve conversation history.`,
@@ -1376,12 +1335,9 @@ export function makeOpenCodeAdapter(
         // and already inserted a session while we were awaiting async work.
         const raceWinner = sessions.get(input.threadId);
         if (raceWinner) {
-          // Another call won the race – clean up the session we just started
-          // and return the existing one. Only abort the remote SDK session if
-          // we *created* it here; a session we merely resumed is shared upstream
-          // state the race winner is now using, so aborting it would interrupt
-          // them (and `session.abort` is otherwise the wrong tool — it cancels
-          // an in-flight turn rather than disowning a session).
+          // Another call won the race — clean up. Only abort the remote
+          // session if we created it here; a resumed one is shared upstream
+          // state the winner is now using.
           if (started.created) {
             yield* runOpenCodeSdk("session.abort", () =>
               started.client.session.abort({
@@ -1402,12 +1358,9 @@ export function makeOpenCodeAdapter(
           cwd: directory,
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
           threadId: input.threadId,
-          // Durable binding to the upstream OpenCode session. ProviderService
-          // persists this into provider_session_runtime.resume_cursor_json and
-          // feeds it back into `startSession` on the next turn after the
-          // in-memory session is lost (reaper / app or server restart), which
-          // is what lets a follow-up continue the same conversation instead of
-          // silently landing in a new, empty session (issue #3604).
+          // ProviderService persists this cursor and feeds it back into
+          // `startSession` after the in-memory session is lost (reaper /
+          // restart), so follow-ups continue the same conversation (#3604).
           resumeCursor: {
             schemaVersion: OPENCODE_RESUME_VERSION,
             sessionId: started.openCodeSession.id,

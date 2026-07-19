@@ -118,10 +118,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   connectToOpenCodeServer: ({ serverUrl }) =>
     Effect.gen(function* () {
       const url = serverUrl ?? "http://127.0.0.1:4301";
-      // Unconditionally register a scope finalizer for test observability —
-      // preserves the `closeCalls` / `closeError` probes that the existing
-      // suites rely on. Production code never attaches a finalizer to an
-      // external server (it simply returns `Effect.succeed(...)`).
+      // Always register a finalizer so the closeCalls/closeError probes fire;
+      // production attaches none for external servers.
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           runtimeMock.state.closeCalls.push(url);
@@ -150,10 +148,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         get: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.sessionGetIds.push(sessionID);
-          // The real client is created with `throwOnError: true`, so a non-2xx
-          // response REJECTS (it does not resolve to a tuple). Model that: a
-          // transient error throws a non-404, a missing session throws a 404,
-          // and success resolves with the session payload.
+          // The real client is `throwOnError: true`: non-2xx rejects rather
+          // than resolving, so missing → 404 throw, transient → 500 throw.
           if (runtimeMock.state.transientErrorSessionIds.has(sessionID)) {
             throw new Error("opencode server error", { cause: { status: 500 } });
           }
@@ -170,8 +166,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           return { data: { id: sessionID } };
         },
         fork: async ({ sessionID, directory }: { sessionID: string; directory?: string }) => {
-          // Model OpenCode fork: clones history into a NEW session bound to the
-          // requested directory (all prior messages carried over upstream).
+          // Fork clones history into a new session bound to the directory.
           const forkedId = `${sessionID}_fork`;
           runtimeMock.state.forkCalls.push({ sessionID, ...(directory ? { directory } : {}) });
           if (directory) {
@@ -501,9 +496,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           resumeCursor: { schemaVersion: 1, sessionId: "ses_otherdir" },
         });
 
-        // A cwd change must NOT mint an empty session and drop context. OpenCode routes
-        // tools by the request directory, so the adapter FORKS the persisted session into
-        // the requested cwd — carrying all prior messages forward — instead of session.create.
+        // A cwd change must not mint an empty session: the adapter forks the
+        // persisted session into the requested cwd, carrying history forward.
         NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_otherdir"]);
         NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
         NodeAssert.equal(runtimeMock.state.forkCalls.length, 1);
@@ -526,9 +520,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-opencode-samedir");
-      // Same working tree, different spelling (trailing slash). A raw string
-      // comparison would misread this as a cwd change and fork the session,
-      // churning upstream sessions and the durable cursor on every resume.
+      // Same working tree, different spelling (trailing slash) — must reuse,
+      // not fork.
       runtimeMock.state.sessionDirectoryById.set("ses_samedir", `${process.cwd()}/`);
 
       const session = yield* adapter.startSession({
@@ -1041,9 +1034,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       // without touching the filesystem — the paths need not exist.
       NodeAssert.equal(yield* sameDirectory("/repo/project/", "/repo/project"), true);
       NodeAssert.equal(yield* sameDirectory("/repo/nested/../project", "/repo/project"), true);
-      // Distinct nonexistent paths degrade to the lexical comparison instead
-      // of failing (covers directories recorded by an external OpenCode server
-      // that don't exist on this machine, or since-deleted worktrees).
+      // Nonexistent paths degrade to the lexical comparison instead of failing.
       NodeAssert.equal(yield* sameDirectory("/repo/project", "/repo/other"), false);
 
       // A symlinked cwd (the macOS `/tmp` → `/private/tmp` shape) resolves to
