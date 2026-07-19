@@ -97,13 +97,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
   loadInventoryFromCli: () =>
     runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
-          }),
-        )
+      ? Effect.succeed({
+          providerList: { all: [], default: {}, connected: [] as string[] },
+          agents: [],
+        } as OpenCodeInventory)
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
 };
 
@@ -215,13 +212,14 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("surfaces CLI failure as error status for local installs", () =>
+  it.effect("degrades gracefully on CLI failure for local installs", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventoryError = new Error("opencode models failed");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.status, "warning");
       NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.models.length, 0);
     }),
   );
 });

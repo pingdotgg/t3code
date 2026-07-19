@@ -650,53 +650,55 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
     Effect.gen(function* () {
-      const [modelsResult, agentsResult] = yield* Effect.all(
-        [
-          runOpenCodeCommand({
-            binaryPath: input.binaryPath,
-            args: ["models", "--verbose"],
-            ...(input.environment !== undefined ? { environment: input.environment } : {}),
-          }).pipe(Effect.exit),
-          runOpenCodeCommand({
-            binaryPath: input.binaryPath,
-            args: ["agent", "list"],
-            ...(input.environment !== undefined ? { environment: input.environment } : {}),
-          }).pipe(Effect.exit),
-        ],
-        { concurrency: "unbounded" },
-      );
+      const env = input.environment !== undefined ? { environment: input.environment } : ({} as {});
 
-      if (modelsResult._tag === "Failure") {
-        return yield* new OpenCodeRuntimeError({
-          operation: "loadInventoryFromCli",
-          detail: `Failed to run 'opencode models': ${openCodeRuntimeErrorDetail(modelsResult.cause)}`,
-          cause: modelsResult.cause,
-        });
-      }
-      if (modelsResult.value.code !== 0) {
-        return yield* new OpenCodeRuntimeError({
-          operation: "loadInventoryFromCli",
-          detail: [
-            `'opencode models' exited with code ${modelsResult.value.code}.`,
-            modelsResult.value.stderr.trim()
-              ? `stderr:\n${modelsResult.value.stderr.trim()}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        });
+      const runModelsCli = () =>
+        runOpenCodeCommand({
+          binaryPath: input.binaryPath,
+          args: ["models", "--verbose"],
+          ...env,
+        }).pipe(Effect.exit);
+      const runAgentsCli = () =>
+        runOpenCodeCommand({ binaryPath: input.binaryPath, args: ["agent", "list"], ...env }).pipe(
+          Effect.exit,
+        );
+
+      // First attempt — run both in parallel
+      let [modelsResult, agentsResult] = yield* Effect.all([runModelsCli(), runAgentsCli()], {
+        concurrency: "unbounded",
+      });
+
+      // Retry once after 1s on transient failures (e.g. SQLite "database is locked")
+      const needsModelsRetry = modelsResult._tag === "Failure" || modelsResult.value.code !== 0;
+      const needsAgentsRetry = agentsResult._tag === "Failure" || agentsResult.value.code !== 0;
+      if (needsModelsRetry || needsAgentsRetry) {
+        yield* Effect.sleep("1 second");
+        const [m2, a2] = yield* Effect.all(
+          [
+            needsModelsRetry ? runModelsCli() : Effect.succeed(modelsResult),
+            needsAgentsRetry ? runAgentsCli() : Effect.succeed(agentsResult),
+          ],
+          { concurrency: "unbounded" },
+        );
+        modelsResult = m2;
+        agentsResult = a2;
       }
 
-      const parsed = parseModelsCliOutput(modelsResult.value.stdout);
-      const connected = [...parsed.connected];
-      const allProviders: ProviderListResponse["all"] = [...parsed.providers.values()].map((p) => ({
-        id: p.id,
-        name: p.name,
-        source: "config" as const,
-        env: [],
-        options: {},
-        models: p.models,
-      }));
+      // Degrade gracefully on failure — return empty inventory (warning status, not error)
+      let connected: ReadonlyArray<string> = [];
+      let allProviders: ProviderListResponse["all"] = [];
+      if (modelsResult._tag === "Success" && modelsResult.value.code === 0) {
+        const parsed = parseModelsCliOutput(modelsResult.value.stdout);
+        connected = [...parsed.connected];
+        allProviders = [...parsed.providers.values()].map((p) => ({
+          id: p.id,
+          name: p.name,
+          source: "config" as const,
+          env: [],
+          options: {},
+          models: p.models,
+        }));
+      }
 
       let agents: ReadonlyArray<Agent> = [];
       if (agentsResult._tag === "Success" && agentsResult.value.code === 0) {
