@@ -5,6 +5,8 @@ packages:
   - packages/*
   - scripts
 
+enableGlobalVirtualStore: true
+
 # Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11).
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
@@ -95,9 +97,11 @@ packageExtensions:
   "@clerk/expo@*":
     dependencies:
       "@expo/config-plugins": 56.0.9
-  "@effect/vitest@*":
+  # Wildcard semver excludes prereleases.
+  "@effect/vitest@4.0.0-beta.78":
     dependencies:
-      vite-plus: "catalog:"
+      # The patched package imports vite-plus inside the shared graph.
+      vite-plus: 0.2.2
     peerDependenciesMeta:
       vitest:
         optional: true
