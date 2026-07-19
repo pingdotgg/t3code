@@ -93,7 +93,7 @@ export function encodeConnectAuthCode(input: ConnectAuthCode): string {
 }
 
 /**
- * Validates a pasted blob against the state of the request this process
+ * Validates an out-of-band authorization code against the state of the request this process
  * generated. Returns the parsed code or a user-facing error message; both
  * the prompt's live validation and the authoritative post-prompt check go
  * through here so they cannot drift.

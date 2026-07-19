@@ -55,41 +55,42 @@ const jsonFlag = Flag.boolean("json").pipe(
 
 const isCloudCliTokenManagerError = Schema.is(CliTokenManager.CloudCliTokenManagerError);
 
-const pasteFlag = Flag.boolean("paste").pipe(
-  Flag.withDescription(
-    "Authorize by pasting a code from the hosted app instead of a local browser callback.",
-  ),
+const headlessFlag = Flag.boolean("headless").pipe(
+  Flag.withDescription("Authorize without a local browser using out-of-band OAuth."),
   Flag.withDefault(false),
 );
 
 /**
  * Inside an SSH session there is no local browser to complete the loopback
- * OAuth callback, so the paste-code flow is the only one that can work.
+ * OAuth callback, so out-of-band OAuth is the only flow that can work.
  */
 const detectHeadlessSession = Effect.map(
   HostProcessEnvironment,
   (env) => env.SSH_CONNECTION !== undefined || env.SSH_TTY !== undefined,
 );
 
-const promptForPastedCode = ({ authorizeUrl, validate }: CliTokenManager.PasteCodePromptInput) =>
+const promptForOutOfBandOAuthCode = ({
+  authorizeUrl,
+  validate,
+}: CliTokenManager.OutOfBandOAuthPromptInput) =>
   Console.log(`To set up T3 Connect, open this URL and sign in:\n  ${authorizeUrl}\n`).pipe(
     Effect.andThen(
-      Prompt.run(Prompt.text({ message: "Paste your authentication code here", validate })),
+      Prompt.run(Prompt.text({ message: "Enter your authentication code", validate })),
     ),
   );
 
 /** Returns the connected account identity, if the flow could determine one. */
 const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
-  readonly paste: boolean;
+  readonly headless: boolean;
 }) {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
-  const paste = options.paste || (yield* detectHeadlessSession);
-  if (!paste) {
+  const useOutOfBandOAuth = options.headless || (yield* detectHeadlessSession);
+  if (!useOutOfBandOAuth) {
     yield* tokens.get;
     return null;
   }
   // A stored credential whose refresh fails (revoked, expired grant) must
-  // fall through to a fresh paste login, not dead-end the command.
+  // fall through to a fresh out-of-band authorization, not dead-end the command.
   const existing = yield* tokens.getExisting.pipe(
     Effect.catchTags({
       CloudCliCredentialRefreshError: () =>
@@ -101,7 +102,9 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   if (Option.isSome(existing)) {
     return null;
   }
-  const { token, identity } = yield* CliTokenManager.pasteCodeLogin(promptForPastedCode).pipe(
+  const { token, identity } = yield* CliTokenManager.outOfBandOAuthLogin(
+    promptForOutOfBandOAuthCode,
+  ).pipe(
     Effect.mapError((cause) =>
       // Ctrl-C / EOF at the prompt is a QuitError; let it propagate so the CLI
       // cancels quietly instead of dumping an authorization error.
@@ -459,7 +462,7 @@ const runCloudCommand = <A, E>(
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
 
 const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(function* (options: {
-  readonly paste: boolean;
+  readonly headless: boolean;
   readonly publishOnly?: boolean;
 }) {
   const publishOnly = options.publishOnly ?? false;
@@ -490,7 +493,7 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
 
 const connectLoginCommand = Command.make("login", {
   ...projectLocationFlags,
-  paste: pasteFlag,
+  headless: headlessFlag,
 }).pipe(
   Command.withDescription("Authorize the T3 Connect CLI without enabling remote access."),
   Command.withHandler((flags) =>
@@ -506,7 +509,7 @@ const connectLoginCommand = Command.make("login", {
 
 const connectLinkCommand = Command.make("link", {
   ...projectLocationFlags,
-  paste: pasteFlag,
+  headless: headlessFlag,
   publishOnly: Flag.boolean("publish-only").pipe(
     Flag.withDescription(
       "Link to publish agent activity only — no managed tunnel. Reach this environment out of band (e.g. Tailscale).",
@@ -695,7 +698,7 @@ const offerBootService = Effect.gen(function* () {
 
 export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
-  paste: pasteFlag,
+  headless: headlessFlag,
 }).pipe(
   Command.withDescription("Set up T3 Connect for this machine."),
   Command.withHandler((flags) =>
@@ -706,8 +709,8 @@ export const connectCommand = Command.make("connect", {
         if (!linked) {
           return;
         }
-        // Show which account was linked so an unexpected identity (a pasted
-        // code that authorized a different account) is visible before the
+        // Show which account was linked so an unexpected identity (an
+        // authorization code for a different account) is visible before the
         // machine is brought online.
         yield* Console.log(`\nConnected${connectedAs(linked.identity)}!`);
 

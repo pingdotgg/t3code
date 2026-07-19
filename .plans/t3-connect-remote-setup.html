@@ -93,7 +93,7 @@
 $ npx t3 connect<br><br>
 To set up T3 Connect, open this URL and sign in:<br>
 &nbsp;&nbsp;<span class="b">https://app.t3.codes/connect#B64URL_STATE_AND_CHALLENGE</span><br><br>
-Paste your authentication code here: <span class="dim">[paste]</span><br><br>
+Enter your authentication code: <span class="dim">[code]</span><br><br>
 <span class="g">Connected as theo@t3.gg!</span><br><br>
 Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
 <span class="g">T3 Code is set up and ready to go.</span>
@@ -101,7 +101,7 @@ Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
 
 <h2>Why this is a small change</h2>
 <p>The entire <code>t3 connect</code> data plane already works: Clerk PKCE token exchange, encrypted secret store, cloudflared relay-client install, relay environment linking, DPoP tokens. The <em>only</em> broken piece on an SSH box is the redirect: <code>CliTokenManager.login()</code> hardcodes a loopback callback (<code>http://127.0.0.1:34338/callback</code>) that requires a browser on the same machine.</p>
-<p>We swap that one leg for a hosted copy/paste page and keep everything else. Because PKCE's <code>code_verifier</code> never leaves the box, the displayed one-time code is useless to anyone who sees it &mdash; no new token-minting or storage is needed anywhere.</p>
+<p>We swap that one leg for a hosted out-of-band authorization page and keep everything else. Because PKCE's <code>code_verifier</code> never leaves the box, the displayed one-time code is useless to anyone who sees it &mdash; no new token-minting or storage is needed anywhere.</p>
 
 <div class="card">
 <h3>Reused as-is (zero changes)</h3>
@@ -116,10 +116,10 @@ Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
 </ul>
 </div>
 
-<h2>Auth flow (hosted OOB, Clerk PKCE)</h2>
+<h2>Auth flow (hosted out-of-band OAuth, Clerk PKCE)</h2>
 
 <figure>
-<svg viewBox="0 0 820 470" width="100%" role="img" aria-label="Sequence diagram of the paste-code auth flow">
+<svg viewBox="0 0 820 470" width="100%" role="img" aria-label="Sequence diagram of the out-of-band OAuth flow">
   <!-- lanes -->
   <rect x="20"  y="16" width="220" height="44" rx="8" fill="#121212" stroke="#2a2a2a"/>
   <rect x="300" y="16" width="220" height="44" rx="8" fill="#121212" stroke="#2a2a2a"/>
@@ -152,12 +152,12 @@ Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
 
   <!-- 5: page shows code -->
   <rect x="310" y="252" width="200" height="34" rx="6" fill="#14301e"/>
-  <text x="410" y="273" fill="#4ade80" font-size="12.5" text-anchor="middle">5. shows account + paste code</text>
+  <text x="410" y="273" fill="#4ade80" font-size="12.5" text-anchor="middle">5. shows account + authorization code</text>
 
-  <!-- 6: user pastes -->
+  <!-- 6: user enters code -->
   <line x1="410" y1="316" x2="136" y2="316" stroke="#7c9cff" stroke-dasharray="5 4"/>
   <polygon points="136,316 146,311 146,321" fill="#7c9cff"/>
-  <text x="273" y="308" fill="#a3a3a3" font-size="12.5" text-anchor="middle">6. user pastes code into terminal</text>
+  <text x="273" y="308" fill="#a3a3a3" font-size="12.5" text-anchor="middle">6. user enters code in terminal</text>
 
   <!-- 7: token exchange -->
   <line x1="130" y1="360" x2="684" y2="360" stroke="#e5e5e5"/>
@@ -169,16 +169,16 @@ Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
   <text x="130" y="411" fill="#4ade80" font-size="12.5" text-anchor="middle">8. store token, set desired link,</text>
   <text x="130" y="427" fill="#4ade80" font-size="12.5" text-anchor="middle">install relay client &#8594; Connected!</text>
 </svg>
-<figcaption>The verifier never leaves the box (steps 1&#8594;7), so the pasted code is worthless if observed. state/challenge ride the URL fragment &mdash; they are not secrets.</figcaption>
+<figcaption>The verifier never leaves the box (steps 1&#8594;7), so the authorization code is worthless if observed. state/challenge ride the URL fragment &mdash; they are not secrets.</figcaption>
 </figure>
 
 <div class="card">
 <h3>Details that keep it simple</h3>
 <ul>
-  <li><strong>Stateless URL, no short-link service.</strong> The <code>/connect</code> page reads <code>state</code> + <code>code_challenge</code> from the URL fragment and builds the Clerk authorize URL client-side. ~100-char URL &mdash; fine for copy/paste over SSH.</li>
-  <li><strong>State check without a backend:</strong> the callback page displays one paste-blob of <code>code.state</code>; the CLI splits it and verifies <code>state</code> matches what it generated. One line on each side, preserves the loopback flow's CSRF check.</li>
-  <li><strong>Phishing is addressed with copy, not code:</strong> the callback page shows <em>which account</em> is being connected ("Connecting as theo@&hellip;") and warns: <em>"Only paste this code into a terminal session you started yourself."</em> No mechanism needed.</li>
-  <li><strong>Code expiry is a non-issue:</strong> Clerk auth codes live 10 minutes &mdash; the same timeout the existing loopback flow already uses. Wrong/expired paste &#8594; friendly retry that reprints the URL.</li>
+  <li><strong>Stateless URL, no short-link service.</strong> The <code>/connect</code> page reads <code>state</code> + <code>code_challenge</code> from the URL fragment and builds the Clerk authorize URL client-side. ~100-char URL &mdash; fine to transfer into an SSH session.</li>
+  <li><strong>State check without a backend:</strong> the callback page displays one authorization blob of <code>code.state</code>; the CLI splits it and verifies <code>state</code> matches what it generated. One line on each side, preserves the loopback flow's CSRF check.</li>
+  <li><strong>Phishing is addressed with copy, not code:</strong> the callback page shows <em>which account</em> is being connected ("Connecting as theo@&hellip;") and warns: <em>"Only enter this code in a terminal session you started yourself."</em> No mechanism needed.</li>
+  <li><strong>Code expiry is a non-issue:</strong> Clerk auth codes live 10 minutes &mdash; the same timeout the existing loopback flow already uses. Wrong/expired code &#8594; friendly retry that reprints the URL.</li>
   <li><strong>One external config step:</strong> register <code>https://app.t3.codes/connect/callback</code> as an allowed redirect URI on the existing Clerk CLI OAuth client. No new client, no new scopes.</li>
 </ul>
 </div>
@@ -190,13 +190,13 @@ Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
   <tr><th style="width:1%">Phase</th><th>Scope</th><th>Files</th><th style="width:1%">~LOC</th></tr>
   <tr>
     <td><span class="pill core">1</span></td>
-    <td><strong>Hosted code page</strong> (web-only, purely additive, zero risk). Two static routes modeled on <code>pair.tsx</code>: <code>/connect</code> (ensure Clerk session, then client-side redirect to authorize &mdash; it's a static SPA, no server 302) and <code>/connect/callback</code> (validate params, show account + copyable code + paste warning). Both routes guard against non-hosted deployments &mdash; redirect to <code>/</code> unless <code>isHostedStaticApp()</code>, same pattern as <code>pair.tsx</code>, since this bundle also ships in local instances. Plus the Clerk dashboard redirect-URI entry.</td>
+    <td><strong>Hosted code page</strong> (web-only, purely additive, zero risk). Two static routes modeled on <code>pair.tsx</code>: <code>/connect</code> (ensure Clerk session, then client-side redirect to authorize &mdash; it's a static SPA, no server 302) and <code>/connect/callback</code> (validate params, show account + copyable code + safety warning). Both routes guard against non-hosted deployments &mdash; redirect to <code>/</code> unless <code>isHostedStaticApp()</code>, same pattern as <code>pair.tsx</code>, since this bundle also ships in local instances. Plus the Clerk dashboard redirect-URI entry.</td>
     <td><code>apps/web/src/routes/connect.tsx</code><br><code>apps/web/src/routes/connect.callback.tsx</code></td>
     <td>~200</td>
   </tr>
   <tr>
     <td><span class="pill core">2</span></td>
-    <td><strong>CLI paste flow + single command.</strong> Add an OOB login path to <code>CliTokenManager</code> (print URL, <code>Prompt.text</code> for the code, reuse <code>exchangeToken</code>). Make bare <code>t3 connect</code> a handler = login + link (subcommands untouched). Auto-pick paste mode inside SSH sessions (<code>SSH_CONNECTION</code>/<code>SSH_TTY</code> &mdash; nothing else); <code>--paste</code> flag as manual override. Loopback stays the default on desktop &mdash; no regression.</td>
+    <td><strong>CLI out-of-band OAuth flow + single command.</strong> Add an out-of-band OAuth login path to <code>CliTokenManager</code> (print URL, <code>Prompt.text</code> for the code, reuse <code>exchangeToken</code>). Make bare <code>t3 connect</code> a handler = login + link (subcommands untouched). Auto-pick headless mode inside SSH sessions (<code>SSH_CONNECTION</code>/<code>SSH_TTY</code> &mdash; nothing else); <code>--headless</code> flag as manual override. Loopback stays the default on desktop &mdash; no regression.</td>
     <td><code>cloud/CliTokenManager.ts</code> (+60)<br><code>cloud/publicConfig.ts</code> (+10)<br><code>cli/connect.ts</code> (+60)</td>
     <td>~150</td>
   </tr>
@@ -243,7 +243,7 @@ loginctl enable-linger $USER            &larr; survives SSH logout / reboot</cod
 
 <h2>Decision log</h2>
 <ul class="kv">
-  <li>Auth: hosted OOB redirect on Clerk PKCE (not relay-brokered pairing, not device grant) &mdash; chosen for minimal new surface.</li>
+  <li>Auth: hosted out-of-band OAuth redirect on Clerk PKCE (not relay-brokered pairing, not device grant) &mdash; chosen for minimal new surface.</li>
   <li>URL: stateless static page, no backend short-link.</li>
   <li>Service: real per-user login service (systemd user + linger first); detect + offer install, never silent.</li>
   <li>Binary: pinned managed runtime under <code>~/.t3</code>; interactive <code>npx</code> usage untouched.</li>

@@ -94,7 +94,7 @@ export function ConnectCliAuthorizeSurface() {
 
 /**
  * /connect/callback: Clerk's redirect target. Shows the one-time code the
- * user pastes back into the waiting terminal.
+ * user enters in the waiting terminal.
  */
 export function ConnectCliCallbackSurface() {
   const result = useMemo(() => readConnectCliCallbackResult(), []);
@@ -137,8 +137,8 @@ export function ConnectCliCallbackSurface() {
         title="Almost connected"
         description={
           accountLabel
-            ? `Paste this code into your waiting terminal to connect it as ${accountLabel}.`
-            : "Paste this code into your waiting terminal to finish connecting."
+            ? `Enter this code in your waiting terminal to connect it as ${accountLabel}.`
+            : "Enter this code in your waiting terminal to finish connecting."
         }
       />
 
@@ -155,8 +155,8 @@ export function ConnectCliCallbackSurface() {
       </div>
 
       <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
-        Only paste this code into a terminal session you started yourself. Anyone holding it can
-        link their machine to your T3 Connect account while it is valid.
+        Only enter this code in a terminal session you started yourself. Anyone holding it can link
+        their machine to your T3 Connect account while it is valid.
       </p>
     </AuthSurfaceShell>
   );

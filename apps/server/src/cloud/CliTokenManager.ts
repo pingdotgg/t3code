@@ -191,26 +191,27 @@ const makePkceRequest = Effect.gen(function* () {
   return { verifier, challenge, state };
 });
 
-export interface PasteCodePromptInput {
+export interface OutOfBandOAuthPromptInput {
   readonly authorizeUrl: string;
   readonly validate: (value: string) => Effect.Effect<string, string>;
 }
 
 /**
- * Out-of-band authorization for machines without a local browser (SSH). The
- * user opens the hosted /connect URL elsewhere, signs in, and pastes the
- * displayed code back into this terminal. The PKCE verifier never leaves
- * this process, so the pasted code is useless to an observer, and the state
- * bundled into the blob preserves the loopback flow's CSRF check.
+ * Out-of-band OAuth for machines without a local browser (SSH). The user
+ * opens the hosted /connect URL elsewhere, signs in, and enters the displayed
+ * code in this terminal. The PKCE verifier never leaves this process, so the
+ * authorization code is useless to an observer, and the state bundled into
+ * the blob preserves the loopback flow's CSRF check.
  */
-export const pasteCodeLogin = Effect.fn("cloud.cli_token.paste_code_login")(function* <E, R>(
-  promptForCode: (input: PasteCodePromptInput) => Effect.Effect<string, E, R>,
-) {
+export const outOfBandOAuthLogin = Effect.fn("cloud.cli_token.out_of_band_oauth_login")(function* <
+  E,
+  R,
+>(promptForCode: (input: OutOfBandOAuthPromptInput) => Effect.Effect<string, E, R>) {
   const metadata = yield* cloudCliOAuthConfig;
   const hostedAppUrl = yield* hostedAppUrlConfig;
   const { verifier, challenge, state } = yield* makePkceRequest;
 
-  const pasted = yield* promptForCode({
+  const authorizationCode = yield* promptForCode({
     authorizeUrl: buildConnectAuthorizeRequestUrl({ hostedAppUrl, state, challenge }),
     validate: (value) => {
       const checked = checkConnectAuthCode(value, state);
@@ -226,7 +227,7 @@ export const pasteCodeLogin = Effect.fn("cloud.cli_token.paste_code_login")(func
   );
   // promptForCode is caller-supplied, so re-check the returned value rather
   // than trusting that the prompt ran validate.
-  const authCode = checkConnectAuthCode(pasted, state);
+  const authCode = checkConnectAuthCode(authorizationCode, state);
   if (typeof authCode === "string") {
     return yield* new CloudCliAuthorizationError({ cause: authCode });
   }
@@ -242,7 +243,7 @@ export const pasteCodeLogin = Effect.fn("cloud.cli_token.paste_code_login")(func
 
 export const make = Effect.gen(function* () {
   // Capture exactly the services the login/refresh flows need at build time
-  // (matching the pre-paste-flow behavior of capturing the instances), not
+  // (matching the behavior before the out-of-band flow captured the instances), not
   // the whole ambient context.
   const crypto = yield* Crypto.Crypto;
   const httpClient = yield* HttpClient.HttpClient;
@@ -369,7 +370,7 @@ export const make = Effect.gen(function* () {
       // A stored credential that can't be read or refreshed (corrupt, revoked,
       // expired grant) must fall through to a fresh login rather than dead-end
       // the command — this is the loopback counterpart of authorizeCli's
-      // paste-side fallback.
+      // out-of-band counterpart.
       const token = yield* getExistingNoLock().pipe(
         Effect.orElseSucceed(() => Option.none<PersistedToken>()),
       );

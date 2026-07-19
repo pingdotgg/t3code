@@ -60,7 +60,7 @@ describe("connectAuth", () => {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   });
 
-  it("round-trips the pasted code blob and preserves dots inside the code", () => {
+  it("round-trips the out-of-band authorization code and preserves dots inside it", () => {
     const blob = encodeConnectAuthCode({ code: "az9.code.chunk", state: "state-uuid" });
     expect(parseConnectAuthCode(blob)).toEqual({ code: "az9.code.chunk", state: "state-uuid" });
     expect(parseConnectAuthCode(`  ${blob}\n`)).toEqual({
@@ -69,7 +69,7 @@ describe("connectAuth", () => {
     });
   });
 
-  it("rejects malformed pasted blobs", () => {
+  it("rejects malformed out-of-band authorization codes", () => {
     expect(parseConnectAuthCode("")).toBeNull();
     expect(parseConnectAuthCode("no-separator")).toBeNull();
     expect(parseConnectAuthCode(".leading")).toBeNull();

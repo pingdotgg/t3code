@@ -102,7 +102,7 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
 export const relayUrlConfig = makeRelayUrlConfig();
 
 /**
- * Hosted app origin used for the paste-code connect flow on headless
+ * Hosted app origin used for out-of-band OAuth on headless
  * machines. Overridable so staging/nightly builds can point their CLIs at a
  * matching hosted deployment.
  */

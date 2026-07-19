@@ -11,7 +11,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import * as CliTokenManager from "./CliTokenManager.ts";
-import type { PasteCodePromptInput } from "./CliTokenManager.ts";
+import type { OutOfBandOAuthPromptInput } from "./CliTokenManager.ts";
 
 // pk_test_<base64 of "clerk.example.test$">
 const TEST_ENV = {
@@ -89,14 +89,14 @@ class PromptRejectedError extends Schema.TaggedErrorClass<PromptRejectedError>()
   { message: Schema.String },
 ) {}
 
-it.layer(NodeServices.layer)("CliTokenManager.pasteCodeLogin", (it) => {
-  it.effect("prints a hosted authorize URL and exchanges the pasted code with PKCE", () =>
+it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
+  it.effect("prints a hosted authorize URL and exchanges the out-of-band code with PKCE", () =>
     Effect.gen(function* () {
       const requests: Array<RecordedTokenRequest> = [];
       let seenAuthorizeUrl = "";
 
-      const { token, identity } = yield* CliTokenManager.pasteCodeLogin(
-        ({ authorizeUrl, validate }: PasteCodePromptInput) =>
+      const { token, identity } = yield* CliTokenManager.outOfBandOAuthLogin(
+        ({ authorizeUrl, validate }: OutOfBandOAuthPromptInput) =>
           Effect.gen(function* () {
             seenAuthorizeUrl = authorizeUrl;
             const request = readConnectAuthorizeRequest(new URL(authorizeUrl));
@@ -137,16 +137,17 @@ it.layer(NodeServices.layer)("CliTokenManager.pasteCodeLogin", (it) => {
     }),
   );
 
-  it.effect("rejects pasted codes whose state does not match the request", () =>
+  it.effect("rejects out-of-band codes whose state does not match the request", () =>
     Effect.gen(function* () {
       const requests: Array<RecordedTokenRequest> = [];
 
       const validationErrors: Array<string> = [];
-      const result = yield* CliTokenManager.pasteCodeLogin(({ validate }: PasteCodePromptInput) =>
-        validate("clerk-code-123.wrong-state").pipe(
-          Effect.tapError((message) => Effect.sync(() => validationErrors.push(message))),
-          Effect.mapError((message) => new PromptRejectedError({ message })),
-        ),
+      const result = yield* CliTokenManager.outOfBandOAuthLogin(
+        ({ validate }: OutOfBandOAuthPromptInput) =>
+          validate("clerk-code-123.wrong-state").pipe(
+            Effect.tapError((message) => Effect.sync(() => validationErrors.push(message))),
+            Effect.mapError((message) => new PromptRejectedError({ message })),
+          ),
       ).pipe(Effect.provide(makeTokenEndpointLayer(requests)), provideTestEnv, Effect.flip);
 
       assert.lengthOf(requests, 0);
@@ -161,8 +162,8 @@ it.layer(NodeServices.layer)("CliTokenManager.pasteCodeLogin", (it) => {
       const requests: Array<RecordedTokenRequest> = [];
       const malformedIdToken = `header.${Encoding.encodeBase64Url("not-json")}.signature`;
 
-      const { identity } = yield* CliTokenManager.pasteCodeLogin(
-        ({ authorizeUrl }: PasteCodePromptInput) => {
+      const { identity } = yield* CliTokenManager.outOfBandOAuthLogin(
+        ({ authorizeUrl }: OutOfBandOAuthPromptInput) => {
           const request = readConnectAuthorizeRequest(new URL(authorizeUrl));
           assert.isNotNull(request);
           return Effect.succeed(`clerk-code-123.${request!.state}`);
@@ -181,7 +182,7 @@ it.layer(NodeServices.layer)("CliTokenManager.pasteCodeLogin", (it) => {
     Effect.gen(function* () {
       const requests: Array<RecordedTokenRequest> = [];
 
-      const result = yield* CliTokenManager.pasteCodeLogin(() =>
+      const result = yield* CliTokenManager.outOfBandOAuthLogin(() =>
         Effect.succeed("not-a-connect-code"),
       ).pipe(Effect.provide(makeTokenEndpointLayer(requests)), provideTestEnv, Effect.flip);
 
