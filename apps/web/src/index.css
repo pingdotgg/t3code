@@ -1067,3 +1067,33 @@ label:has(> select#reasoning-effort) select {
 .dark .model-picker-list::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+@keyframes preview-loading-progress {
+  from {
+    transform: scaleX(0.04);
+  }
+
+  to {
+    transform: scaleX(0.9);
+  }
+}
+
+.preview-loading-progress-active {
+  opacity: 1;
+  animation: preview-loading-progress 10s cubic-bezier(0.1, 0.5, 0.2, 1) forwards;
+}
+
+.preview-loading-progress-idle {
+  opacity: 0;
+  transform: scaleX(1);
+  transition:
+    transform 150ms ease-out,
+    opacity 150ms ease-out 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-loading-progress-active {
+    transform: scaleX(0.9);
+    animation: none;
+  }
+}

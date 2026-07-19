@@ -39,7 +39,6 @@ import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
-import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
@@ -98,7 +97,6 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const isUnreachable = navStatus._tag === "LoadFailed";
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
-  const loadProgress = useLoadingProgress(loading);
   const displayUrl =
     url && environment && environmentHttpBaseUrl
       ? (formatPreviewUrl({
@@ -564,7 +562,6 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         url={url}
         displayUrl={displayUrl}
         loading={loading}
-        loadProgress={loadProgress}
         canGoBack={canGoBack}
         canGoForward={canGoForward}
         refreshDisabled={refreshDisabled}
