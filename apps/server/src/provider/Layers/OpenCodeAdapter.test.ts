@@ -506,52 +506,57 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("passes agent and variant options for the adapter's bound custom instance id", () => {
-    const instanceId = ProviderInstanceId.make("opencode_zen");
-    const adapterLayer = Layer.effect(
-      OpenCodeAdapter,
-      makeOpenCodeAdapter(openCodeAdapterTestSettings, { instanceId }),
-    ).pipe(
-      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(providerSessionDirectoryTestLayer),
-      Layer.provideMerge(NodeServices.layer),
-    );
+  it.effect(
+    "passes agent, variant, and verbosity options for the adapter's bound custom instance id",
+    () => {
+      const instanceId = ProviderInstanceId.make("opencode_zen");
+      const adapterLayer = Layer.effect(
+        OpenCodeAdapter,
+        makeOpenCodeAdapter(openCodeAdapterTestSettings, { instanceId }),
+      ).pipe(
+        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
 
-    return Effect.gen(function* () {
-      const adapter = yield* OpenCodeAdapter;
-      yield* adapter.startSession({
-        provider: ProviderDriverKind.make("opencode"),
-        threadId: asThreadId("thread-custom-instance"),
-        runtimeMode: "full-access",
-      });
+      return Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId: asThreadId("thread-custom-instance"),
+          runtimeMode: "full-access",
+        });
 
-      yield* adapter.sendTurn({
-        threadId: asThreadId("thread-custom-instance"),
-        input: "Fix it",
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("opencode_zen"),
-          "anthropic/claude-sonnet-4-5",
-          [
-            { id: "agent", value: "github-copilot" },
-            { id: "variant", value: "high" },
-          ],
-        ),
-      });
+        yield* adapter.sendTurn({
+          threadId: asThreadId("thread-custom-instance"),
+          input: "Fix it",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode_zen"),
+            "anthropic/claude-sonnet-4-5",
+            [
+              { id: "agent", value: "github-copilot" },
+              { id: "variant", value: "high" },
+              { id: "verbosity", value: "high" },
+            ],
+          ),
+        });
 
-      NodeAssert.deepEqual(runtimeMock.state.promptCalls.at(-1), {
-        sessionID: "http://127.0.0.1:9999/session",
-        model: {
-          providerID: "anthropic",
-          modelID: "claude-sonnet-4-5",
-        },
-        agent: "github-copilot",
-        variant: "high",
-        parts: [{ type: "text", text: "Fix it" }],
-      });
-    }).pipe(Effect.provide(adapterLayer));
-  });
+        NodeAssert.deepEqual(runtimeMock.state.promptCalls.at(-1), {
+          sessionID: "http://127.0.0.1:9999/session",
+          model: {
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4-5",
+          },
+          agent: "github-copilot",
+          variant: "high",
+          verbosity: "high",
+          parts: [{ type: "text", text: "Fix it" }],
+        });
+      }).pipe(Effect.provide(adapterLayer));
+    },
+  );
 
   it.effect("uses the bound custom instance id for fallback sendTurn model selection", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");

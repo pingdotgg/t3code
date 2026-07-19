@@ -186,6 +186,15 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         variantDescriptor.options.find((option) => option.isDefault === true)?.id,
         "medium",
       );
+      const verbosityDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "verbosity" && descriptor.type === "select",
+      );
+      NodeAssert.ok(verbosityDescriptor && verbosityDescriptor.type === "select");
+      NodeAssert.deepEqual(
+        verbosityDescriptor.options.map((option) => option.id),
+        ["low", "medium", "high"],
+      );
+      NodeAssert.equal(verbosityDescriptor.currentValue, "medium");
       const agentDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
@@ -194,6 +203,85 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+    }),
+  );
+
+  it.effect("does not expose verbosity for non-GPT-5 models", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-4.1": {
+                  id: "gpt-4.1",
+                  name: "GPT-4.1",
+                  variants: {
+                    low: {},
+                    high: {},
+                  },
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-4.1");
+
+      NodeAssert.ok(model);
+      const verbosityDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "verbosity",
+      );
+      NodeAssert.equal(verbosityDescriptor, undefined);
+    }),
+  );
+
+  it.effect("exposes verbosity for GPT-5 models across providers", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["partner-ai"],
+          all: [
+            {
+              id: "partner-ai",
+              name: "Partner AI",
+              models: {
+                "gpt-5.4": {
+                  id: "gpt-5.4",
+                  name: "GPT-5.4",
+                  variants: {
+                    low: {},
+                    medium: {},
+                  },
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const model = snapshot.models.find((entry) => entry.slug === "partner-ai/gpt-5.4");
+
+      NodeAssert.ok(model);
+      const verbosityDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "verbosity" && descriptor.type === "select",
+      );
+      NodeAssert.ok(verbosityDescriptor && verbosityDescriptor.type === "select");
+      NodeAssert.deepEqual(
+        verbosityDescriptor.options.map((option) => option.id),
+        ["low", "medium", "high"],
+      );
+      NodeAssert.equal(verbosityDescriptor.currentValue, "medium");
     }),
   );
 

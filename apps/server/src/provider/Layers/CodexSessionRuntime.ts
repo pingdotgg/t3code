@@ -72,19 +72,21 @@ const CodexUserInputAnswerObject = Schema.Struct({
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
+export const CodexVerbosity = Schema.Literals(["low", "medium", "high"]);
+export type CodexVerbosity = typeof CodexVerbosity.Type;
+export const isCodexVerbosity = Schema.is(CodexVerbosity);
+
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
-const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
+// `V2TurnStartParams` schema includes `collaborationMode` and `verbosity` directly.
+const CodexTurnStartParams = EffectCodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
+    verbosity: Schema.optionalKey(CodexVerbosity),
   }),
 );
-const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
-  CodexTurnStartParamsWithCollaborationMode,
-);
+const decodeCodexTurnStartParams = Schema.decodeUnknownEffect(CodexTurnStartParams);
 
-export type CodexTurnStartParamsWithCollaborationMode =
-  typeof CodexTurnStartParamsWithCollaborationMode.Type;
+export type CodexTurnStartParams = typeof CodexTurnStartParams.Type;
 
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
@@ -115,6 +117,7 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
+  readonly verbosity?: CodexVerbosity | undefined;
   readonly interactionMode?: ProviderInteractionMode;
 }
 
@@ -353,11 +356,9 @@ export function buildTurnStartParams(input: {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly verbosity?: CodexVerbosity;
   readonly interactionMode?: ProviderInteractionMode;
-}): Effect.Effect<
-  CodexTurnStartParamsWithCollaborationMode,
-  CodexErrors.CodexAppServerProtocolParseError
-> {
+}): Effect.Effect<CodexTurnStartParams, CodexErrors.CodexAppServerProtocolParseError> {
   const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
   if (input.prompt) {
     turnInput.push({
@@ -376,7 +377,7 @@ export function buildTurnStartParams(input: {
     ...(input.effort ? { effort: input.effort } : {}),
   });
 
-  return decodeCodexTurnStartParamsWithCollaborationMode({
+  return decodeCodexTurnStartParams({
     threadId: input.threadId,
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
@@ -384,6 +385,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.verbosity ? { verbosity: input.verbosity } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(
     Effect.mapError((cause) =>
@@ -1283,6 +1285,7 @@ export const makeCodexSessionRuntime = (
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
+            ...(input.verbosity ? { verbosity: input.verbosity } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);

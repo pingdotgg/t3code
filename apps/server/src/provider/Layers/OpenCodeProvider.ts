@@ -170,11 +170,16 @@ const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabi
   optionDescriptors: [],
 });
 
+function isGpt5Model(modelID: string): boolean {
+  return modelID.startsWith("gpt-5");
+}
+
 function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
+  const hasGpt5Verbosity = isGpt5Model(input.model.id);
   const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
@@ -191,6 +196,14 @@ function openCodeCapabilitiesForModel(input: {
       ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
       : { id: agent.name, label: titleCaseSlug(agent.name) },
   );
+  const verbosityOptions = [
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
+    { id: "high", label: "High" },
+  ];
+  const defaultVerbosity = hasGpt5Verbosity
+    ? (verbosityOptions.find((option) => option.id === "medium")?.id ?? verbosityOptions[0]?.id)
+    : undefined;
   return createModelCapabilities({
     optionDescriptors: [
       ...(variantOptions.length > 0
@@ -212,6 +225,17 @@ function openCodeCapabilitiesForModel(input: {
               type: "select" as const,
               options: agentOptions,
               ...(defaultAgent ? { currentValue: defaultAgent } : {}),
+            },
+          ]
+        : []),
+      ...(hasGpt5Verbosity
+        ? [
+            {
+              id: "verbosity",
+              label: "Verbosity",
+              type: "select" as const,
+              options: verbosityOptions,
+              ...(defaultVerbosity ? { currentValue: defaultVerbosity } : {}),
             },
           ]
         : []),

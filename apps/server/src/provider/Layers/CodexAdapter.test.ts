@@ -345,6 +345,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
             { id: "reasoningEffort", value: "high" },
             { id: "serviceTier", value: "priority" },
+            { id: "verbosity", value: "high" },
           ]),
           attachments: [],
         }),
@@ -355,6 +356,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "priority",
+        verbosity: "high",
       });
     }),
   );
@@ -399,6 +401,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
             [
               { id: "reasoningEffort", value: "high" },
               { id: "serviceTier", value: "flex" },
+              { id: "verbosity", value: "medium" },
             ],
           ),
           attachments: [],
@@ -410,6 +413,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "flex",
+        verbosity: "medium",
       });
     }).pipe(Effect.provide(customLayer));
   });
