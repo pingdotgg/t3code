@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -32,6 +36,7 @@ import {
 import {
   appendOpenCodeAssistantTextDelta,
   isOpenCodeNotFound,
+  isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
 } from "./OpenCodeAdapter.ts";
@@ -519,6 +524,34 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       }),
   );
 
+  it.effect("reuses the resumed session when the stored directory differs only lexically", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-samedir");
+      // Same working tree, different spelling (trailing slash). A raw string
+      // comparison would misread this as a cwd change and fork the session,
+      // churning upstream sessions and the durable cursor on every resume.
+      runtimeMock.state.sessionDirectoryById.set("ses_samedir", `${process.cwd()}/`);
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: "ses_samedir" },
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_samedir"]);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+      NodeAssert.deepEqual(runtimeMock.state.forkCalls, []);
+      NodeAssert.deepEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "ses_samedir",
+      });
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("fails sendTurn for missing sessions through the typed error channel", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
@@ -997,6 +1030,35 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(isOpenCodeNotFound(new Error("network error (no response)")), false);
       NodeAssert.equal(isOpenCodeNotFound(undefined), false);
     }),
+  );
+
+  it.effect("treats lexically or physically identical directories as the same", () =>
+    Effect.gen(function* () {
+      // Lexical-only differences (trailing slash, dot segments) short-circuit
+      // without touching the filesystem — the paths need not exist.
+      NodeAssert.equal(yield* isSameOpenCodeDirectory("/repo/project/", "/repo/project"), true);
+      NodeAssert.equal(
+        yield* isSameOpenCodeDirectory("/repo/nested/../project", "/repo/project"),
+        true,
+      );
+      // Distinct nonexistent paths degrade to the lexical comparison instead
+      // of failing (covers directories recorded by an external OpenCode server
+      // that don't exist on this machine, or since-deleted worktrees).
+      NodeAssert.equal(yield* isSameOpenCodeDirectory("/repo/project", "/repo/other"), false);
+
+      // A symlinked cwd (the macOS `/tmp` → `/private/tmp` shape) resolves to
+      // the directory it points at, so the two spellings compare equal.
+      const base = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-opencode-dir-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const real = NodePath.join(base, "real");
+      const link = NodePath.join(base, "link");
+      yield* Effect.promise(() => NodeFSP.mkdir(real));
+      yield* Effect.promise(() => NodeFSP.symlink(real, link));
+      NodeAssert.equal(yield* isSameOpenCodeDirectory(link, real), true);
+      NodeAssert.equal(yield* isSameOpenCodeDirectory(link, NodePath.join(base, "other")), false);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>

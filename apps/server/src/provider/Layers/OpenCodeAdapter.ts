@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import {
   EventId,
   type OpenCodeSettings,
@@ -143,6 +147,32 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Whether the directory stored on an upstream OpenCode session and the
+ * requested working directory name the same location. Raw string equality
+ * produces false mismatches — a trailing slash, an unnormalized `.`/`..`
+ * segment, or a symlinked cwd (macOS `/tmp` → `/private/tmp`) — and every
+ * false mismatch needlessly forks the session and repoints the durable
+ * cursor at the clone. Lexically equal paths short-circuit without touching
+ * the filesystem; otherwise both sides are compared through `realpath`, each
+ * falling back to its lexical form when resolution fails (directory since
+ * deleted, or a path recorded by an external OpenCode server that doesn't
+ * exist on this machine). Because the lexical check runs first, the realpath
+ * pass can only ever turn a spurious mismatch into a match — it can never
+ * split paths that compare equal today. Exported for unit testing.
+ */
+export function isSameOpenCodeDirectory(left: string, right: string): Effect.Effect<boolean> {
+  return Effect.promise(async () => {
+    const lexicalLeft = NodePath.resolve(left);
+    const lexicalRight = NodePath.resolve(right);
+    if (lexicalLeft === lexicalRight) {
+      return true;
+    }
+    const canonicalize = (lexical: string) => NodeFSP.realpath(lexical).catch(() => lexical);
+    return (await canonicalize(lexicalLeft)) === (await canonicalize(lexicalRight));
+  });
 }
 
 interface OpenCodeTurnSnapshot {
@@ -1242,7 +1272,9 @@ export function makeOpenCodeAdapter(
                 // moved from the project root into a git worktree), the session is
                 // forked into the new directory below rather than reused in place.
                 const reusable =
-                  adopted && (!adopted.directory || adopted.directory === directory)
+                  adopted &&
+                  (!adopted.directory ||
+                    (yield* isSameOpenCodeDirectory(adopted.directory, directory)))
                     ? adopted
                     : undefined;
 
