@@ -66,25 +66,6 @@ export function detectComposerTrigger(
   const linePrefix = text.slice(lineStart, cursor);
 
   if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-
     const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
     if (modelMatch) {
       return {
@@ -104,6 +85,28 @@ export function detectComposerTrigger(
   const tokenStart = tokenIdx + 1;
 
   const token = text.slice(tokenStart, cursor);
+
+  if (token.startsWith("/")) {
+    const commandMatch = /^\/(\S*)$/.exec(token);
+    if (commandMatch) {
+      const commandQuery = commandMatch[1] ?? "";
+      if (commandQuery.toLowerCase() === "model") {
+        return {
+          kind: "slash-model",
+          query: "",
+          rangeStart: tokenStart,
+          rangeEnd: cursor,
+        };
+      }
+      return {
+        kind: "slash-command",
+        query: commandQuery,
+        rangeStart: tokenStart,
+        rangeEnd: cursor,
+      };
+    }
+  }
+
   if (token.startsWith("$")) {
     return {
       kind: "skill",

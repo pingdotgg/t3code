@@ -94,6 +94,37 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects slash-command trigger mid-line, not just at line start", () => {
+    const text = "fix this /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "fix this ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects slash-command trigger mid-message after a newline", () => {
+    const text = "first line\nfix this /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "first line\nfix this ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("does not trigger on a slash inside an existing token", () => {
+    const text = "path/to/file";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toBeNull();
+  });
+
   it("detects $skill trigger at cursor", () => {
     const text = "Use $gh-fi";
     const trigger = detectComposerTrigger(text, text.length);
