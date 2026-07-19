@@ -22,8 +22,11 @@ describe("ComposerBannerStack", () => {
 
     expect(expandedItems?.[1]).toContain("grid-rows-[0fr]");
     expect(expandedItems?.[1]).toContain("group-hover/banner-stack:grid-rows-[1fr]");
+    expect(expandedItems?.[1]).toContain("z-20");
     expect(expandedItems?.[1]).not.toContain("absolute");
-    expect(markup.indexOf("stacked warning")).toBeLessThan(markup.indexOf("front warning"));
+    expect(markup.indexOf("front warning")).toBeLessThan(markup.indexOf("stacked warning"));
+    expect(markup).toContain("invisible pointer-events-none");
+    expect(markup).toContain("group-focus-within/banner-stack:visible");
   });
 
   it("does not render an expandable region for a single banner", () => {
