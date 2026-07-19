@@ -245,7 +245,7 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
           agents.push({
             name: currentHeader.name,
             mode: currentHeader.mode as Agent["mode"],
-            hidden: KNOWN_HIDDEN_AGENTS.has(currentHeader.name) || undefined,
+            hidden: KNOWN_HIDDEN_AGENTS.has(currentHeader.name),
             permission,
             options: {},
           });
