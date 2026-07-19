@@ -231,6 +231,42 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
+  /* Stage-channel sidebar art; ::after ramps to the sidebar bg color and the
+     mask lets the surface grain show through at the boundary. */
+  .sidebar-stage-backdrop {
+    mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+  }
+
+  .sidebar-stage-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      transparent 28%,
+      color-mix(in srgb, var(--app-chrome-background) 10%, transparent) 40%,
+      color-mix(in srgb, var(--app-chrome-background) 30%, transparent) 52%,
+      color-mix(in srgb, var(--app-chrome-background) 58%, transparent) 64%,
+      color-mix(in srgb, var(--app-chrome-background) 82%, transparent) 75%,
+      color-mix(in srgb, var(--app-chrome-background) 96%, transparent) 85%,
+      var(--app-chrome-background) 93%
+    );
+  }
+
+  .stage-blueprint {
+    --stage-bp-top: #67c2ff;
+    --stage-bp-mid: #347ff8;
+    --stage-bp-bottom: #1538d0;
+  }
+
+  .dark .stage-blueprint {
+    --stage-bp-top: #3a7ad1;
+    --stage-bp-mid: #2050ae;
+    --stage-bp-bottom: #101f6e;
+  }
+
   .workspace-topbar {
     display: flex;
     height: var(--workspace-topbar-height);
