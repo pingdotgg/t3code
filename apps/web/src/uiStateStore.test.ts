@@ -14,6 +14,7 @@ import {
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
+  setThreadPinned,
   type UiState,
 } from "./uiStateStore";
 
@@ -23,12 +24,21 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    pinnedThreadKeysByProject: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
 }
 
 describe("uiStateStore pure functions", () => {
+  it("keeps pinned threads scoped to their project", () => {
+    const pinned = setThreadPinned(makeUiState(), "project-a", "thread-1", true);
+    const otherProject = setThreadPinned(pinned, "project-b", "thread-2", true);
+    const unpinned = setThreadPinned(otherProject, "project-a", "thread-1", false);
+
+    expect(unpinned.pinnedThreadKeysByProject).toEqual({ "project-b": ["thread-2"] });
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -161,6 +171,9 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      pinnedThreadKeysByProject: {
+        logical: ["environment:thread-1"],
+      },
     });
 
     expect(parsed).toEqual({
@@ -176,6 +189,9 @@ describe("parsePersistedState", () => {
         "environment:thread-1": {
           "turn-1": false,
         },
+      },
+      pinnedThreadKeysByProject: {
+        logical: ["environment:thread-1"],
       },
     });
   });
@@ -262,6 +278,9 @@ describe("uiStateStore persistence", () => {
         },
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      pinnedThreadKeysByProject: {
+        logical: ["environment:thread-1"],
+      },
     });
 
     persistState(state);
@@ -282,6 +301,9 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": {
           "turn-1": false,
         },
+      },
+      pinnedThreadKeysByProject: {
+        logical: ["environment:thread-1"],
       },
     });
     expect(parsePersistedState(persisted)).toEqual({

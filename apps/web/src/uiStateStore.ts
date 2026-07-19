@@ -25,6 +25,7 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  pinnedThreadKeysByProject?: Record<string, string[]>;
 }
 
 export interface UiProjectState {
@@ -35,6 +36,7 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  pinnedThreadKeysByProject: Record<string, string[]>;
 }
 
 export interface UiEndpointState {
@@ -48,6 +50,7 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  pinnedThreadKeysByProject: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -96,6 +99,16 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+function sanitizeStringArrayRecord(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entries]) => {
+      const sanitized = sanitizeStringArray(entries);
+      return key.length > 0 && sanitized.length > 0 ? [[key, sanitized]] : [];
+    }),
+  );
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -127,6 +140,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
     ),
+    pinnedThreadKeysByProject: sanitizeStringArrayRecord(parsed.pinnedThreadKeysByProject),
     defaultAdvertisedEndpointKey:
       typeof parsed.defaultAdvertisedEndpointKey === "string" &&
       parsed.defaultAdvertisedEndpointKey.length > 0
@@ -211,6 +225,7 @@ export function persistState(state: UiState): void {
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        pinnedThreadKeysByProject: state.pinnedThreadKeysByProject,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -334,6 +349,25 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+export function setThreadPinned(
+  state: UiState,
+  projectKey: string,
+  threadKey: string,
+  pinned: boolean,
+): UiState {
+  const current = state.pinnedThreadKeysByProject[projectKey] ?? [];
+  const isPinned = current.includes(threadKey);
+  if (isPinned === pinned) return state;
+
+  const nextProjectPins = pinned
+    ? [...current, threadKey]
+    : current.filter((key) => key !== threadKey);
+  const pinnedThreadKeysByProject = { ...state.pinnedThreadKeysByProject };
+  if (nextProjectPins.length === 0) delete pinnedThreadKeysByProject[projectKey];
+  else pinnedThreadKeysByProject[projectKey] = nextProjectPins;
+  return { ...state, pinnedThreadKeysByProject };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -416,6 +450,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setThreadPinned: (projectKey: string, threadKey: string, pinned: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -434,6 +469,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setThreadPinned: (projectKey, threadKey, pinned) =>
+    set((state) => setThreadPinned(state, projectKey, threadKey, pinned)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

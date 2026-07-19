@@ -11,6 +11,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  prioritizeThreadsByPinnedKeys,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -18,6 +19,10 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  shouldBlockThreadDragActivation,
+  shouldShowPinnedThreadDivider,
+  shouldHideThreadMeta,
+  resolveThreadPinCrossingAction,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -37,6 +42,118 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldBlockThreadDragActivation", () => {
+  it("blocks drag activation from interactive descendants", () => {
+    const input = { closest: vi.fn(() => ({})) } as unknown as HTMLElement;
+    const button = { closest: vi.fn(() => ({})) } as unknown as HTMLElement;
+    const row = { closest: vi.fn(() => null) } as unknown as HTMLElement;
+
+    expect(shouldBlockThreadDragActivation(input)).toBe(true);
+    expect(shouldBlockThreadDragActivation(button)).toBe(true);
+    expect(shouldBlockThreadDragActivation(row)).toBe(false);
+  });
+});
+
+describe("shouldHideThreadMeta", () => {
+  it("keeps mobile metadata visible beside always-visible actions", () => {
+    expect(
+      shouldHideThreadMeta({
+        isConfirmingArchive: false,
+        isMobile: true,
+        showRowActions: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides metadata for desktop actions and archive confirmation", () => {
+    expect(
+      shouldHideThreadMeta({
+        isConfirmingArchive: false,
+        isMobile: false,
+        showRowActions: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHideThreadMeta({
+        isConfirmingArchive: true,
+        isMobile: true,
+        showRowActions: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("prioritizeThreadsByPinnedKeys", () => {
+  it("moves only pinned threads to the front while preserving the current sort order", () => {
+    const threads = [{ id: "newest" }, { id: "pinned" }, { id: "oldest" }];
+
+    expect(prioritizeThreadsByPinnedKeys(threads, ["pinned"], (thread) => thread.id)).toEqual([
+      { id: "pinned" },
+      { id: "newest" },
+      { id: "oldest" },
+    ]);
+  });
+});
+
+describe("resolveThreadPinCrossingAction", () => {
+  it("pins an unpinned thread after its center crosses above the divider", () => {
+    expect(
+      resolveThreadPinCrossingAction({
+        activeIsPinned: false,
+        draggedCenterY: 90,
+        dividerCenterY: 100,
+      }),
+    ).toBe("pin");
+    expect(
+      resolveThreadPinCrossingAction({
+        activeIsPinned: false,
+        draggedCenterY: 110,
+        dividerCenterY: 100,
+      }),
+    ).toBeNull();
+  });
+
+  it("unpins a pinned thread after its center crosses below the divider", () => {
+    expect(
+      resolveThreadPinCrossingAction({
+        activeIsPinned: true,
+        draggedCenterY: 110,
+        dividerCenterY: 100,
+      }),
+    ).toBe("unpin");
+    expect(
+      resolveThreadPinCrossingAction({
+        activeIsPinned: true,
+        draggedCenterY: 90,
+        dividerCenterY: 100,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldShowPinnedThreadDivider", () => {
+  it("shows between mixed groups and during edge-case drags", () => {
+    expect(
+      shouldShowPinnedThreadDivider({ isDragging: false, pinnedCount: 1, regularCount: 1 }),
+    ).toBe(true);
+    expect(
+      shouldShowPinnedThreadDivider({ isDragging: true, pinnedCount: 0, regularCount: 2 }),
+    ).toBe(true);
+    expect(
+      shouldShowPinnedThreadDivider({ isDragging: true, pinnedCount: 2, regularCount: 0 }),
+    ).toBe(true);
+  });
+
+  it("stays hidden outside a drag when only one group exists", () => {
+    expect(
+      shouldShowPinnedThreadDivider({ isDragging: false, pinnedCount: 0, regularCount: 2 }),
+    ).toBe(false);
+    expect(
+      shouldShowPinnedThreadDivider({ isDragging: false, pinnedCount: 2, regularCount: 0 }),
+    ).toBe(false);
+  });
+});
 
 describe("resolveSidebarStageBadgeLabel", () => {
   it("returns Nightly for nightly primary server versions", () => {
@@ -790,6 +907,56 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+
+  it("includes every always-visible thread beyond the folded preview limit", () => {
+    const threads = Array.from({ length: 9 }, (_, index) =>
+      makeThread({
+        id: ThreadId.make(`thread-${index + 1}`),
+      }),
+    );
+
+    const result = getVisibleThreadsForProject({
+      threads,
+      activeThreadId: undefined,
+      isThreadListExpanded: false,
+      previewLimit: 3,
+      isThreadAlwaysVisible: (thread) => Number(thread.id.split("-")[1]) <= 5,
+    });
+
+    expect(result.hasHiddenThreads).toBe(true);
+    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-1"),
+      ThreadId.make("thread-2"),
+      ThreadId.make("thread-3"),
+      ThreadId.make("thread-4"),
+      ThreadId.make("thread-5"),
+    ]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-6"),
+      ThreadId.make("thread-7"),
+      ThreadId.make("thread-8"),
+      ThreadId.make("thread-9"),
+    ]);
+  });
+
+  it("supports scoped identities for grouped projects", () => {
+    const threads = [
+      { id: ThreadId.make("shared"), scopedKey: "env-a:shared" },
+      { id: ThreadId.make("shared"), scopedKey: "env-b:shared" },
+    ];
+
+    const result = getVisibleThreadsForProject({
+      threads,
+      activeThreadId: "env-b:shared",
+      isThreadListExpanded: false,
+      previewLimit: 1,
+      getThreadId: (thread) => thread.scopedKey,
+    });
+
+    expect(result.hasHiddenThreads).toBe(false);
+    expect(result.hiddenThreads).toEqual([]);
+    expect(result.visibleThreads).toEqual(threads);
   });
 });
 
