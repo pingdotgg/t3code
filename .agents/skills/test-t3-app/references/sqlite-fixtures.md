@@ -24,7 +24,7 @@ The helper targets `state.sqlite` by default. Select the cold archive database e
 node apps/server/scripts/t3-sqlite-state.ts query \
   --base-dir <base-dir> \
   --database archive \
-  --sql "SELECT thread_id, status, chunk_count FROM archive_threads ORDER BY thread_id"
+  --sql "SELECT t.thread_id, t.archive_version, COUNT(c.chunk_index) AS chunk_count FROM archive_threads AS t LEFT JOIN archive_thread_chunks AS c ON c.thread_id = t.thread_id GROUP BY t.thread_id, t.archive_version ORDER BY t.thread_id"
 ```
 
 Inspect current columns before writing a fixture:
