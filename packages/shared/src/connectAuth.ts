@@ -86,7 +86,7 @@ export interface ConnectAuthCode {
  * Bundling `state` with the authorization code lets the CLI keep the loopback
  * flow's CSRF check without any backend: it verifies the returned state
  * matches the one it generated. Clerk authorization codes and the CLI's
- * UUID states never contain ".".
+ * base64url states never contain ".".
  */
 export function encodeConnectAuthCode(input: ConnectAuthCode): string {
   return `${input.code}${CONNECT_AUTH_CODE_SEPARATOR}${input.state}`;

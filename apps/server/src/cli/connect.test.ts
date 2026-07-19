@@ -11,11 +11,25 @@ import * as References from "effect/References";
 
 import {
   acquireRelayClientForLink,
+  formatHeadlessAuthorizationPrompt,
   formatRelayClientReady,
   headlessSessionConfig,
   isPublishAgentActivityEnabledValue,
   reportCloudDisconnectResults,
 } from "./connect.ts";
+
+it("explains how to complete headless authorization", () => {
+  assert.equal(
+    formatHeadlessAuthorizationPrompt("https://example.test/connect"),
+    [
+      "Headless authorization",
+      "Open this URL on a device with a browser:",
+      "  https://example.test/connect",
+      "",
+      "After signing in, return here and enter the code shown in your browser.",
+    ].join("\n"),
+  );
+});
 
 it("formats relay readiness without printing its installation path", () => {
   assert.equal(formatRelayClientReady("2026.5.2"), "✓ Relay client ready · cloudflared 2026.5.2");

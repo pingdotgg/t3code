@@ -74,12 +74,20 @@ export const headlessSessionConfig = Config.all({
 
 const promptForOutOfBandOAuthCode = Effect.fn("cloud.cli.prompt_for_out_of_band_oauth_code")(
   function* ({ authorizeUrl, validate }: CliTokenManager.OutOfBandOAuthPromptInput) {
-    yield* Console.log(`→ Authorize on another device\n\n  ${authorizeUrl}\n`);
-    return yield* Prompt.run(
-      Prompt.text({ message: "Enter the code shown in your browser", validate }),
-    );
+    yield* Console.log(formatHeadlessAuthorizationPrompt(authorizeUrl));
+    return yield* Prompt.run(Prompt.text({ message: "Authorization code", validate }));
   },
 );
+
+export function formatHeadlessAuthorizationPrompt(authorizeUrl: string): string {
+  return [
+    "Headless authorization",
+    "Open this URL on a device with a browser:",
+    `  ${authorizeUrl}`,
+    "",
+    "After signing in, return here and enter the code shown in your browser.",
+  ].join("\n");
+}
 
 /** Returns the connected account identity, if the flow could determine one. */
 const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
@@ -92,7 +100,7 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
     if (authorization._tag === "Authorized") {
       return null;
     }
-    yield* Console.log("\n→ Switching to out-of-band OAuth");
+    yield* Console.log("\nHeadless mode enabled. A new authorization link is ready below.");
   }
   // A stored credential whose refresh fails (revoked, expired grant) must
   // fall through to a fresh out-of-band authorization, not dead-end the command.

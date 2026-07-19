@@ -13,7 +13,7 @@ describe("connectAuth", () => {
   it("round-trips state and challenge through the authorize URL fragment", () => {
     const url = buildConnectAuthorizeRequestUrl({
       hostedAppUrl: "https://app.t3.codes",
-      state: "0b5f9a52-83a7-4f6e-9d2a-1c4b8e7f6a3d",
+      state: "q7mK9xV2pL4nR8sT6wYzAQ",
       challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
     });
     const parsed = new URL(url);
@@ -22,7 +22,7 @@ describe("connectAuth", () => {
     expect(parsed.pathname).toBe("/connect");
     expect(parsed.search).toBe("");
     expect(readConnectAuthorizeRequest(parsed)).toEqual({
-      state: "0b5f9a52-83a7-4f6e-9d2a-1c4b8e7f6a3d",
+      state: "q7mK9xV2pL4nR8sT6wYzAQ",
       challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
     });
   });

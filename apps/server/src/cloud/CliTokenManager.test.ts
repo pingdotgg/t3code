@@ -100,7 +100,8 @@ it("formats loopback authorization with a headless-host fallback", () => {
       "Open this URL to authorize T3 Connect:",
       "  https://clerk.example.test/authorize",
       "",
-      "Press Enter to open it in your browser, or H to switch to `--headless`.",
+      "Press \u001b[1mEnter\u001b[22m to open it in your browser.",
+      "No browser on this device? Press \u001b[1mH\u001b[22m to switch to headless mode.",
     ].join("\n"),
   );
 });
@@ -180,6 +181,7 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
       assert.equal(authorizeUrl.pathname, "/connect");
       const request = readConnectAuthorizeRequest(authorizeUrl);
       assert.isNotNull(request);
+      assert.match(request!.state, /^[A-Za-z0-9_-]{22}$/);
 
       assert.equal(token.accessToken, "access-token-1");
       assert.equal(token.refreshToken, "refresh-token-1");

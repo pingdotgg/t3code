@@ -43,13 +43,15 @@ import { renderLoopbackAuthorizationCompleteHtml } from "./cliAuthHtml.ts";
 const CLOUD_CLI_OAUTH_TOKEN_SECRET = "cloud-cli-oauth-token";
 const CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT = Duration.minutes(10);
 const CLOUD_CLI_OAUTH_REFRESH_EARLY_MS = Duration.toMillis(Duration.minutes(5));
+const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m`;
 
 export function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
   return [
     "Open this URL to authorize T3 Connect:",
     `  ${authorizationUrl}`,
     "",
-    "Press Enter to open it in your browser, or H to switch to `--headless`.",
+    `Press ${boldTerminalText("Enter")} to open it in your browser.`,
+    `No browser on this device? Press ${boldTerminalText("H")} to switch to headless mode.`,
   ].join("\n");
 }
 
@@ -105,7 +107,7 @@ export const waitForLoopbackAuthorization = Effect.fn(
           .pipe(
             Effect.catch(() =>
               Console.warn(
-                "Could not open a browser on this machine. Open the URL above manually, or press H for `--headless`.",
+                `Could not open a browser on this device. Open the URL above manually, or press ${boldTerminalText("H")} to switch to headless mode.`,
               ),
             ),
           );
@@ -265,7 +267,7 @@ const makePkceRequest = Effect.gen(function* () {
   const challenge = Encoding.encodeBase64Url(
     yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
   );
-  const state = yield* crypto.randomUUIDv4;
+  const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
   return { verifier, challenge, state };
 });
 
