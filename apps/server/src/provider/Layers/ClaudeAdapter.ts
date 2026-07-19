@@ -69,6 +69,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -122,6 +123,13 @@ interface ClaudeResumeState {
 interface ClaudeTurnState {
   readonly turnId: TurnId;
   readonly startedAt: string;
+  /**
+   * True for turns auto-started by assistant output arriving without an
+   * active turn (background agent/subagent responses between user prompts).
+   * Synthetic turns are auto-closed by the next sendTurn; real turns are
+   * steered instead (the queued message continues the same turn).
+   */
+  readonly synthetic?: boolean;
   readonly items: Array<unknown>;
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
@@ -241,21 +249,8 @@ function toMessage(cause: unknown, fallback: string): string {
   return fallback;
 }
 
-function toProcessError(
-  cause: unknown,
-  fallback: string,
-  threadId: ThreadId,
-): ProviderAdapterProcessError {
-  return new ProviderAdapterProcessError({
-    provider: PROVIDER,
-    threadId,
-    detail: toMessage(cause, fallback),
-    cause,
-  });
-}
-
 function normalizeClaudeStreamMessages(
-  cause: Cause.Cause<{ readonly message: string }>,
+  cause: Cause.Cause<ProviderAdapterProcessError>,
 ): ReadonlyArray<string> {
   const errors: Array<string> = [];
   for (const error of Cause.prettyErrors(cause)) {
@@ -289,25 +284,15 @@ function isClaudeInterruptedMessage(message: string): boolean {
   );
 }
 
-function isClaudeInterruptedCause(cause: Cause.Cause<{ readonly message: string }>): boolean {
+function isClaudeInterruptedCause(cause: Cause.Cause<ProviderAdapterProcessError>): boolean {
   return (
     Cause.hasInterruptsOnly(cause) ||
-    normalizeClaudeStreamMessages(cause).some(isClaudeInterruptedMessage)
+    normalizeClaudeStreamMessages(cause).some(isClaudeInterruptedMessage) ||
+    cause.reasons.some(
+      (reason) =>
+        Cause.isFailReason(reason) && isClaudeInterruptedMessage(toMessage(reason.error.cause, "")),
+    )
   );
-}
-
-function messageFromClaudeStreamCause(
-  cause: Cause.Cause<{ readonly message: string }>,
-  fallback: string,
-): string {
-  return normalizeClaudeStreamMessages(cause)[0] ?? fallback;
-}
-
-function interruptionMessageFromClaudeCause(
-  cause: Cause.Cause<{ readonly message: string }>,
-): string {
-  const message = messageFromClaudeStreamCause(cause, "Claude runtime interrupted.");
-  return isClaudeInterruptedMessage(message) ? "Claude runtime interrupted." : message;
 }
 
 function resultErrorsText(result: SDKResultMessage): string {
@@ -996,7 +981,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "turn/start",
-            detail: toMessage(cause, "Failed to read attachment file."),
+            detail: "Failed to read attachment file.",
             cause,
           }),
       ),
@@ -1234,7 +1219,7 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
   return new ProviderAdapterRequestError({
     provider: PROVIDER,
     method,
-    detail: toMessage(cause, `${method} failed`),
+    detail: `${method} failed`,
     cause,
   });
 }
@@ -2486,6 +2471,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.turnState = {
         turnId,
         startedAt,
+        synthetic: true,
         items: [],
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
@@ -2901,18 +2887,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const runSdkStream = (
     context: ClaudeSessionContext,
   ): Effect.Effect<void, ProviderAdapterProcessError> =>
-    Stream.fromAsyncIterable(context.query, (cause) =>
-      toProcessError(cause, "Claude runtime stream failed.", context.session.threadId),
+    Stream.fromAsyncIterable(
+      context.query,
+      (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: context.session.threadId,
+          detail: "Claude runtime stream failed.",
+          cause,
+        }),
     ).pipe(
       Stream.takeWhile(() => !context.stopped),
       Stream.runForEach((message) =>
         handleSdkMessage(context, message).pipe(
-          Effect.mapError((cause) =>
-            toProcessError(
-              cause,
-              "Failed to process Claude runtime event.",
-              context.session.threadId,
-            ),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: context.session.threadId,
+                detail: "Failed to process Claude runtime event.",
+                cause,
+              }),
           ),
         ),
       ),
@@ -2929,15 +2924,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (Exit.isFailure(exit)) {
       if (isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
-          yield* completeTurn(
-            context,
-            "interrupted",
-            interruptionMessageFromClaudeCause(exit.cause),
-          );
+          yield* completeTurn(context, "interrupted", "Claude runtime interrupted.");
         }
       } else {
-        const message = messageFromClaudeStreamCause(exit.cause, "Claude runtime stream failed.");
-        yield* emitRuntimeError(context, message, Cause.pretty(exit.cause));
+        const failures = exit.cause.reasons.flatMap((reason) =>
+          Cause.isFailReason(reason) ? [reason.error] : [],
+        );
+        const message = failures[0]?.detail ?? "Claude runtime stream failed.";
+        yield* emitRuntimeError(context, message, {
+          failureCount: failures.length,
+          failureTags: failures.map((failure) => failure._tag),
+        });
         yield* completeTurn(context, "failed", message);
       }
     } else if (context.turnState) {
@@ -2995,12 +2992,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         new ProviderAdapterProcessError({
           provider: PROVIDER,
           threadId: context.session.threadId,
-          detail: toMessage(cause, "Failed to close Claude runtime query."),
+          detail: "Failed to close Claude runtime query.",
           cause,
         }),
     }).pipe(
-      Effect.catch((cause) =>
-        emitRuntimeError(context, "Failed to close Claude runtime query.", cause),
+      Effect.catch((error) =>
+        emitRuntimeError(context, "Failed to close Claude runtime query.", {
+          errorTag: error._tag,
+          provider: error.provider,
+          threadId: error.threadId,
+          detail: error.detail,
+        }),
       ),
     );
 
@@ -3437,6 +3439,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
       };
+      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3462,6 +3465,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
+        ...(mcpSession
+          ? {
+              mcpServers: {
+                "t3-code": {
+                  type: "http",
+                  url: mcpSession.endpoint,
+                  headers: {
+                    Authorization: mcpSession.authorizationHeader,
+                  },
+                },
+              },
+            }
+          : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -3499,7 +3515,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId,
-            detail: toMessage(cause, "Failed to start Claude runtime session."),
+            detail: "Failed to start Claude runtime session.",
             cause,
           }),
       });
@@ -3629,9 +3645,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? input.modelSelection
         : undefined;
 
-    if (context.turnState) {
-      // Auto-close a stale synthetic turn (from background agent responses
-      // between user prompts) to prevent blocking the user's next turn.
+    // A sendTurn while a real turn is running is a steer: the message is
+    // queued into the live SDK agent loop and the work continues as the same
+    // turn — no synthetic turn boundary. Stale synthetic turns (from
+    // background agent responses between user prompts) are auto-closed
+    // instead, so they don't block the user's next turn.
+    const steeringTurnState =
+      context.turnState && context.turnState.synthetic !== true ? context.turnState : null;
+    if (context.turnState && steeringTurnState === null) {
       yield* completeTurn(context, "completed");
     }
 
@@ -3666,37 +3687,39 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    const turnId = TurnId.make(yield* randomUUIDv4);
-    const turnState: ClaudeTurnState = {
-      turnId,
-      startedAt: yield* nowIso,
-      items: [],
-      assistantTextBlocks: new Map(),
-      assistantTextBlockOrder: [],
-      capturedProposedPlanKeys: new Set(),
-      nextSyntheticAssistantBlockIndex: -1,
-    };
+    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+    if (steeringTurnState === null) {
+      const turnState: ClaudeTurnState = {
+        turnId,
+        startedAt: yield* nowIso,
+        items: [],
+        assistantTextBlocks: new Map(),
+        assistantTextBlockOrder: [],
+        capturedProposedPlanKeys: new Set(),
+        nextSyntheticAssistantBlockIndex: -1,
+      };
 
-    const updatedAt = yield* nowIso;
-    context.turnState = turnState;
-    context.session = {
-      ...context.session,
-      status: "running",
-      activeTurnId: turnId,
-      updatedAt,
-    };
+      const updatedAt = yield* nowIso;
+      context.turnState = turnState;
+      context.session = {
+        ...context.session,
+        status: "running",
+        activeTurnId: turnId,
+        updatedAt,
+      };
 
-    const turnStartedStamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
-      type: "turn.started",
-      eventId: turnStartedStamp.eventId,
-      provider: PROVIDER,
-      createdAt: turnStartedStamp.createdAt,
-      threadId: context.session.threadId,
-      turnId,
-      payload: modelSelection?.model ? { model: modelSelection.model } : {},
-      providerRefs: {},
-    });
+      const turnStartedStamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "turn.started",
+        eventId: turnStartedStamp.eventId,
+        provider: PROVIDER,
+        createdAt: turnStartedStamp.createdAt,
+        threadId: context.session.threadId,
+        turnId,
+        payload: modelSelection?.model ? { model: modelSelection.model } : {},
+        providerRefs: {},
+      });
+    }
 
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,

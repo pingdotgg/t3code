@@ -11,7 +11,7 @@ const program = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const command = ChildProcess.make("cursor-agent", ["acp"], {
     cwd: process.cwd(),
-    shell: process.platform === "win32",
+    shell: false,
   });
   const handle = yield* spawner.spawn(command);
   const acpLayer = AcpClient.layerChildProcess(handle, {

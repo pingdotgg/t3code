@@ -1,5 +1,6 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -7,10 +8,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as CodexClient from "../../src/client.ts";
 
 const program = Effect.gen(function* () {
-  const codexLayer = CodexClient.layerCommand({
-    command: process.env.CODEX_BIN ?? "codex",
-    args: ["app-server"],
-    cwd: process.cwd(),
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const handle = yield* spawner.spawn(
+    ChildProcess.make(process.env.CODEX_BIN ?? "codex", ["app-server"], {
+      cwd: process.cwd(),
+      shell: false,
+    }),
+  );
+  const codexLayer = CodexClient.layerChildProcess(handle, {
     logIncoming: true,
     logOutgoing: true,
   });

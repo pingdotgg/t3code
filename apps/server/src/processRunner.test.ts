@@ -4,23 +4,22 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import {
-  isWindowsCommandNotFound,
-  ProcessOutputLimitError,
-  ProcessRunner,
-  ProcessTimeoutError,
-  layer as ProcessRunnerLive,
-  type ProcessRunInput,
-} from "./processRunner.ts";
+import * as ProcessRunner from "./processRunner.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly options: {
+    readonly shell?: boolean | string;
+  };
 };
 
 // Accesses private properties of ChildProcessCommand for testing purposes
@@ -57,22 +56,24 @@ function makeHandle(input: {
 }
 
 function makeSpawner(
-  f: (command: ChildProcessCommand) => Effect.Effect<ChildProcessSpawner.ChildProcessHandle>,
+  f: (
+    command: ChildProcessCommand,
+  ) => Effect.Effect<ChildProcessSpawner.ChildProcessHandle, PlatformError.PlatformError>,
 ) {
   return ChildProcessSpawner.make((command) => f(asChildProcessCommand(command)));
 }
 
 const runWith =
-  (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => (input: ProcessRunInput) =>
-    Effect.service(ProcessRunner).pipe(
+  (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+  (input: ProcessRunner.ProcessRunInput) =>
+    Effect.service(ProcessRunner.ProcessRunner).pipe(
       Effect.flatMap((runner) =>
         runner.run({
           ...input,
-          shell: input.shell ?? false,
         }),
       ),
       Effect.provide(
-        ProcessRunnerLive.pipe(
+        ProcessRunner.layer.pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
       ),
@@ -108,12 +109,12 @@ describe("runProcess", () => {
         return makeHandle({ stdout: "service ok" });
       }),
     );
-    const layer = ProcessRunnerLive.pipe(
+    const layer = ProcessRunner.layer.pipe(
       Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
     );
 
     return Effect.gen(function* () {
-      const runner = yield* ProcessRunner;
+      const runner = yield* ProcessRunner.ProcessRunner;
       const result = yield* runner.run({
         command: "fake",
         args: ["--service"],
@@ -122,6 +123,82 @@ describe("runProcess", () => {
       expect(result.stdout).toBe("service ok");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("resolves and escapes Windows command shims before spawning", () => {
+    const spawner = makeSpawner((command) =>
+      Effect.sync(() => {
+        expect(command.command).toBe('^"C:\\Users\\tester\\AppData\\Roaming\\npm\\az.cmd^"');
+        expect(command.args).toEqual([
+          '^"repos^"',
+          '^"pr^"',
+          '^"list^"',
+          '^"--source-branch^"',
+          '^"feature^ ^&^ release^"',
+        ]);
+        expect(command.options.shell).toBe(true);
+        return makeHandle({ stdout: "[]" });
+      }),
+    );
+
+    return runWith(spawner)({
+      command: "az",
+      args: ["repos", "pr", "list", "--source-branch", "feature & release"],
+      env: { AZURE_CONFIG_DIR: "C:\\Users\\tester\\.azure" },
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcessEnvironment, {
+        PATH: "C:\\Users\\tester\\AppData\\Roaming\\npm",
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      }),
+      Effect.provideService(SpawnExecutableResolution, (_command, _platform, env) =>
+        env.PATH === "C:\\Users\\tester\\AppData\\Roaming\\npm" &&
+        env.AZURE_CONFIG_DIR === "C:\\Users\\tester\\.azure"
+          ? "C:\\Users\\tester\\AppData\\Roaming\\npm\\az.cmd"
+          : undefined,
+      ),
+      Effect.map((result) => {
+        expect(result.stdout).toBe("[]");
+      }),
+    );
+  });
+
+  it.effect("preserves resolved spawn context and cause", () =>
+    Effect.gen(function* () {
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "ChildProcessSpawner",
+        method: "spawn",
+        pathOrDescriptor: "/actual/fake",
+      });
+      const spawner = makeSpawner(() => Effect.fail(cause));
+
+      const error = yield* runWith(spawner)({
+        command: "fake",
+        args: ["--flag", "secret-token-value"],
+        cwd: "/logical",
+        spawnCwd: "/actual",
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("ProcessSpawnError");
+      if (error._tag !== "ProcessSpawnError") {
+        return expect.fail("Expected ProcessSpawnError");
+      }
+      expect(error).toMatchObject({
+        command: "fake",
+        argumentCount: 2,
+        cwd: "/logical",
+        spawnCwd: "/actual",
+        resolvedCommand: "fake",
+        resolvedArgumentCount: 2,
+        shell: false,
+      });
+      expect(error.cause).toBe(cause);
+      expect(error.message).toBe("Failed to spawn process 'fake' in '/actual'");
+      expect(error).not.toHaveProperty("args");
+      expect(error).not.toHaveProperty("resolvedArgs");
+      expect(error.message).not.toContain("secret-token-value");
+    }),
+  );
 
   it.effect("fails when output exceeds max buffer in default mode", () =>
     Effect.gen(function* () {
@@ -133,7 +210,39 @@ describe("runProcess", () => {
         maxOutputBytes: 128,
       }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(ProcessOutputLimitError);
+      expect(error._tag).toBe("ProcessOutputLimitError");
+      if (error._tag !== "ProcessOutputLimitError") {
+        return expect.fail("Expected ProcessOutputLimitError");
+      }
+      expect(error).toMatchObject({
+        stream: "stdout",
+        maxBytes: 128,
+        observedBytes: 2048,
+      });
+      expect(error.message).toBe(
+        "Process 'fake' stdout produced 2048 bytes, exceeding the 128 byte limit",
+      );
+    }),
+  );
+
+  it.effect("accepts output at the byte limit followed by an empty chunk", () =>
+    Effect.gen(function* () {
+      const output = new TextEncoder().encode("exactly");
+      const spawner = makeSpawner(() =>
+        Effect.succeed(
+          makeHandle({
+            stdout: Stream.make(output, new Uint8Array()),
+          }),
+        ),
+      );
+
+      const result = yield* runWith(spawner)({
+        command: "fake",
+        args: ["exact-limit"],
+        maxOutputBytes: output.byteLength,
+      });
+
+      expect(result.stdout).toBe("exactly");
     }),
   );
 
@@ -158,7 +267,7 @@ describe("runProcess", () => {
         timeout: "2 seconds",
       }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(ProcessOutputLimitError);
+      expect(error).toBeInstanceOf(ProcessRunner.ProcessOutputLimitError);
     }),
   );
 
@@ -236,6 +345,8 @@ describe("runProcess", () => {
       const errorFiber = yield* runWith(spawner)({
         command: "fake",
         args: ["sleep"],
+        cwd: "/logical",
+        spawnCwd: "/actual",
         timeout: "50 millis",
       }).pipe(Effect.flip, Effect.forkScoped);
 
@@ -243,7 +354,18 @@ describe("runProcess", () => {
       yield* TestClock.adjust(Duration.millis(50));
       const error = yield* Fiber.join(errorFiber);
 
-      expect(error).toBeInstanceOf(ProcessTimeoutError);
+      expect(error._tag).toBe("ProcessTimeoutError");
+      if (error._tag !== "ProcessTimeoutError") {
+        return expect.fail("Expected ProcessTimeoutError");
+      }
+      expect(error).toMatchObject({
+        command: "fake",
+        argumentCount: 1,
+        cwd: "/logical",
+        spawnCwd: "/actual",
+        timeoutMs: 50,
+      });
+      expect(error.message).toBe("Process 'fake' in '/actual' timed out after 50ms");
     }),
   );
 
@@ -280,19 +402,13 @@ describe("runProcess", () => {
 });
 
 describe("isWindowsCommandNotFound", () => {
-  it("matches the localized German cmd.exe error text", () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-
-    try {
-      expect(
-        isWindowsCommandNotFound(
-          1,
-          "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
-        ),
-      ).toBe(true);
-    } finally {
-      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
-    }
-  });
+  it.effect("matches the localized German cmd.exe error text", () =>
+    Effect.gen(function* () {
+      const isCommandNotFound = yield* ProcessRunner.isWindowsCommandNotFound(
+        1,
+        "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
+      ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      expect(isCommandNotFound).toBe(true);
+    }),
+  );
 });

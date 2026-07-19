@@ -1,13 +1,17 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
-const require = createRequire(import.meta.url);
+const require = NodeModule.createRequire(import.meta.url);
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
+const hostPlatform = NodeOS.platform();
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
+const hostArch = NodeOS.arch();
 
 function getPlatformPath() {
-  switch (process.platform) {
+  switch (hostPlatform) {
     case "darwin":
       return "Electron.app/Contents/MacOS/Electron";
     case "freebsd":
@@ -17,32 +21,34 @@ function getPlatformPath() {
     case "win32":
       return "electron.exe";
     default:
-      throw new Error(`Electron builds are not available on platform: ${process.platform}`);
+      throw new Error(`Electron builds are not available on platform: ${hostPlatform}`);
   }
 }
 
 function ensureExecutable(filePath) {
-  if (process.platform !== "win32") {
-    chmodSync(filePath, 0o755);
+  if (hostPlatform !== "win32") {
+    NodeFS.chmodSync(filePath, 0o755);
   }
 }
 
 function repairPathFile(electronDir, platformPath) {
-  const pathFile = join(electronDir, "path.txt");
-  const currentPath = existsSync(pathFile) ? readFileSync(pathFile, "utf8") : undefined;
+  const pathFile = NodePath.join(electronDir, "path.txt");
+  const currentPath = NodeFS.existsSync(pathFile)
+    ? NodeFS.readFileSync(pathFile, "utf8")
+    : undefined;
 
   if (currentPath !== platformPath) {
-    writeFileSync(pathFile, platformPath);
+    NodeFS.writeFileSync(pathFile, platformPath);
   }
 }
 
 function getRequiredRuntimePaths(electronDir, platformPath) {
-  const paths = [join(electronDir, "dist", platformPath)];
+  const paths = [NodePath.join(electronDir, "dist", platformPath)];
 
-  if (process.platform === "darwin") {
+  if (hostPlatform === "darwin") {
     paths.push(
-      join(electronDir, "dist", "Electron.app", "Contents", "Info.plist"),
-      join(
+      NodePath.join(electronDir, "dist", "Electron.app", "Contents", "Info.plist"),
+      NodePath.join(
         electronDir,
         "dist",
         "Electron.app",
@@ -58,11 +64,11 @@ function getRequiredRuntimePaths(electronDir, platformPath) {
 }
 
 function isMachO(filePath) {
-  if (process.platform !== "darwin") {
+  if (hostPlatform !== "darwin") {
     return true;
   }
 
-  const result = spawnSync("file", ["-b", filePath], {
+  const result = NodeChildProcess.spawnSync("file", ["-b", filePath], {
     encoding: "utf8",
   });
 
@@ -71,18 +77,18 @@ function isMachO(filePath) {
 
 function missingRuntimePaths(electronDir, platformPath) {
   return getRequiredRuntimePaths(electronDir, platformPath).filter((runtimePath) => {
-    return !existsSync(runtimePath);
+    return !NodeFS.existsSync(runtimePath);
   });
 }
 
 function invalidRuntimePaths(electronDir, platformPath) {
-  if (process.platform !== "darwin") {
+  if (hostPlatform !== "darwin") {
     return [];
   }
 
   return [
-    join(electronDir, "dist", platformPath),
-    join(
+    NodePath.join(electronDir, "dist", platformPath),
+    NodePath.join(
       electronDir,
       "dist",
       "Electron.app",
@@ -91,11 +97,11 @@ function invalidRuntimePaths(electronDir, platformPath) {
       "Electron Framework.framework",
       "Electron Framework",
     ),
-  ].filter((runtimePath) => existsSync(runtimePath) && !isMachO(runtimePath));
+  ].filter((runtimePath) => NodeFS.existsSync(runtimePath) && !isMachO(runtimePath));
 }
 
 function runChecked(command, args) {
-  const result = spawnSync(command, args, {
+  const result = NodeChildProcess.spawnSync(command, args, {
     encoding: "utf8",
     stdio: "inherit",
   });
@@ -110,45 +116,45 @@ function runChecked(command, args) {
 }
 
 function installElectronRuntime(electronDir, version) {
-  const tempDir = mkdtempSync(join(tmpdir(), "t3-electron-"));
-  const zipPath = join(tempDir, `electron-v${version}-${process.platform}-${process.arch}.zip`);
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
+  const zipPath = NodePath.join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
 
   try {
     runChecked("curl", [
       "-fsSL",
-      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${process.platform}-${process.arch}.zip`,
+      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`,
       "-o",
       zipPath,
     ]);
-    if (process.platform === "darwin") {
-      runChecked("ditto", ["-x", "-k", zipPath, join(electronDir, "dist")]);
+    if (hostPlatform === "darwin") {
+      runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
     } else {
       runChecked("python3", [
         "-c",
         "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
         zipPath,
-        join(electronDir, "dist"),
+        NodePath.join(electronDir, "dist"),
       ]);
     }
   } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+    NodeFS.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
 export function ensureElectronRuntime() {
   const electronPackageJsonPath = require.resolve("electron/package.json");
-  const electronPackageJson = JSON.parse(readFileSync(electronPackageJsonPath, "utf8"));
-  const electronDir = dirname(electronPackageJsonPath);
+  const electronPackageJson = JSON.parse(NodeFS.readFileSync(electronPackageJsonPath, "utf8"));
+  const electronDir = NodePath.dirname(electronPackageJsonPath);
   const platformPath = getPlatformPath();
-  const electronPath = join(electronDir, "dist", platformPath);
+  const electronPath = NodePath.join(electronDir, "dist", platformPath);
   const missingBeforeInstall = missingRuntimePaths(electronDir, platformPath);
   const invalidBeforeInstall = invalidRuntimePaths(electronDir, platformPath);
 
   if (missingBeforeInstall.length > 0 || invalidBeforeInstall.length > 0) {
-    if (existsSync(join(electronDir, "dist"))) {
-      rmSync(join(electronDir, "dist"), { recursive: true, force: true });
+    if (NodeFS.existsSync(NodePath.join(electronDir, "dist"))) {
+      NodeFS.rmSync(NodePath.join(electronDir, "dist"), { recursive: true, force: true });
     }
-    rmSync(join(electronDir, "path.txt"), { force: true });
+    NodeFS.rmSync(NodePath.join(electronDir, "path.txt"), { force: true });
     installElectronRuntime(electronDir, electronPackageJson.version);
   }
 

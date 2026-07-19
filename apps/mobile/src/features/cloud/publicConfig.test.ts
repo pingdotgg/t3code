@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { hasMobileTracingPublicConfig, resolveCloudPublicConfig } from "./publicConfig";
+import {
+  CloudPublicConfigMissingError,
+  hasTracingPublicConfig,
+  resolveCloudPublicConfig,
+  resolveRelayClerkTokenOptions,
+} from "./publicConfig";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -11,6 +16,12 @@ vi.mock("expo-constants", () => ({
 }));
 
 describe("resolveCloudPublicConfig", () => {
+  it("reports the missing Clerk JWT template as structured configuration", () => {
+    expect(() => resolveRelayClerkTokenOptions()).toThrowError(
+      new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" }),
+    );
+  });
+
   it("returns no cloud configuration for an unconfigured build", () => {
     expect(resolveCloudPublicConfig({})).toEqual({
       clerk: {
@@ -94,9 +105,9 @@ describe("resolveCloudPublicConfig", () => {
   });
 
   it("keeps tracing disabled unless every public tracing value is configured", () => {
-    expect(hasMobileTracingPublicConfig(resolveCloudPublicConfig({}))).toBe(false);
+    expect(hasTracingPublicConfig(resolveCloudPublicConfig({}))).toBe(false);
     expect(
-      hasMobileTracingPublicConfig(
+      hasTracingPublicConfig(
         resolveCloudPublicConfig({
           observability: {
             tracesUrl: "https://api.axiom.co/v1/traces",
@@ -106,7 +117,7 @@ describe("resolveCloudPublicConfig", () => {
       ),
     ).toBe(false);
     expect(
-      hasMobileTracingPublicConfig(
+      hasTracingPublicConfig(
         resolveCloudPublicConfig({
           observability: {
             tracesUrl: "https://api.axiom.co/v1/traces",

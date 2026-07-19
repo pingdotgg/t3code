@@ -300,7 +300,7 @@ describe("derivePendingUserInputs", () => {
         payload: {
           requestId: "req-user-input-stale-1",
           detail:
-            "Stale pending user-input request: req-user-input-stale-1. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.",
+            "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: req-user-input-stale-1",
         },
       }),
     ];
@@ -934,6 +934,67 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolLifecycleStatus).toBe("completed");
   });
 
+  it("preserves MCP server, tool, arguments, and results for expanded display", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "preview_status",
+      arguments: {},
+      status: "completed",
+      result: { content: [{ type: "text", text: "attached" }] },
+    };
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "mcp-tool-done",
+        kind: "tool.completed",
+        summary: "t3-code · preview_status",
+        payload: {
+          itemType: "mcp_tool_call",
+          title: "t3-code · preview_status",
+          data: { item },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolTitle).toBe("t3-code · preview_status");
+    expect(entry?.toolData).toEqual(item);
+  });
+
+  it("keeps MCP payloads while collapsing lifecycle updates", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "preview_snapshot",
+      arguments: { interactiveOnly: true },
+      status: "completed",
+    };
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "mcp-tool-progress",
+        kind: "tool.updated",
+        summary: "t3-code · preview_snapshot",
+        payload: {
+          itemType: "mcp_tool_call",
+          toolCallId: "call-1",
+          data: { item },
+        },
+      }),
+      makeActivity({
+        id: "mcp-tool-complete",
+        kind: "tool.completed",
+        summary: "t3-code · preview_snapshot",
+        payload: {
+          itemType: "mcp_tool_call",
+          toolCallId: "call-1",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.toolData).toEqual(item);
+  });
+
   it("unwraps PowerShell command wrappers for displayed command text", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1440,6 +1501,8 @@ describe("deriveTimelineEntries", () => {
           role: "assistant",
           text: "hello",
           createdAt: "2026-02-23T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:01.000Z",
           streaming: false,
         },
       ],
@@ -1525,7 +1588,7 @@ describe("isLatestTurnSettled", () => {
   it("returns false while the same turn is still active in a running session", () => {
     expect(
       isLatestTurnSettled(latestTurn, {
-        orchestrationStatus: "running",
+        status: "running",
         activeTurnId: TurnId.make("turn-1"),
       }),
     ).toBe(false);
@@ -1534,7 +1597,7 @@ describe("isLatestTurnSettled", () => {
   it("returns false while any turn is running to avoid stale latest-turn banners", () => {
     expect(
       isLatestTurnSettled(latestTurn, {
-        orchestrationStatus: "running",
+        status: "running",
         activeTurnId: TurnId.make("turn-2"),
       }),
     ).toBe(false);
@@ -1543,8 +1606,8 @@ describe("isLatestTurnSettled", () => {
   it("returns true once the session is no longer running that turn", () => {
     expect(
       isLatestTurnSettled(latestTurn, {
-        orchestrationStatus: "ready",
-        activeTurnId: undefined,
+        status: "ready",
+        activeTurnId: null,
       }),
     ).toBe(true);
   });
@@ -1575,7 +1638,7 @@ describe("deriveActiveWorkStartedAt", () => {
       deriveActiveWorkStartedAt(
         latestTurn,
         {
-          orchestrationStatus: "running",
+          status: "running",
           activeTurnId: TurnId.make("turn-1"),
         },
         "2026-02-27T21:11:00.000Z",
@@ -1588,7 +1651,7 @@ describe("deriveActiveWorkStartedAt", () => {
       deriveActiveWorkStartedAt(
         latestTurn,
         {
-          orchestrationStatus: "running",
+          status: "running",
           activeTurnId: TurnId.make("turn-2"),
         },
         "2026-02-27T21:11:00.000Z",
@@ -1601,8 +1664,8 @@ describe("deriveActiveWorkStartedAt", () => {
       deriveActiveWorkStartedAt(
         latestTurn,
         {
-          orchestrationStatus: "ready",
-          activeTurnId: undefined,
+          status: "ready",
+          activeTurnId: null,
         },
         "2026-02-27T21:11:00.000Z",
       ),

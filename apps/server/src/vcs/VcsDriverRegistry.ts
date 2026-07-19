@@ -22,27 +22,19 @@ export interface VcsDriverResolveInput {
 export interface VcsDriverHandle {
   readonly kind: VcsDriverKind;
   readonly repository: VcsRepositoryIdentity;
-  readonly driver: VcsDriver.VcsDriverShape;
+  readonly driver: VcsDriver.VcsDriver["Service"];
 }
 
-export interface VcsDriverRegistryShape {
-  readonly get: (kind: VcsDriverKind) => Effect.Effect<VcsDriver.VcsDriverShape, VcsError>;
-  readonly detect: (
-    input: VcsDriverResolveInput,
-  ) => Effect.Effect<VcsDriverHandle | null, VcsError>;
-  readonly resolve: (input: VcsDriverResolveInput) => Effect.Effect<VcsDriverHandle, VcsError>;
-}
-
-export class VcsDriverRegistry extends Context.Service<VcsDriverRegistry, VcsDriverRegistryShape>()(
-  "t3/vcs/VcsDriverRegistry",
-) {}
-
-const unsupported = (operation: string, kind: VcsDriverKind, detail: string) =>
-  new VcsUnsupportedOperationError({
-    operation,
-    kind,
-    detail,
-  });
+export class VcsDriverRegistry extends Context.Service<
+  VcsDriverRegistry,
+  {
+    readonly get: (kind: VcsDriverKind) => Effect.Effect<VcsDriver.VcsDriver["Service"], VcsError>;
+    readonly detect: (
+      input: VcsDriverResolveInput,
+    ) => Effect.Effect<VcsDriverHandle | null, VcsError>;
+    readonly resolve: (input: VcsDriverResolveInput) => Effect.Effect<VcsDriverHandle, VcsError>;
+  }
+>()("t3/vcs/VcsDriverRegistry") {}
 
 function detectionCacheKey(input: {
   readonly cwd: string;
@@ -68,18 +60,22 @@ function parseDetectionCacheKey(key: string): {
   };
 }
 
-export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
+export const make = Effect.gen(function* () {
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
-  const git = yield* GitVcsDriver.makeVcsDriverShape();
-  const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriverShape>> = {
+  const git = yield* GitVcsDriver.makeVcsDriver;
+  const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
   };
 
-  const get: VcsDriverRegistryShape["get"] = (kind) => {
+  const get: VcsDriverRegistry["Service"]["get"] = (kind) => {
     const driver = drivers[kind];
     if (!driver) {
       return Effect.fail(
-        unsupported("VcsDriverRegistry.get", kind, `No ${kind} VCS driver is registered.`),
+        new VcsUnsupportedOperationError({
+          operation: "VcsDriverRegistry.get",
+          kind,
+          detail: `No ${kind} VCS driver is registered.`,
+        }),
       );
     }
     return Effect.succeed(driver);
@@ -87,7 +83,7 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
 
   const detectWithDriver = Effect.fn("VcsDriverRegistry.detectWithDriver")(function* (
     kind: VcsDriverKind,
-    driver: VcsDriver.VcsDriverShape,
+    driver: VcsDriver.VcsDriver["Service"],
     cwd: string,
   ) {
     const repository = yield* driver.detectRepository(cwd);
@@ -123,14 +119,14 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
     },
   );
 
-  const detect: VcsDriverRegistryShape["detect"] = Effect.fn("VcsDriverRegistry.detect")(
+  const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
       const requestedKind = yield* projectConfig.resolveKind(input);
       return yield* Cache.get(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind }));
     },
   );
 
-  const resolve: VcsDriverRegistryShape["resolve"] = Effect.fn("VcsDriverRegistry.resolve")(
+  const resolve: VcsDriverRegistry["Service"]["resolve"] = Effect.fn("VcsDriverRegistry.resolve")(
     function* (input) {
       const detected = yield* detect(input);
       if (detected) {
@@ -138,13 +134,14 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
       }
 
       const requestedKind = input.requestedKind ?? "auto";
-      return yield* unsupported(
-        "VcsDriverRegistry.resolve",
-        requestedKind === "auto" ? "unknown" : requestedKind,
-        requestedKind === "auto"
-          ? `No supported VCS repository was detected at ${input.cwd}.`
-          : `No ${requestedKind} repository was detected at ${input.cwd}.`,
-      );
+      return yield* new VcsUnsupportedOperationError({
+        operation: "VcsDriverRegistry.resolve",
+        kind: requestedKind === "auto" ? "unknown" : requestedKind,
+        detail:
+          requestedKind === "auto"
+            ? `No supported VCS repository was detected at ${input.cwd}.`
+            : `No ${requestedKind} repository was detected at ${input.cwd}.`,
+      });
     },
   );
 
@@ -155,6 +152,6 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
   });
 });
 
-export const layer = Layer.effect(VcsDriverRegistry, make()).pipe(
+export const layer = Layer.effect(VcsDriverRegistry, make).pipe(
   Layer.provide(VcsProjectConfig.layer),
 );

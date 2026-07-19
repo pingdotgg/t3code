@@ -10,15 +10,20 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 import {
   RelayClientInstallError,
   CLOUDFLARED_VERSION,
   makeCloudflaredRelayClient,
-  resolveManagedCloudflaredPath,
 } from "./relayClient.ts";
 
-const emptyConfigProvider = () => ConfigProvider.fromEnv({ env: {} });
+const hostRuntimeLayer = (env: Record<string, string> = {}) =>
+  Layer.mergeAll(
+    Layer.succeed(HostProcessPlatform, "linux"),
+    Layer.succeed(HostProcessArchitecture, "x64"),
+    ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+  );
 
 function makeHandle(exitCode = 0) {
   return ChildProcessSpawner.makeHandle({
@@ -69,18 +74,18 @@ describe("RelayClient", () => {
       yield* fileSystem.chmod(overridePath, 0o755);
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
-        platform: "linux",
-        arch: "x64",
-        configProvider: () =>
-          ConfigProvider.fromEnv({
-            env: {
-              PATH: "",
-              T3CODE_CLOUDFLARED_PATH: overridePath,
-            },
-          }),
       });
 
-      expect(yield* manager.resolve).toEqual({
+      expect(
+        yield* manager.resolve.pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnv({
+              env: { PATH: "", T3CODE_CLOUDFLARED_PATH: overridePath },
+            }),
+          ),
+        ),
+      ).toEqual({
         status: "available",
         executablePath: overridePath,
         source: "override",
@@ -93,6 +98,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new Uint8Array()),
           makeSpawnerLayer([]),
+          hostRuntimeLayer(),
         ),
       ),
     ),
@@ -107,14 +113,11 @@ describe("RelayClient", () => {
       const bytes = new TextEncoder().encode("test-cloudflared-binary");
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
-        platform: "linux",
-        arch: "x64",
         releaseAsset: {
           url: "https://example.test/cloudflared",
           sha256: Encoding.encodeHex(sha256(bytes)),
           archive: "binary",
         },
-        configProvider: emptyConfigProvider,
       });
 
       const progress: Array<string> = [];
@@ -125,11 +128,7 @@ describe("RelayClient", () => {
           }
         }),
       );
-      const managedPath = resolveManagedCloudflaredPath({
-        baseDir,
-        platform: "linux",
-        arch: "x64",
-      });
+      const managedPath = `${baseDir}/tools/cloudflared/${CLOUDFLARED_VERSION}/linux-x64/cloudflared`;
       expect(installed).toEqual({
         status: "available",
         executablePath: managedPath,
@@ -156,6 +155,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new TextEncoder().encode("test-cloudflared-binary")),
           makeSpawnerLayer([]),
+          hostRuntimeLayer(),
         ),
       ),
     ),
@@ -169,14 +169,11 @@ describe("RelayClient", () => {
       });
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
-        platform: "linux",
-        arch: "x64",
         releaseAsset: {
           url: "https://example.test/cloudflared",
           sha256: Encoding.encodeHex(sha256(new TextEncoder().encode("expected"))),
           archive: "binary",
         },
-        configProvider: emptyConfigProvider,
       });
 
       const error = yield* manager.install.pipe(Effect.flip);
@@ -189,6 +186,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new TextEncoder().encode("tampered")),
           makeSpawnerLayer([]),
+          hostRuntimeLayer(),
         ),
       ),
     ),
@@ -204,14 +202,11 @@ describe("RelayClient", () => {
       });
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
-        platform: "linux",
-        arch: "x64",
         releaseAsset: {
           url: "https://example.test/cloudflared",
           sha256: Encoding.encodeHex(sha256(bytes)),
           archive: "binary",
         },
-        configProvider: emptyConfigProvider,
       });
 
       const [first, second] = yield* Effect.all([manager.install, manager.install], {
@@ -222,25 +217,27 @@ describe("RelayClient", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, makeHttpClientLayer(bytes), makeSpawnerLayer(commands)),
+        Layer.mergeAll(
+          NodeServices.layer,
+          makeHttpClientLayer(bytes),
+          makeSpawnerLayer(commands),
+          hostRuntimeLayer(),
+        ),
       ),
     );
   });
 
-  it.effect("observes PATH changes after the manager has been constructed", () =>
-    Effect.gen(function* () {
+  it.effect("observes PATH changes after the manager has been constructed", () => {
+    const env = { PATH: "" };
+    return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-cloudflared-test-",
       });
       const binDir = `${baseDir}/bin`;
       const executablePath = `${binDir}/cloudflared`;
-      let path = "";
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
-        platform: "linux",
-        arch: "x64",
-        configProvider: () => ConfigProvider.fromEnv({ env: { PATH: path } }),
       });
 
       expect(yield* manager.resolve).toEqual({
@@ -251,7 +248,7 @@ describe("RelayClient", () => {
       yield* fileSystem.makeDirectory(binDir);
       yield* fileSystem.writeFileString(executablePath, "cloudflared");
       yield* fileSystem.chmod(executablePath, 0o755);
-      path = binDir;
+      env.PATH = binDir;
 
       expect(yield* manager.resolve).toEqual({
         status: "available",
@@ -266,8 +263,9 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new Uint8Array()),
           makeSpawnerLayer([]),
+          hostRuntimeLayer(env),
         ),
       ),
-    ),
-  );
+    );
+  });
 });

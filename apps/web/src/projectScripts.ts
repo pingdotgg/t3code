@@ -56,7 +56,7 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
   return `${baseId}-${Date.now()}`.slice(0, MAX_SCRIPT_ID_LENGTH);
 }
 
-export function primaryProjectScript(scripts: ProjectScript[]): ProjectScript | null {
+export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {
   const regular = scripts.find((script) => !script.runOnWorktreeCreate);
   return regular ?? scripts[0] ?? null;
 }

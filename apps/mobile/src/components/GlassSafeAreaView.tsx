@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { useColorScheme, View, type StyleProp, type ViewStyle } from "react-native";
+import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useThemeColor } from "../lib/useThemeColor";
 
 import { GlassSurface } from "./GlassSurface";
 
@@ -17,14 +18,16 @@ export function GlassSafeAreaView({
   rightSlot,
   style,
 }: GlassSafeAreaViewProps) {
-  const isDarkMode = useColorScheme() === "dark";
   const insets = useSafeAreaInsets();
+  const headerColor = useThemeColor("--color-header");
+  const headerBorderColor = useThemeColor("--color-header-border");
+  const glassTint = useThemeColor("--color-glass-tint");
   const headerPaddingTop = insets.top + 16;
   const surfaceStyle = {
     borderRadius: 0,
-    backgroundColor: isDarkMode ? "rgba(10,10,10,0.97)" : "rgba(255,255,255,0.97)",
+    backgroundColor: headerColor,
     borderBottomWidth: 1,
-    borderBottomColor: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
+    borderBottomColor: headerBorderColor,
   } as const;
 
   return (
@@ -32,26 +35,16 @@ export function GlassSafeAreaView({
       <GlassSurface
         chrome="none"
         glassEffectStyle="regular"
-        tintColor={isDarkMode ? "rgba(15,23,42,0.24)" : "rgba(255,255,255,0.18)"}
+        tintColor={glassTint}
         style={{ borderRadius: 0, backgroundColor: "transparent" }}
       >
         <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: 20,
-            paddingTop: headerPaddingTop,
-            paddingBottom: 16,
-            gap: 10,
-          }}
+          className="flex-row items-center gap-2.5 px-5 pb-4"
+          style={{ paddingTop: headerPaddingTop }}
         >
-          <View style={{ alignItems: "flex-start", justifyContent: "center" }}>{leftSlot}</View>
-          <View
-            style={{ flex: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" }}
-          >
-            {centerSlot}
-          </View>
-          <View style={{ alignItems: "flex-end", justifyContent: "center" }}>{rightSlot}</View>
+          <View className="items-start justify-center">{leftSlot}</View>
+          <View className="flex-1 items-center justify-center overflow-hidden">{centerSlot}</View>
+          <View className="items-end justify-center">{rightSlot}</View>
         </View>
       </GlassSurface>
     </View>
