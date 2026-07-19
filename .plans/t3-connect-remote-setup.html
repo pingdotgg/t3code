@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan: seamless `npx t3 connect` for remote boxes</title>
+<style>
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --muted: #a3a3a3;
+    --surface: #121212;
+    --surface2: #1a1a1a;
+    --border: #2a2a2a;
+    --accent: #7c9cff;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; }
+  h2 { font-size: 21px; margin: 48px 0 12px; padding-top: 24px; border-top: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  p, li { color: #e5e5e5; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  code, pre {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13.5px;
+  }
+  code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 16px 0;
+  }
+  .card h3 { margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--surface2); font-weight: 600; }
+  td code { white-space: nowrap; }
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px;
+    padding: 2px 10px; margin-right: 6px; vertical-align: 2px;
+  }
+  .pill.core { background: #1e2a4a; color: var(--accent); }
+  .pill.new { background: #14301e; color: var(--green); }
+  .pill.later { background: #33270e; color: var(--amber); }
+  .ok { color: var(--green); }
+  .warn { color: var(--amber); }
+  .no { color: var(--red); }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .terminal {
+    background: #0a0a0a; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13.5px; line-height: 1.65; color: #d4d4d4; overflow-x: auto;
+  }
+  .terminal .dim { color: #737373; }
+  .terminal .g { color: var(--green); }
+  .terminal .b { color: var(--accent); }
+  figure { margin: 24px 0; }
+  figcaption { color: var(--muted); font-size: 13px; margin-top: 8px; text-align: center; }
+  svg text { font-family: -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  .kv { color: var(--muted); font-size: 13.5px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Seamless <code>npx t3 connect</code> for remote boxes</h1>
+<p class="sub">Design principle: <strong>the smallest diff that ships the UX.</strong> No relay/infra changes, no new backend surface, no new auth primitives &mdash; every step reuses code that already exists. One PR, built as four phases with clear commit boundaries &mdash; each phase compiles, passes tests, and leaves the product working, so the PR reviews commit-by-commit. (Phase 4, web-triggered update, is an optional follow-up PR.)</p>
+
+<div class="terminal">
+$ npx t3 connect<br><br>
+To set up T3 Connect, open this URL and sign in:<br>
+&nbsp;&nbsp;<span class="b">https://app.t3.codes/connect#B64URL_STATE_AND_CHALLENGE</span><br><br>
+Enter your authentication code: <span class="dim">[code]</span><br><br>
+<span class="g">Connected as theo@t3.gg!</span><br><br>
+Run T3 Code in the background whenever this machine boots? (y/n): y<br><br>
+<span class="g">T3 Code is set up and ready to go.</span>
+</div>
+
+<h2>Why this is a small change</h2>
+<p>The entire <code>t3 connect</code> data plane already works: Clerk PKCE token exchange, encrypted secret store, cloudflared relay-client install, relay environment linking, DPoP tokens. The <em>only</em> broken piece on an SSH box is the redirect: <code>CliTokenManager.login()</code> hardcodes a loopback callback (<code>http://127.0.0.1:34338/callback</code>) that requires a browser on the same machine.</p>
+<p>We swap that one leg for a hosted out-of-band authorization page and keep everything else. Because PKCE's <code>code_verifier</code> never leaves the box, the displayed one-time code is useless to anyone who sees it &mdash; no new token-minting or storage is needed anywhere.</p>
+
+<div class="card">
+<h3>Reused as-is (zero changes)</h3>
+<ul>
+  <li><code>exchangeToken()</code> PKCE exchange &mdash; <code>apps/server/src/cloud/CliTokenManager.ts:147</code></li>
+  <li>Token persistence in <code>ServerSecretStore</code> (<code>cloud-cli-oauth-token</code>)</li>
+  <li><code>acquireRelayClientForLink()</code> cloudflared install + progress &mdash; <code>cli/connect.ts:146</code></li>
+  <li><code>CliState.setCliDesiredCloudLink()</code> + server-side provisioning on start</li>
+  <li>All relay endpoints (<code>infra/relay</code>) and contracts &mdash; <strong>untouched</strong></li>
+  <li>Existing subcommands <code>login/link/status/unlink/logout</code> &mdash; semantics unchanged</li>
+  <li>Web app Clerk session + hosted-page precedent (<code>routes/pair.tsx</code>, <code>hostedPairing.ts</code>)</li>
+</ul>
+</div>
+
+<h2>Auth flow (hosted out-of-band OAuth, Clerk PKCE)</h2>
+
+<figure>
+<svg viewBox="0 0 820 470" width="100%" role="img" aria-label="Sequence diagram of the out-of-band OAuth flow">
+  <!-- lanes -->
+  <rect x="20"  y="16" width="220" height="44" rx="8" fill="#121212" stroke="#2a2a2a"/>
+  <rect x="300" y="16" width="220" height="44" rx="8" fill="#121212" stroke="#2a2a2a"/>
+  <rect x="580" y="16" width="220" height="44" rx="8" fill="#121212" stroke="#2a2a2a"/>
+  <text x="130" y="43" fill="#fff" font-size="14" font-weight="600" text-anchor="middle">Remote box &#8212; t3 CLI</text>
+  <text x="410" y="43" fill="#fff" font-size="14" font-weight="600" text-anchor="middle">Laptop &#8212; app.t3.codes</text>
+  <text x="690" y="43" fill="#fff" font-size="14" font-weight="600" text-anchor="middle">Clerk</text>
+  <line x1="130" y1="60" x2="130" y2="450" stroke="#2a2a2a"/>
+  <line x1="410" y1="60" x2="410" y2="450" stroke="#2a2a2a"/>
+  <line x1="690" y1="60" x2="690" y2="450" stroke="#2a2a2a"/>
+
+  <!-- 1: generate + print -->
+  <rect x="30" y="80" width="200" height="34" rx="6" fill="#1e2a4a"/>
+  <text x="130" y="101" fill="#7c9cff" font-size="12.5" text-anchor="middle">1. gen verifier + challenge + state</text>
+
+  <!-- 2: user opens URL -->
+  <line x1="130" y1="140" x2="404" y2="140" stroke="#7c9cff" stroke-dasharray="5 4"/>
+  <polygon points="404,140 394,135 394,145" fill="#7c9cff"/>
+  <text x="267" y="132" fill="#a3a3a3" font-size="12.5" text-anchor="middle">2. user opens /connect#&#123;state,challenge&#125;</text>
+
+  <!-- 3: redirect to clerk -->
+  <line x1="410" y1="185" x2="684" y2="185" stroke="#e5e5e5"/>
+  <polygon points="684,185 674,180 674,190" fill="#e5e5e5"/>
+  <text x="547" y="177" fill="#a3a3a3" font-size="12.5" text-anchor="middle">3. sign in &#8594; /oauth/authorize (PKCE)</text>
+
+  <!-- 4: redirect back with code -->
+  <line x1="690" y1="230" x2="416" y2="230" stroke="#e5e5e5"/>
+  <polygon points="416,230 426,225 426,235" fill="#e5e5e5"/>
+  <text x="553" y="222" fill="#a3a3a3" font-size="12.5" text-anchor="middle">4. redirect /connect/callback?code&amp;state</text>
+
+  <!-- 5: page shows code -->
+  <rect x="310" y="252" width="200" height="34" rx="6" fill="#14301e"/>
+  <text x="410" y="273" fill="#4ade80" font-size="12.5" text-anchor="middle">5. shows account + authorization code</text>
+
+  <!-- 6: user enters code -->
+  <line x1="410" y1="316" x2="136" y2="316" stroke="#7c9cff" stroke-dasharray="5 4"/>
+  <polygon points="136,316 146,311 146,321" fill="#7c9cff"/>
+  <text x="273" y="308" fill="#a3a3a3" font-size="12.5" text-anchor="middle">6. user enters code in terminal</text>
+
+  <!-- 7: token exchange -->
+  <line x1="130" y1="360" x2="684" y2="360" stroke="#e5e5e5"/>
+  <polygon points="684,360 674,355 674,365" fill="#e5e5e5"/>
+  <text x="407" y="352" fill="#a3a3a3" font-size="12.5" text-anchor="middle">7. POST /oauth/token &#123;code + verifier&#125; &#8594; access/refresh tokens</text>
+
+  <!-- 8: done -->
+  <rect x="30" y="392" width="200" height="46" rx="6" fill="#14301e"/>
+  <text x="130" y="411" fill="#4ade80" font-size="12.5" text-anchor="middle">8. store token, set desired link,</text>
+  <text x="130" y="427" fill="#4ade80" font-size="12.5" text-anchor="middle">install relay client &#8594; Connected!</text>
+</svg>
+<figcaption>The verifier never leaves the box (steps 1&#8594;7), so the authorization code is worthless if observed. state/challenge ride the URL fragment &mdash; they are not secrets.</figcaption>
+</figure>
+
+<div class="card">
+<h3>Details that keep it simple</h3>
+<ul>
+  <li><strong>Stateless URL, no short-link service.</strong> The <code>/connect</code> page reads <code>state</code> + <code>code_challenge</code> from the URL fragment and builds the Clerk authorize URL client-side. ~100-char URL &mdash; fine to transfer into an SSH session.</li>
+  <li><strong>State check without a backend:</strong> the callback page displays one authorization blob of <code>code.state</code>; the CLI splits it and verifies <code>state</code> matches what it generated. One line on each side, preserves the loopback flow's CSRF check.</li>
+  <li><strong>Phishing is addressed with copy, not code:</strong> the callback page shows <em>which account</em> is being connected ("Connecting as theo@&hellip;") and warns: <em>"Only enter this code in a terminal session you started yourself."</em> No mechanism needed.</li>
+  <li><strong>Code expiry is a non-issue:</strong> Clerk auth codes live 10 minutes &mdash; the same timeout the existing loopback flow already uses. Wrong/expired code &#8594; friendly retry that reprints the URL.</li>
+  <li><strong>One external config step:</strong> register <code>https://app.t3.codes/connect/callback</code> as an allowed redirect URI on the existing Clerk CLI OAuth client. No new client, no new scopes.</li>
+</ul>
+</div>
+
+<h2>The phases (one PR, one commit each)</h2>
+<p class="kv">Ordering is dependency order: each phase is independently revertable and the tree is green at every boundary. Phases 1&ndash;3 are the PR; phase 4 ships separately later.</p>
+
+<table>
+  <tr><th style="width:1%">Phase</th><th>Scope</th><th>Files</th><th style="width:1%">~LOC</th></tr>
+  <tr>
+    <td><span class="pill core">1</span></td>
+    <td><strong>Hosted code page</strong> (web-only, purely additive, zero risk). Two static routes modeled on <code>pair.tsx</code>: <code>/connect</code> (ensure Clerk session, then client-side redirect to authorize &mdash; it's a static SPA, no server 302) and <code>/connect/callback</code> (validate params, show account + copyable code + safety warning). Both routes guard against non-hosted deployments &mdash; redirect to <code>/</code> unless <code>isHostedStaticApp()</code>, same pattern as <code>pair.tsx</code>, since this bundle also ships in local instances. Plus the Clerk dashboard redirect-URI entry.</td>
+    <td><code>apps/web/src/routes/connect.tsx</code><br><code>apps/web/src/routes/connect.callback.tsx</code></td>
+    <td>~200</td>
+  </tr>
+  <tr>
+    <td><span class="pill core">2</span></td>
+    <td><strong>CLI out-of-band OAuth flow + single command.</strong> Add an out-of-band OAuth login path to <code>CliTokenManager</code> (print URL, <code>Prompt.text</code> for the code, reuse <code>exchangeToken</code>). Make bare <code>t3 connect</code> a handler = login + link (subcommands untouched). Auto-pick headless mode inside SSH sessions (<code>SSH_CONNECTION</code>/<code>SSH_TTY</code> &mdash; nothing else); <code>--headless</code> flag as manual override. Loopback stays the default on desktop &mdash; no regression.</td>
+    <td><code>cloud/CliTokenManager.ts</code> (+60)<br><code>cloud/publicConfig.ts</code> (+10)<br><code>cli/connect.ts</code> (+60)</td>
+    <td>~150</td>
+  </tr>
+  <tr>
+    <td><span class="pill new">3</span></td>
+    <td><strong>Background on boot &mdash; Linux first</strong> (the SSH case). One new module: pinned runtime install to <code>~/.t3/runtime/versions/&lt;v&gt;</code> + <code>current</code> symlink, systemd <em>user</em> unit with absolute node/t3 paths, <code>enable-linger</code>. y/n prompt at the end of <code>connect</code>; teardown in <code>logout</code>. Install and service-start failures must land in a log file (under <code>~/.t3/userdata/logs/</code>) whose path is printed at connect time &mdash; systemd user units fail invisibly otherwise. Unit-file generation is pure string-building &#8594; trivially testable. macOS launchd / Windows follow as 3b/3c only if wanted.</td>
+    <td><code>cloud/bootService.ts</code> (new)<br><code>cli/connect.ts</code> (+prompt/teardown)</td>
+    <td>~250</td>
+  </tr>
+  <tr>
+    <td><span class="pill later">4</span></td>
+    <td><strong>Web-triggered update</strong> (optional follow-up PR; not part of this one, not needed for the core UX). Web detects <code>daemon version &lt; latest-on-channel</code> using the existing version-skew surface + hosted manifest; one authenticated "update" command &mdash; client says <em>update</em>, daemon resolves/verifies the version itself (never client-specified &mdash; that would be RCE). Stage install &#8594; verify &#8594; atomic symlink swap &#8594; <code>systemctl --user restart</code>. Progress streams reuse the <code>RelayClientInstallProgressEvent</code> pattern.</td>
+    <td>web banner + one control command + daemon update routine</td>
+    <td>later</td>
+  </tr>
+</table>
+
+<h3>Runtime layout (phase 3)</h3>
+<pre><code>~/.t3/runtime/
+├── versions/0.0.27/        &larr; npm install --prefix (gets native deps right: node-pty etc.)
+└── current -> versions/0.0.27
+
+~/.config/systemd/user/t3code.service   &larr; ExecStart=/abs/path/node .../current/.../t3 serve
+loginctl enable-linger $USER            &larr; survives SSH logout / reboot</code></pre>
+<p class="kv">Why a real <code>npm install</code> and not "reuse the npx binary": the npx cache is ephemeral and <code>t3</code> ships native deps (<code>node-pty</code>, <code>@ff-labs/fff-node</code>) that need per-platform prebuilds. Why pinned and not <code>npx t3@latest</code> in the unit: a boot-time registry fetch means the box may simply not come up (network down, PATH-less systemd env, nvm). Deterministic boot; updates happen out-of-band (phase 4 follow-up) or by re-running <code>npx t3 connect</code>.</p>
+
+<h2>Explicitly not doing</h2>
+<ul>
+  <li><span class="no">&#10007;</span> Relay / <code>infra</code> / contracts changes &mdash; none, in any phase</li>
+  <li><span class="no">&#10007;</span> Short-link service (<code>app.t3.codes/c/AB7K</code>) &mdash; only matters for hand-typing; revisit if ever needed</li>
+  <li><span class="no">&#10007;</span> RFC 8628 device grant &mdash; wrong UX direction, unverified Clerk support</li>
+  <li><span class="no">&#10007;</span> Auto-update loop in the daemon &mdash; web-triggered only (phase 4 follow-up), user stays in control</li>
+  <li><span class="no">&#10007;</span> Project auto-registration &mdash; workspace assumed set up; the web UI handles the rest</li>
+  <li><span class="no">&#10007;</span> Changing existing loopback flow, subcommands, or desktop behavior</li>
+</ul>
+
+<h2>Risks &amp; checks</h2>
+<ul>
+  <li><span class="warn">&#9888;</span> <strong>Clerk redirect URI:</strong> confirm the CLI OAuth client accepts the hosted redirect and that the token endpoint honors PKCE exchange for codes issued to it. Verify in staging before the phase 2 commit. <em>(Only external dependency in the plan.)</em></li>
+  <li><span class="warn">&#9888;</span> <strong>systemd user env is minimal:</strong> always write absolute paths for node + t3 into the unit; never rely on PATH. Service failures are invisible by default &mdash; hence the phase 3 requirement to log to a printed file path.</li>
+  <li><span class="warn">&#9888;</span> <strong>Linger prompt honesty:</strong> the y/n prompt should say the machine becomes reachable via T3 Connect whenever powered on &mdash; that's the feature, but say it.</li>
+  <li><span class="ok">&#10003;</span> Re-running <code>connect</code> when linked &#8594; idempotent: refresh token, re-confirm service, done.</li>
+</ul>
+
+<h2>Decision log</h2>
+<ul class="kv">
+  <li>Auth: hosted out-of-band OAuth redirect on Clerk PKCE (not relay-brokered pairing, not device grant) &mdash; chosen for minimal new surface.</li>
+  <li>URL: stateless static page, no backend short-link.</li>
+  <li>Service: real per-user login service (systemd user + linger first); detect + offer install, never silent.</li>
+  <li>Binary: pinned managed runtime under <code>~/.t3</code>; interactive <code>npx</code> usage untouched.</li>
+  <li>Updates: not always-latest; web UI surfaces available updates with one-click trigger (phase 4 follow-up).</li>
+  <li>Delivery: one PR with a commit per phase (green tree at every boundary), not separate PRs.</li>
+  <li>Workspace: assumed already set up; no auto-registration.</li>
+</ul>
+
+</main>
+</body>
+</html>
