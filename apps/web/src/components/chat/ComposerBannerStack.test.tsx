@@ -32,6 +32,7 @@ describe("ComposerBannerStack", () => {
 
     expect(markup).toContain("grid-rows-[0fr]");
     expect(markup).toContain("group-hover/banner-stack:grid-rows-[1fr]");
+    expect(markup).not.toContain("invisible");
     expect(markup.indexOf("Hero headline")).toBeLessThan(markup.indexOf("Stacked banner"));
     expect(markup.indexOf("Stacked banner")).toBeLessThan(markup.indexOf("Front banner"));
   });
