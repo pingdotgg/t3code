@@ -32,7 +32,11 @@ export interface EnsureWslNodePtyOptions {
 }
 
 export type EnsureWslNodePtyResult =
-  | { readonly ok: true; readonly nodePath: string; readonly resolvedPath: string }
+  | {
+      readonly ok: true;
+      readonly nodePath: string;
+      readonly resolvedPath: string;
+    }
   | {
       readonly ok: false;
       readonly reason: string;
@@ -222,6 +226,7 @@ export const formatNodePtyProbeFailureReason = (exitCode: number): string | null
 const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
+printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
 if command -v node >/dev/null 2>&1; then
   _ver="$(node -p 'process.versions.node' 2>/dev/null)"; [ -n "$_ver" ] && printf 'nodeVersion:%s\\n' "$_ver"
@@ -421,7 +426,11 @@ const ensureNodePtyImpl = (
 
     const transportFailureReason = formatWslShellTransportFailureReason(probe.transportFailure);
     if (transportFailureReason !== null) {
-      return { ok: false, reason: transportFailureReason, fatal: false } as const;
+      return {
+        ok: false,
+        reason: transportFailureReason,
+        fatal: false,
+      } as const;
     }
 
     // No node at all, even after the shared resolver repaired PATH. Surface
@@ -507,7 +516,11 @@ const ensureNodePtyImpl = (
     if (options.allowBuild !== true) {
       const packagedProbeFailure = formatNodePtyProbeFailureReason(probe.exitCode);
       if (packagedProbeFailure !== null) {
-        return { ok: false, reason: packagedProbeFailure, fatal: true } as const;
+        return {
+          ok: false,
+          reason: packagedProbeFailure,
+          fatal: true,
+        } as const;
       }
     }
 
