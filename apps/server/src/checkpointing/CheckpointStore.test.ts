@@ -152,6 +152,31 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("restores an empty checkpoint in a repository before its first commit", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-unborn-empty-test-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const baselineRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-unborn-empty-checkpoint-store"),
+          0,
+        );
+        const createdPath = NodePath.join(tmp, "created.txt");
+
+        yield* git(tmp, ["init"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(createdPath, "created after baseline\n");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        expect(yield* fileSystem.exists(createdPath)).toBe(false);
+      }),
+    );
+
     it.effect("uses shadow checkpoints for a project nested under an unrelated repository", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir("checkpoint-store-nested-project-test-");
@@ -215,6 +240,29 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(yield* fileSystem.readFileString(sourcePath)).toBe("before\n");
         expect(yield* fileSystem.exists(createdPath)).toBe(false);
         expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+      }),
+    );
+
+    it.effect("fails shadow checkpoint diffs when a ref is unavailable", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-shadow-invalid-ref-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-shadow-invalid-ref-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const missingRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        const error = yield* Effect.flip(
+          checkpointStore.diffCheckpoints({
+            cwd: tmp,
+            fromCheckpointRef: baselineRef,
+            toCheckpointRef: missingRef,
+            ignoreWhitespace: false,
+          }),
+        );
+
+        expect(error._tag).toBe("VcsProcessExitError");
+        expect(error.message).toContain("git diff");
       }),
     );
 

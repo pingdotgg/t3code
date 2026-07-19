@@ -886,7 +886,7 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints).toHaveLength(1);
     expect(
       thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
@@ -970,7 +970,7 @@ describe("CheckpointReactor", () => {
     ).toBe(false);
   });
 
-  it("reverts legacy conversation turns that predate filesystem checkpoints", async () => {
+  it("reverts legacy predecessor turns in mixed checkpoint history", async () => {
     const harness = await createHarness();
     const threadId = ThreadId.make("thread-1");
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -993,7 +993,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    for (const turnNumber of [1, 2]) {
+    for (const turnNumber of [1, 2, 3]) {
       const turnId = asTurnId(`legacy-turn-${turnNumber}`);
       await harness.runPromise(
         harness.engine.dispatch({
@@ -1036,10 +1036,25 @@ describe("CheckpointReactor", () => {
 
     await harness.runPromise(
       harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-mixed-checkpoint"),
+        threadId,
+        turnId: asTurnId("legacy-turn-3"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await harness.runPromise(
+      harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-legacy-revert-request"),
         threadId,
-        turnCount: 1,
+        turnCount: 2,
         createdAt,
       }),
     );

@@ -62,6 +62,15 @@ export function countConversationTurns(messages: ReadonlyArray<{ readonly role: 
   return messages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0);
 }
 
+function maxCheckpointTurnCount(
+  checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>,
+): number {
+  return checkpoints.reduce(
+    (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+    0,
+  );
+}
+
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
   switch (status) {
     case "failed":
@@ -391,13 +400,11 @@ const make = Effect.gen(function* () {
       const existingPlaceholder = thread.checkpoints.find(
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
       );
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
+      const currentTurnCount = maxCheckpointTurnCount(thread.checkpoints);
+      const conversationTurnCount = countConversationTurns(thread.messages);
       const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
-        : currentTurnCount + 1;
+        ? Math.max(existingPlaceholder.checkpointTurnCount, conversationTurnCount)
+        : Math.max(currentTurnCount + 1, conversationTurnCount);
 
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
@@ -467,7 +474,7 @@ const make = Effect.gen(function* () {
       turnId,
       thread,
       cwd: checkpointCwd,
-      turnCount: checkpointTurnCount,
+      turnCount: Math.max(checkpointTurnCount, countConversationTurns(thread.messages)),
       status: "ready",
       assistantMessageId: event.payload.assistantMessageId ?? undefined,
       createdAt: event.payload.completedAt,
@@ -497,9 +504,9 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
+      const currentTurnCount = Math.max(
+        maxCheckpointTurnCount(thread.checkpoints),
+        Math.max(0, countConversationTurns(thread.messages) - 1),
       );
       const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
       const baselineExists = yield* checkpointStore.hasCheckpointRef({
@@ -579,9 +586,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
+    const projectedConversationTurnCount = countConversationTurns(thread.messages);
+    const currentTurnCount = Math.max(
+      maxCheckpointTurnCount(thread.checkpoints),
+      event.type === "thread.message-sent" &&
+        thread.messages.some((message) => message.id === event.payload.messageId)
+        ? Math.max(0, projectedConversationTurnCount - 1)
+        : projectedConversationTurnCount,
     );
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
     const baselineExists = yield* checkpointStore.hasCheckpointRef({
@@ -631,12 +642,8 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
-    const checkpointTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
-    const currentTurnCount =
-      checkpointTurnCount > 0 ? checkpointTurnCount : countConversationTurns(thread.messages);
+    const checkpointTurnCount = maxCheckpointTurnCount(thread.checkpoints);
+    const currentTurnCount = Math.max(checkpointTurnCount, countConversationTurns(thread.messages));
 
     if (event.payload.turnCount > currentTurnCount) {
       yield* appendRevertFailureActivity({
@@ -649,29 +656,18 @@ const make = Effect.gen(function* () {
     }
 
     if (checkpointTurnCount > 0) {
+      const summarizedCheckpoint = thread.checkpoints.find(
+        (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+      );
       const targetCheckpointRef =
-        event.payload.turnCount === 0
-          ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-          : thread.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-            )?.checkpointRef;
-
-      if (!targetCheckpointRef) {
-        yield* appendRevertFailureActivity({
-          threadId: event.payload.threadId,
-          turnCount: event.payload.turnCount,
-          detail: `Checkpoint ref for turn ${event.payload.turnCount} is unavailable in read model.`,
-          createdAt: now,
-        }).pipe(Effect.catch(() => Effect.void));
-        return;
-      }
-
+        summarizedCheckpoint?.checkpointRef ??
+        checkpointRefForThreadTurn(event.payload.threadId, event.payload.turnCount);
       const restored = yield* checkpointStore.restoreCheckpoint({
         cwd: sessionRuntime.value.cwd,
         checkpointRef: targetCheckpointRef,
         fallbackToHead: event.payload.turnCount === 0,
       });
-      if (!restored) {
+      if (!restored && summarizedCheckpoint) {
         yield* appendRevertFailureActivity({
           threadId: event.payload.threadId,
           turnCount: event.payload.turnCount,
@@ -681,9 +677,11 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // Refresh the workspace entry index so the @-mention file picker
-      // reflects the reverted filesystem state.
-      yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+      if (restored) {
+        // Refresh the workspace entry index so the @-mention file picker
+        // reflects the reverted filesystem state.
+        yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+      }
     }
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);

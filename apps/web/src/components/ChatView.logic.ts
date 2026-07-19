@@ -43,7 +43,6 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   const checkpointByTurnId = new Map(
     input.checkpoints.map((checkpoint) => [checkpoint.turnId, checkpoint] as const),
   );
-  const useConversationOrderFallback = input.checkpoints.length === 0;
   let userTurnIndex = 0;
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
@@ -70,10 +69,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
           ? undefined
           : checkpointByTurnId.get(nextEntry.message.turnId));
       if (checkpoint) {
-        result.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+        result.set(entry.message.id, userTurnIndex);
         break;
       }
-      if (useConversationOrderFallback && !nextEntry.message.streaming) {
+      if (!nextEntry.message.streaming) {
         result.set(entry.message.id, userTurnIndex);
         break;
       }

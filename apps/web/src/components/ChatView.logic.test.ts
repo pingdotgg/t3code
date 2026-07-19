@@ -92,6 +92,33 @@ describe("deriveRevertTurnCountByUserMessageId", () => {
     expect(result.get(user.message.id)).toBe(0);
     expect(result.get(secondUser.message.id)).toBe(1);
   });
+
+  it("uses conversation order for unmatched legacy turns in mixed checkpoint histories", () => {
+    const secondUser = timelineMessage("user-2", "user", null, "2026-03-29T00:00:02.000Z");
+    const secondAssistant = timelineMessage(
+      "assistant-2",
+      "assistant",
+      TurnId.make("turn-2"),
+      "2026-03-29T00:00:03.000Z",
+    );
+    const result = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [user, assistant, secondUser, secondAssistant],
+      checkpoints: [
+        {
+          turnId: TurnId.make("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/2"),
+          status: "ready",
+          files: [],
+          assistantMessageId: secondAssistant.message.id,
+          completedAt: secondAssistant.createdAt,
+        },
+      ],
+    });
+
+    expect(result.get(user.message.id)).toBe(0);
+    expect(result.get(secondUser.message.id)).toBe(1);
+  });
 });
 
 const environmentId = EnvironmentId.make("environment-local");

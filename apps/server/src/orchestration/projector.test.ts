@@ -484,7 +484,7 @@ describe("orchestration projector", () => {
     expect(message?.updatedAt).toBe(completeAt);
   });
 
-  it("prunes reverted turn messages from in-memory thread snapshot", async () => {
+  it("preserves an uncheckpointed predecessor when reverting mixed history", async () => {
     const createdAt = "2026-02-23T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
@@ -555,24 +555,6 @@ describe("orchestration projector", () => {
       }),
       makeEvent({
         sequence: 4,
-        type: "thread.turn-diff-completed",
-        aggregateKind: "thread",
-        aggregateId: "thread-1",
-        occurredAt: "2026-02-23T10:00:02.500Z",
-        commandId: "cmd-turn-1-complete",
-        payload: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          checkpointTurnCount: 1,
-          checkpointRef: "refs/t3/checkpoints/thread-1/turn/1",
-          status: "ready",
-          files: [],
-          assistantMessageId: "assistant-msg-1",
-          completedAt: "2026-02-23T10:00:02.500Z",
-        },
-      }),
-      makeEvent({
-        sequence: 5,
         type: "thread.activity-appended",
         aggregateKind: "thread",
         aggregateId: "thread-1",
@@ -592,7 +574,7 @@ describe("orchestration projector", () => {
         },
       }),
       makeEvent({
-        sequence: 6,
+        sequence: 5,
         type: "thread.message-sent",
         aggregateKind: "thread",
         aggregateId: "thread-1",
@@ -610,7 +592,7 @@ describe("orchestration projector", () => {
         },
       }),
       makeEvent({
-        sequence: 7,
+        sequence: 6,
         type: "thread.message-sent",
         aggregateKind: "thread",
         aggregateId: "thread-1",
@@ -628,7 +610,7 @@ describe("orchestration projector", () => {
         },
       }),
       makeEvent({
-        sequence: 8,
+        sequence: 7,
         type: "thread.turn-diff-completed",
         aggregateKind: "thread",
         aggregateId: "thread-1",
@@ -646,7 +628,7 @@ describe("orchestration projector", () => {
         },
       }),
       makeEvent({
-        sequence: 9,
+        sequence: 8,
         type: "thread.activity-appended",
         aggregateKind: "thread",
         aggregateId: "thread-1",
@@ -666,7 +648,7 @@ describe("orchestration projector", () => {
         },
       }),
       makeEvent({
-        sequence: 10,
+        sequence: 9,
         type: "thread.reverted",
         aggregateKind: "thread",
         aggregateId: "thread-1",
@@ -696,8 +678,8 @@ describe("orchestration projector", () => {
     expect(
       thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId })),
     ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
-    expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
-    expect(thread?.latestTurn?.turnId).toBe("turn-1");
+    expect(thread?.checkpoints).toEqual([]);
+    expect(thread?.latestTurn).toBeNull();
   });
 
   it("retains the selected user prompt even when it is tied to the reverted turn", async () => {

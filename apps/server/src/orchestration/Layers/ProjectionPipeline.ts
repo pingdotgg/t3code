@@ -205,94 +205,49 @@ function deriveHasActionableProposedPlan(input: {
 
 function retainProjectionMessagesAfterRevert(
   messages: ReadonlyArray<ProjectionThreadMessage>,
-  turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadMessage> {
-  const retainedMessageIds = new Set<string>();
-  const retainedTurnIds = new Set<string>();
-  const keptTurns = retainProjectionTurnsAfterRevert(turns, turnCount);
-  for (const turn of keptTurns) {
-    if (turn.turnId !== null) {
-      retainedTurnIds.add(turn.turnId);
-    }
-    if (turn.pendingMessageId !== null) {
-      retainedMessageIds.add(turn.pendingMessageId);
-    }
-    if (turn.assistantMessageId !== null) {
-      retainedMessageIds.add(turn.assistantMessageId);
-    }
-  }
-
-  for (const message of messages) {
-    if (message.role === "system") {
-      retainedMessageIds.add(message.messageId);
+  const compareMessages = (left: ProjectionThreadMessage, right: ProjectionThreadMessage): number =>
+    left.createdAt.localeCompare(right.createdAt) || left.messageId.localeCompare(right.messageId);
+  const retainedMessageIds = new Set(
+    messages
+      .filter((message) => message.role === "user")
+      .toSorted(compareMessages)
+      .slice(0, turnCount + 1)
+      .map((message) => message.messageId),
+  );
+  const assistantTurnIndexes = new Map<string, number>();
+  let nextAssistantTurnIndex = 0;
+  for (const message of messages
+    .filter((entry) => entry.role === "assistant")
+    .toSorted(compareMessages)) {
+    if (message.turnId === null) {
+      if (nextAssistantTurnIndex < turnCount) {
+        retainedMessageIds.add(message.messageId);
+      }
+      nextAssistantTurnIndex += 1;
       continue;
     }
-    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
+    let assistantTurnIndex = assistantTurnIndexes.get(message.turnId);
+    if (assistantTurnIndex === undefined) {
+      assistantTurnIndex = nextAssistantTurnIndex;
+      assistantTurnIndexes.set(message.turnId, assistantTurnIndex);
+      nextAssistantTurnIndex += 1;
+    }
+    if (assistantTurnIndex < turnCount) {
       retainedMessageIds.add(message.messageId);
     }
   }
 
-  const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.messageId),
-  ).length;
-  // Keep the selected user prompt (the message immediately after the retained turns),
-  // while pruning its response and every message that follows it.
-  const missingUserCount = Math.max(0, turnCount + 1 - retainedUserCount);
-  if (missingUserCount > 0) {
-    const fallbackUserMessages = messages
-      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.messageId))
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          left.messageId.localeCompare(right.messageId),
-      )
-      .slice(0, missingUserCount);
-    for (const message of fallbackUserMessages) {
-      retainedMessageIds.add(message.messageId);
-    }
-  }
-
-  const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.messageId),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.messageId) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          left.messageId.localeCompare(right.messageId),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
-      retainedMessageIds.add(message.messageId);
-    }
-  }
-
-  return messages.filter((message) => retainedMessageIds.has(message.messageId));
+  return messages.filter(
+    (message) => message.role === "system" || retainedMessageIds.has(message.messageId),
+  );
 }
 
 function retainProjectionTurnsAfterRevert(
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
 ): ReadonlyArray<ProjectionTurn> {
-  const checkpointedTurns = turns.filter(
-    (turn) =>
-      turn.turnId !== null &&
-      turn.checkpointTurnCount !== null &&
-      turn.checkpointTurnCount <= turnCount,
-  );
-  if (turns.some((turn) => turn.checkpointTurnCount !== null)) {
-    return checkpointedTurns;
-  }
-
   return turns
     .filter((turn) => turn.turnId !== null)
     .toSorted(
@@ -865,12 +820,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
-          const existingTurns = yield* projectionTurnRepository.listByThreadId({
-            threadId: event.payload.threadId,
-          });
           const keptRows = retainProjectionMessagesAfterRevert(
             existingRows,
-            existingTurns,
             event.payload.turnCount,
           );
           if (keptRows.length === existingRows.length) {

@@ -417,11 +417,9 @@ export function applyThreadDetailEvent(
         Arr.sort(checkpointOrder),
       );
 
-      const retainedTurnIds = new Set(Arr.map(checkpoints, (entry) => entry.turnId));
-      const messages = retainMessagesAfterRevert(
-        thread.messages,
-        retainedTurnIds,
-        event.payload.turnCount,
+      const messages = retainMessagesAfterRevert(thread.messages, event.payload.turnCount);
+      const retainedTurnIds = new Set(
+        messages.flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
       );
       const proposedPlans = pipe(
         thread.proposedPlans,
@@ -535,63 +533,42 @@ function rebindCheckpointAssistantMessage(
 
 function retainMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
-  retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
 ): OrchestrationMessage[] {
-  const retainedMessageIds = new Set<string>();
-  for (const message of messages) {
-    if (message.role === "system") {
-      retainedMessageIds.add(message.id);
+  const compareMessages = (left: OrchestrationMessage, right: OrchestrationMessage): number =>
+    left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+  const retainedMessageIds = new Set(
+    messages
+      .filter((message) => message.role === "user")
+      .toSorted(compareMessages)
+      .slice(0, turnCount + 1)
+      .map((message) => message.id),
+  );
+  const assistantTurnIndexes = new Map<string, number>();
+  let nextAssistantTurnIndex = 0;
+  for (const message of messages
+    .filter((entry) => entry.role === "assistant")
+    .toSorted(compareMessages)) {
+    if (message.turnId === null) {
+      if (nextAssistantTurnIndex < turnCount) {
+        retainedMessageIds.add(message.id);
+      }
+      nextAssistantTurnIndex += 1;
       continue;
     }
-    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
+    let assistantTurnIndex = assistantTurnIndexes.get(message.turnId);
+    if (assistantTurnIndex === undefined) {
+      assistantTurnIndex = nextAssistantTurnIndex;
+      assistantTurnIndexes.set(message.turnId, assistantTurnIndex);
+      nextAssistantTurnIndex += 1;
+    }
+    if (assistantTurnIndex < turnCount) {
       retainedMessageIds.add(message.id);
     }
   }
 
-  // The revert target is the next user prompt after the retained completed turns.
-  // Keep that selected prompt visible, but discard its response and every later message.
-  const targetUserCount = turnCount + 1;
-  const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.id),
-  ).length;
-  const missingUserCount = Math.max(0, targetUserCount - retainedUserCount);
-  if (missingUserCount > 0) {
-    const fallbackUserMessages = messages
-      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.id))
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-      )
-      .slice(0, missingUserCount);
-    for (const message of fallbackUserMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.id) &&
-          (retainedTurnIds.size === 0 ||
-            message.turnId === null ||
-            retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  return Arr.filter(messages, (message) => retainedMessageIds.has(message.id));
+  return Arr.filter(
+    messages,
+    (message) => message.role === "system" || retainedMessageIds.has(message.id),
+  );
 }

@@ -17,7 +17,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
-import { type CheckpointRef } from "@t3tools/contracts";
+import { type CheckpointRef, VcsProcessExitError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -265,6 +265,15 @@ export const make = Effect.gen(function* () {
         allowNonZeroExit: true,
         maxOutputBytes: 50 * 1024 * 1024,
       });
+      if (result.exitCode !== 0) {
+        return yield* new VcsProcessExitError({
+          operation: "CheckpointStore.shadow.diffCheckpoints",
+          command: "git diff",
+          cwd: input.cwd,
+          exitCode: result.exitCode,
+          detail: result.stderr.trim() || "Checkpoint ref is unavailable for diff operation.",
+        });
+      }
       return result.stdout;
     }),
 
