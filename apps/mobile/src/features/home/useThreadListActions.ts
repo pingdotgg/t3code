@@ -11,6 +11,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 
 type ThreadListAction = "archive" | "unarchive" | "delete";
 
+interface ThreadActionOptions {
+  readonly reportFailure?: boolean;
+}
+
 function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -40,10 +44,14 @@ function useThreadActionExecutor(
   const inFlightThreadKeys = useRef(new Set<string>());
 
   const executeAction = useCallback(
-    async (action: ThreadListAction, thread: EnvironmentThreadShell) => {
+    async (
+      action: ThreadListAction,
+      thread: EnvironmentThreadShell,
+      options: ThreadActionOptions = {},
+    ): Promise<boolean> => {
       const key = scopedThreadKey(thread.environmentId, thread.id);
       if (inFlightThreadKeys.current.has(key)) {
-        return;
+        return false;
       }
 
       inFlightThreadKeys.current.add(key);
@@ -60,10 +68,13 @@ function useThreadActionExecutor(
           input: { threadId: thread.id },
         });
         if (result._tag === "Failure") {
-          Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
-          return;
+          if (options.reportFailure !== false) {
+            Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
+          }
+          return false;
         }
         onCompleted?.(action, thread);
+        return true;
       } finally {
         inFlightThreadKeys.current.delete(key);
       }
@@ -75,7 +86,11 @@ function useThreadActionExecutor(
 }
 
 function useConfirmDeleteThread(
-  executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<void>,
+  executeAction: (
+    action: ThreadListAction,
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<boolean>,
 ) {
   return useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -129,7 +144,14 @@ export function useThreadListActions(): {
 export function useArchivedThreadListActions(
   onCompleted: (thread: EnvironmentThreadShell) => void,
 ): {
-  readonly unarchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly unarchiveThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<boolean>;
+  readonly deleteThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
   const handleCompleted = useCallback(
@@ -140,12 +162,16 @@ export function useArchivedThreadListActions(
   );
   const executeAction = useThreadActionExecutor(handleCompleted);
   const unarchiveThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void executeAction("unarchive", thread);
-    },
+    (thread: EnvironmentThreadShell, options?: ThreadActionOptions) =>
+      executeAction("unarchive", thread, options),
+    [executeAction],
+  );
+  const deleteThread = useCallback(
+    (thread: EnvironmentThreadShell, options?: ThreadActionOptions) =>
+      executeAction("delete", thread, options),
     [executeAction],
   );
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
-  return { unarchiveThread, confirmDeleteThread };
+  return { unarchiveThread, deleteThread, confirmDeleteThread };
 }
