@@ -98,7 +98,7 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   if (!useOutOfBandOAuth) {
     const authorization = yield* tokens.get;
     if (authorization._tag === "Authorized") {
-      return null;
+      return authorization.token.identity ?? null;
     }
     yield* Console.log("\nHeadless mode enabled. A new authorization link is ready below.");
   }
@@ -112,7 +112,7 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
     ),
   );
   if (Option.isSome(existing)) {
-    return null;
+    return existing.value.identity ?? null;
   }
   const { token, identity } = yield* CliTokenManager.outOfBandOAuthLogin(
     promptForOutOfBandOAuthCode,
@@ -712,6 +712,21 @@ const offerBootService = Effect.gen(function* () {
   return true;
 });
 
+export const recoverBootServiceOffer = <R>(
+  offer: Effect.Effect<boolean, BootService.BootServiceError | Terminal.QuitError, R>,
+) =>
+  offer.pipe(
+    Effect.catchTags({
+      QuitError: () => Effect.succeed(false),
+      BootServiceUnsupportedError: (error) =>
+        Console.log(`Skipping background setup: ${error.message}`).pipe(Effect.as(false)),
+      BootServiceCommandError: (error) =>
+        Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+      BootServiceInstallError: (error) =>
+        Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+    }),
+  );
+
 export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
   headless: headlessFlag,
@@ -733,20 +748,7 @@ export const connectCommand = Command.make("connect", {
 
         // Connect itself already succeeded; a boot-service failure must not
         // fail the command, just tell the user what happened and move on.
-        const background = yield* offerBootService.pipe(
-          Effect.catchTags({
-            BootServiceUnsupportedError: (error) =>
-              Console.log(`Skipping background setup: ${error.message}`).pipe(Effect.as(false)),
-            BootServiceCommandError: (error) =>
-              Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-                Effect.as(false),
-              ),
-            BootServiceInstallError: (error) =>
-              Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-                Effect.as(false),
-              ),
-          }),
-        );
+        const background = yield* recoverBootServiceOffer(offerBootService);
         yield* Console.log(
           background
             ? "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out."

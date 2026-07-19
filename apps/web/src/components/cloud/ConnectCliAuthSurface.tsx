@@ -49,6 +49,7 @@ export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
+  const signInOpened = useRef(false);
   const redirecting = useRef(false);
 
   useEffect(() => {
@@ -56,7 +57,10 @@ export function ConnectCliAuthorizeSurface() {
       return;
     }
     if (!isSignedIn) {
-      clerk.openSignIn({ forceRedirectUrl: window.location.href });
+      if (!signInOpened.current) {
+        signInOpened.current = true;
+        clerk.openSignIn({ forceRedirectUrl: window.location.href });
+      }
       return;
     }
     const authorizeUrl = buildConnectCliClerkAuthorizeUrl(request);

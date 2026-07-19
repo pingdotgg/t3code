@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -34,8 +35,8 @@ const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
 const EPHEMERAL_CACHE_SEGMENTS = [
   "/_npx/", // npx
   "\\_npx\\",
-  "/pnpm/dlx", // pnpm dlx (~/.cache/pnpm/dlx and $PNPM_HOME/.pnpm/dlx)
-  "/.pnpm/dlx",
+  "/pnpm/dlx/", // pnpm dlx (~/.cache/pnpm/dlx and $PNPM_HOME/.pnpm/dlx)
+  "/.pnpm/dlx/",
   "/.bun/install/cache/", // bunx
 ];
 
@@ -266,9 +267,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // file alone is not enough: npm extracts files before running native
     // builds (node-pty), so a killed install leaves a plausible-looking but
     // broken tree behind.
-    const alreadyPinned = yield* fs
-      .exists(runtimeSentinelPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    const alreadyPinned = yield* Effect.all([
+      fs.exists(runtimeSentinelPath),
+      fs.exists(runtimeEntryPath),
+    ]).pipe(
+      Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
     if (alreadyPinned) {
       return;
     }
@@ -321,6 +326,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
     yield* ensurePinnedRuntime;
 
+    const previousUnit = yield* fs.exists(unitPath).pipe(
+      Effect.flatMap((exists) =>
+        exists
+          ? fs.readFileString(unitPath).pipe(Effect.map(Option.some))
+          : Effect.succeed(Option.none<string>()),
+      ),
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
+
     yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
       Effect.andThen(fs.writeFileString(unitPath, renderBootServiceUnit(plan))),
       Effect.mapError((cause) => new BootServiceInstallError({ cause })),
@@ -349,7 +363,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       // username argument: loginctl defaults to the calling user, which is
       // always right, while $USER can be stale (su without -l) or unset.
       yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
-    }).pipe(Effect.tapError(() => rollbackFailedInstall));
+    }).pipe(Effect.tapError(() => rollbackFailedInstall(previousUnit)));
 
     return plan;
   }).pipe(Effect.withSpan("cloud.boot_service.install"));
@@ -359,16 +373,30 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // deletes the file, daemon-reload clears the stale definition — otherwise a
   // dangling wants/ symlink logs "Failed to load unit" at every boot and the
   // next connect misreports the state.
-  const rollbackFailedInstall = Effect.gen(function* () {
-    yield* runStep("cleaning up the service", "systemctl", [
-      "--user",
-      "disable",
-      BOOT_SERVICE_UNIT_FILE,
-    ]).pipe(Effect.ignore);
-    yield* fs.remove(unitPath).pipe(Effect.ignore);
+  const rollbackFailedInstall = Effect.fn("cloud.boot_service.rollback_failed_install")(function* (
+    previousUnit: Option.Option<string>,
+  ) {
+    if (Option.isSome(previousUnit)) {
+      yield* fs.writeFileString(unitPath, previousUnit.value).pipe(Effect.ignore);
+    } else {
+      yield* runStep("cleaning up the service", "systemctl", [
+        "--user",
+        "disable",
+        "--now",
+        BOOT_SERVICE_UNIT_FILE,
+      ]).pipe(Effect.ignore);
+      yield* fs.remove(unitPath).pipe(Effect.ignore);
+    }
     yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]).pipe(
       Effect.ignore,
     );
+    if (Option.isSome(previousUnit)) {
+      yield* runStep("restoring the previous service", "systemctl", [
+        "--user",
+        "restart",
+        BOOT_SERVICE_UNIT_FILE,
+      ]).pipe(Effect.ignore);
+    }
   });
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
@@ -384,7 +412,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       "disable",
       "--now",
       BOOT_SERVICE_UNIT_FILE,
-    ]).pipe(Effect.ignore({ log: true }));
+    ]);
     yield* fs
       .remove(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));

@@ -120,6 +120,7 @@ const PersistedToken = Schema.Struct({
   accessToken: Schema.String,
   refreshToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
+  identity: Schema.optional(Schema.String),
 });
 export type PersistedToken = typeof PersistedToken.Type;
 
@@ -251,13 +252,15 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
     Effect.flatMap(HttpClientResponse.schemaBodyJson(OAuthTokenResponse)),
   );
   const now = yield* Clock.currentTimeMillis;
+  const identity = idTokenIdentity(response.id_token);
   return {
     token: {
       accessToken: response.access_token,
       refreshToken: response.refresh_token ?? params.refresh_token ?? "",
       expiresAtEpochMs: now + response.expires_in * 1_000,
+      ...(identity === null ? {} : { identity }),
     } satisfies PersistedToken,
-    identity: idTokenIdentity(response.id_token),
+    identity,
   };
 });
 
@@ -357,7 +360,9 @@ export const make = Effect.gen(function* () {
       refresh_token: token.refreshToken,
       client_id: metadata.clientId,
     });
-    return refreshed;
+    return refreshed.identity === undefined && token.identity !== undefined
+      ? { ...refreshed, identity: token.identity }
+      : refreshed;
   });
 
   const login = Effect.fn("cloud.cli_token.login")(function* () {

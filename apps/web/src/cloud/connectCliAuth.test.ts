@@ -24,20 +24,23 @@ describe("connectCliAuth", () => {
     expect(hasConnectCliAuthConfig()).toBe(true);
   });
 
-  it("builds the Clerk authorize URL with the current origin's callback", () => {
+  it("builds the Clerk authorize URL with the configured hosted origin's callback", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
     vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://nightly.app.t3.codes");
 
-    const authorizeUrl = buildConnectCliClerkAuthorizeUrl(
-      { state: "state-1", challenge: "challenge-1" },
-      "https://app.t3.codes",
-    );
+    const authorizeUrl = buildConnectCliClerkAuthorizeUrl({
+      state: "state-1",
+      challenge: "challenge-1",
+    });
     expect(authorizeUrl).not.toBeNull();
 
     const url = new URL(authorizeUrl!);
     expect(url.hostname).toBe("witty-mole-42.clerk.accounts.dev");
     expect(url.pathname).toBe("/oauth/authorize");
-    expect(url.searchParams.get("redirect_uri")).toBe("https://app.t3.codes/connect/callback");
+    expect(url.searchParams.get("redirect_uri")).toBe(
+      "https://nightly.app.t3.codes/connect/callback",
+    );
     expect(url.searchParams.get("state")).toBe("state-1");
     expect(url.searchParams.get("code_challenge")).toBe("challenge-1");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
@@ -46,10 +49,7 @@ describe("connectCliAuth", () => {
   it("returns null when the CLI OAuth client id is not configured", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
     expect(
-      buildConnectCliClerkAuthorizeUrl(
-        { state: "state-1", challenge: "challenge-1" },
-        "https://app.t3.codes",
-      ),
+      buildConnectCliClerkAuthorizeUrl({ state: "state-1", challenge: "challenge-1" }),
     ).toBeNull();
   });
 

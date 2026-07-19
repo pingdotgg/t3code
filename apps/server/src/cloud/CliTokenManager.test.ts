@@ -185,6 +185,7 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
 
       assert.equal(token.accessToken, "access-token-1");
       assert.equal(token.refreshToken, "refresh-token-1");
+      assert.equal(token.identity, "theo@example.test");
       // The id_token's email claim is surfaced so connect can show the account.
       assert.equal(identity, "theo@example.test");
 

@@ -27,7 +27,10 @@ interface RecordedCommand {
 
 const makeRecordingRunnerLayer = (
   commands: Array<RecordedCommand>,
-  options?: { readonly failCommand?: string },
+  options?: {
+    readonly failCommand?: string;
+    readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
+  },
 ) =>
   Layer.succeed(
     ProcessRunner.ProcessRunner,
@@ -36,7 +39,9 @@ const makeRecordingRunnerLayer = (
         Effect.sync(() => {
           assert.isUndefined(input.env);
           commands.push({ command: input.command, args: input.args });
-          const failed = input.command === options?.failCommand;
+          const failed =
+            input.command === options?.failCommand ||
+            options?.failWhen?.(input.command, input.args) === true;
           return {
             stdout: "",
             stderr: failed ? `${input.command} exploded` : "",
@@ -154,6 +159,11 @@ it("flags package-manager cache entry points as ephemeral", () => {
   assert.isFalse(BootService.isEphemeralCacheEntry("/usr/local/lib/node_modules/t3/dist/bin.mjs"));
   assert.isFalse(
     BootService.isEphemeralCacheEntry(
+      "/home/theo/dev/pnpm/dlx-tools/t3/node_modules/t3/dist/bin.mjs",
+    ),
+  );
+  assert.isFalse(
+    BootService.isEphemeralCacheEntry(
       "/home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
     ),
   );
@@ -231,6 +241,29 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       });
       // Success is recorded via a sentinel so interrupted installs re-run.
       assert.isTrue(yield* fs.exists(path.join(runtimeDir, ".install-complete")));
+    }),
+  );
+
+  it.effect("reinstalls a pinned runtime when its entry point is missing", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost("/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs"),
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(dirs.home));
+
+      const plan = yield* service.install;
+      yield* fs.makeDirectory(path.dirname(plan.t3EntryPath), { recursive: true });
+      yield* fs.writeFileString(plan.t3EntryPath, "#!/usr/bin/env node\n");
+      yield* fs.remove(plan.t3EntryPath);
+      commands.length = 0;
+
+      yield* service.install;
+
+      assert.isTrue(commands.some(({ command }) => command === "npm"));
     }),
   );
 
@@ -376,6 +409,95 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       );
       const status = yield* service.status;
       assert.isFalse(status.installed);
+      assert.isTrue(
+        commands.some(
+          ({ command, args }) =>
+            command === "systemctl" && args.join(" ") === "--user disable --now t3code.service",
+        ),
+      );
+    }),
+  );
+
+  it.effect("restores the previous unit when a repair cannot activate", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const initialCommands: Array<RecordedCommand> = [];
+      const initialService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(initialCommands)),
+        provideHostRefs(dirs.home),
+      );
+      yield* initialService.install;
+
+      const unitPath = path.join(dirs.home, ".config", "systemd", "user", "t3code.service");
+      const previousUnit = yield* fs.readFileString(unitPath);
+      const replacementEntry = path.join(dirs.home, "replacement-bin.mjs");
+      yield* fs.writeFileString(replacementEntry, "#!/usr/bin/env node\n");
+      const repairCommands: Array<RecordedCommand> = [];
+      const repairService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        host: makeHost(replacementEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(repairCommands, { failCommand: "loginctl" })),
+        provideHostRefs(dirs.home),
+      );
+
+      const error = yield* repairService.install.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readFileString(unitPath), previousUnit);
+      assert.isTrue(
+        repairCommands.some(
+          ({ command, args }) =>
+            command === "systemctl" && args.join(" ") === "--user restart t3code.service",
+        ),
+      );
+    }),
+  );
+
+  it.effect("keeps the unit when stopping it during uninstall fails", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const installCommands: Array<RecordedCommand> = [];
+      const installedService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(installCommands)),
+        provideHostRefs(dirs.home),
+      );
+      yield* installedService.install;
+
+      const uninstallCommands: Array<RecordedCommand> = [];
+      const failingService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(uninstallCommands, {
+            failWhen: (command, args) =>
+              command === "systemctl" && args.includes("disable") && args.includes("--now"),
+          }),
+        ),
+        provideHostRefs(dirs.home),
+      );
+
+      const error = yield* failingService.uninstall.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.isTrue(
+        yield* fs.exists(path.join(dirs.home, ".config", "systemd", "user", "t3code.service")),
+      );
     }),
   );
 

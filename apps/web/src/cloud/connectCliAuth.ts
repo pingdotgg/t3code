@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 
-import { isHostedStaticApp } from "../hostedPairing";
+import { configuredHostedAppUrl, isHostedStaticApp } from "../hostedPairing";
 import { hasCloudPublicConfig, resolveCloudPublicConfig, trimNonEmpty } from "./publicConfig";
 
 const CONNECT_CLI_AUTH_STATE_STORAGE_KEY = "t3code-connect-cli-auth-state";
@@ -35,10 +35,7 @@ export function connectCliAuthRoutesEnabled(): boolean {
  * state is mirrored into sessionStorage so the callback page can verify the
  * response matches a request this browser actually started.
  */
-export function buildConnectCliClerkAuthorizeUrl(
-  request: ConnectAuthorizeRequest,
-  currentOrigin: string = window.location.origin,
-): string | null {
+export function buildConnectCliClerkAuthorizeUrl(request: ConnectAuthorizeRequest): string | null {
   const { clerkPublishableKey } = resolveCloudPublicConfig();
   const clientId = resolveConnectCliOAuthClientId();
   if (!clerkPublishableKey || !clientId) {
@@ -47,7 +44,7 @@ export function buildConnectCliClerkAuthorizeUrl(
   return buildConnectClerkAuthorizeUrl({
     authorizationEndpoint: `${clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey)}/oauth/authorize`,
     clientId,
-    redirectUri: connectCallbackUrl(currentOrigin),
+    redirectUri: connectCallbackUrl(configuredHostedAppUrl()),
     scopes: CONNECT_OAUTH_SCOPES,
     state: request.state,
     challenge: request.challenge,
