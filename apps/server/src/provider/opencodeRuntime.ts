@@ -685,7 +685,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       }
 
       // Degrade gracefully on failure — return empty inventory (warning status, not error)
-      let connected: ReadonlyArray<string> = [];
+      let connected: string[] = [];
       let allProviders: ProviderListResponse["all"] = [];
       if (modelsResult._tag === "Success" && modelsResult.value.code === 0) {
         const parsed = parseModelsCliOutput(modelsResult.value.stdout);
