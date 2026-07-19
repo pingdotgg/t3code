@@ -15,6 +15,7 @@ import {
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadRowTransientProps,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -37,6 +38,51 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarThreadRowTransientProps", () => {
+  it("only publishes rename state to the row being edited", () => {
+    expect(
+      resolveSidebarThreadRowTransientProps({
+        threadKey: "thread-1",
+        renamingThreadKey: "thread-1",
+        renamingTitle: "Edited title",
+        confirmingArchiveThreadKey: null,
+      }),
+    ).toEqual({
+      isRenaming: true,
+      renamingTitle: "Edited title",
+      isConfirmingArchive: false,
+    });
+
+    expect(
+      resolveSidebarThreadRowTransientProps({
+        threadKey: "thread-2",
+        renamingThreadKey: "thread-1",
+        renamingTitle: "Edited title",
+        confirmingArchiveThreadKey: null,
+      }),
+    ).toEqual({
+      isRenaming: false,
+      renamingTitle: "",
+      isConfirmingArchive: false,
+    });
+  });
+
+  it("only publishes archive confirmation state to its target row", () => {
+    expect(
+      resolveSidebarThreadRowTransientProps({
+        threadKey: "thread-2",
+        renamingThreadKey: null,
+        renamingTitle: "",
+        confirmingArchiveThreadKey: "thread-2",
+      }),
+    ).toEqual({
+      isRenaming: false,
+      renamingTitle: "",
+      isConfirmingArchive: true,
+    });
+  });
+});
 
 describe("resolveSidebarStageBadgeLabel", () => {
   it("returns Nightly for nightly primary server versions", () => {

@@ -193,6 +193,7 @@ import {
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadRowTransientProps,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -325,13 +326,13 @@ interface SidebarThreadRowProps {
   isActive: boolean;
   jumpLabel: string | null;
   appSettingsConfirmThreadArchive: boolean;
-  renamingThreadKey: string | null;
+  isRenaming: boolean;
   renamingTitle: string;
   setRenamingTitle: (title: string) => void;
   startThreadRename: (threadKey: string, title: string) => void;
   renamingInputRef: React.RefObject<HTMLInputElement | null>;
   renamingCommittedRef: React.RefObject<boolean>;
-  confirmingArchiveThreadKey: string | null;
+  isConfirmingArchive: boolean;
   setConfirmingArchiveThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
   confirmArchiveButtonRefs: React.RefObject<Map<string, HTMLButtonElement>>;
   handleThreadClick: (
@@ -362,13 +363,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     isActive,
     jumpLabel,
     appSettingsConfirmThreadArchive,
-    renamingThreadKey,
+    isRenaming,
     renamingTitle,
     setRenamingTitle,
     startThreadRename,
     renamingInputRef,
     renamingCommittedRef,
-    confirmingArchiveThreadKey,
+    isConfirmingArchive,
     setConfirmingArchiveThreadKey,
     confirmArchiveButtonRefs,
     handleThreadClick,
@@ -469,8 +470,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
-  const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
-  const threadMetaClassName = isConfirmingArchive
+  const showArchiveConfirmation = isConfirmingArchive && !isThreadRunning;
+  const threadMetaClassName = showArchiveConfirmation
     ? "pointer-events-none opacity-0"
     : !isThreadRunning
       ? "pointer-events-none transition-opacity duration-150 max-sm:pr-6 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
@@ -503,7 +504,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     (event: React.MouseEvent) => {
       // Already renaming this row: a double-click on the row chrome (outside the
       // input) must not restart and discard the in-progress edit.
-      if (renamingThreadKey === threadKey) return;
+      if (isRenaming) return;
       // On mobile the first tap navigates and closes the sidebar sheet, so the
       // inline rename can't be shown. Renaming there stays on the context menu.
       if (isMobile) return;
@@ -515,7 +516,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       event.preventDefault();
       startThreadRename(threadKey, thread.title);
     },
-    [isMobile, renamingThreadKey, startThreadRename, threadKey, thread.title],
+    [isMobile, isRenaming, startThreadRename, threadKey, thread.title],
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -710,7 +711,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
-          {renamingThreadKey === threadKey ? (
+          {isRenaming ? (
             <input
               ref={handleRenameInputRef}
               className="min-w-0 flex-1 truncate text-base sm:text-xs bg-transparent outline-none border border-ring rounded px-0.5"
@@ -784,7 +785,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
-            {isConfirmingArchive ? (
+            {showArchiveConfirmation ? (
               <button
                 ref={handleConfirmArchiveRef}
                 type="button"
@@ -996,6 +997,12 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
       {shouldShowThreadPanel &&
         renderedThreads.map((thread) => {
           const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          const transientProps = resolveSidebarThreadRowTransientProps({
+            threadKey,
+            renamingThreadKey,
+            renamingTitle,
+            confirmingArchiveThreadKey,
+          });
           return (
             <SidebarThreadRow
               key={threadKey}
@@ -1005,13 +1012,13 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               isActive={activeRouteThreadKey === threadKey}
               jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
               appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
-              renamingThreadKey={renamingThreadKey}
-              renamingTitle={renamingTitle}
+              isRenaming={transientProps.isRenaming}
+              renamingTitle={transientProps.renamingTitle}
               setRenamingTitle={setRenamingTitle}
               startThreadRename={startThreadRename}
               renamingInputRef={renamingInputRef}
               renamingCommittedRef={renamingCommittedRef}
-              confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+              isConfirmingArchive={transientProps.isConfirmingArchive}
               setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
               confirmArchiveButtonRefs={confirmArchiveButtonRefs}
               handleThreadClick={handleThreadClick}

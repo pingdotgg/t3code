@@ -17,6 +17,25 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+
+export function resolveSidebarThreadRowTransientProps(input: {
+  threadKey: string;
+  renamingThreadKey: string | null;
+  renamingTitle: string;
+  confirmingArchiveThreadKey: string | null;
+}): {
+  isRenaming: boolean;
+  renamingTitle: string;
+  isConfirmingArchive: boolean;
+} {
+  const isRenaming = input.renamingThreadKey === input.threadKey;
+  return {
+    isRenaming,
+    renamingTitle: isRenaming ? input.renamingTitle : "",
+    isConfirmingArchive: input.confirmingArchiveThreadKey === input.threadKey,
+  };
+}
+
 type SidebarProject = {
   id: string;
   title: string;
