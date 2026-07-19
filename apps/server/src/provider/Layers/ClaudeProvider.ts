@@ -38,6 +38,9 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -659,6 +662,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings: ClaudeSettings,
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
+  ptyAdapter?: PtyAdapter.PtyAdapter["Service"],
+  cwd = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -776,6 +781,35 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     : undefined;
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const authMetadata = capabilities
+    ? claudeAuthMetadata({
+        subscriptionType: capabilities.subscriptionType,
+        authMethod: capabilities.tokenSource,
+      })
+    : undefined;
+  const usageLimits =
+    authMetadata?.type === "apiKey"
+      ? makeUnavailableUsageLimits({
+          source: "claudeStatusProbe",
+          checkedAt,
+          reason: "Usage limits unavailable for Claude API key accounts.",
+        })
+      : ptyAdapter
+        ? yield* probeClaudeUsageLimits(
+            {
+              binaryPath: claudeSettings.binaryPath,
+              launchArgs: claudeSettings.launchArgs,
+              cwd,
+              checkedAt,
+              environment: yield* makeClaudeEnvironment(claudeSettings, environment),
+            },
+            ptyAdapter,
+          ).pipe(Effect.map((result) => result.usageLimits))
+        : makeUnavailableUsageLimits({
+            source: "claudeStatusProbe",
+            checkedAt,
+            reason: "Usage limits are unavailable in this runtime.",
+          });
 
   if (!capabilities) {
     return buildServerProvider({
@@ -790,14 +824,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+        usageLimits,
       },
     });
   }
-
-  const authMetadata = claudeAuthMetadata({
-    subscriptionType: capabilities.subscriptionType,
-    authMethod: capabilities.tokenSource,
-  });
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -814,6 +844,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });

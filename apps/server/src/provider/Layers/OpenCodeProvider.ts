@@ -23,6 +23,8 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
+import { resolveOpenCodeManagedUsageLimits } from "../openCodeUsageLimits.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
@@ -443,6 +445,18 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
   const connectedCount = inventoryExit.value.providerList.connected.length;
+  const usageLimits =
+    resolveOpenCodeManagedUsageLimits({
+      checkedAt,
+      inventory: inventoryExit.value,
+    }) ??
+    (connectedCount > 0
+      ? makeUnavailableUsageLimits({
+          source: "opencodeManaged",
+          checkedAt,
+          reason: "Upstream providers did not report usage information",
+        })
+      : undefined);
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
@@ -462,6 +476,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           : isExternalServer
             ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
             : "OpenCode is available, but it did not report any connected upstream providers.",
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });
