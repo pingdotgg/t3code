@@ -1197,4 +1197,117 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect(
+    "surfaces a runtime error and cancels the turn when the agent goes silent mid-turn",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("grok-watchdog-thread");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockGrokWrapper({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
+        );
+        const previousTimeout = process.env.T3CODE_ACP_TURN_IDLE_TIMEOUT_MS;
+        process.env.T3CODE_ACP_TURN_IDLE_TIMEOUT_MS = "400";
+        const adapter = yield* makeTestAdapter(wrapperPath).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousTimeout === undefined) {
+                delete process.env.T3CODE_ACP_TURN_IDLE_TIMEOUT_MS;
+              } else {
+                process.env.T3CODE_ACP_TURN_IDLE_TIMEOUT_MS = previousTimeout;
+              }
+            }),
+          ),
+        );
+
+        const runtimeErrorSeen = yield* Deferred.make<ProviderRuntimeEvent>();
+        const turnStarted = yield* Deferred.make<void>();
+        const cancelledSeen = yield* Deferred.make<void>();
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.gen(function* () {
+            if (event.type === "turn.started") {
+              yield* Deferred.succeed(turnStarted, undefined);
+            }
+            if (event.type === "runtime.error") {
+              yield* Deferred.succeed(runtimeErrorSeen, event);
+            }
+            if (event.type === "turn.completed" && event.payload.state === "cancelled") {
+              yield* Deferred.succeed(cancelledSeen, undefined);
+            }
+          }),
+        ).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("grok"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        });
+        // The prompt hangs forever; run it in the background so the watchdog can
+        // fire while it is still in flight.
+        yield* adapter
+          .sendTurn({ threadId, input: "please hang", attachments: [] })
+          .pipe(Effect.forkChild);
+
+        // Wait until the prompt is actually in flight (turn.started emitted),
+        // then advance virtual time past the idle timeout to trip the watchdog.
+        yield* Deferred.await(turnStarted);
+        yield* TestClock.adjust("2 seconds");
+
+        const errorEvent = yield* Deferred.await(runtimeErrorSeen);
+        assert.strictEqual(errorEvent.type, "runtime.error");
+        if (errorEvent.type === "runtime.error") {
+          assert.include(errorEvent.payload.message, "stopped responding");
+        }
+        // The watchdog also cancels the wedged turn so the UI stops spinning.
+        yield* Deferred.await(cancelledSeen);
+
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+      }),
+  );
+
+  it.effect("surfaces a warning when the agent completes a turn with no output", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-empty-completion-thread");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_EMPTY_COMPLETION: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "check the repo", attachments: [] });
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("15 seconds"));
+
+      const warning = runtimeEvents.find((event) => event.type === "runtime.warning");
+      assert.isDefined(warning);
+      if (warning?.type === "runtime.warning") {
+        assert.include(warning.payload.message, "without a response");
+      }
+      // No assistant content was produced for the empty turn.
+      assert.isUndefined(runtimeEvents.find((event) => event.type === "content.delta"));
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

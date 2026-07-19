@@ -12,9 +12,11 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -79,6 +81,26 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJ
 const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_RESUME_VERSION = 1 as const;
 
+/**
+ * Default idle timeout for the turn watchdog. If the agent produces no ACP
+ * activity for this long while a prompt is in flight, the turn is treated as
+ * hung: a runtime error is surfaced and the turn is cancelled instead of the UI
+ * spinning forever. Generous by default so genuinely long-running tools are not
+ * killed; override with `T3CODE_ACP_TURN_IDLE_TIMEOUT_MS` (0 disables).
+ */
+const DEFAULT_TURN_IDLE_TIMEOUT_MS = 240_000;
+/** How often the watchdog checks for idleness. */
+const TURN_IDLE_WATCHDOG_INTERVAL_MS = 15_000;
+
+function resolveTurnIdleTimeoutMs(): number {
+  const raw = process.env.T3CODE_ACP_TURN_IDLE_TIMEOUT_MS?.trim();
+  if (!raw) {
+    return DEFAULT_TURN_IDLE_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TURN_IDLE_TIMEOUT_MS;
+}
+
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
   return Exit.isSuccess(result) ? result.value : undefined;
@@ -131,6 +153,13 @@ interface GrokSessionContext {
   promptsInFlight: number;
   currentModelId: string | undefined;
   stopped: boolean;
+  /** Epoch millis of the last ACP activity (turn start or inbound update).
+   * Used by the idle watchdog to detect an agent that went silent mid-turn. */
+  lastActivityAtMillis: number;
+  /** Whether the active turn has produced any assistant/tool output yet.
+   * A turn that completes without output (e.g. provider hit a usage limit and
+   * ended silently) triggers an empty-completion notice. */
+  activeTurnProducedOutput: boolean;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -257,6 +286,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
+    const turnIdleTimeoutMs = resolveTurnIdleTimeoutMs();
 
     const sessions = new Map<ThreadId, GrokSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -310,6 +340,35 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+
+    // Surfaces a visible notice when a turn ends "successfully" but produced no
+    // assistant text and no tool activity. This is the observable shape of an
+    // agent that silently gave up mid-turn — most notably Grok ending the turn
+    // with `end_turn` after its inference failed on a usage/credit limit (HTTP
+    // 402), which otherwise leaves the user with no message and no error.
+    const emitEmptyCompletionNoticeIfNeeded = (
+      ctx: GrokSessionContext,
+      turnId: TurnId,
+      stopReason: EffectAcpSchema.StopReason | null,
+    ) =>
+      Effect.gen(function* () {
+        if (ctx.activeTurnProducedOutput || stopReason === "cancelled") {
+          return;
+        }
+        yield* offerRuntimeEvent({
+          type: "runtime.warning",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          payload: {
+            message: `${providerDisplayName} ended the turn without a response.`,
+            detail: `The model produced no output before ending the turn${
+              stopReason ? ` (stop reason: ${stopReason})` : ""
+            }. This commonly happens when a usage or credit limit has been reached, or the request was declined.`,
+          },
+        });
+      });
 
     const settlePromptInFlight = (
       threadId: ThreadId,
@@ -435,6 +494,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             },
           });
         } else if (shouldEmitCompletedTurn) {
+          yield* emitEmptyCompletionNoticeIfNeeded(
+            liveCtx,
+            settleTurnId,
+            options.completedStopReason ?? null,
+          );
           yield* offerRuntimeEvent({
             type: "turn.completed",
             ...(yield* makeEventStamp()),
@@ -850,6 +914,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             promptsInFlight: 0,
             currentModelId: boundModelId,
             stopped: false,
+            lastActivityAtMillis: yield* Clock.currentTimeMillis,
+            activeTurnProducedOutput: false,
           };
 
           const nf = yield* Stream.runDrain(
@@ -877,6 +943,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   ctx.interruptedTurnIds.has(notificationTurnId)
                 ) {
                   return;
+                }
+                // Any inbound update for the active turn counts as liveness for
+                // the idle watchdog, and marks that the turn produced output so a
+                // silent (e.g. usage-limited) completion can be distinguished.
+                ctx.lastActivityAtMillis = yield* Clock.currentTimeMillis;
+                if (
+                  event._tag === "AssistantItemStarted" ||
+                  event._tag === "ContentDelta" ||
+                  event._tag === "ToolCallUpdated" ||
+                  event._tag === "PlanUpdated"
+                ) {
+                  ctx.activeTurnProducedOutput = true;
                 }
                 const stamp = yield* makeEventStamp();
 
@@ -956,6 +1034,63 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
 
+          // Idle turn watchdog: if a prompt is in flight but the agent produces
+          // no ACP activity for longer than the timeout, treat the turn as hung
+          // (e.g. the agent wedged on a tool/command that never returns), surface
+          // a runtime error, and cancel it instead of spinning forever.
+          yield* Effect.gen(function* () {
+            if (turnIdleTimeoutMs <= 0) {
+              return;
+            }
+            // Poll at most every TURN_IDLE_WATCHDOG_INTERVAL_MS, but never slower
+            // than the timeout itself, so a short (e.g. test) timeout is honored
+            // promptly without busy-looping on the default multi-minute timeout.
+            const checkIntervalMs = Math.min(
+              TURN_IDLE_WATCHDOG_INTERVAL_MS,
+              Math.max(250, turnIdleTimeoutMs),
+            );
+            while (true) {
+              yield* Effect.sleep(Duration.millis(checkIntervalMs));
+              const liveCtx = sessions.get(input.threadId);
+              if (!liveCtx || liveCtx.stopped) {
+                return;
+              }
+              const activeTurnId = liveCtx.activeTurnId;
+              if (
+                liveCtx.promptsInFlight <= 0 ||
+                activeTurnId === undefined ||
+                liveCtx.interruptedTurnIds.has(activeTurnId)
+              ) {
+                continue;
+              }
+              const nowMillis = yield* Clock.currentTimeMillis;
+              const idleMillis = nowMillis - liveCtx.lastActivityAtMillis;
+              if (idleMillis < turnIdleTimeoutMs) {
+                continue;
+              }
+              const idleSeconds = Math.round(idleMillis / 1000);
+              yield* offerRuntimeEvent({
+                type: "runtime.error",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: activeTurnId,
+                payload: {
+                  message: `${providerDisplayName} stopped responding and the turn was cancelled.`,
+                  detail: `No activity for ${idleSeconds}s while a response was in progress. The agent may have hung on a tool or command that never returned. Retry, or raise T3CODE_ACP_TURN_IDLE_TIMEOUT_MS if long-running work is expected.`,
+                },
+              });
+              yield* interruptTurn(input.threadId, activeTurnId).pipe(Effect.ignore);
+            }
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(`${providerDisplayName} turn watchdog stopped unexpectedly.`, {
+                cause,
+              }),
+            ),
+            Effect.forkIn(sessionScope),
+          );
+
           yield* offerRuntimeEvent({
             type: "session.started",
             ...(yield* makeEventStamp()),
@@ -1003,6 +1138,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // Bind the turn id before cooperative yields so interruptTurn can
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
+            // Reset the idle-watchdog clock: a freshly sent prompt is activity,
+            // and gives the agent a full timeout window before its first token.
+            ctx.lastActivityAtMillis = yield* Clock.currentTimeMillis;
             ctx.session = {
               ...ctx.session,
               status: steeringTurnId === undefined ? "connecting" : "running",
@@ -1092,6 +1230,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
               if (steeringTurnId === undefined) {
                 ctx.lastPlanFingerprint = undefined;
+                ctx.activeTurnProducedOutput = false;
               }
               ctx.session = {
                 ...ctx.session,
@@ -1253,6 +1392,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
                 };
                 const completedStopReason = completedStopReasonFromPromptResponse(result);
+                yield* emitEmptyCompletionNoticeIfNeeded(ctx, prepared.turnId, completedStopReason);
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
