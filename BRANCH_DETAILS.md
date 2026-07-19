@@ -3,6 +3,7 @@
 Archived conversations use cold storage instead of retaining full hot projections and diagnostics in `state.sqlite`.
 
 - `state.sqlite` keeps only the lightweight archived thread shell needed by the Archive page. Conversation events, messages, activities, turns, checkpoints, plans, session/runtime rows, and content attachments are written as bounded gzip-compressed chunks in the separate `archive.sqlite` database, then removed from hot storage.
+- `apps/server/scripts/t3-sqlite-state.ts` is the supported isolated-database inspection path. It targets hot `state.sqlite` by default and accepts `--database archive` for cold manifest and chunk queries, with both paths derived from the shared server configuration. Archive and restore behavior should use application commands rather than direct archive-bundle writes.
 - Content attachments are part of the archive bundle and return on unarchive. Attachment collection follows exact ids persisted in thread messages, while retry cleanup may reuse exact attachment chunk filenames already recorded in the cold bundle; normalized thread-name collisions cannot claim another thread's files. Provider diagnostic logs and terminal history logs are deliberately destructive on archive: they are deleted, never copied into the bundle, and never restored. Provider-log cleanup matches only the exact thread log and its numeric rotations so similarly prefixed thread ids are not affected.
 - Cold restore preserves binary SQL values, validates attachment entry names, and atomically replaces attachment files before marking SQL rows restored. It keeps compressed chunks authoritative on failure, pages chunk reads to bound memory, rejects unknown tables/chunk kinds, and intersects archived row columns with the current schema so older bundles remain recoverable after compatible migrations.
 - Permanent thread deletion removes the shell, event stream, command receipts, every thread-owned projection/runtime/checkpoint row, attachments, terminal history, provider logs and rotations, and any cold-archive manifest/chunks. Exact attachment ownership metadata remains available until external attachment and provider-log cleanup succeeds, after which the SQL and cold-chunk rows are removed; cross-thread plan references are cleared rather than leaving dangling ids, and the durable cleanup-queue entry is retained until filesystem cleanup and free-page reclamation succeed so interrupted deletes retry safely.
@@ -18,6 +19,7 @@ Primary files:
 - `apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts`
 - `apps/server/src/persistence/Migrations/035_ThreadColdArchive.ts`
 - `apps/server/src/persistence/Migrations/036_DeletedThreadCleanupQueue.ts`
+- `apps/server/scripts/t3-sqlite-state.ts`
 
 ## Sidebar And Shell Consistency
 
