@@ -2762,12 +2762,12 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && "hover:bg-white/15 [&_svg]:text-white/85! [&_svg]:hover:text-white!",
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} stageLabel={stageLabel} />
+      <SidebarBrand onBackdrop={backdropVariant !== null} />
     </SidebarHeader>
   );
 });
 
-function SidebarBrand({ stageLabel, onBackdrop }: { stageLabel: string; onBackdrop: boolean }) {
+function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <Link
       aria-label="Go to threads"
@@ -2785,16 +2785,6 @@ function SidebarBrand({ stageLabel, onBackdrop }: { stageLabel: string; onBackdr
         )}
       >
         Code
-      </span>
-      <span
-        className={cn(
-          "sidebar-brand-stage shrink-0 items-center whitespace-nowrap rounded-full px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em]",
-          onBackdrop
-            ? "bg-white/15 text-white/80 backdrop-blur-sm"
-            : "bg-muted/50 text-muted-foreground/60",
-        )}
-      >
-        {stageLabel}
       </span>
     </Link>
   );
