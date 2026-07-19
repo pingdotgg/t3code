@@ -46,6 +46,10 @@ export interface ServerDerivedPaths {
   readonly secretsDir: string;
 }
 
+export interface DeriveServerPathsOptions {
+  readonly baseDirIsExplicit?: boolean;
+}
+
 /**
  * ServerConfig - Service tag for server runtime configuration.
  */
@@ -92,9 +96,13 @@ export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerCo
 export const deriveServerPaths = Effect.fn(function* (
   baseDir: ServerConfig["Service"]["baseDir"],
   devUrl: ServerConfig["Service"]["devUrl"],
+  options: DeriveServerPathsOptions = {},
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
-  const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
+  const stateDir = join(
+    baseDir,
+    devUrl !== undefined && !options.baseDirIsExplicit ? "dev" : "userdata",
+  );
   const dbPath = join(stateDir, "state.sqlite");
   const archiveDbPath = join(stateDir, "archive.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
