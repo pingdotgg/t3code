@@ -75,7 +75,7 @@ patchedDependencies:
   '@legendapp/list@3.2.0': 45e4cbcbeeca1b628b8480869374d7cbc77e3fbfa97ee0107a0d72c3c4a5d7f3
   '@pierre/diffs@1.3.0-beta.5': 7cb6da88544119adda056b2f46f43956f99326227732da0b345081e285a6c53a
   '@react-native-menu/menu@2.0.0': 5ea3ae4bf1d9baf5443b65c269bb09621c27a68d556f713778f37b1e8d46aaae
-  '@react-navigation/native-stack@7.17.6': 2d7fec7933e324ccf082b1ae0df3907c35d16d48c117d628e27d9c3921c26bca
+  '@react-navigation/native-stack@7.17.6': c7fc101b78d434904425e5a24c22fb0042298dec6f807250486e784f3c717273
   effect@4.0.0-beta.78: c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5
   expo-modules-jsi@56.0.10: 9170f8074ae4e35a0a086e756c8f815794fd3abe51eac67ca3ba02804225ec1f
   react-native-gesture-handler@2.31.2: 808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3
@@ -229,7 +229,7 @@ importers:
         version: 7.3.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       '@react-navigation/native-stack':
         specifier: 7.17.6
-        version: 7.17.6(patch_hash=2d7fec7933e324ccf082b1ae0df3907c35d16d48c117d628e27d9c3921c26bca)(a49e8e72dc3ef754b9d26038db8e6d3f)
+        version: 7.17.6(patch_hash=c7fc101b78d434904425e5a24c22fb0042298dec6f807250486e784f3c717273)(a49e8e72dc3ef754b9d26038db8e6d3f)
       '@shikijs/core':
         specifier: 4.2.0
         version: 4.2.0
@@ -14148,7 +14148,7 @@ snapshots:
     optionalDependencies:
       '@react-native-masked-view/masked-view': 0.3.2(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
 
-  '@react-navigation/native-stack@7.17.6(patch_hash=2d7fec7933e324ccf082b1ae0df3907c35d16d48c117d628e27d9c3921c26bca)(a49e8e72dc3ef754b9d26038db8e6d3f)':
+  '@react-navigation/native-stack@7.17.6(patch_hash=c7fc101b78d434904425e5a24c22fb0042298dec6f807250486e784f3c717273)(a49e8e72dc3ef754b9d26038db8e6d3f)':
     dependencies:
       '@react-navigation/elements': 2.9.26(c6a2ad0e2c930f8e3896e77c3ba11bc4)
       '@react-navigation/native': 7.3.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
