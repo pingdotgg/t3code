@@ -128,6 +128,7 @@ import {
 } from "./cli/liveContext.ts";
 
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
+const PENDING_REQUEST_DETAILS_CONCURRENCY = 4;
 
 const BootstrapEnvelopeSchema = Schema.Struct({
   mode: Schema.optional(RuntimeMode),
@@ -2369,8 +2370,10 @@ const approvalListCommand = Command.make("list", {
         const threads = Option.isSome(flags.thread)
           ? [yield* findThreadForCli(snapshot, flags.thread.value)]
           : activeThreadsOf(snapshot).filter((thread) => thread.hasPendingApprovals);
-        const details = yield* Effect.forEach(threads, (thread) =>
-          getThreadSnapshot(thread.id).pipe(Effect.map((detail) => detail.thread)),
+        const details = yield* Effect.forEach(
+          threads,
+          (thread) => getThreadSnapshot(thread.id).pipe(Effect.map((detail) => detail.thread)),
+          { concurrency: PENDING_REQUEST_DETAILS_CONCURRENCY },
         );
         yield* printJson(
           details.flatMap((thread) =>
@@ -2460,8 +2463,10 @@ const inputListCommand = Command.make("list", {
         const threads = Option.isSome(flags.thread)
           ? [yield* findThreadForCli(snapshot, flags.thread.value)]
           : activeThreadsOf(snapshot).filter((thread) => thread.hasPendingUserInput);
-        const details = yield* Effect.forEach(threads, (thread) =>
-          getThreadSnapshot(thread.id).pipe(Effect.map((detail) => detail.thread)),
+        const details = yield* Effect.forEach(
+          threads,
+          (thread) => getThreadSnapshot(thread.id).pipe(Effect.map((detail) => detail.thread)),
+          { concurrency: PENDING_REQUEST_DETAILS_CONCURRENCY },
         );
         yield* printJson(
           details.flatMap((thread) =>
