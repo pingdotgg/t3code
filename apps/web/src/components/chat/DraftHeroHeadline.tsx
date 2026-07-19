@@ -101,7 +101,7 @@ export function DraftHeroHeadline({
   );
 
   return (
-    <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-3xl text-foreground tracking-tight sm:text-5xl">
+    <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-3xl text-foreground tracking-tight">
       {hasResolvedProject ? (
         <>What should we build in {projectSelector}?</>
       ) : canChooseProject ? (
