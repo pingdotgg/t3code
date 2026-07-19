@@ -165,16 +165,24 @@ The backend reads observability config at process start. If you change OTLP env 
 
 The trace file is the fastest way to inspect raw span data.
 
+Resolve the production or explicitly configured trace file once. Runtime state lives under the
+base directory's `userdata` folder:
+
+```bash
+TRACE_FILE="${T3CODE_HOME:-$HOME/.t3}/userdata/logs/server.trace.ndjson"
+```
+
 Tail it:
 
 ```bash
-tail -f "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+tail -f "$TRACE_FILE"
 ```
 
-In monorepo dev, use:
+For an implicit monorepo dev server, use:
 
 ```bash
-tail -f ./dev/logs/server.trace.ndjson
+TRACE_FILE="$HOME/.t3/dev/logs/server.trace.ndjson"
+tail -f "$TRACE_FILE"
 ```
 
 Show failed spans:
@@ -185,7 +193,7 @@ jq -c 'select(.exit._tag != "Success") | {
   durationMs,
   exit,
   attributes
-}' "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+}' "$TRACE_FILE"
 ```
 
 Show slow spans:
@@ -196,7 +204,7 @@ jq -c 'select(.durationMs > 1000) | {
   durationMs,
   traceId,
   spanId
-}' "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+}' "$TRACE_FILE"
 ```
 
 Inspect embedded log events:
@@ -213,7 +221,7 @@ jq -c 'select(any(.events[]?; .attributes["effect.logLevel"] != null)) | {
         level: .attributes["effect.logLevel"]
       }
   ]
-}' "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+}' "$TRACE_FILE"
 ```
 
 Follow one trace:
@@ -224,7 +232,7 @@ jq -r 'select(.traceId == "TRACE_ID_HERE") | [
   .spanId,
   (.parentSpanId // "-"),
   .durationMs
-] | @tsv' "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+] | @tsv' "$TRACE_FILE"
 ```
 
 Filter orchestration commands:
@@ -235,7 +243,7 @@ jq -c 'select(.attributes["orchestration.command_type"] != null) | {
   durationMs,
   commandType: .attributes["orchestration.command_type"],
   aggregateKind: .attributes["orchestration.aggregate_kind"]
-}' "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+}' "$TRACE_FILE"
 ```
 
 Filter git activity:
@@ -250,7 +258,7 @@ jq -c 'select(.attributes["git.operation"] != null) | {
     .events[]
     | select(.name == "git.hook.started" or .name == "git.hook.finished")
   ]
-}' "$T3CODE_HOME/userdata/logs/server.trace.ndjson"
+}' "$TRACE_FILE"
 ```
 
 ### Use Tempo When You Need A Real Trace Viewer

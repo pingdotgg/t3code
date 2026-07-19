@@ -1,0 +1,4 @@
+interface:
+  display_name: "T3 App Testing"
+  short_description: "Launch and seed isolated T3 test environments"
+  default_prompt: "Use $test-t3-app to launch an isolated T3 development environment and test it in the browser."
