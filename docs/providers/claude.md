@@ -29,6 +29,25 @@ Claude HOME path: empty
 
 An empty `Claude HOME path` means T3 Code uses your normal home directory.
 
+## My Claude Login Expired
+
+If Claude Code's OAuth token expires, a turn fails with an error such as:
+
+```text
+Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.
+```
+
+You do not need to leave T3 Code. Click **Re-authenticate** on the error banner
+(or on the provider's status banner when it reports "unauthenticated"). T3 Code
+opens an integrated terminal and runs `claude setup-token` for that provider,
+using its configured binary and Claude HOME. Follow the prompt — open the
+printed URL, approve access, and paste the authorization code back into the
+terminal. Once it finishes, retry your turn.
+
+The re-authenticate action runs against the same Claude provider you were using,
+so multi-account and custom-home setups (below) re-authenticate the correct
+account.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude home for each account.

@@ -58,6 +58,25 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+/**
+ * Describes how a provider can be (re-)authenticated from within T3 Code.
+ *
+ * When present, the client may offer an in-app "Re-authenticate" action that
+ * runs `command` — an interactive CLI login such as `claude setup-token` or
+ * `codex login` — inside an integrated terminal using the provider's resolved
+ * environment. This lets users recover from an expired credential (e.g. a
+ * Claude `401 OAuth access token has expired` turn failure) without dropping
+ * to an external shell. `executable`/`args` carry the same command already
+ * split for callers that spawn directly instead of through a shell.
+ */
+export const ServerProviderReauthentication = Schema.Struct({
+  command: TrimmedNonEmptyString,
+  executable: TrimmedNonEmptyString,
+  args: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  label: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderReauthentication = typeof ServerProviderReauthentication.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -171,6 +190,10 @@ export const ServerProvider = Schema.Struct({
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
   auth: ServerProviderAuth,
+  // Present when the provider exposes an in-app re-authentication command
+  // (see `ServerProviderReauthentication`). Optional/back-compat: legacy
+  // producers omit it and consumers simply hide the re-authenticate action.
+  reauthentication: Schema.optionalKey(ServerProviderReauthentication),
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and

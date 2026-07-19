@@ -10,6 +10,7 @@ import {
   type ProviderApprovalDecision,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderReauthentication,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -265,6 +266,19 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+
+/**
+ * Heuristic for whether a thread/turn error stems from an expired or missing
+ * provider credential — the signals that make an in-app "Re-authenticate"
+ * action worth offering (e.g. Claude's
+ * `401 OAuth access token has expired. Re-authenticate to continue.`).
+ */
+function isProviderAuthError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /(re-?authenticate|reauth|unauthenticated|not authenticated|authentication (failed|error|required)|oauth|access token|api key|\b401\b|\b403\b|log ?in again|sign ?in again)/i.test(
+    message,
+  );
+}
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -2700,6 +2714,28 @@ function ChatViewContent(props: ChatViewProps) {
       terminalUiState.activeTerminalId,
       writeTerminal,
     ],
+  );
+
+  const reauthenticateProvider = useCallback(
+    (reauthentication: ServerProviderReauthentication) => {
+      // Reuse the project-script launcher so re-authentication runs through
+      // the same proven "open/reuse a terminal, focus it, write the command"
+      // path. A fresh terminal keeps the interactive OAuth prompt (URL +
+      // pasted code) from colliding with an in-flight shell, and
+      // `rememberAsLastInvoked: false` keeps this synthetic command out of the
+      // per-project "last run script" state.
+      void runProjectScript(
+        {
+          id: "__t3-code-reauthenticate__",
+          name: reauthentication.label ?? "Re-authenticate",
+          command: reauthentication.command,
+          icon: "configure",
+          runOnWorktreeCreate: false,
+        },
+        { preferNewTerminal: true, rememberAsLastInvoked: false },
+      );
+    },
+    [runProjectScript],
   );
 
   const persistProjectScripts = useCallback(
@@ -5248,11 +5284,29 @@ function ChatViewContent(props: ChatViewProps) {
         </header>
 
         {/* Error banner */}
-        <ProviderStatusBanner status={activeProviderStatus} />
-        <ThreadErrorBanner
-          error={threadError}
-          onDismiss={() => setThreadError(activeThread.id, null)}
+        <ProviderStatusBanner
+          status={activeProviderStatus}
+          onReauthenticate={reauthenticateProvider}
         />
+        {(() => {
+          const reauth = activeProviderStatus?.reauthentication;
+          if (!reauth || !isProviderAuthError(threadError)) {
+            return (
+              <ThreadErrorBanner
+                error={threadError}
+                onDismiss={() => setThreadError(activeThread.id, null)}
+              />
+            );
+          }
+          return (
+            <ThreadErrorBanner
+              error={threadError}
+              onDismiss={() => setThreadError(activeThread.id, null)}
+              onReauthenticate={() => reauthenticateProvider(reauth)}
+              {...(reauth.label ? { reauthenticateLabel: reauth.label } : {})}
+            />
+          );
+        })()}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}

@@ -3,6 +3,7 @@ import type {
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderReauthentication,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
@@ -216,6 +217,7 @@ export function buildServerProvider(input: {
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
+  reauthentication?: ServerProviderReauthentication;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
@@ -244,6 +246,7 @@ export function buildServerProvider(input: {
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    ...(input.reauthentication ? { reauthentication: input.reauthentication } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }

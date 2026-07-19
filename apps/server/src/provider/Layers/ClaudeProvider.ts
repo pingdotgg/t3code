@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   type ServerProviderModel,
+  type ServerProviderReauthentication,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -379,6 +380,34 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
   }
 }
 
+const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
+
+/**
+ * Build the in-app re-authentication descriptor for a Claude provider
+ * instance.
+ *
+ * Runs `claude setup-token`, which performs the interactive OAuth login
+ * (prints a URL, then accepts the pasted authorization code) and stores a
+ * fresh long-lived token. Surfacing this to the client lets users recover
+ * from an expired Claude OAuth access token — e.g. a
+ * `401 OAuth access token has expired` turn failure — from within T3 Code's
+ * integrated terminal instead of dropping to an external shell. The configured
+ * `binaryPath` is preserved so custom Claude installs re-authenticate the same
+ * binary they run.
+ */
+export function resolveClaudeReauthentication(
+  claudeSettings: ClaudeSettings,
+): ServerProviderReauthentication {
+  const executable = claudeSettings.binaryPath?.trim() || "claude";
+  const args = [...CLAUDE_REAUTHENTICATION_ARGS];
+  return {
+    command: [executable, ...args].join(" "),
+    executable,
+    args,
+    label: "Re-authenticate Claude",
+  };
+}
+
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -666,6 +695,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const reauthentication = resolveClaudeReauthentication(claudeSettings);
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
     PROVIDER,
@@ -784,6 +814,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       checkedAt,
       models,
       slashCommands: dedupedSlashCommands,
+      reauthentication,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -804,6 +835,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     checkedAt,
     models,
     slashCommands: dedupedSlashCommands,
+    reauthentication,
     probe: {
       installed: true,
       version: parsedVersion,

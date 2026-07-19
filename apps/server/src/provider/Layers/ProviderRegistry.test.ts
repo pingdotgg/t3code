@@ -1475,6 +1475,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
+          assert.deepStrictEqual(status.reauthentication, {
+            command: "claude setup-token",
+            executable: "claude",
+            args: ["setup-token"],
+            label: "Re-authenticate Claude",
+          });
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
