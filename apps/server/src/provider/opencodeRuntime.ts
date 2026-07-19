@@ -168,6 +168,11 @@ function parseServerUrlFromOutput(output: string): string | null {
 const SLUG_LINE_RE = /^(\S+\/\S+)\s*$/;
 const AGENT_HEADER_RE = /^(\S+)\s+\((\S+)\)\s*$/;
 
+// Agents that are always hidden in OpenCode but the CLI "agent list" command
+// does not expose the hidden flag. Keep in sync with OpenCode agent
+// definitions (packages/opencode/src/agent/agent.ts).
+const KNOWN_HIDDEN_AGENTS = new Set(["compaction", "summary", "title"]);
+
 /** @internal */
 export function parseModelsCliOutput(stdout: string): {
   readonly providers: ReadonlyMap<
@@ -240,6 +245,7 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
           agents.push({
             name: currentHeader.name,
             mode: currentHeader.mode as Agent["mode"],
+            hidden: KNOWN_HIDDEN_AGENTS.has(currentHeader.name) || undefined,
             permission,
             options: {},
           });
