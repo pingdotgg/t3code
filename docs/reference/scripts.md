@@ -11,7 +11,7 @@
 - `vp run build` — Builds contracts, web app, and server.
 - `vp run typecheck` — Strict TypeScript checks for all packages.
 - `vp run test` — Runs workspace tests.
-- `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...` — Inspects or seeds an isolated T3 SQLite database; writes create a private backup first.
+- `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> [--database state|archive] ...` — Inspects or seeds an isolated T3 SQLite database, defaulting to `state`; writes create a private backup first.
 - `vp run dist:desktop:artifact -- --platform <mac|linux|win> --target <target> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.
 - `vp run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
 - `vp run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
