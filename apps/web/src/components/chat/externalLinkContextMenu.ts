@@ -1,6 +1,6 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
-export type ExternalLinkContextMenuAction = "open-in-browser" | "open-external" | "copy-link";
+export type ExternalLinkContextMenuAction = "open-in-preview" | "open-external" | "copy-link";
 
 export type ExternalLinkContextMenuFailureOperation =
   | "show-link-context-menu"
@@ -9,13 +9,13 @@ export type ExternalLinkContextMenuFailureOperation =
   | "copy-link";
 
 const FAILURE_OPERATION_BY_ACTION = {
-  "open-in-browser": "open-link-in-preview",
+  "open-in-preview": "open-link-in-preview",
   "open-external": "open-link-external",
   "copy-link": "copy-link",
 } as const satisfies Record<ExternalLinkContextMenuAction, ExternalLinkContextMenuFailureOperation>;
 
 const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
-  { id: "open-in-browser", label: "Open in integrated browser" },
+  { id: "open-in-preview", label: "Open in integrated browser" },
   { id: "open-external", label: "Open in system browser" },
   { id: "copy-link", label: "Copy Link" },
 ] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
@@ -27,7 +27,7 @@ interface ShowExternalLinkContextMenuOptions {
     items: readonly ContextMenuItem<ExternalLinkContextMenuAction>[],
     position: { readonly x: number; readonly y: number },
   ) => Promise<ExternalLinkContextMenuAction | null>;
-  readonly openInBrowser: (href: string) => Promise<void>;
+  readonly openInPreview: (href: string) => Promise<void>;
   readonly openExternal: (href: string) => Promise<void>;
   readonly copyLink: (href: string) => Promise<unknown>;
   readonly reportFailure: (
@@ -49,7 +49,7 @@ export async function showExternalLinkContextMenu({
   href,
   position,
   showContextMenu,
-  openInBrowser,
+  openInPreview,
   openExternal,
   copyLink,
   reportFailure,
@@ -63,8 +63,8 @@ export async function showExternalLinkContextMenu({
   }
 
   try {
-    if (action === "open-in-browser") {
-      await openInBrowser(href);
+    if (action === "open-in-preview") {
+      await openInPreview(href);
     } else if (action === "open-external") {
       await openExternal(href);
     } else if (action === "copy-link") {

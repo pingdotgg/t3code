@@ -1421,7 +1421,7 @@ function ChatMarkdown({
                   href,
                   position: { x: event.clientX, y: event.clientY },
                   showContextMenu: (items, position) => api.contextMenu.show(items, position),
-                  openInBrowser: async (target) => {
+                  openInPreview: async (target) => {
                     const result = await openExternalLinkInPreview(target);
                     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
                       reportMarkdownActionFailure(

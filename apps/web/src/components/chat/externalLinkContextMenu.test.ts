@@ -2,16 +2,16 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { isExternalWebLink, showExternalLinkContextMenu } from "./externalLinkContextMenu";
 
-function createHarness(selection: "open-in-browser" | "open-external" | "copy-link" | null) {
+function createHarness(selection: "open-in-preview" | "open-external" | "copy-link" | null) {
   const showContextMenu = vi.fn().mockResolvedValue(selection);
-  const openInBrowser = vi.fn().mockResolvedValue(undefined);
+  const openInPreview = vi.fn().mockResolvedValue(undefined);
   const openExternal = vi.fn().mockResolvedValue(undefined);
   const copyLink = vi.fn().mockResolvedValue(undefined);
   const reportFailure = vi.fn();
 
   return {
     showContextMenu,
-    openInBrowser,
+    openInPreview,
     openExternal,
     copyLink,
     reportFailure,
@@ -30,13 +30,13 @@ describe("external chat link context menu", () => {
 
     expect(harness.showContextMenu).toHaveBeenCalledWith(
       [
-        { id: "open-in-browser", label: "Open in integrated browser" },
+        { id: "open-in-preview", label: "Open in integrated browser" },
         { id: "open-external", label: "Open in system browser" },
         { id: "copy-link", label: "Copy Link" },
       ],
       { x: 12, y: 24 },
     );
-    expect(harness.openInBrowser).not.toHaveBeenCalled();
+    expect(harness.openInPreview).not.toHaveBeenCalled();
     expect(harness.openExternal).not.toHaveBeenCalled();
     expect(harness.copyLink).not.toHaveBeenCalled();
   });
@@ -48,12 +48,12 @@ describe("external chat link context menu", () => {
     await showExternalLinkContextMenu({ href, position: { x: 1, y: 2 }, ...harness });
 
     expect(harness.copyLink).toHaveBeenCalledWith(href);
-    expect(harness.openInBrowser).not.toHaveBeenCalled();
+    expect(harness.openInPreview).not.toHaveBeenCalled();
     expect(harness.openExternal).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["open-in-browser" as const, "openInBrowser" as const],
+    ["open-in-preview" as const, "openInPreview" as const],
     ["open-external" as const, "openExternal" as const],
   ])("preserves the %s action", async (selection, expectedCallback) => {
     const harness = createHarness(selection);
@@ -91,13 +91,13 @@ describe("external chat link context menu", () => {
     });
 
     expect(harness.reportFailure).toHaveBeenCalledWith("show-link-context-menu", cause);
-    expect(harness.openInBrowser).not.toHaveBeenCalled();
+    expect(harness.openInPreview).not.toHaveBeenCalled();
     expect(harness.openExternal).not.toHaveBeenCalled();
     expect(harness.copyLink).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["open-in-browser" as const, "openInBrowser" as const, "open-link-in-preview"],
+    ["open-in-preview" as const, "openInPreview" as const, "open-link-in-preview"],
     ["open-external" as const, "openExternal" as const, "open-link-external"],
   ])("reports a failed %s action", async (selection, callback, operation) => {
     const harness = createHarness(selection);
