@@ -34,6 +34,7 @@ describe("ClientSettings word wrap", () => {
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
+    expect(DEFAULT_SERVER_SETTINGS.providerFallback.enabled).toBe(false);
   });
 
   it("decodes a fully empty config (legacy on-disk shape) without complaint", () => {
