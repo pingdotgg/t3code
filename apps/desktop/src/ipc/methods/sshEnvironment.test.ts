@@ -8,9 +8,12 @@ import * as Option from "effect/Option";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import {
+  acquireSshPortForward,
   DesktopSshEnvironmentRequestError,
   fetchSshEnvironmentDescriptor,
+  releaseSshPortForward,
 } from "./sshEnvironment.ts";
+import { DesktopSshEnvironment } from "../../ssh/DesktopSshEnvironment.ts";
 
 function jsonResponse(request: HttpClientRequest.HttpClientRequest, body: unknown, status = 200) {
   return HttpClientResponse.fromWeb(
@@ -34,6 +37,41 @@ function makeHttpClientLayer(
 }
 
 describe("SSH environment IPC", () => {
+  it.effect("acquires and releases SSH port-forward leases", () => {
+    const calls: unknown[] = [];
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.test",
+      username: "developer",
+      port: 22,
+    } as const;
+    const layer = Layer.succeed(
+      DesktopSshEnvironment,
+      DesktopSshEnvironment.of({
+        discoverHosts: () => Effect.succeed([]),
+        ensureEnvironment: () => Effect.die("unused"),
+        disconnectEnvironment: () => Effect.die("unused"),
+        acquirePortForward: (receivedTarget, remotePort) =>
+          Effect.sync(() => {
+            calls.push([receivedTarget, remotePort]);
+            return { leaseId: "lease-1", localPort: 42_173, remotePort };
+          }),
+        releasePortForward: (leaseId) => Effect.sync(() => void calls.push(leaseId)),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const acquired = yield* acquireSshPortForward.handler({ target, remotePort: 5173 });
+      assert.deepEqual(acquired, {
+        leaseId: "lease-1",
+        localPort: 42_173,
+        remotePort: 5173,
+      });
+      yield* releaseSshPortForward.handler({ leaseId: "lease-1" });
+      assert.deepEqual(calls, [[target, 5173], "lease-1"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fetches and decodes the remote environment descriptor", () => {
     const requestUrls: string[] = [];
     const layer = makeHttpClientLayer((request) =>

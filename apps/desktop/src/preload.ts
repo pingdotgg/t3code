@@ -11,7 +11,7 @@ import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
 
-function unwrapEnsureSshEnvironmentResult(result: unknown) {
+function unwrapSshPasswordPromptResult<T>(result: unknown): T {
   if (
     typeof result === "object" &&
     result !== null &&
@@ -24,7 +24,7 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
         : "SSH authentication cancelled.";
     throw new Error(message);
   }
-  return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
+  return result as T;
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -53,7 +53,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   clearConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL),
   discoverSshHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL),
   ensureSshEnvironment: async (target, options) =>
-    unwrapEnsureSshEnvironmentResult(
+    unwrapSshPasswordPromptResult<Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>>(
       await ipcRenderer.invoke(IpcChannels.ENSURE_SSH_ENVIRONMENT_CHANNEL, {
         target,
         ...(options === undefined ? {} : { options }),
@@ -61,6 +61,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ),
   disconnectSshEnvironment: (target) =>
     ipcRenderer.invoke(IpcChannels.DISCONNECT_SSH_ENVIRONMENT_CHANNEL, target),
+  acquireSshPortForward: async (target, remotePort) =>
+    unwrapSshPasswordPromptResult<Awaited<ReturnType<DesktopBridge["acquireSshPortForward"]>>>(
+      await ipcRenderer.invoke(IpcChannels.ACQUIRE_SSH_PORT_FORWARD_CHANNEL, {
+        target,
+        remotePort,
+      }),
+    ),
+  releaseSshPortForward: (leaseId) =>
+    ipcRenderer.invoke(IpcChannels.RELEASE_SSH_PORT_FORWARD_CHANNEL, { leaseId }),
   fetchSshEnvironmentDescriptor: (httpBaseUrl) =>
     ipcRenderer.invoke(IpcChannels.FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL, { httpBaseUrl }),
   bootstrapSshBearerSession: (httpBaseUrl, credential) =>

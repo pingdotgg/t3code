@@ -23,6 +23,7 @@ import {
 
 const emptyConfigLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
 const netServiceLayer = Layer.succeed(NetService.NetService, {
+  hasListenerOnHost: () => Effect.succeed(false),
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
   reserveLoopbackPort: () => Effect.succeed(49_152),

@@ -1,141 +1,127 @@
+import {
+  EnvironmentPortRouter,
+  type EnvironmentPortRouteRequest,
+} from "@t3tools/client-runtime/preview";
+import {
+  createRuntimeCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   BrowserNavigationTarget,
   EnvironmentId,
   PreviewUrlResolution,
 } from "@t3tools/contracts";
-import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
+import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 
+import { connectionAtomRuntime } from "~/connection/runtime";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readPreparedConnection } from "~/state/session";
 
-const normalizeHostname = (host: string): string => host.toLowerCase().replace(/^\[|\]$/g, "");
-
-const parseIpv4Address = (host: string): readonly number[] | null => {
-  const parts = normalizeHostname(host).split(".").map(Number);
-  return parts.length === 4 &&
-    parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ? parts
-    : null;
-};
-
-const isLocalLoopbackHost = (host: string): boolean => {
-  const normalized = normalizeHostname(host);
-  if (normalized === "localhost" || normalized === "::1") return true;
-  return parseIpv4Address(normalized)?.[0] === 127;
-};
-
-const isPrivateNetworkHost = (host: string): boolean => {
-  const normalized = normalizeHostname(host);
-  if (isLocalLoopbackHost(normalized) || normalized.endsWith(".local")) {
-    return true;
-  }
-  if (normalized.endsWith(".ts.net")) return true;
-  const parts = parseIpv4Address(normalized);
-  if (parts) {
-    return (
-      parts[0] === 10 ||
-      (parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127) ||
-      (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      (parts[0] === 169 && parts[1] === 254)
-    );
-  }
-  const firstIpv6Token = normalized.split(":", 1)[0] ?? "";
-  if (!normalized.includes(":") || !/^[\da-f]{1,4}$/u.test(firstIpv6Token)) return false;
-  const firstIpv6Hextet = Number.parseInt(firstIpv6Token, 16);
-  return (
-    Number.isInteger(firstIpv6Hextet) &&
-    ((firstIpv6Hextet & 0xfe00) === 0xfc00 || (firstIpv6Hextet & 0xffc0) === 0xfe80)
-  );
-};
-
-const readEnvironmentUrl = (environmentId: EnvironmentId): URL => {
-  const connection = readPreparedConnection(environmentId);
-  if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
-  return new URL(connection.httpBaseUrl);
-};
-
-const resolveEnvironmentPortTarget = (
-  environmentId: EnvironmentId,
-  target: Extract<BrowserNavigationTarget, { readonly kind: "environment-port" }>,
-  environmentUrl: URL,
-  requestedUrl?: string,
-  sourceUrl?: URL,
-): PreviewUrlResolution => {
-  if (!isPrivateNetworkHost(environmentUrl.hostname)) {
-    throw new Error(
-      "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",
-    );
-  }
-  const protocol = target.protocol ?? "http";
-  const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
-  const normalizedEnvironmentHost = environmentUrl.hostname.replace(/^\[|\]$/g, "");
-  const resolvedHost = normalizedEnvironmentHost.includes(":")
-    ? `[${normalizedEnvironmentHost}]`
-    : normalizedEnvironmentHost;
-  const resolved = sourceUrl
-    ? new URL(sourceUrl)
-    : new URL(path, `${protocol}://${resolvedHost}:${target.port}`);
-  if (sourceUrl) {
-    resolved.hostname = resolvedHost;
-    resolved.port = String(target.port);
-  }
-  return {
-    requestedUrl: requestedUrl ?? `${protocol}://localhost:${target.port}${path}`,
-    resolvedUrl: resolved.toString(),
-    resolutionKind: isLocalLoopbackHost(normalizedEnvironmentHost)
-      ? "direct"
-      : "direct-private-network",
-    environmentId,
-  };
-};
-
-export function resolveBrowserNavigationTarget(
-  environmentId: EnvironmentId,
-  target: BrowserNavigationTarget,
-): PreviewUrlResolution {
-  if (target.kind === "url") {
-    let parsed: URL | null = null;
-    try {
-      parsed = new URL(normalizePreviewUrl(target.url));
-    } catch {
-      // Preserve the existing direct-navigation behavior so the preview host
-      // reports malformed URL errors through its normal navigation path.
-    }
-    if (parsed && isLoopbackHost(parsed.hostname)) {
-      const environmentUrl = readEnvironmentUrl(environmentId);
-      if (parsed.hostname === "0.0.0.0" || !isLocalLoopbackHost(environmentUrl.hostname)) {
-        return resolveEnvironmentPortTarget(
-          environmentId,
-          {
-            kind: "environment-port",
-            port: Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80)),
-            protocol: parsed.protocol === "https:" ? "https" : "http",
-            path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
-          },
-          environmentUrl,
-          target.url,
-          parsed,
-        );
-      }
-    }
-    return {
-      requestedUrl: target.url,
-      resolvedUrl: target.url,
-      resolutionKind: "direct",
-      environmentId,
-    };
-  }
-  return resolveEnvironmentPortTarget(environmentId, target, readEnvironmentUrl(environmentId));
+interface AcquiredRoute {
+  readonly resolution: PreviewUrlResolution;
+  readonly scope: Scope.Closeable;
 }
 
-export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
-  try {
-    const normalizedUrl = normalizePreviewUrl(rawUrl);
-    return resolveBrowserNavigationTarget(environmentId, {
-      kind: "url",
-      url: normalizedUrl,
-    }).resolvedUrl;
-  } catch {
-    return rawUrl;
+export interface BrowserNavigationRoute {
+  readonly resolution: PreviewUrlResolution;
+  readonly commit: (tabId: string) => Promise<void>;
+  readonly release: () => Promise<void>;
+}
+
+const activeRoutes = new Map<string, Scope.Closeable>();
+
+const closeRouteScope = (scope: Scope.Closeable): Promise<void> =>
+  Effect.runPromise(Scope.close(scope, Exit.void));
+
+const acquireRouteCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "preview route acquisition",
+  execute: ({ connection, target }: EnvironmentPortRouteRequest) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const resolution = yield* EnvironmentPortRouter.pipe(
+        Effect.flatMap((router) => router.acquire({ connection, target })),
+        Scope.provide(scope),
+        Effect.onError(() => Scope.close(scope, Exit.void)),
+      );
+      return { resolution, scope } satisfies AcquiredRoute;
+    }),
+});
+
+export async function acquireBrowserNavigationTarget(
+  environmentId: EnvironmentId,
+  target: BrowserNavigationTarget,
+): Promise<BrowserNavigationRoute> {
+  const connection = readPreparedConnection(environmentId);
+  if (connection === null) {
+    throw new Error(`Environment ${environmentId} is not connected.`);
   }
+  const result = await acquireRouteCommand.run(appAtomRegistry, { connection, target });
+  if (result._tag === "Failure") {
+    throw squashAtomCommandFailure(result);
+  }
+
+  const acquired = result.value;
+  let ownership: "pending" | "committed" | "released" = "pending";
+  return {
+    resolution: acquired.resolution,
+    commit: async (tabId) => {
+      if (ownership !== "pending") return;
+      ownership = "committed";
+      const previous = activeRoutes.get(tabId);
+      if (acquired.resolution.resolutionKind === "ssh-forward") {
+        activeRoutes.set(tabId, acquired.scope);
+      } else {
+        activeRoutes.delete(tabId);
+        await closeRouteScope(acquired.scope);
+      }
+      if (previous !== undefined && previous !== acquired.scope) {
+        await closeRouteScope(previous);
+      }
+    },
+    release: async () => {
+      if (ownership !== "pending") return;
+      ownership = "released";
+      await closeRouteScope(acquired.scope);
+    },
+  };
+}
+
+export async function acquireDiscoveredServerRoute(
+  environmentId: EnvironmentId,
+  rawUrl: string,
+): Promise<BrowserNavigationRoute> {
+  let url = rawUrl;
+  try {
+    url = normalizePreviewUrl(rawUrl);
+  } catch {
+    // Keep malformed input on the preview's normal navigation error path.
+  }
+  return acquireBrowserNavigationTarget(environmentId, { kind: "url", url });
+}
+
+export async function releaseBrowserNavigationRoute(tabId: string): Promise<void> {
+  const scope = activeRoutes.get(tabId);
+  if (scope === undefined) return;
+  activeRoutes.delete(tabId);
+  await closeRouteScope(scope);
+}
+
+export async function withBrowserNavigationRoute<A>(
+  route: BrowserNavigationRoute | undefined,
+  use: () => Promise<A>,
+): Promise<A> {
+  try {
+    return await use();
+  } finally {
+    await route?.release();
+  }
+}
+
+export async function resetBrowserNavigationRoutesForTests(): Promise<void> {
+  const scopes = [...activeRoutes.values()];
+  activeRoutes.clear();
+  await Promise.all(scopes.map(closeRouteScope));
 }

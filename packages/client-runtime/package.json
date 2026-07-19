@@ -35,6 +35,10 @@
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
     },
+    "./preview": {
+      "types": "./src/preview/index.ts",
+      "default": "./src/preview/index.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"

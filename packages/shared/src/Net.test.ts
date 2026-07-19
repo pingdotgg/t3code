@@ -71,6 +71,18 @@ it.layer(NetService.layer)("NetService", (it) => {
       ),
     );
 
+    it.effect("hasListenerOnHost detects an occupied TCP port", () =>
+      Effect.acquireUseRelease(
+        openServer("127.0.0.1"),
+        (server) =>
+          Effect.gen(function* () {
+            const net = yield* NetService.NetService;
+            assert.equal(yield* net.hasListenerOnHost(getPort(server), "127.0.0.1"), true);
+          }),
+        closeServer,
+      ),
+    );
+
     it.effect("findAvailablePort returns preferred when it is free", () =>
       Effect.gen(function* () {
         const net = yield* NetService.NetService;

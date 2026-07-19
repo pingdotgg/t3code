@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
+import type * as Scope from "effect/Scope";
 
 import type { ConnectionAttemptError } from "../connection/model.ts";
 
@@ -19,6 +20,10 @@ export interface PreparedSshEnvironment {
 export interface ProvisionedSshEnvironment extends PreparedSshEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+}
+
+export interface PreparedSshPortForward {
+  readonly localPort: number;
 }
 
 export class CloudSession extends Context.Service<
@@ -64,5 +69,9 @@ export class SshEnvironmentGateway extends Context.Service<
     readonly disconnect: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, ConnectionAttemptError>;
+    readonly forwardPort: (input: {
+      readonly target: DesktopSshEnvironmentTarget;
+      readonly remotePort: number;
+    }) => Effect.Effect<PreparedSshPortForward, ConnectionAttemptError, Scope.Scope>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/SshEnvironmentGateway") {}

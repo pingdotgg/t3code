@@ -10,6 +10,7 @@ import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { EnvironmentPortRouter } from "../preview/router.ts";
 
 const resolverLayer = ConnectionResolver.layer.pipe(
   Layer.provide(RemoteEnvironmentAuthorization.layer),
@@ -27,6 +28,7 @@ const connectionServicesLayer = Layer.mergeAll(
   registryLayer,
   RelayEnvironmentDiscovery.layer,
   onboardingLayer,
+  EnvironmentPortRouter.layer,
 );
 
 const connectionStartupLayer = Layer.effectDiscard(

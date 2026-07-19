@@ -61,6 +61,11 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+    readonly acquirePortForward: (
+      target: DesktopSshEnvironmentTarget,
+      remotePort: number,
+    ) => Effect.Effect<SshTunnel.SshPortForwardLease, DesktopSshEnvironmentOperationError>;
+    readonly releasePortForward: (leaseId: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
 
@@ -152,6 +157,16 @@ export const make = Effect.gen(function* () {
           Effect.provide(runtimeContext),
           Effect.withSpan("desktop.ssh.disconnectEnvironment"),
         ),
+    acquirePortForward: (target, remotePort) =>
+      manager
+        .acquirePortForward(target, remotePort)
+        .pipe(
+          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.acquirePortForward"),
+        ),
+    releasePortForward: (leaseId) =>
+      manager.releasePortForward(leaseId).pipe(Effect.withSpan("desktop.ssh.releasePortForward")),
   });
 });
 

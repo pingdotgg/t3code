@@ -161,6 +161,13 @@ const capabilitiesLayer = Layer.effectContext(
               }),
             ),
           disconnect: () => Effect.void,
+          forwardPort: () =>
+            Effect.fail(
+              new ConnectionBlockedError({
+                reason: "unsupported",
+                detail: "SSH environments are only available in the desktop app.",
+              }),
+            ),
         }),
       ),
     );

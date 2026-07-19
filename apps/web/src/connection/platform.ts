@@ -272,6 +272,34 @@ const capabilitiesLayer = Layer.effectContext(
             }),
         });
       }),
+      forwardPort: Effect.fn("web.connectionPlatform.ssh.forwardPort")(function* (input) {
+        const bridge = window.desktopBridge;
+        if (bridge === undefined) {
+          return yield* new ConnectionBlockedError({
+            reason: "unsupported",
+            detail: "SSH port forwarding is only available in the desktop app.",
+          });
+        }
+        const lease = yield* Effect.acquireRelease(
+          Effect.tryPromise({
+            try: () => bridge.acquireSshPortForward(input.target, input.remotePort),
+            catch: sshPreparationError,
+          }),
+          (acquired) =>
+            Effect.tryPromise(() => bridge.releaseSshPortForward(acquired.leaseId)).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not release SSH preview port forward.").pipe(
+                  Effect.annotateLogs({
+                    leaseId: acquired.leaseId,
+                    remotePort: acquired.remotePort,
+                    cause,
+                  }),
+                ),
+              ),
+            ),
+        );
+        return { localPort: lease.localPort };
+      }),
     });
 
     return Context.make(CloudSession, cloudSession).pipe(

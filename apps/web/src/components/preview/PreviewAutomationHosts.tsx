@@ -28,7 +28,10 @@ import {
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
+import {
+  acquireBrowserNavigationTarget,
+  withBrowserNavigationRoute,
+} from "~/browser/browserTargetResolver";
 import {
   readActiveBrowserRecordingTabId,
   startBrowserRecording,
@@ -343,81 +346,89 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
-            const resolvedInputUrl = input.url
-              ? resolveBrowserNavigationTarget(environmentId, {
+            const route = input.url
+              ? await acquireBrowserNavigationTarget(environmentId, {
                   kind: "url",
                   url: input.url,
-                }).resolvedUrl
+                })
               : undefined;
-            let activeTabId = resolvePreviewAutomationOpenTab(
-              state,
-              request.tabId,
-              input.reuseExistingTab ?? true,
-            );
-            let activeSnapshot = activeTabId
-              ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
-              : undefined;
-            const reusedExistingTab = activeTabId !== null;
-            tabId = activeTabId;
-            if (!activeTabId) {
-              const result = await open({
-                environmentId,
-                input: {
-                  threadId: request.threadId,
-                  ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
-                },
-              });
-              if (result._tag === "Failure") {
-                return raiseAtomCommandFailure(result);
-              }
-              const snapshot = result.value;
-              applyPreviewServerSnapshot(threadRef, snapshot);
-              activeTabId = snapshot.tabId;
-              activeSnapshot = snapshot;
+            const resolvedInputUrl = route?.resolution.resolvedUrl;
+            return await withBrowserNavigationRoute(route, async () => {
+              let activeTabId = resolvePreviewAutomationOpenTab(
+                state,
+                request.tabId,
+                input.reuseExistingTab ?? true,
+              );
+              let activeSnapshot = activeTabId
+                ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
+                : undefined;
+              const reusedExistingTab = activeTabId !== null;
               tabId = activeTabId;
-            }
-            if (input.show ?? true) {
-              useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
-            }
-            if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
-              await waitForDesktopOverlay(
-                threadRef,
-                request.requestId,
-                activeTabId,
-                request.timeoutMs,
-              );
-            }
-            if (reusedExistingTab && resolvedInputUrl && previewBridge) {
-              await previewBridge.navigate(activeTabId, resolvedInputUrl);
-              await waitForNavigationReadiness(
-                threadRef,
-                request.requestId,
-                activeTabId,
-                "load",
-                request.timeoutMs,
-              );
-            }
-            return await currentStatus(threadRef, activeTabId);
+              if (!activeTabId) {
+                const result = await open({
+                  environmentId,
+                  input: {
+                    threadId: request.threadId,
+                    ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+                  },
+                });
+                if (result._tag === "Failure") {
+                  return raiseAtomCommandFailure(result);
+                }
+                const snapshot = result.value;
+                applyPreviewServerSnapshot(threadRef, snapshot);
+                activeTabId = snapshot.tabId;
+                activeSnapshot = snapshot;
+                tabId = activeTabId;
+                await route?.commit(activeTabId);
+              }
+              if (input.show ?? true) {
+                useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
+              }
+              if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
+                await waitForDesktopOverlay(
+                  threadRef,
+                  request.requestId,
+                  activeTabId,
+                  request.timeoutMs,
+                );
+              }
+              if (reusedExistingTab && resolvedInputUrl && previewBridge) {
+                await previewBridge.navigate(activeTabId, resolvedInputUrl);
+                await route?.commit(activeTabId);
+                await waitForNavigationReadiness(
+                  threadRef,
+                  request.requestId,
+                  activeTabId,
+                  "load",
+                  request.timeoutMs,
+                );
+              }
+              return await currentStatus(threadRef, activeTabId);
+            });
           }
           case "navigate": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationNavigateInput;
-            const resolution = resolveBrowserNavigationTarget(
+            const route = await acquireBrowserNavigationTarget(
               environmentId,
               input.target ?? {
                 kind: "url",
                 url: input.url!,
               },
             );
-            await ready.bridge.navigate(ready.tabId, resolution.resolvedUrl);
-            await waitForNavigationReadiness(
-              threadRef,
-              request.requestId,
-              ready.tabId,
-              input.readiness ?? "load",
-              input.timeoutMs ?? request.timeoutMs,
-            );
-            return await currentStatus(threadRef, ready.tabId);
+            return await withBrowserNavigationRoute(route, async () => {
+              await ready.bridge.navigate(ready.tabId, route.resolution.resolvedUrl);
+              await route.commit(ready.tabId);
+              await waitForNavigationReadiness(
+                threadRef,
+                request.requestId,
+                ready.tabId,
+                input.readiness ?? "load",
+                input.timeoutMs ?? request.timeoutMs,
+              );
+              return await currentStatus(threadRef, ready.tabId);
+            });
           }
           case "resize": {
             const ready = await requireReadyTab();

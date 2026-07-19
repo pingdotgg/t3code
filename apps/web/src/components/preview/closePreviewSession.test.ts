@@ -7,6 +7,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+const releaseBrowserNavigationRoute = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock("~/browser/browserTargetResolver", () => ({ releaseBrowserNavigationRoute }));
+
 import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
@@ -33,7 +37,10 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-06-18T19:00:00.000Z",
 };
 
-beforeEach(resetPreviewStateForTests);
+beforeEach(() => {
+  resetPreviewStateForTests();
+  releaseBrowserNavigationRoute.mockClear();
+});
 
 describe("closePreviewSession", () => {
   it("suppresses stale server snapshots while the close is in flight", async () => {
@@ -60,6 +67,7 @@ describe("closePreviewSession", () => {
     finishClose?.();
     await closing;
     expect(closePreview).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
+    expect(releaseBrowserNavigationRoute).toHaveBeenCalledWith("tab-1");
   });
 
   it("restores the last snapshot when the server close fails", async () => {
@@ -75,5 +83,6 @@ describe("closePreviewSession", () => {
     expect(result._tag).toBe("Failure");
     expect(readThreadPreviewState(threadRef).snapshot).toEqual(snapshot);
     expect(readThreadPreviewState(threadRef).sessions).toEqual({ [snapshot.tabId]: snapshot });
+    expect(releaseBrowserNavigationRoute).not.toHaveBeenCalled();
   });
 });

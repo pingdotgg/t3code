@@ -75,6 +75,7 @@ const backendConfigurationLayer = Layer.succeed(
 );
 
 const netLayer = Layer.succeed(NetService.NetService, {
+  hasListenerOnHost: () => Effect.succeed(false),
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
   reserveLoopbackPort: () => Effect.succeed(41773),

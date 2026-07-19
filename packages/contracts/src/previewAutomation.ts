@@ -851,7 +851,7 @@ export type PreviewAutomationError = typeof PreviewAutomationError.Type;
 export const PreviewUrlResolution = Schema.Struct({
   requestedUrl: Schema.String,
   resolvedUrl: Schema.String,
-  resolutionKind: Schema.Literals(["direct", "direct-private-network"]),
+  resolutionKind: Schema.Literals(["direct", "direct-private-network", "ssh-forward"]),
   environmentId: EnvironmentId,
 });
 export type PreviewUrlResolution = typeof PreviewUrlResolution.Type;

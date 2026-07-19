@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
+import { releaseBrowserNavigationRoute } from "~/browser/browserTargetResolver";
 
 interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {
@@ -32,6 +33,8 @@ export async function closePreviewSession<E>(
   });
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
+  } else {
+    await releaseBrowserNavigationRoute(input.tabId);
   }
   return result;
 }

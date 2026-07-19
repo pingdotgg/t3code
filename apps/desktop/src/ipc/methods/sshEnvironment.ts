@@ -15,6 +15,9 @@ import {
   DesktopSshEnvironmentEnsureResultSchema,
   DesktopSshEnvironmentTargetSchema,
   DesktopSshHttpBaseUrlInputSchema,
+  DesktopSshPortForwardAcquireInputSchema,
+  DesktopSshPortForwardAcquireResultSchema,
+  DesktopSshPortForwardReleaseInputSchema,
   DesktopSshPasswordPromptCancelledType,
   DesktopSshPasswordPromptResolutionInputSchema,
   ExecutionEnvironmentDescriptor,
@@ -146,6 +149,38 @@ export const disconnectSshEnvironment = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.sshEnvironment.disconnectEnvironment")(function* (target) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     yield* sshEnvironment.disconnectEnvironment(target);
+  }),
+});
+
+export const acquireSshPortForward = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.ACQUIRE_SSH_PORT_FORWARD_CHANNEL,
+  payload: DesktopSshPortForwardAcquireInputSchema,
+  result: DesktopSshPortForwardAcquireResultSchema,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.acquirePortForward")(function* ({
+    target,
+    remotePort,
+  }) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    return yield* sshEnvironment.acquirePortForward(target, remotePort).pipe(
+      Effect.catch((error) =>
+        DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(error)
+          ? Effect.succeed({
+              type: DesktopSshPasswordPromptCancelledType,
+              message: error.message,
+            })
+          : Effect.fail(error),
+      ),
+    );
+  }),
+});
+
+export const releaseSshPortForward = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RELEASE_SSH_PORT_FORWARD_CHANNEL,
+  payload: DesktopSshPortForwardReleaseInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.releasePortForward")(function* ({ leaseId }) {
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    yield* sshEnvironment.releasePortForward(leaseId);
   }),
 });
 

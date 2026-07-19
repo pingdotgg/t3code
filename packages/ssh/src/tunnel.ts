@@ -11,12 +11,14 @@ import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
@@ -78,6 +80,21 @@ interface SshTunnelEntry {
   readonly wsBaseUrl: string;
   readonly process: ChildProcessSpawner.ChildProcessHandle;
   readonly scope: Scope.Scope;
+}
+
+interface SshPortForwardEntry extends SshTunnelEntry {
+  readonly connectionKey: string;
+  readonly leases: Set<string>;
+}
+
+interface PendingSshPortForward {
+  readonly deferred: Deferred.Deferred<SshPortForwardEntry, SshEnvironmentEffectError>;
+}
+
+export interface SshPortForwardLease {
+  readonly leaseId: string;
+  readonly localPort: number;
+  readonly remotePort: number;
 }
 
 type SshEnvironmentEffectContext =
@@ -150,6 +167,11 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  readonly acquirePortForward: (
+    target: DesktopSshEnvironmentTarget,
+    remotePort: number,
+  ) => Effect.Effect<SshPortForwardLease, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  readonly releasePortForward: (leaseId: string) => Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -917,6 +939,27 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
+const waitForTcpForwardReady = Effect.fn("ssh/tunnel.waitForTcpForwardReady")(function* (
+  localPort: number,
+) {
+  const net = yield* NetService.NetService;
+  const retryPolicy = Schedule.spaced(Duration.millis(50)).pipe(
+    Schedule.take(Math.ceil(SSH_READY_TIMEOUT_MS / 50)),
+  );
+  yield* net.hasListenerOnHost(localPort, "127.0.0.1").pipe(
+    Effect.flatMap((ready) =>
+      ready
+        ? Effect.void
+        : Effect.fail(
+            new SshReadinessError({
+              message: `SSH port forward on 127.0.0.1:${localPort} did not become ready.`,
+            }),
+          ),
+    ),
+    Effect.retry(retryPolicy),
+  );
+});
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -926,6 +969,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly wsBaseUrl: string;
   readonly authOptions: SshAuthOptions;
   readonly remoteServerKind: "external" | "managed" | null;
+  readonly readiness: "http" | "tcp";
 }): Effect.fn.Return<
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
@@ -969,7 +1013,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-n",
     "-N",
     "-L",
-    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
@@ -1068,74 +1112,87 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       }).pipe(Effect.andThen(Effect.fail(error)));
     }),
   );
-  yield* Effect.raceFirst(
-    waitForHttpReady({
-      baseUrl: input.httpBaseUrl,
-      timeoutMs: SSH_READY_TIMEOUT_MS,
-    }),
-    exitFailure,
-  ).pipe(
-    Effect.tap(() =>
-      Effect.logInfo("ssh.tunnel.ready", {
-        ...sshTargetLogFields(input.resolvedTarget),
-        command: tunnelCommand,
-        pid: child.pid,
-        localPort: input.localPort,
-        remotePort: input.remotePort,
-        httpBaseUrl: input.httpBaseUrl,
-      }),
-    ),
-    Effect.tapError((cause) =>
-      Effect.gen(function* () {
-        const net = yield* NetService.NetService;
-        const processRunningExit = yield* Effect.exit(child.isRunning);
-        const localPortAvailableExit = yield* Effect.exit(
-          net.canListenOnHost(input.localPort, "127.0.0.1"),
-        );
-        const remoteLogTailExit = yield* Effect.exit(
-          readRemoteServerLogTail(input.resolvedTarget, input.authOptions),
-        );
-        const processRunning = Exit.isSuccess(processRunningExit) ? processRunningExit.value : null;
-        const localPortAvailable = Exit.isSuccess(localPortAvailableExit)
-          ? localPortAvailableExit.value
-          : null;
-        const remoteLogTail = Exit.isSuccess(remoteLogTailExit)
-          ? remoteLogTailExit.value || null
-          : null;
-        yield* Effect.logWarning("ssh.tunnel.ready.failed", {
+  const observeReadiness = <R>(
+    readiness: Effect.Effect<void, SshCommandError | SshReadinessError, R>,
+  ) =>
+    readiness.pipe(
+      Effect.tap(() =>
+        Effect.logInfo("ssh.tunnel.ready", {
           ...sshTargetLogFields(input.resolvedTarget),
           command: tunnelCommand,
           pid: child.pid,
-          processRunning,
-          ...(Exit.isSuccess(processRunningExit)
-            ? {}
-            : { processRunningError: processRunningExit.cause }),
           localPort: input.localPort,
-          localPortListening: localPortAvailable === null ? null : !localPortAvailable,
           remotePort: input.remotePort,
           httpBaseUrl: input.httpBaseUrl,
-          ...(Exit.isSuccess(localPortAvailableExit)
-            ? {}
-            : { localPortProbeError: localPortAvailableExit.cause }),
-          ...(remoteLogTail === null ? {} : { remoteLogTail }),
-          ...(Exit.isSuccess(remoteLogTailExit)
-            ? {}
-            : { remoteLogTailError: remoteLogTailExit.cause }),
-          cause,
-        });
-      }),
-    ),
-    Effect.onExit((exit) =>
-      Exit.isSuccess(exit)
-        ? Effect.void
-        : child
-            .kill({
-              killSignal: "SIGTERM",
-              forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-            })
-            .pipe(Effect.ignore),
-    ),
-  );
+        }),
+      ),
+      Effect.tapError((cause) =>
+        Effect.gen(function* () {
+          const net = yield* NetService.NetService;
+          const processRunningExit = yield* Effect.exit(child.isRunning);
+          const localPortAvailableExit = yield* Effect.exit(
+            net.canListenOnHost(input.localPort, "127.0.0.1"),
+          );
+          const remoteLogTailExit =
+            input.readiness === "http"
+              ? yield* Effect.exit(readRemoteServerLogTail(input.resolvedTarget, input.authOptions))
+              : Exit.succeed("");
+          const processRunning = Exit.isSuccess(processRunningExit)
+            ? processRunningExit.value
+            : null;
+          const localPortAvailable = Exit.isSuccess(localPortAvailableExit)
+            ? localPortAvailableExit.value
+            : null;
+          const remoteLogTail = Exit.isSuccess(remoteLogTailExit)
+            ? remoteLogTailExit.value || null
+            : null;
+          yield* Effect.logWarning("ssh.tunnel.ready.failed", {
+            ...sshTargetLogFields(input.resolvedTarget),
+            command: tunnelCommand,
+            pid: child.pid,
+            processRunning,
+            ...(Exit.isSuccess(processRunningExit)
+              ? {}
+              : { processRunningError: processRunningExit.cause }),
+            localPort: input.localPort,
+            localPortListening: localPortAvailable === null ? null : !localPortAvailable,
+            remotePort: input.remotePort,
+            httpBaseUrl: input.httpBaseUrl,
+            ...(Exit.isSuccess(localPortAvailableExit)
+              ? {}
+              : { localPortProbeError: localPortAvailableExit.cause }),
+            ...(remoteLogTail === null ? {} : { remoteLogTail }),
+            ...(Exit.isSuccess(remoteLogTailExit)
+              ? {}
+              : { remoteLogTailError: remoteLogTailExit.cause }),
+            cause,
+          });
+        }),
+      ),
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : child
+              .kill({
+                killSignal: "SIGTERM",
+                forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+              })
+              .pipe(Effect.ignore),
+      ),
+    );
+  if (input.readiness === "http") {
+    yield* observeReadiness(
+      Effect.raceFirst(
+        waitForHttpReady({
+          baseUrl: input.httpBaseUrl,
+          timeoutMs: SSH_READY_TIMEOUT_MS,
+        }),
+        exitFailure,
+      ),
+    );
+  } else {
+    yield* observeReadiness(Effect.raceFirst(waitForTcpForwardReady(input.localPort), exitFailure));
+  }
   return tunnelEntry;
 });
 
@@ -1148,6 +1205,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     string,
     Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
   >();
+  const portForwards = new Map<string, SshPortForwardEntry>();
+  const pendingPortForwards = new Map<string, PendingSshPortForward>();
+  const portForwardLeases = new Map<string, SshPortForwardEntry>();
+  let nextPortForwardLeaseId = 0;
   const authSecrets = new Map<string, string>();
 
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
@@ -1180,11 +1241,60 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     yield* Deferred.fail(pending, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
   });
 
+  const closePortForwardEntry = Effect.fn("ssh/tunnel.closePortForwardEntry")(function* (
+    entry: SshPortForwardEntry,
+  ) {
+    yield* Effect.logDebug("ssh.portForward.close.start", {
+      ...sshTargetLogFields(entry.target),
+      key: entry.key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+      leases: entry.leases.size,
+    });
+    if (portForwards.get(entry.key) === entry) {
+      portForwards.delete(entry.key);
+    }
+    for (const leaseId of entry.leases) {
+      portForwardLeases.delete(leaseId);
+    }
+    entry.leases.clear();
+    yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+    yield* Effect.logInfo("ssh.portForward.close.succeeded", {
+      ...sshTargetLogFields(entry.target),
+      key: entry.key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+    });
+  });
+
+  const cancelPendingPortForward = Effect.fn("ssh/tunnel.cancelPendingPortForward")(function* (
+    key: string,
+    target: DesktopSshEnvironmentTarget,
+  ) {
+    const pending = pendingPortForwards.get(key);
+    if (!pending) {
+      return;
+    }
+    pendingPortForwards.delete(key);
+    yield* Deferred.fail(pending.deferred, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
+  });
+
   yield* Scope.addFinalizer(
     managerScope,
-    Effect.sync(() => [...tunnels.values()]).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" }),
+    Effect.sync(() => ({
+      tunnels: [...tunnels.values()],
+      portForwards: [...portForwards.values()],
+    })).pipe(
+      Effect.flatMap(({ tunnels: tunnelEntries, portForwards: portForwardEntries }) =>
+        Effect.all(
+          [
+            Effect.forEach(tunnelEntries, closeTunnelEntry, { concurrency: "unbounded" }),
+            Effect.forEach(portForwardEntries, closePortForwardEntry, {
+              concurrency: "unbounded",
+            }),
+          ],
+          { concurrency: "unbounded" },
+        ),
       ),
       Effect.ignore,
     ),
@@ -1301,6 +1411,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
+  const resolveManagerTarget = Effect.fn("ssh/tunnel.resolveManagerTarget")(function* (
+    target: DesktopSshEnvironmentTarget,
+  ) {
+    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
+    return {
+      ...baseResolved,
+      ...(target.username !== null ? { username: target.username } : {}),
+      ...(target.port !== null ? { port: target.port } : {}),
+    } satisfies DesktopSshEnvironmentTarget;
+  });
+
   const createTunnelEntry = Effect.fn("ssh/tunnel.ensureTunnelEntry.create")(function* (input: {
     readonly key: string;
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -1347,6 +1468,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           wsBaseUrl,
           authOptions,
           remoteServerKind: remoteLaunch.remoteServerKind,
+          readiness: "http",
         }).pipe(Effect.provideService(Scope.Scope, entryScope)),
     }).pipe(
       Effect.onExit((exit) =>
@@ -1486,6 +1608,186 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
+  const createPortForwardEntry = Effect.fn("ssh/tunnel.portForward.create")(function* (input: {
+    readonly key: string;
+    readonly connectionKey: string;
+    readonly resolvedTarget: DesktopSshEnvironmentTarget;
+    readonly remotePort: number;
+  }): Effect.fn.Return<
+    SshPortForwardEntry,
+    SshEnvironmentEffectError,
+    SshEnvironmentEffectContext
+  > {
+    const localPort = yield* reserveLocalTunnelPort();
+    const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
+    const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
+    const entryScope = yield* Scope.make("sequential");
+    const tunnelEntry = yield* runWithSshAuth({
+      key: input.connectionKey,
+      target: input.resolvedTarget,
+      operation: (authOptions) =>
+        startSshTunnel({
+          key: input.key,
+          resolvedTarget: input.resolvedTarget,
+          remotePort: input.remotePort,
+          localPort,
+          httpBaseUrl,
+          wsBaseUrl,
+          authOptions,
+          remoteServerKind: null,
+          readiness: "tcp",
+        }).pipe(Effect.provideService(Scope.Scope, entryScope)),
+    }).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+      ),
+    );
+    const entry: SshPortForwardEntry = {
+      ...tunnelEntry,
+      connectionKey: input.connectionKey,
+      leases: new Set(),
+    };
+    yield* Scope.addFinalizer(
+      entryScope,
+      Effect.gen(function* () {
+        if (portForwards.get(entry.key) === entry) {
+          portForwards.delete(entry.key);
+        }
+        for (const leaseId of entry.leases) {
+          portForwardLeases.delete(leaseId);
+        }
+        entry.leases.clear();
+        yield* entry.process
+          .kill({
+            killSignal: "SIGTERM",
+            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+          })
+          .pipe(Effect.ignore);
+      }),
+    );
+    yield* Effect.logInfo("ssh.portForward.create.succeeded", {
+      ...sshTargetLogFields(entry.target),
+      key: entry.key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+    });
+    return entry;
+  });
+
+  const ensurePortForwardEntry = Effect.fn("ssh/tunnel.portForward.ensure")(function* (input: {
+    readonly key: string;
+    readonly connectionKey: string;
+    readonly resolvedTarget: DesktopSshEnvironmentTarget;
+    readonly remotePort: number;
+  }): Effect.fn.Return<
+    SshPortForwardEntry,
+    SshEnvironmentEffectError,
+    SshEnvironmentEffectContext
+  > {
+    const existing = portForwards.get(input.key);
+    if (existing !== undefined) {
+      const running = yield* existing.process.isRunning.pipe(Effect.orElseSucceed(() => false));
+      if (running) {
+        return existing;
+      }
+      yield* closePortForwardEntry(existing);
+    }
+
+    const pending = pendingPortForwards.get(input.key);
+    if (pending !== undefined) {
+      return yield* Deferred.await(pending.deferred);
+    }
+
+    const deferred = yield* Deferred.make<SshPortForwardEntry, SshEnvironmentEffectError>();
+    const pendingEntry: PendingSshPortForward = {
+      deferred,
+    };
+    pendingPortForwards.set(input.key, pendingEntry);
+    return yield* createPortForwardEntry(input).pipe(
+      Effect.flatMap((entry) => {
+        if (pendingPortForwards.get(input.key) !== pendingEntry) {
+          return closePortForwardEntry(entry).pipe(
+            Effect.andThen(Effect.fail(makeSshTunnelCancelledError(input.resolvedTarget))),
+          );
+        }
+        portForwards.set(input.key, entry);
+        return Effect.succeed(entry);
+      }),
+      Effect.tapError((cause) =>
+        Effect.logWarning("ssh.portForward.create.failed", {
+          ...sshTargetLogFields(input.resolvedTarget),
+          key: input.key,
+          remotePort: input.remotePort,
+          cause,
+        }),
+      ),
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (pendingPortForwards.get(input.key) === pendingEntry) {
+            pendingPortForwards.delete(input.key);
+          }
+        }).pipe(Effect.andThen(Deferred.done(deferred, exit))),
+      ),
+    );
+  });
+
+  const acquirePortForward = Effect.fn("ssh/tunnel.acquirePortForward")(function* (
+    target: DesktopSshEnvironmentTarget,
+    remotePort: number,
+  ): Effect.fn.Return<SshPortForwardLease, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
+    if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65_535) {
+      return yield* new SshInvalidTargetError({
+        message: `Invalid remote SSH port: ${remotePort}.`,
+      });
+    }
+    const resolvedTarget = yield* resolveManagerTarget(target);
+    const connectionKey = targetConnectionKey(resolvedTarget);
+    const key = `${connectionKey}\0${remotePort}`;
+    const entry = yield* ensurePortForwardEntry({
+      key,
+      connectionKey,
+      resolvedTarget,
+      remotePort,
+    });
+    nextPortForwardLeaseId += 1;
+    const leaseId = `ssh-port-forward-${nextPortForwardLeaseId}`;
+    entry.leases.add(leaseId);
+    portForwardLeases.set(leaseId, entry);
+    yield* Effect.logInfo("ssh.portForward.acquired", {
+      ...sshTargetLogFields(entry.target),
+      leaseId,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+      references: entry.leases.size,
+    });
+    return {
+      leaseId,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+    };
+  });
+
+  const releasePortForward = Effect.fn("ssh/tunnel.releasePortForward")(function* (
+    leaseId: string,
+  ) {
+    const entry = portForwardLeases.get(leaseId);
+    if (entry === undefined) {
+      return;
+    }
+    portForwardLeases.delete(leaseId);
+    entry.leases.delete(leaseId);
+    yield* Effect.logInfo("ssh.portForward.released", {
+      ...sshTargetLogFields(entry.target),
+      leaseId,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+      references: entry.leases.size,
+    });
+    if (entry.leases.size === 0) {
+      yield* closePortForwardEntry(entry);
+    }
+  });
+
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
     requestOptions?: { readonly issuePairingToken?: boolean },
@@ -1498,12 +1800,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
     });
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveManagerTarget(target);
     const key = targetConnectionKey(resolvedTarget);
     yield* Effect.logDebug("ssh.environment.target.resolved", {
       ...sshTargetLogFields(resolvedTarget),
@@ -1554,20 +1851,32 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     target: DesktopSshEnvironmentTarget,
   ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logInfo("ssh.environment.disconnect.start", sshTargetLogFields(target));
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveManagerTarget(target);
     const key = targetConnectionKey(resolvedTarget);
+    const forwardEntries = [...portForwards.values()].filter(
+      (entry) => entry.connectionKey === key,
+    );
+    const pendingForwardKeys = [...pendingPortForwards.keys()].filter((forwardKey) =>
+      forwardKey.startsWith(`${key}\0`),
+    );
     const entry = tunnels.get(key) ?? null;
     yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
       ...sshTargetLogFields(resolvedTarget),
       key,
       hasTunnel: entry !== null,
       hasPendingTunnel: pendingTunnelEntries.has(key),
+      portForwards: forwardEntries.length,
+      pendingPortForwards: pendingForwardKeys.length,
     });
+    yield* Effect.forEach(forwardEntries, closePortForwardEntry, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    yield* Effect.forEach(
+      pendingForwardKeys,
+      (forwardKey) => cancelPendingPortForward(forwardKey, resolvedTarget),
+      { concurrency: "unbounded", discard: true },
+    );
     if (entry !== null) {
       yield* closeTunnelEntry(entry);
     }
@@ -1585,7 +1894,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  return SshEnvironmentManager.of({
+    ensureEnvironment,
+    disconnectEnvironment,
+    acquirePortForward,
+    releasePortForward,
+  });
 });
 
 /**

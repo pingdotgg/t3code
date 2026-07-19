@@ -17,7 +17,10 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  acquireDiscoveredServerRoute,
+  withBrowserNavigationRoute,
+} from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -115,19 +118,26 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
       try {
-        const resolvedUrl = resolveDiscoveredServerUrl(threadRef.environmentId, next);
-        if (tabId && previewBridge) {
-          // Drive the webview imperatively; `usePreviewBridge` mirrors the
-          // resolved URL back to the server so other clients stay in sync.
-          await previewBridge.navigate(tabId, resolvedUrl);
-          rememberPreviewUrl(threadRef, resolvedUrl);
-        } else {
-          await openPreviewSession({
-            openPreview: open,
-            threadRef,
-            url: resolvedUrl,
-          });
-        }
+        const route = await acquireDiscoveredServerRoute(threadRef.environmentId, next);
+        await withBrowserNavigationRoute(route, async () => {
+          const resolvedUrl = route.resolution.resolvedUrl;
+          if (tabId && previewBridge) {
+            // Drive the webview imperatively; `usePreviewBridge` mirrors the
+            // resolved URL back to the server so other clients stay in sync.
+            await previewBridge.navigate(tabId, resolvedUrl);
+            rememberPreviewUrl(threadRef, resolvedUrl);
+            await route.commit(tabId);
+          } else {
+            const result = await openPreviewSession({
+              openPreview: open,
+              threadRef,
+              url: resolvedUrl,
+            });
+            if (result._tag === "Success") {
+              await route.commit(result.value.tabId);
+            }
+          }
+        });
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }

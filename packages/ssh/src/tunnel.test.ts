@@ -78,6 +78,7 @@ const testHttpClient = HttpClient.make((request) =>
 const hangingHttpClient = HttpClient.make(() => Effect.never);
 
 const testNetService = NetService.NetService.of({
+  hasListenerOnHost: () => Effect.succeed(true),
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
   reserveLoopbackPort: () => Effect.succeed(41_773),
@@ -390,6 +391,67 @@ describe("ssh tunnel scripts", () => {
 
       assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
       assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("reference-counts shared preview port forwards", () => {
+    let tunnelSpawnCount = 0;
+    let tunnelKillCount = 0;
+    const forwardArgs: ReadonlyArray<string>[] = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          tunnelSpawnCount += 1;
+          forwardArgs.push(args);
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const [first, second] = yield* Effect.all(
+        [manager.acquirePortForward(target, 5173), manager.acquirePortForward(target, 5173)],
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(first.localPort, second.localPort);
+      assert.notEqual(first.leaseId, second.leaseId);
+      assert.equal(tunnelSpawnCount, 1);
+      assert.include(forwardArgs[0] ?? [], "127.0.0.1:41773:127.0.0.1:5173");
+
+      yield* manager.releasePortForward(first.leaseId);
+      assert.equal(tunnelKillCount, 0);
+
+      yield* manager.releasePortForward(second.leaseId);
+      assert.equal(tunnelKillCount, 1);
+
+      const third = yield* manager.acquirePortForward(target, 5173);
+      assert.equal(tunnelSpawnCount, 2);
+
+      yield* manager.disconnectEnvironment(target);
+      assert.equal(tunnelKillCount, 2);
+
+      yield* manager.releasePortForward(third.leaseId);
+      assert.equal(tunnelKillCount, 2);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 });

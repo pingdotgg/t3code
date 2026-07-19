@@ -30,6 +30,11 @@ const closeServer = (server: NodeNet.Server) => {
 
 export interface NetServiceShape {
   /**
+   * Returns true when a TCP client can connect to {host, port}.
+   */
+  readonly hasListenerOnHost: (port: number, host: string) => Effect.Effect<boolean>;
+
+  /**
    * Returns true when a TCP server can bind to {host, port}.
    */
   readonly canListenOnHost: (port: number, host: string) => Effect.Effect<boolean>;
@@ -181,6 +186,7 @@ export const make = () => {
     });
 
   return {
+    hasListenerOnHost,
     canListenOnHost,
     isPortAvailableOnLoopback,
     reserveLoopbackPort,

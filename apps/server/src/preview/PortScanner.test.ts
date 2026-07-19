@@ -35,6 +35,7 @@ const makeProbeFailureLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
         Layer.succeed(Net.NetService, {
+          hasListenerOnHost: () => Effect.succeed(false),
           canListenOnHost: () => Effect.succeed(true),
           isPortAvailableOnLoopback: () => Effect.succeed(true),
           reserveLoopbackPort: () => Effect.succeed(40_000),
