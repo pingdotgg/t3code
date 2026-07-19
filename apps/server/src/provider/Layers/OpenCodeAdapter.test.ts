@@ -1001,14 +1001,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       // An explicit non-404 status seals its subtree: a 500 whose serialized
       // body echoes a NotFoundError name — or that is itself named
       // *NotFound* — is a real failure, never a miss.
-      NodeAssert.equal(
-        isOpenCodeNotFound({ status: 500, body: { name: "NotFoundError" } }),
-        false,
-      );
-      NodeAssert.equal(
-        isOpenCodeNotFound({ name: "UpstreamNotFoundError", status: 500 }),
-        false,
-      );
+      NodeAssert.equal(isOpenCodeNotFound({ status: 500, body: { name: "NotFoundError" } }), false);
+      NodeAssert.equal(isOpenCodeNotFound({ name: "UpstreamNotFoundError", status: 500 }), false);
+      // A "NotFound"-flavored name that isn't OpenCode's exact `NotFoundError`
+      // is not a confirmed miss even without a sealing status.
+      NodeAssert.equal(isOpenCodeNotFound({ name: "UpstreamNotFoundError" }), false);
+      NodeAssert.equal(isOpenCodeNotFound({ cause: { name: "ProviderNotFoundError" } }), false);
       NodeAssert.equal(
         isOpenCodeNotFound(
           new Error("x", { cause: { status: 502, body: { name: "NotFoundError" } } }),

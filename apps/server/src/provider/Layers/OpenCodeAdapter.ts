@@ -88,7 +88,7 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
  * is `throwOnError: true`, so `session.get` rejects on every non-2xx) must
  * propagate, or a transient blip resets a live thread to an empty one — the
  * #3604 silent context loss. Decides on structured signals only, never free
- * text: a numeric 404 or a `NotFoundError` name, found via a bounded walk
+ * text: a numeric 404 or the exact `NotFoundError` name, found via a bounded walk
  * over `cause`/`body`/`error`/`data`. An explicit non-404 status seals its
  * subtree so a wrapped "NotFound" name can't reclassify a real failure.
  * Exported for unit testing.
@@ -120,7 +120,7 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
     }
 
     const name = record.name;
-    if (typeof name === "string" && name.toLowerCase().includes("notfound")) {
+    if (typeof name === "string" && name.toLowerCase() === "notfounderror") {
       return true;
     }
 
@@ -1242,7 +1242,7 @@ export function makeOpenCodeAdapter(
                       Effect.map((response) => response.data),
                       Effect.catchIf(
                         (cause) => isOpenCodeNotFound(cause),
-                        () => Effect.succeed(undefined),
+                        () => Effect.void,
                       ),
                     )
                   : undefined;
@@ -1302,7 +1302,6 @@ export function makeOpenCodeAdapter(
                 }
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
-                    title: `T3 Code ${input.threadId}`,
                     permission: buildOpenCodePermissionRules(input.runtimeMode),
                   }),
                 );
