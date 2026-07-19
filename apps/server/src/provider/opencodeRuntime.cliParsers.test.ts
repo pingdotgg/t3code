@@ -197,4 +197,33 @@ describe("parseAgentListCliOutput", () => {
     NodeAssert.equal(result[0]!.permission[0]!.action, "allow");
     NodeAssert.equal(result[0]!.permission[2]!.action, "ask");
   });
+
+  it("handles agent names with spaces", () => {
+    const stdout = [
+      "code reviewer (subagent)",
+      "  " + JSON.stringify([{ permission: "read", action: "allow", pattern: "*" }]),
+      "my custom agent (primary)",
+      "  " + JSON.stringify([{ permission: "edit", action: "ask", pattern: "*.ts" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result.length, 2);
+    NodeAssert.equal(result[0]!.name, "code reviewer");
+    NodeAssert.equal(result[0]!.mode, "subagent");
+    NodeAssert.equal(result[1]!.name, "my custom agent");
+    NodeAssert.equal(result[1]!.mode, "primary");
+  });
+
+  it("marks known hidden agents", () => {
+    const stdout = [
+      "compaction (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "build (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result[0]!.hidden, true);
+    NodeAssert.equal(result[1]!.hidden, undefined);
+  });
 });
