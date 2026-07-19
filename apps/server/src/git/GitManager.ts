@@ -48,6 +48,7 @@ import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsChangeService from "../vcs/VcsChangeService.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -523,6 +524,7 @@ export const make = Effect.gen(function* () {
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const vcsChangeService = yield* VcsChangeService.VcsChangeService;
   const crypto = yield* Crypto.Crypto;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
@@ -1666,8 +1668,190 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const runJjStackedAction = Effect.fn("runJjStackedAction")(function* (
+    input: GitRunStackedActionInput,
+    options?: GitRunStackedActionOptions,
+  ) {
+    const progress = yield* createProgressEmitter(input, options);
+    const currentPhase = yield* Ref.make<Option.Option<GitActionProgressPhase>>(Option.none());
+    const mapChangeError = (cause: unknown) =>
+      new GitManagerError({
+        operation: "runJjStackedAction",
+        cwd: input.cwd,
+        detail: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      });
+
+    const runAction = Effect.fn("runJjStackedAction.runAction")(function* () {
+      if (input.action !== "commit") {
+        return yield* new GitManagerError({
+          operation: "runJjStackedAction",
+          cwd: input.cwd,
+          detail: "Jujutsu publishing and change requests are not available until Phase 6.",
+        });
+      }
+
+      yield* progress.emit({ kind: "action_started", phases: ["commit"] });
+      yield* Ref.set(currentPhase, Option.some("commit"));
+
+      const modelSelection = yield* serverSettingsService.getSettings.pipe(
+        Effect.map((settings) => settings.textGenerationModelSelection),
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "runJjStackedAction",
+              cwd: input.cwd,
+              detail: "Failed to get server settings.",
+              cause,
+            }),
+        ),
+      );
+      const context = yield* vcsChangeService
+        .prepareMessageContext({
+          cwd: input.cwd,
+          ...(input.filePaths ? { filePaths: input.filePaths } : {}),
+        })
+        .pipe(Effect.mapError(mapChangeError));
+
+      if (!context) {
+        const result: GitRunStackedActionResult = {
+          action: input.action,
+          branch: { status: "skipped_not_requested" },
+          commit: { status: "skipped_no_changes" },
+          push: { status: "skipped_not_requested" },
+          pr: { status: "skipped_not_requested" },
+          toast: {
+            title: "No changes to finalize",
+            cta: { kind: "none" },
+          },
+        };
+        yield* progress.emit({ kind: "action_finished", result });
+        return result;
+      }
+
+      const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
+      let suggestion: CommitAndBranchSuggestion;
+      if (customCommit) {
+        suggestion = {
+          subject: customCommit.subject,
+          body: customCommit.body,
+          ...(input.featureBranch
+            ? { branch: sanitizeFeatureBranchName(customCommit.subject) }
+            : {}),
+          commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+        };
+      } else {
+        yield* progress.emit({
+          kind: "phase_started",
+          phase: "commit",
+          label: "Generating change message...",
+        });
+        const generated = yield* textGeneration
+          .generateCommitMessage({
+            cwd: input.cwd,
+            branch: null,
+            stagedSummary: limitContext(context.summary, 8_000),
+            stagedPatch: limitContext(context.patch, 50_000),
+            ...(input.featureBranch ? { includeBranch: true } : {}),
+            modelSelection,
+          })
+          .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        suggestion = {
+          subject: generated.subject,
+          body: generated.body,
+          ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
+          commitMessage: formatCommitMessage(generated.subject, generated.body),
+        };
+      }
+
+      yield* progress.emit({
+        kind: "phase_started",
+        phase: "commit",
+        label: "Finalizing change...",
+      });
+      const preferredPublishRef = input.featureBranch
+        ? (suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject))
+        : undefined;
+      const finalized = yield* vcsChangeService
+        .finalizeChange({
+          cwd: input.cwd,
+          message: suggestion.commitMessage,
+          ...(input.filePaths ? { filePaths: input.filePaths } : {}),
+          ...(preferredPublishRef ? { createPublishRef: preferredPublishRef } : {}),
+        })
+        .pipe(Effect.mapError(mapChangeError));
+
+      if (finalized.status === "skipped_no_changes") {
+        const result: GitRunStackedActionResult = {
+          action: input.action,
+          branch: { status: "skipped_not_requested" },
+          commit: { status: "skipped_no_changes" },
+          push: { status: "skipped_not_requested" },
+          pr: { status: "skipped_not_requested" },
+          toast: { title: "No changes to finalize", cta: { kind: "none" } },
+        };
+        yield* progress.emit({ kind: "action_finished", result });
+        return result;
+      }
+
+      const shortCommit = finalized.finalizedRevision.commitId.slice(0, SHORT_SHA_LENGTH);
+      const result: GitRunStackedActionResult = {
+        action: input.action,
+        branch: finalized.publishRef
+          ? { status: "created", name: finalized.publishRef.name }
+          : { status: "skipped_not_requested" },
+        commit: {
+          status: "created",
+          commitSha: finalized.finalizedRevision.commitId,
+          subject: suggestion.subject,
+          finalizedRevision: finalized.finalizedRevision,
+          workspaceRevision: finalized.workspaceRevision,
+          ...(finalized.publishRef ? { publishRef: finalized.publishRef } : {}),
+        },
+        push: { status: "skipped_not_requested" },
+        pr: { status: "skipped_not_requested" },
+        toast: {
+          title: `Finalized ${shortCommit}`,
+          description: finalized.publishRef
+            ? `Created bookmark ${finalized.publishRef.name}`
+            : "Created a new working-copy change",
+          cta: { kind: "none" },
+        },
+      };
+      yield* progress.emit({ kind: "action_finished", result });
+      return result;
+    });
+
+    return yield* runAction().pipe(
+      Effect.ensuring(invalidateStatus(input.cwd)),
+      Effect.tapError((error) =>
+        Effect.flatMap(Ref.get(currentPhase), (phase) =>
+          progress.emit({
+            kind: "action_failed",
+            phase: Option.getOrNull(phase),
+            message: error.message,
+          }),
+        ),
+      ),
+    );
+  });
+
   const runStackedAction: GitManager["Service"]["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
+      const driverKind = yield* vcsChangeService.detectKind(input.cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "runStackedAction.detectKind",
+              cwd: input.cwd,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
+      if (driverKind === "jj") {
+        return yield* runJjStackedAction(input, options);
+      }
       const progress = yield* createProgressEmitter(input, options);
       const currentPhase = yield* Ref.make<Option.Option<GitActionProgressPhase>>(Option.none());
 

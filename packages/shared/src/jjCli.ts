@@ -247,6 +247,22 @@ export function quoteJjSymbol(value: string): string {
   return JSON.stringify(value);
 }
 
+export function quoteJjRootFileFileset(value: string): string {
+  if (value.length === 0) {
+    throw new Error("jj file paths cannot be empty");
+  }
+  if (value.includes("\0")) {
+    throw new Error("jj file paths cannot contain NUL bytes");
+  }
+  if (/^(?:[/\\]|[A-Za-z]:[/\\])/.test(value)) {
+    throw new Error("jj file paths must be workspace-relative");
+  }
+  if (value.split(/[\\/]/).some((segment) => segment === "." || segment === "..")) {
+    throw new Error("jj file paths cannot contain relative traversal segments");
+  }
+  return `root-file:${quoteJjSymbol(value)}`;
+}
+
 export function classifyJjRevisionCondition(
   revision: Pick<JjRevisionRecord, "conflict">,
 ): JjRevisionConditionKind | null {

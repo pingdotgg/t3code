@@ -1,6 +1,6 @@
 # jj Equivalent Workflows Plan
 
-Status: Phases 0-4 implemented locally; Phase 5 next
+Status: Phases 0-5 implemented locally; Phase 6 next
 
 Scope: server, shared contracts, web, mobile, provider integrations, tests, and documentation
 
@@ -225,6 +225,11 @@ Exit criteria:
 - deleting one thread cannot change or forget another workspace.
 
 ### Phase 5: change finalization and AI messages
+
+Implementation status: implemented locally. JJ actions now use `@` patch context, support custom or
+AI-generated messages, finalize all or selected files, preserve excluded edits in the new `@`, and
+return both finalized and workspace revisions. A publish bookmark is created only when the existing
+feature-ref option explicitly requests one; no remote publish occurs.
 
 Implement the current commit workflows with jj-native behavior.
 

@@ -349,7 +349,24 @@ export function useSelectedThreadGitActions() {
               result.value.toast.cta.kind === "open_pr" ? result.value.toast.cta.url : undefined,
           });
 
-          if (result.value.branch.status === "created" && result.value.branch.name) {
+          if (result.value.commit.workspaceRevision && thread.vcsWorkspace) {
+            const syncResult = await syncSelectedThreadBranchState({
+              thread,
+              cwd,
+              nextThreadState: {
+                vcsWorkspace: {
+                  ...thread.vcsWorkspace,
+                  workspaceRevision: result.value.commit.workspaceRevision,
+                  ...(result.value.commit.publishRef
+                    ? { publishRef: result.value.commit.publishRef }
+                    : {}),
+                },
+              },
+            });
+            if (AsyncResult.isFailure(syncResult)) {
+              return AsyncResult.failure(syncResult.cause);
+            }
+          } else if (result.value.branch.status === "created" && result.value.branch.name) {
             const syncResult = await syncSelectedThreadBranchState({
               thread,
               cwd,

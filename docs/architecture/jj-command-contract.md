@@ -1,6 +1,6 @@
 # jj command contract
 
-Status: Phases 0-3 implemented; thread workspace workflows begin in Phase 4.
+Status: Phases 0-5 implemented; remote publishing begins in Phase 6.
 
 ## Compatibility
 
@@ -117,7 +117,9 @@ Removal validates ownership, runs `jj workspace forget <name>`, and only then re
 the workspace directory. Missing metadata and missing directories are idempotent; ownership
 mismatches fail without deleting files.
 
-Bookmark/revision names that enter revset positions must use `quoteJjSymbol()`. Exact file arguments must use `root-file:` filesets with template-language string quoting; this helper remains a Phase 5 implementation task.
+Bookmark/revision names that enter revset positions must use `quoteJjSymbol()`. Exact file arguments
+use `quoteJjRootFileFileset()`, which rejects absolute or parent-traversing paths and produces a
+`root-file:` fileset with template-language string quoting.
 
 ## Special-character results
 

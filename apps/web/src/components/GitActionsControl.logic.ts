@@ -53,6 +53,7 @@ function resolveChangeRequestTerminology(
 
 export function buildGitActionProgressStages(input: {
   action: GitStackedAction;
+  driverKind?: VcsStatusResult["driverKind"];
   hasCustomCommitMessage: boolean;
   hasWorkingTreeChanges: boolean;
   pushTarget?: string;
@@ -61,7 +62,10 @@ export function buildGitActionProgressStages(input: {
   terminology?: ChangeRequestTerminology;
 }): string[] {
   const terminology = input.terminology ?? DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
-  const branchStages = input.featureBranch ? ["Preparing feature ref..."] : [];
+  const isJj = input.driverKind === "jj";
+  const branchStages = input.featureBranch
+    ? [isJj ? "Preparing feature bookmark..." : "Preparing feature ref..."]
+    : [];
   const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
   const prStages = [
     `Preparing ${terminology.shortLabel}...`,
@@ -80,8 +84,10 @@ export function buildGitActionProgressStages(input: {
   const commitStages = !shouldIncludeCommitStages
     ? []
     : input.hasCustomCommitMessage
-      ? ["Committing..."]
-      : ["Generating commit message...", "Committing..."];
+      ? [isJj ? "Finalizing change..." : "Committing..."]
+      : isJj
+        ? ["Generating change message...", "Finalizing change..."]
+        : ["Generating commit message...", "Committing..."];
   if (input.action === "commit") {
     return [...branchStages, ...commitStages];
   }
@@ -97,7 +103,18 @@ export function buildMenuItems(
   hasPrimaryRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
-  if (gitStatus.driverKind === "jj") return [];
+  if (gitStatus.driverKind === "jj") {
+    return [
+      {
+        id: "commit",
+        label: "Finalize change",
+        disabled: isBusy || !gitStatus.hasWorkingTreeChanges,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+    ];
+  }
   const terminology = resolveChangeRequestTerminology(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
@@ -185,11 +202,27 @@ export function resolveQuickAction(
   }
 
   if (gitStatus.driverKind === "jj") {
+    if (isBusy) {
+      return {
+        label: "Finalize change",
+        disabled: true,
+        kind: "show_hint",
+        hint: "Source control action in progress.",
+      };
+    }
+    if (!gitStatus.hasWorkingTreeChanges) {
+      return {
+        label: "Finalize change",
+        disabled: true,
+        kind: "show_hint",
+        hint: "The working-copy change is empty.",
+      };
+    }
     return {
       label: "Finalize change",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Jujutsu change finalization is not available yet.",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
     };
   }
 

@@ -64,6 +64,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as VcsChangeService from "./vcs/VcsChangeService.ts";
 import * as VcsWorkspaceService from "./vcs/VcsWorkspaceService.ts";
 import * as VcsGitProviderCompatibility from "./vcs/VcsGitProviderCompatibility.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -202,11 +203,16 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
+const VcsChangeLayerLive = VcsChangeService.layer.pipe(
+  Layer.provideMerge(VcsDriverRegistryLayerLive),
+);
+
 const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(ProjectSetupScriptRunner.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(TextGeneration.layer),
+  Layer.provideMerge(VcsChangeLayerLive),
 );
 
 const GitLayerLive = Layer.empty.pipe(

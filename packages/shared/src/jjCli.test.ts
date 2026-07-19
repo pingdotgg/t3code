@@ -10,6 +10,7 @@ import {
   isJjRevisionRecord,
   parseJjJsonLines,
   parseJjVersionOutput,
+  quoteJjRootFileFileset,
   quoteJjSymbol,
 } from "./jjCli.ts";
 
@@ -60,6 +61,24 @@ describe("jj CLI contract", () => {
       expect(JSON.parse(quoteJjSymbol(name))).toBe(name);
     }
     expect(() => quoteJjSymbol("nul\0name")).toThrow("NUL");
+  });
+
+  it("quotes exact workspace-relative file paths as root-file filesets", () => {
+    for (const filePath of [
+      "src/file.ts",
+      "space snow-雪.txt",
+      "tab\tname.txt",
+      "line\nbreak.txt",
+      'quote"name.txt',
+    ]) {
+      const fileset = quoteJjRootFileFileset(filePath);
+      expect(fileset.startsWith("root-file:")).toBe(true);
+      expect(JSON.parse(fileset.slice("root-file:".length))).toBe(filePath);
+    }
+
+    for (const invalidPath of ["", "/tmp/file", "../file", "src/../file", "C:\\tmp\\file"]) {
+      expect(() => quoteJjRootFileFileset(invalidPath)).toThrow();
+    }
   });
 
   it.each([

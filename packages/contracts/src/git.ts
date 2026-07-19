@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
-import { VcsDriverKind, VcsWorkspaceIdentity } from "./vcs.ts";
+import { VcsDriverKind, VcsNamedRef, VcsRevision, VcsWorkspaceIdentity } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -338,6 +338,9 @@ export const GitRunStackedActionResult = Schema.Struct({
     status: GitCommitStepStatus,
     commitSha: Schema.optional(TrimmedNonEmptyStringSchema),
     subject: Schema.optional(TrimmedNonEmptyStringSchema),
+    finalizedRevision: Schema.optional(VcsRevision),
+    workspaceRevision: Schema.optional(VcsRevision),
+    publishRef: Schema.optional(VcsNamedRef),
   }),
   push: Schema.Struct({
     status: GitPushStepStatus,

@@ -23,6 +23,7 @@ import { GitCommandError, TextGenerationError } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsChangeService from "../vcs/VcsChangeService.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -638,6 +639,7 @@ function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  vcsChangeService?: VcsChangeService.VcsChangeService["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -669,6 +671,14 @@ function makeManager(input?: {
 
   const managerLayer = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
+    Layer.succeed(
+      VcsChangeService.VcsChangeService,
+      input?.vcsChangeService ?? {
+        detectKind: () => Effect.succeed("git" as const),
+        prepareMessageContext: () => Effect.die("unexpected jj change context"),
+        finalizeChange: () => Effect.die("unexpected jj change finalization"),
+      },
+    ),
     Layer.succeed(
       ProjectSetupScriptRunner.ProjectSetupScriptRunner,
       input?.setupScriptRunner ?? {
@@ -1411,6 +1421,62 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toContain("- details from user");
+    }),
+  );
+
+  it.effect("routes jj finalization through VcsChangeService with AI context", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-jj-manager-");
+      let finalizeInput: VcsChangeService.VcsFinalizeChangeInput | null = null;
+      const { manager } = yield* makeManager({
+        vcsChangeService: {
+          detectKind: () => Effect.succeed("jj"),
+          prepareMessageContext: () =>
+            Effect.succeed({
+              summary: "modified\tsrc/change.ts",
+              patch: "diff --git a/src/change.ts b/src/change.ts\n",
+              workspaceRevision: { commitId: "before-commit", changeId: "before-change" },
+            }),
+          finalizeChange: (input) => {
+            finalizeInput = input;
+            return Effect.succeed({
+              status: "created" as const,
+              finalizedRevision: { commitId: "finalized-commit", changeId: "finalized-change" },
+              workspaceRevision: { commitId: "workspace-commit", changeId: "workspace-change" },
+              publishRef: {
+                kind: "bookmark" as const,
+                name: "feature/implement-stacked-git-actions",
+                target: { commitId: "finalized-commit", changeId: "finalized-change" },
+              },
+            });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+        filePaths: ["src/change.ts"],
+      });
+
+      expect(finalizeInput).toMatchObject({
+        cwd: repoDir,
+        message: "Implement stacked git actions",
+        filePaths: ["src/change.ts"],
+        createPublishRef: "feature/implement-stacked-git-actions",
+      });
+      expect(result.branch).toEqual({
+        status: "created",
+        name: "feature/implement-stacked-git-actions",
+      });
+      expect(result.commit).toMatchObject({
+        status: "created",
+        commitSha: "finalized-commit",
+        finalizedRevision: { commitId: "finalized-commit", changeId: "finalized-change" },
+        workspaceRevision: { commitId: "workspace-commit", changeId: "workspace-change" },
+      });
+      expect(result.toast.title).toBe("Finalized finaliz");
     }),
   );
 

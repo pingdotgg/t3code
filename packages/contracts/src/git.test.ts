@@ -138,6 +138,31 @@ describe("GitRunStackedActionResult", () => {
       expect(parsed.toast.cta.action.kind).toBe("create_pr");
     }
   });
+
+  it("decodes jj finalized and new workspace revisions", () => {
+    const parsed = decodeRunStackedActionResult({
+      action: "commit",
+      branch: { status: "created", name: "feature/jj-change" },
+      commit: {
+        status: "created",
+        commitSha: "finalized-commit",
+        subject: "Finalize jj change",
+        finalizedRevision: { commitId: "finalized-commit", changeId: "finalized-change" },
+        workspaceRevision: { commitId: "workspace-commit", changeId: "workspace-change" },
+        publishRef: {
+          kind: "bookmark",
+          name: "feature/jj-change",
+          target: { commitId: "finalized-commit", changeId: "finalized-change" },
+        },
+      },
+      push: { status: "skipped_not_requested" },
+      pr: { status: "skipped_not_requested" },
+      toast: { title: "Finalized finaliz", cta: { kind: "none" } },
+    });
+
+    expect(parsed.commit.workspaceRevision?.changeId).toBe("workspace-change");
+    expect(parsed.commit.publishRef?.kind).toBe("bookmark");
+  });
 });
 
 describe("VcsStatusLocalResult", () => {

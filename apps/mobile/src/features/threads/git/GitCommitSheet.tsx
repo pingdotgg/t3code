@@ -37,6 +37,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   );
 
   const busy = gitState.gitOperationLabel !== null;
+  const isJjRepository = gitStatus.data?.driverKind === "jj";
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
@@ -68,7 +69,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader title="Commit changes" onBack={() => navigation.goBack()} />
+        <AndroidSheetHeader
+          title={isJjRepository ? "Finalize change" : "Commit changes"}
+          onBack={() => navigation.goBack()}
+        />
       ) : null}
       <ScrollView
         className="flex-1"
@@ -79,12 +83,16 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       >
         <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
           <View className="flex-row items-center justify-between gap-3">
-            <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
+            <Text className="text-foreground-muted text-sm font-medium">
+              {isJjRepository ? "Workspace change" : "Branch"}
+            </Text>
             <Text className="text-foreground text-base font-t3-bold">
-              {gitStatus.data?.refName ?? "(detached HEAD)"}
+              {isJjRepository
+                ? (gitStatus.data?.workspaceRevision ?? "unknown")
+                : (gitStatus.data?.refName ?? "(detached HEAD)")}
             </Text>
           </View>
-          {isDefaultRef ? (
+          {!isJjRepository && isDefaultRef ? (
             <Text className="text-xs leading-normal text-amber-700 dark:text-amber-400">
               Warning: this is the default branch.
             </Text>
@@ -197,7 +205,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         </View>
 
         <View className="gap-2">
-          <Text className="text-foreground text-sm font-t3-bold">Commit message</Text>
+          <Text className="text-foreground text-sm font-t3-bold">
+            {isJjRepository ? "Change message" : "Commit message"}
+          </Text>
           <TextInput
             multiline
             value={dialogCommitMessage}
@@ -212,7 +222,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           <View className="flex-1">
             <SheetActionButton
               icon="arrow.branch"
-              label="Commit on new branch"
+              label={isJjRepository ? "Finalize with bookmark" : "Commit on new branch"}
               disabled={noneSelected || busy}
               onPress={() => void runCommitAction(true)}
             />
@@ -220,7 +230,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           <View className="flex-1">
             <SheetActionButton
               icon="checkmark.circle"
-              label="Commit"
+              label={isJjRepository ? "Finalize" : "Commit"}
               tone="primary"
               disabled={noneSelected || busy}
               onPress={() => void runCommitAction(false)}

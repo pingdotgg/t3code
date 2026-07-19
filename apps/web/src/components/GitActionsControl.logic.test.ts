@@ -157,19 +157,29 @@ describe("when: repository uses jj", () => {
     refName: null,
     workspaceRevision: "change-id",
     publishRef: null,
+    hasWorkingTreeChanges: true,
   });
 
-  it("shows workspace-aware disabled finalization", () => {
+  it("enables workspace-aware finalization", () => {
     assert.deepEqual(resolveQuickAction(jjStatus, false), {
       label: "Finalize change",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Jujutsu change finalization is not available yet.",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
     });
   });
 
-  it("does not expose Git actions", () => {
-    assert.deepEqual(buildMenuItems(jjStatus, false), []);
+  it("exposes only the finalize action", () => {
+    assert.deepEqual(buildMenuItems(jjStatus, false), [
+      {
+        id: "commit",
+        label: "Finalize change",
+        disabled: false,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+    ]);
   });
 });
 
@@ -1023,6 +1033,21 @@ describe("buildGitActionProgressStages", () => {
       "Preparing PR...",
       "Generating PR content...",
       "Creating pull request...",
+    ]);
+  });
+
+  it("uses jj-native finalization and bookmark labels", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit",
+      driverKind: "jj",
+      hasCustomCommitMessage: false,
+      hasWorkingTreeChanges: true,
+      featureBranch: true,
+    });
+    assert.deepEqual(stages, [
+      "Preparing feature bookmark...",
+      "Generating change message...",
+      "Finalizing change...",
     ]);
   });
 });

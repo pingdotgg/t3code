@@ -332,8 +332,7 @@ function getMenuActionDisabledReason({
   return `Create ${terminology.singular} is currently unavailable.`;
 }
 
-const COMMIT_DIALOG_TITLE = "Commit changes";
-const COMMIT_DIALOG_DESCRIPTION =
+const GIT_COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
 function GitActionItemIcon({
@@ -1082,8 +1081,22 @@ export default function GitActionsControl({
     ],
   );
 
-  const syncThreadBranchAfterGitAction = useCallback(
+  const syncThreadAfterSourceControlAction = useCallback(
     (result: GitRunStackedActionResult) => {
+      if (result.commit.workspaceRevision && activeServerThread?.vcsWorkspace && activeThreadRef) {
+        void updateThreadMetadata({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadRef.threadId,
+            vcsWorkspace: {
+              ...activeServerThread.vcsWorkspace,
+              workspaceRevision: result.commit.workspaceRevision,
+              ...(result.commit.publishRef ? { publishRef: result.commit.publishRef } : {}),
+            },
+          },
+        });
+        return;
+      }
       const branchUpdate = resolveThreadBranchUpdate(result);
       if (!branchUpdate) {
         return;
@@ -1091,7 +1104,7 @@ export default function GitActionsControl({
 
       persistThreadBranchSync(branchUpdate.branch);
     },
-    [persistThreadBranchSync],
+    [activeServerThread, activeThreadRef, persistThreadBranchSync, updateThreadMetadata],
   );
 
   const gitStatusQuery = useEnvironmentQuery(
@@ -1309,6 +1322,7 @@ export default function GitActionsControl({
 
       const progressStages = buildGitActionProgressStages({
         action,
+        driverKind: actionStatus?.driverKind,
         hasCustomCommitMessage: !!commitMessage?.trim(),
         hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
         featureBranch,
@@ -1437,7 +1451,7 @@ export default function GitActionsControl({
       }
 
       const actionResult = result.value;
-      syncThreadBranchAfterGitAction(actionResult);
+      syncThreadAfterSourceControlAction(actionResult);
       const closeResultToast = () => {
         toastManager.close(resolvedProgressToastId);
       };
@@ -1905,18 +1919,26 @@ export default function GitActionsControl({
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
-            <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
+            <DialogTitle>{isJjRepository ? "Finalize change" : "Commit changes"}</DialogTitle>
+            <DialogDescription>
+              {isJjRepository
+                ? "Review and finalize the working-copy change. Leave the message blank to auto-generate one."
+                : GIT_COMMIT_DIALOG_DESCRIPTION}
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
-                <span className="text-muted-foreground">Branch</span>
+                <span className="text-muted-foreground">
+                  {isJjRepository ? "Workspace change" : "Branch"}
+                </span>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-medium">
-                    {gitStatusForActions?.refName ?? "(detached HEAD)"}
+                    {isJjRepository
+                      ? (gitStatusForActions?.workspaceRevision ?? "unknown")
+                      : (gitStatusForActions?.refName ?? "(detached HEAD)")}
                   </span>
-                  {isDefaultRef && (
+                  {!isJjRepository && isDefaultRef && (
                     <span className="text-right text-warning text-xs">
                       Warning: default refName
                     </span>
@@ -2024,7 +2046,9 @@ export default function GitActionsControl({
               </div>
             </div>
             <div className="space-y-1">
-              <p className="text-xs font-medium">Commit message (optional)</p>
+              <p className="text-xs font-medium">
+                {isJjRepository ? "Change message (optional)" : "Commit message (optional)"}
+              </p>
               <Textarea
                 value={dialogCommitMessage}
                 onChange={(event) => setDialogCommitMessage(event.target.value)}
@@ -2052,10 +2076,10 @@ export default function GitActionsControl({
               disabled={noneSelected}
               onClick={runDialogActionOnNewBranch}
             >
-              Commit on new refName
+              {isJjRepository ? "Finalize with new bookmark" : "Commit on new refName"}
             </Button>
             <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
-              Commit
+              {isJjRepository ? "Finalize change" : "Commit"}
             </Button>
           </DialogFooter>
         </DialogPopup>
