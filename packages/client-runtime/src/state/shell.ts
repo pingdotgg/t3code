@@ -204,9 +204,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         const httpSnapshot = yield* snapshotLoader.load(prepared);
         if (Option.isSome(httpSnapshot)) {
           yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+          // A cold archive can compact the event that removed a thread after
+          // this HTTP snapshot was read but before the socket subscribes. Newer
+          // servers therefore revalidate with a socket-owned snapshot, whose
+          // live buffer is attached before the projection is read. Keep the
+          // cursor resume path only for older servers that do not advertise the
+          // synchronized snapshot handoff.
+          if (supportsCompletionMarker) {
+            return { requestCompletionMarker: true as const };
+          }
           return {
             afterSequence: httpSnapshot.value.snapshotSequence,
-            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           };
         }
 

@@ -615,7 +615,7 @@ const make = Effect.gen(function* () {
   const restoreTreeImpl = Effect.fn("restoreArchiveTreeImpl")(function* (threadId: ThreadId) {
     const rootThreadId = yield* resolveTreeRoot(threadId);
     const rows = (yield* sql.unsafe(
-      `SELECT thread_id
+      `SELECT thread_id, status
        FROM thread_archive_manifests
        WHERE root_thread_id = ? AND status IN ('cleanup_pending', 'cold', 'restored')
        ORDER BY CASE WHEN thread_id = ? THEN 1 ELSE 0 END, thread_id ASC`,
@@ -625,7 +625,44 @@ const make = Effect.gen(function* () {
     for (const row of rows) {
       restored = (yield* restoreThread(ThreadId.make(String(row.thread_id)))) || restored;
     }
-    return restored;
+    if (restored || rows.some((row) => row.status === "restored")) {
+      return true;
+    }
+    if (rows.length > 0) {
+      return false;
+    }
+
+    // The lifecycle worker may not have started archiving this shell yet. Mark
+    // its still-hot rows as owned by the unarchive command before releasing the
+    // tree lock, so a queued archive job cannot delete them before that command
+    // commits. A failed command rolls this reservation back through archiveImpl;
+    // a successful command removes it through finishRestoreTreeImpl.
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const archivedShell = (yield* sql.unsafe(
+          `SELECT archived_at
+           FROM projection_threads
+           WHERE thread_id = ? AND deleted_at IS NULL AND archived_at IS NOT NULL
+           LIMIT 1`,
+          [threadId],
+        )) as ReadonlyArray<SqlRow>;
+        const source = archivedShell[0];
+        if (!source) return false;
+
+        yield* sql.unsafe(
+          `INSERT INTO thread_archive_manifests
+            (thread_id, root_thread_id, status, archive_version, archived_at, updated_at, error)
+           VALUES (?, ?, 'restored', ?, ?, CURRENT_TIMESTAMP, NULL)
+           ON CONFLICT(thread_id) DO UPDATE SET
+             status = 'restored',
+             updated_at = CURRENT_TIMESTAMP,
+             error = NULL
+           WHERE thread_archive_manifests.status IN ('pending', 'archiving')`,
+          [threadId, rootThreadId, ARCHIVE_VERSION, String(source.archived_at)],
+        );
+        return true;
+      }),
+    );
   });
 
   const rollbackRestoreTreeImpl = Effect.fn("rollbackRestoreArchiveTreeImpl")(function* (

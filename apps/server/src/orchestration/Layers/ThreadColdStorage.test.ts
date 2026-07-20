@@ -53,6 +53,44 @@ layer("ThreadColdStorage", (it) => {
     }),
   );
 
+  it.effect("reserves hot archived rows while an unarchive command is pending", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-unarchive-hot-reservation");
+
+      yield* insertArchivedThread(threadId, "Pending hot unarchive");
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-unarchive-hot-reservation', ${threadId}, NULL, 'user',
+          'keep hot until unarchive commits', '[]', 0,
+          '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+        )
+      `;
+
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      yield* storage.archiveThread(threadId);
+
+      const messages = yield* sql<{ readonly text: string }>`
+        SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}
+      `;
+      const manifest = yield* sql<{ readonly status: string }>`
+        SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(messages, [{ text: "keep hot until unarchive commits" }]);
+      assert.deepStrictEqual(manifest, [{ status: "restored" }]);
+
+      yield* storage.finishRestoreTree(threadId);
+      const remainingManifest = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM thread_archive_manifests WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(remainingManifest, [{ count: 0 }]);
+    }),
+  );
+
   it.effect("compresses conversation data, destroys logs, restores content, and hard-deletes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
