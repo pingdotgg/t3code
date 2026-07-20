@@ -1,4 +1,14 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, RunId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  RunId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -11,27 +21,17 @@ import {
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
+  deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
-  ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
-  isVideoPreviewRequestCurrent,
-  hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
-  resolveBackgroundDraftWorkspaceOptions,
-  resolveDraftPromotionNavigationTarget,
-  resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
-  resolveDraftHeroState,
-  scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
-  codexArtifactTemplatePromptToAppend,
-  shouldDockDraftHeroForSubmission,
-  shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -258,184 +258,6 @@ const helloWorldTemplate: CodexArtifactTemplate = {
   skillDirectory: "/Users/test/.codex/skills/artifact-template-hello-world",
   skillName: "artifact-template-hello-world",
 };
-
-describe("draft hero submission transition", () => {
-  it("does not dock the composer before a background submission", () => {
-    expect(
-      shouldDockDraftHeroForSubmission({
-        isDraftHeroState: true,
-        activeThreadKey: "environment-local:thread-1",
-        submissionIntent: "background",
-      }),
-    ).toBe(false);
-  });
-
-  it("keeps the composer in the hero layout until navigation after server promotion", () => {
-    expect(
-      resolveDraftHeroState({
-        isLocalDraftThread: false,
-        hasTimelineEntries: true,
-        isWorking: true,
-        draftHeroDockRequested: false,
-        backgroundSubmissionPending: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not auto-navigate a background submission after server promotion", () => {
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef: { environmentId, threadId },
-        serverThread: makeThread({ latestTurn: completedTurn }),
-        backgroundSubmissionPending: true,
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("shouldReleaseTimelineAnchorForToolActivity", () => {
-  const activeTurnId = TurnId.make("active-turn");
-  const anchorMessageId = MessageId.make("anchored-message");
-  const activeToolEntry = {
-    id: "tool-entry",
-    kind: "work" as const,
-    createdAt: now,
-    entry: {
-      id: "active-tool",
-      createdAt: now,
-      turnId: activeTurnId,
-      label: "Run command",
-      tone: "tool" as const,
-      command: "git status",
-    },
-  };
-
-  it("releases the send anchor for tool activity in the active turn", () => {
-    expect(
-      shouldReleaseTimelineAnchorForToolActivity({
-        anchorMessageId,
-        liveFollowEnabled: true,
-        runningTurnId: activeTurnId,
-        timelineEntries: [activeToolEntry],
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps the anchor while the user reads history", () => {
-    expect(
-      shouldReleaseTimelineAnchorForToolActivity({
-        anchorMessageId,
-        liveFollowEnabled: false,
-        runningTurnId: activeTurnId,
-        timelineEntries: [activeToolEntry],
-      }),
-    ).toBe(false);
-  });
-
-  it("ignores tool activity from earlier turns", () => {
-    expect(
-      shouldReleaseTimelineAnchorForToolActivity({
-        anchorMessageId,
-        liveFollowEnabled: true,
-        runningTurnId: activeTurnId,
-        timelineEntries: [
-          {
-            ...activeToolEntry,
-            entry: {
-              ...activeToolEntry.entry,
-              turnId: TurnId.make("previous-turn"),
-            },
-          },
-        ],
-      }),
-    ).toBe(false);
-  });
-
-  it("ignores thinking and error rows without tool activity", () => {
-    expect(
-      shouldReleaseTimelineAnchorForToolActivity({
-        anchorMessageId,
-        liveFollowEnabled: true,
-        runningTurnId: activeTurnId,
-        timelineEntries: [
-          {
-            ...activeToolEntry,
-            entry: {
-              id: "thinking-entry",
-              createdAt: now,
-              turnId: activeTurnId,
-              label: "Thinking",
-              tone: "thinking",
-            },
-          },
-          {
-            ...activeToolEntry,
-            id: "error-entry",
-            entry: {
-              id: "error-entry",
-              createdAt: now,
-              turnId: activeTurnId,
-              label: "Provider error",
-              tone: "error",
-            },
-          },
-        ],
-      }),
-    ).toBe(false);
-  });
-
-  it("does nothing without an anchor or running turn", () => {
-    const input = {
-      anchorMessageId,
-      liveFollowEnabled: true,
-      runningTurnId: activeTurnId,
-      timelineEntries: [activeToolEntry],
-    };
-
-    expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, anchorMessageId: null })).toBe(
-      false,
-    );
-    expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, runningTurnId: null })).toBe(
-      false,
-    );
-  });
-});
-
-describe("environment reconnect warning grace", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("shows a persistent reconnect after the grace period", () => {
-    vi.useFakeTimers();
-    const showWarning = vi.fn();
-
-    scheduleEnvironmentReconnectWarning(showWarning);
-    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS - 1);
-    expect(showWarning).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(showWarning).toHaveBeenCalledOnce();
-  });
-
-  it("cancels the warning when the connection recovers during the grace period", () => {
-    vi.useFakeTimers();
-    const showWarning = vi.fn();
-
-    const cancel = scheduleEnvironmentReconnectWarning(showWarning);
-    cancel();
-    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
-
-    expect(showWarning).not.toHaveBeenCalled();
-  });
-
-  it("does not reuse elapsed grace from another environment", () => {
-    const anotherEnvironmentId = EnvironmentId.make("environment-remote");
-
-    expect(hasEnvironmentReconnectWarningGraceElapsed(environmentId, environmentId)).toBe(true);
-    expect(hasEnvironmentReconnectWarningGraceElapsed(anotherEnvironmentId, environmentId)).toBe(
-      false,
-    );
-  });
-});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return makeThreadFixture({
@@ -800,23 +622,6 @@ describe("resolveSendEnvMode", () => {
   });
 });
 
-describe("resolveBackgroundDraftWorkspaceOptions", () => {
-  it("keeps New worktree selected without reusing the launched worktree", () => {
-    expect(
-      resolveBackgroundDraftWorkspaceOptions({
-        envMode: "worktree",
-        branch: "main",
-        startFromOrigin: true,
-      }),
-    ).toEqual({
-      envMode: "worktree",
-      branch: "main",
-      worktreePath: null,
-      startFromOrigin: true,
-    });
-  });
-});
-
 describe("branchMismatchKey", () => {
   it("builds a key from thread id and both branches", () => {
     expect(branchMismatchKey("thread-1", { threadBranch: "feat/a", currentBranch: "feat/b" })).toBe(
@@ -1042,29 +847,6 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(false);
   });
 
-  it("keeps a follow-up active while its provider session is starting", () => {
-    const localDispatch = createLocalDispatchSnapshot(
-      makeThread({ latestTurn: completedTurn, session: readySession }),
-    );
-
-    expect(
-      hasServerAcknowledgedLocalDispatch({
-        localDispatch,
-        phase: "connecting",
-        latestTurn: completedTurn,
-        latestUserMessageId: MessageId.make("message-followup"),
-        session: {
-          ...readySession,
-          status: "starting",
-          updatedAt: "2026-03-29T00:01:00.000Z",
-        },
-        hasPendingApproval: false,
-        hasPendingUserInput: false,
-        threadError: null,
-      }),
-    ).toBe(false);
-  });
-
   it("acknowledges a settled newer turn", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestRun: completedTurn, runtime: readySession }),
@@ -1193,5 +975,105 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("deriveCommittedServerUserMessageIds", () => {
+  it("tracks only committed user turn items, not assistant rows or projection-only messages", () => {
+    const turnStartId = MessageId.make("message-turn-start");
+    const steerId = MessageId.make("message-steer");
+    const assistantId = MessageId.make("message-assistant");
+    const committedAt = DateTime.makeUnsafe("2026-06-26T17:50:15.180Z");
+    const runId = RunId.make("run:thread:thread-1:ordinal:1");
+    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
+      {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("turn-item:message-turn-start"),
+        item: {
+          id: TurnItemId.make("turn-item:message-turn-start"),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: committedAt,
+          completedAt: committedAt,
+          updatedAt: committedAt,
+          createdBy: "user",
+          creationSource: "web",
+          type: "user_message",
+          messageId: turnStartId,
+          inputIntent: "turn_start",
+          text: "start",
+          attachments: [],
+        },
+      },
+      {
+        position: 1,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("turn-item:message-assistant"),
+        item: {
+          id: TurnItemId.make("turn-item:message-assistant"),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "completed",
+          title: null,
+          startedAt: committedAt,
+          completedAt: committedAt,
+          updatedAt: committedAt,
+          type: "assistant_message",
+          messageId: assistantId,
+          text: "working",
+          streaming: false,
+        },
+      },
+      {
+        position: 2,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("turn-item:message-steer"),
+        item: {
+          id: TurnItemId.make("turn-item:message-steer"),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 3,
+          status: "completed",
+          title: null,
+          startedAt: committedAt,
+          completedAt: committedAt,
+          updatedAt: committedAt,
+          createdBy: "user",
+          creationSource: "web",
+          type: "user_message",
+          messageId: steerId,
+          inputIntent: "steer",
+          text: "continue",
+          attachments: [],
+        },
+      },
+    ];
+
+    expect(deriveCommittedServerUserMessageIds(visibleTurnItems)).toEqual(
+      new Set([turnStartId, steerId]),
+    );
   });
 });

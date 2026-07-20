@@ -32,14 +32,20 @@ export const workerLive = Layer.effectDiscard(
             threadId: request.threadId,
             providerThreadId: request.providerThreadId,
           });
+          // Still run the guard so adapters can clear sticky continuationRequested.
+          if (request.dispatchIfCurrent !== undefined) {
+            yield* request.dispatchIfCurrent(Effect.void);
+          }
           return;
         }
+        // The ordinal is display metadata only: allocate.message appends a
+        // random UUID, so a stale projection read here cannot collide ids.
         const messageId = yield* ids.allocate.message({
           threadId: request.threadId,
           ordinal: projection.messages.length + 1,
         });
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        yield* threads.dispatch({
+        const dispatch = threads.dispatch({
           type: "message.dispatch",
           commandId,
           threadId: request.threadId,
@@ -50,6 +56,11 @@ export const workerLive = Layer.effectDiscard(
           createdBy: "agent",
           creationSource: "provider",
         });
+        if (request.dispatchIfCurrent === undefined) {
+          yield* dispatch;
+          return;
+        }
+        yield* request.dispatchIfCurrent(dispatch);
       },
     );
 

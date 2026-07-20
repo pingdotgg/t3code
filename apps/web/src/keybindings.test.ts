@@ -594,6 +594,13 @@ describe("chat/editor shortcuts", () => {
         platform: "Linux",
       }),
     );
+    assert.isFalse(
+      isOpenFavoriteEditorShortcut(
+        event({ key: "o", metaKey: true, repeat: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+    );
   });
 
   it("matches commandPalette.toggle shortcut outside terminal focus", () => {

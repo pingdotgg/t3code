@@ -24,7 +24,7 @@ export function assertCursorMessageSteeringOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
-  assertTurnItemTypes(projection, ["user_message", "run_interrupt_result", "assistant_message"]);
+  assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
   assertRuntimeRequestCounts(projection, { total: 0 });
   assertUserMessagesInclude(projection, [
     MESSAGE_STEERING_INITIAL_PROMPT,
@@ -47,9 +47,10 @@ export function assertCursorMessageSteeringOutput(
   );
   assert.equal(projection.runs[0]?.activeAttemptId, projection.attempts[1]?.id);
   assert.equal(projection.runs[0]?.rootNodeId, projection.attempts[1]?.rootNodeId);
-  assert.notInclude(
-    projection.visibleTurnItems.map((row) => row.item.type),
-    "run_interrupt_result",
-    "restart steering must keep its internal interruption out of visible chat history",
+  assert.isFalse(
+    projection.turnItems.some(
+      (item) => item.type === "run_interrupt_request" || item.type === "run_interrupt_result",
+    ),
+    "steer supersede must not project run_interrupt_* items (those are hard Stop only)",
   );
 }

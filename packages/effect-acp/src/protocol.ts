@@ -4,7 +4,6 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -43,21 +42,18 @@ export type AcpIncomingNotification =
       readonly params: unknown;
     };
 
-/** Standard I/O whose input can report provider-specific ACP failures. */
-export interface AcpStdio extends Omit<Stdio.Stdio, "stdin"> {
-  readonly stdin: Stream.Stream<Uint8Array, PlatformError.PlatformError | AcpError.AcpError>;
-}
-
 export interface AcpPatchedProtocolOptions {
-  readonly stdio: AcpStdio;
+  readonly stdio: Stdio.Stdio;
   readonly terminationError?: Effect.Effect<AcpError.AcpError>;
   readonly serverRequestMethods: ReadonlySet<string>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocolLogEvent) => Effect.Effect<void, never>;
-  readonly transformSessionUpdate?: (
-    notification: AcpSchema.SessionNotification,
-  ) => AcpSchema.SessionNotification;
+  readonly onIncomingRequest?: (
+    requestId: string,
+    method: string,
+    payload: unknown,
+  ) => Effect.Effect<void, never>;
   readonly onNotification?: (
     notification: AcpIncomingNotification,
   ) => Effect.Effect<void, AcpError.AcpError, never>;
@@ -66,6 +62,18 @@ export interface AcpPatchedProtocolOptions {
     params: unknown,
   ) => Effect.Effect<unknown, AcpError.AcpError, never>;
   readonly onTermination?: (error: AcpError.AcpError) => Effect.Effect<void, never, never>;
+  readonly onOutgoingResponseFailure?: (
+    requestId: string,
+    error: AcpError.AcpError,
+  ) => Effect.Effect<void, never>;
+  readonly onOutgoingResponse?: (requestId: string) => Effect.Effect<void, never>;
+  readonly testHooks?: {
+    readonly onOutgoingWriteAdmitted?: () => Effect.Effect<void>;
+    /** Invoked from the stdout writer exit path (after intentional/unexpected handling). */
+    readonly onOutgoingWriterExit?: (input: {
+      readonly intentionalEnd: boolean;
+    }) => Effect.Effect<void>;
+  };
 }
 
 export interface AcpPatchedProtocol {
@@ -79,6 +87,17 @@ export interface AcpPatchedProtocol {
 interface AcpPendingRequest {
   readonly deferred: Deferred.Deferred<unknown, AcpError.AcpError>;
   readonly method: string;
+}
+
+interface AcpOutgoingWrite {
+  readonly acknowledgement?: Deferred.Deferred<void, AcpError.AcpError>;
+  readonly payload: string | Uint8Array;
+}
+
+interface AcpOutgoingWriterState {
+  readonly outstandingAcknowledgements: ReadonlySet<Deferred.Deferred<void, AcpError.AcpError>>;
+  readonly intentionalEnd: boolean;
+  readonly terminalError?: AcpError.AcpError;
 }
 
 const decodeSessionUpdate = Schema.decodeUnknownEffect(AcpSchema.SessionNotification);
@@ -108,15 +127,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     MAX_BUFFERED_RAW_NOTIFICATIONS,
   );
   const disconnects = yield* Queue.unbounded<number>();
-  const outgoing = yield* Queue.unbounded<string | Uint8Array, Cause.Done<void>>();
-  const nextRequestId = yield* Ref.make(1);
+  const outgoing = yield* Queue.unbounded<AcpOutgoingWrite, AcpError.AcpError | Cause.Done<void>>();
+  const outgoingWriterState = yield* Ref.make<AcpOutgoingWriterState>({
+    intentionalEnd: false,
+    outstandingAcknowledgements: new Set(),
+  });
+  const nextRequestId = yield* Ref.make(1n);
   const terminationHandled = yield* Ref.make(false);
-  const terminationFailure = yield* Deferred.make<never, AcpError.AcpError>();
   const extPending = yield* Ref.make(new Map<string, AcpPendingRequest>());
-
-  const ensureActive = Ref.get(terminationHandled).pipe(
-    Effect.flatMap((terminated) => (terminated ? Deferred.await(terminationFailure) : Effect.void)),
-  );
 
   const logProtocol = (event: AcpProtocolLogEvent) => {
     if (event.direction === "incoming" && !options.logIncoming) {
@@ -139,7 +157,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     if (message._tag === "Interrupt") {
       return;
     }
-    yield* ensureActive;
     yield* logProtocol({
       direction: "outgoing",
       stage: "decoded",
@@ -166,8 +183,66 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         payload: typeof encoded === "string" ? encoded : new TextDecoder().decode(encoded),
       });
 
-      yield* ensureActive;
-      yield* Queue.offer(outgoing, encoded).pipe(Effect.asVoid);
+      const acknowledgement =
+        message._tag === "Exit" ? yield* Deferred.make<void, AcpError.AcpError>() : undefined;
+      const admissionError = yield* Ref.modify(outgoingWriterState, (state) => {
+        if (state.terminalError !== undefined) {
+          return [state.terminalError, state] as const;
+        }
+        if (acknowledgement === undefined) {
+          return [undefined, state] as const;
+        }
+        return [
+          undefined,
+          {
+            ...state,
+            outstandingAcknowledgements: new Set(state.outstandingAcknowledgements).add(
+              acknowledgement,
+            ),
+          },
+        ] as const;
+      });
+      if (admissionError !== undefined) {
+        return yield* admissionError;
+      }
+      if (options.testHooks?.onOutgoingWriteAdmitted !== undefined) {
+        yield* options.testHooks.onOutgoingWriteAdmitted();
+      }
+      yield* Queue.offer(outgoing, {
+        payload: encoded,
+        ...(acknowledgement === undefined ? {} : { acknowledgement }),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AcpError.AcpTransportError({
+              detail: "Failed to queue an outgoing ACP message",
+              cause,
+            }),
+        ),
+        Effect.filterOrFail(
+          (accepted) => accepted,
+          () =>
+            new AcpError.AcpTransportError({
+              detail: "The ACP output queue was closed before accepting a message",
+              cause: "Output queue closed",
+            }),
+        ),
+        Effect.tapError((error) =>
+          acknowledgement === undefined
+            ? Effect.void
+            : Ref.update(outgoingWriterState, (state) => {
+                const updated = new Set(state.outstandingAcknowledgements);
+                updated.delete(acknowledgement);
+                return { ...state, outstandingAcknowledgements: updated };
+              }).pipe(Effect.andThen(Deferred.fail(acknowledgement, error)), Effect.asVoid),
+        ),
+      );
+      if (acknowledgement !== undefined) {
+        yield* Deferred.await(acknowledgement);
+      }
+      if (message._tag === "Exit" && options.onOutgoingResponse !== undefined) {
+        yield* options.onOutgoingResponse(message.requestId);
+      }
     }
   });
 
@@ -233,7 +308,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       }),
     }).pipe(Effect.asVoid);
 
-  const handleTermination = (classify: () => Effect.Effect<AcpError.AcpError>) =>
+  const handleTermination = (classify: () => Effect.Effect<AcpError.AcpError | undefined>) =>
     Ref.modify(terminationHandled, (handled) => {
       if (handled) {
         return [Effect.void, true] as const;
@@ -242,7 +317,9 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Effect.gen(function* () {
           yield* Queue.offer(disconnects, 0);
           const error = yield* classify();
-          yield* Deferred.fail(terminationFailure, error);
+          if (!error) {
+            return;
+          }
           yield* failAllExtPending(error);
           yield* emitClientProtocolError(error);
           if (options.onTermination) {
@@ -303,7 +380,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               ({
                 _tag: "SessionUpdate",
                 method: CLIENT_METHODS.session_update,
-                params: options.transformSessionUpdate?.(params) ?? params,
+                params,
               }) satisfies AcpIncomingNotification,
           ),
           Effect.mapError((cause) =>
@@ -343,8 +420,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       });
     }
 
+    const observeIncoming =
+      options.onIncomingRequest?.(message.id, message.tag, message.payload) ?? Effect.void;
+
     if (!options.serverRequestMethods.has(message.tag)) {
-      return handleExtRequest(message).pipe(
+      return observeIncoming.pipe(Effect.andThen(handleExtRequest(message))).pipe(
         Effect.catchTags({
           AcpProtocolParseError: (error) =>
             Effect.logWarning(error).pipe(
@@ -369,7 +449,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       );
     }
 
-    return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
+    return observeIncoming.pipe(Effect.andThen(Queue.offer(serverQueue, message)), Effect.asVoid);
   };
 
   const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
@@ -511,7 +591,112 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     Effect.forkScoped,
   );
 
-  yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
+  const failOutgoingWrites = (error: AcpError.AcpError) =>
+    Ref.modify(outgoingWriterState, (state) => {
+      const terminalError = state.terminalError ?? error;
+      return [
+        [terminalError, state.outstandingAcknowledgements] as const,
+        {
+          ...state,
+          terminalError,
+          outstandingAcknowledgements: new Set<Deferred.Deferred<void, AcpError.AcpError>>(),
+        },
+      ] as const;
+    }).pipe(
+      Effect.flatMap((acknowledgements) =>
+        Effect.forEach(
+          acknowledgements[1],
+          (acknowledgement) => Deferred.fail(acknowledgement, acknowledgements[0]),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ),
+      Effect.andThen(Queue.fail(outgoing, error)),
+      Effect.asVoid,
+    );
+  const completeOutgoingWrites = () =>
+    Ref.modify(outgoingWriterState, (state) => {
+      return [
+        state.outstandingAcknowledgements,
+        {
+          ...state,
+          outstandingAcknowledgements: new Set<Deferred.Deferred<void, AcpError.AcpError>>(),
+        },
+      ] as const;
+    }).pipe(
+      Effect.flatMap((acknowledgements) =>
+        Effect.forEach(
+          acknowledgements,
+          (acknowledgement) => Deferred.succeed(acknowledgement, undefined),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ),
+      Effect.asVoid,
+    );
+  const acknowledgeOutgoingWrite = (acknowledgement: Deferred.Deferred<void, AcpError.AcpError>) =>
+    Ref.update(outgoingWriterState, (state) => {
+      const updated = new Set(state.outstandingAcknowledgements);
+      updated.delete(acknowledgement);
+      return { ...state, outstandingAcknowledgements: updated };
+    }).pipe(Effect.andThen(Deferred.succeed(acknowledgement, undefined)), Effect.asVoid);
+  yield* Stream.fromQueue(outgoing).pipe(
+    Stream.flatMap((write) => {
+      const acknowledgement = write.acknowledgement;
+      const completion =
+        acknowledgement === undefined
+          ? Stream.empty
+          : Stream.fromEffect(acknowledgeOutgoingWrite(acknowledgement)).pipe(Stream.drain);
+      return Stream.make(write.payload).pipe(Stream.concat(completion));
+    }),
+    Stream.run(options.stdio.stdout()),
+    Effect.onExit((exit) =>
+      Exit.match(exit, {
+        onFailure: (cause) => {
+          const error = new AcpError.AcpTransportError({
+            detail: Cause.hasInterruptsOnly(cause)
+              ? "The ACP output writer was interrupted while closing"
+              : "Failed to write an outgoing ACP message",
+            cause,
+          });
+          return failOutgoingWrites(error).pipe(
+            Effect.andThen(
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.void
+                : handleTermination(() => Effect.succeed(error)),
+            ),
+          );
+        },
+        onSuccess: () =>
+          Ref.get(outgoingWriterState).pipe(
+            Effect.flatMap((state) => {
+              // Intentional Queue.end (serverProtocol.end) completes the writer
+              // successfully. Do not invent a transport failure or client protocol
+              // error for a clean RPC shutdown.
+              const handled = state.intentionalEnd
+                ? completeOutgoingWrites()
+                : (() => {
+                    const error = new AcpError.AcpTransportError({
+                      detail: "ACP output writer ended before the protocol closed",
+                      cause: "Output writer ended",
+                    });
+                    return failOutgoingWrites(error).pipe(
+                      Effect.andThen(handleTermination(() => Effect.succeed(error))),
+                    );
+                  })();
+              return handled.pipe(
+                Effect.andThen(
+                  options.testHooks?.onOutgoingWriterExit === undefined
+                    ? Effect.void
+                    : options.testHooks.onOutgoingWriterExit({
+                        intentionalEnd: state.intentionalEnd,
+                      }),
+                ),
+              );
+            }),
+          ),
+      }),
+    ),
+    Effect.forkScoped,
+  );
 
   const clientProtocol = RpcClient.Protocol.of({
     run: (_clientId, f) =>
@@ -542,8 +727,19 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Effect.forever,
       ),
     disconnects,
-    send: (_clientId, response) => offerOutgoing(response).pipe(Effect.orDie),
-    end: (_clientId) => Queue.end(outgoing),
+    send: (_clientId, response) =>
+      offerOutgoing(response).pipe(
+        Effect.tapError((error) =>
+          response._tag === "Exit" && options.onOutgoingResponseFailure !== undefined
+            ? options.onOutgoingResponseFailure(response.requestId, error)
+            : Effect.void,
+        ),
+        Effect.orDie,
+      ),
+    end: (_clientId) =>
+      Ref.update(outgoingWriterState, (state) => ({ ...state, intentionalEnd: true })).pipe(
+        Effect.andThen(Queue.end(outgoing)),
+      ),
     clientIds: Effect.succeed(new Set([0])),
     initialMessage: Effect.succeedNone,
     supportsAck: true,
@@ -558,7 +754,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     method: string,
     payload: unknown,
   ) {
-    yield* ensureActive;
     yield* logProtocol({
       direction: "outgoing",
       stage: "decoded",
@@ -574,12 +769,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     }
     const encoded = `${exit.value}\n`;
     yield* logProtocol({ direction: "outgoing", stage: "raw", payload: encoded });
-    yield* ensureActive;
     yield* Queue.offer(outgoing, encoded);
   });
 
   const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {
-    yield* ensureActive;
     const requestId = yield* Ref.modify(
       nextRequestId,
       (current) => [current, current + 1] as const,

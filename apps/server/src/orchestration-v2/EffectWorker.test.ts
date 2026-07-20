@@ -17,7 +17,11 @@ import * as Ref from "effect/Ref";
 
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import type { OrchestrationEffectV2 } from "./EffectOutbox.ts";
-import { executorLayer, OrchestrationEffectExecutorV2 } from "./EffectWorker.ts";
+import {
+  executorLayer,
+  isNonRetryableProviderTurnControlFailure,
+  OrchestrationEffectExecutorV2,
+} from "./EffectWorker.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
@@ -132,6 +136,40 @@ function makeExecutorLayer(input: {
   );
   return executorLayer.pipe(Layer.provide(dependencies));
 }
+
+it("does not retry pure interrupt races where the turn is already gone", () => {
+  assert.isTrue(
+    isNonRetryableProviderTurnControlFailure(
+      "provider-turn.interrupt",
+      "ProviderAdapterInterruptError: ... ACP provider turn provider-turn:x is not active",
+    ),
+  );
+  assert.isTrue(
+    isNonRetryableProviderTurnControlFailure(
+      "provider-turn.interrupt",
+      "Provider session provider-session:x is not active.",
+    ),
+  );
+  // Restart is compound (interrupt + detach + start). Do not swallow start failures.
+  assert.isFalse(
+    isNonRetryableProviderTurnControlFailure(
+      "provider-turn.restart",
+      "Provider session provider-session:x is not active.",
+    ),
+  );
+  assert.isFalse(
+    isNonRetryableProviderTurnControlFailure(
+      "provider-turn.start",
+      "Provider session provider-session:x is not active.",
+    ),
+  );
+  assert.isFalse(
+    isNonRetryableProviderTurnControlFailure(
+      "provider-turn.interrupt",
+      "ACP hard teardown failed unexpectedly; the session is poisoned",
+    ),
+  );
+});
 
 it.effect("detaches a handed-off session only after the old turn terminalizes", () =>
   Effect.gen(function* () {

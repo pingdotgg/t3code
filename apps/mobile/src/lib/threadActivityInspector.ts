@@ -73,6 +73,7 @@ function addBlock(
 export function buildThreadActivityInspector(
   activity: ThreadFeedActivity,
   support: V2ItemSupport,
+  currentThreadId: ThreadId,
 ): ThreadActivityInspectorModel {
   const row = activity.projectedItem;
   const item = row.item;
@@ -279,7 +280,10 @@ export function buildThreadActivityInspector(
       break;
   }
 
-  const checkpoint = item.type === "checkpoint" ? support.checkpoint : null;
+  const checkpoint =
+    item.type === "checkpoint" && row.sourceThreadId === currentThreadId
+      ? support.checkpoint
+      : null;
   return {
     fields,
     blocks,
