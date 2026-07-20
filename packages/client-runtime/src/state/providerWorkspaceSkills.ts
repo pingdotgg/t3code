@@ -111,9 +111,10 @@ export function resolveNextProviderWorkspaceSkillsSnapshot(input: {
   readonly key: string | null;
   readonly skills: ReadonlyArray<ServerProviderSkill> | null;
   readonly isPending: boolean;
+  readonly error: string | null;
   readonly current: ProviderWorkspaceSkillsSnapshot | null;
 }): ProviderWorkspaceSkillsSnapshot | null {
-  if (input.key === null) return null;
+  if (input.key === null || input.error !== null) return null;
   if (input.skills === null) return input.isPending ? input.current : null;
   return input.isPending ? input.current : { key: input.key, skills: input.skills };
 }

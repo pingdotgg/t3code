@@ -254,6 +254,7 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         key: "environment:codex:/repo",
         skills: loadedSkills,
         isPending: false,
+        error: null,
         current: null,
       }),
     ).toEqual({
@@ -273,6 +274,7 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         key: "environment:codex:/repo",
         skills: [skill("fresh-repo-local")],
         isPending: true,
+        error: null,
         current,
       }),
     ).toBe(current);
@@ -284,6 +286,7 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         key: null,
         skills: [skill("repo-local")],
         isPending: false,
+        error: null,
         current: {
           key: "environment:codex:/repo",
           skills: [skill("repo-local")],
@@ -298,6 +301,22 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         key: "environment:codex:/repo",
         skills: null,
         isPending: false,
+        error: null,
+        current: {
+          key: "environment:codex:/repo",
+          skills: [skill("repo-local")],
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("clears stale workspace skills after a failed refresh", () => {
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: "environment:codex:/repo",
+        skills: [skill("stale-repo-local")],
+        isPending: false,
+        error: "Failed to list skills.",
         current: {
           key: "environment:codex:/repo",
           skills: [skill("repo-local")],

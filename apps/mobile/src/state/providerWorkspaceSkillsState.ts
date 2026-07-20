@@ -45,9 +45,10 @@ export function useProviderWorkspaceSkills(
       key,
       skills: querySkills,
       isPending: query.isPending,
+      error: query.error,
       current: previousWorkspaceSkillsRef.current,
     });
-  }, [key, query.isPending, querySkills]);
+  }, [key, query.error, query.isPending, querySkills]);
 
   if (key === null) {
     return { skills: target.fallbackSkills, isPending: false, error: null };

@@ -119,6 +119,7 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         key: current.key,
         skills: [skill("fresh-repo-local")],
         isPending: true,
+        error: null,
         current,
       }),
     ).toBe(current);
@@ -127,7 +128,23 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         key: null,
         skills: current.skills,
         isPending: false,
+        error: null,
         current,
+      }),
+    ).toBeNull();
+  });
+
+  it("clears a stale snapshot after a failed refresh", () => {
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: "local:codex:/repo",
+        skills: [skill("stale-repo-local")],
+        isPending: false,
+        error: "Failed to list skills.",
+        current: {
+          key: "local:codex:/repo",
+          skills: [skill("repo-local")],
+        },
       }),
     ).toBeNull();
   });

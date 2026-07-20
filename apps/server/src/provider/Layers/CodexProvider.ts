@@ -277,6 +277,7 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly launchArgs?: string;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
 }) {
@@ -286,10 +287,14 @@ export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(func
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
-  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["app-server"], {
-    env: environment,
-    extendEnv: true,
-  });
+  const spawnCommand = yield* resolveSpawnCommand(
+    input.binaryPath,
+    codexAppServerArgs(input.launchArgs),
+    {
+      env: environment,
+      extendEnv: true,
+    },
+  );
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {

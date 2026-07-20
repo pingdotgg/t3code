@@ -41,6 +41,7 @@ const makeMockAppServer = Effect.fn("makeMockAppServer")(function* () {
   return {
     binaryPath,
     cwd: yield* fileSystem.realPath(workspaceDirectory),
+    argsLogPath: path.join(directory, "args.log"),
     cwdLogPath: path.join(directory, "cwd.log"),
     exitLogPath: path.join(directory, "exit.log"),
   };
@@ -163,9 +164,11 @@ describe("listCodexProviderSkills", () => {
       const fixture = yield* makeMockAppServer();
       const skills = yield* listCodexProviderSkills({
         binaryPath: fixture.binaryPath,
+        launchArgs: "--enable workspace-skill-test",
         cwd: fixture.cwd,
         environment: {
           ...process.env,
+          T3_CODEX_ARGS_LOG_PATH: fixture.argsLogPath,
           T3_CODEX_CWD_LOG_PATH: fixture.cwdLogPath,
         },
       }).pipe(Effect.scoped);
@@ -179,6 +182,11 @@ describe("listCodexProviderSkills", () => {
           scope: "repo",
           enabled: true,
         },
+      ]);
+      expect(JSON.parse((yield* waitForFileContent(fixture.argsLogPath)).trim())).toEqual([
+        "app-server",
+        "--enable",
+        "workspace-skill-test",
       ]);
       expect((yield* waitForFileContent(fixture.cwdLogPath)).trim()).toBe(fixture.cwd);
     }).pipe(Effect.provide(NodeServices.layer)),

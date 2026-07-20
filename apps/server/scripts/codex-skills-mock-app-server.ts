@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 
 const cwdLogPath = process.env.T3_CODEX_CWD_LOG_PATH;
+const argsLogPath = process.env.T3_CODEX_ARGS_LOG_PATH;
 const exitLogPath = process.env.T3_CODEX_EXIT_LOG_PATH;
 const hangSkillsList = process.env.T3_CODEX_HANG_SKILLS_LIST === "1";
 
@@ -38,6 +39,7 @@ process.stdin.on("data", (chunk) => {
     switch (message.method) {
       case "initialize":
         appendLog(cwdLogPath, process.cwd());
+        appendLog(argsLogPath, JSON.stringify(process.argv.slice(2)));
         respond(id, {
           userAgent: "t3code-codex-skills-test",
           codexHome: process.cwd(),

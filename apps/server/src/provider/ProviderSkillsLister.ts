@@ -24,6 +24,7 @@ import {
   resolveCodexHomeLayout,
 } from "./Drivers/CodexHomeLayout.ts";
 import { listCodexProviderSkills } from "./Layers/CodexProvider.ts";
+import { resolveCodexLaunchArgs } from "./Layers/codexLaunchArgs.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
@@ -166,12 +167,14 @@ export const listCodexProviderSkillsWithTimeout = Effect.fn("listCodexProviderSk
     readonly instanceId: ProviderInstanceId;
     readonly binaryPath: string;
     readonly homePath?: string;
+    readonly launchArgs?: string;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
   }) {
     return yield* listCodexProviderSkills({
       binaryPath: input.binaryPath,
       ...(input.homePath ? { homePath: input.homePath } : {}),
+      ...(input.launchArgs ? { launchArgs: input.launchArgs } : {}),
       cwd: input.cwd,
       environment: input.environment,
     }).pipe(
@@ -297,12 +300,14 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
         }),
       ),
     );
+    const environment = mergeProviderInstanceEnvironment(instanceConfig.environment ?? []);
     const skills = yield* listCodexProviderSkillsWithTimeout({
       instanceId: input.instanceId,
       binaryPath: effectiveConfig.binaryPath,
       ...(homeLayout.effectiveHomePath ? { homePath: homeLayout.effectiveHomePath } : {}),
+      launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, environment),
       cwd: normalizedCwd,
-      environment: mergeProviderInstanceEnvironment(instanceConfig.environment ?? []),
+      environment,
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
     return { skills };
   });
