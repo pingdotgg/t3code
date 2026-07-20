@@ -1,4 +1,6 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   ContextTransferId,
@@ -22,16 +24,58 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
+import {
+  ProviderOptionDescriptor,
+  ProviderOptionSelection,
+  ProviderOptionSelectionValue,
+} from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
 const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 
+/**
+ * Shorthand `{ id: value }` record form for target model options. Unlike the
+ * legacy-tolerant `ProviderOptionSelections` persistence schema, this decodes
+ * strictly: a value that is not a string or boolean fails the request rather
+ * than being silently dropped.
+ */
+const OrchestratorMcpTargetOptionsFromRecord = Schema.Record(
+  Schema.String,
+  ProviderOptionSelectionValue,
+).pipe(
+  Schema.decodeTo(
+    Schema.Array(ProviderOptionSelection),
+    SchemaTransformation.transformOrFail({
+      decode: (record) =>
+        Effect.succeed(Object.entries(record).map(([id, value]) => ({ id, value }))),
+      encode: (selections: ReadonlyArray<ProviderOptionSelection>) =>
+        Effect.succeed(
+          Object.fromEntries(selections.map((selection) => [selection.id, selection.value])),
+        ),
+    }),
+  ),
+);
+
+export const OrchestratorMcpTargetOptions = Schema.Union([
+  Schema.Array(ProviderOptionSelection),
+  OrchestratorMcpTargetOptionsFromRecord,
+]);
+export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
+
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(ProviderInstanceId),
   driverKind: Schema.optional(ProviderDriverKind),
   model: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Model option selections for the child (for example reasoning effort).
+   * Accepts the canonical `[{ id, value }]` array or the shorthand
+   * `{ id: value }` record; valid ids come from the option descriptors
+   * advertised by orchestrator_capabilities. When omitted, options inherit
+   * from the parent only when the child runs the parent's provider and model.
+   */
+  options: Schema.optional(OrchestratorMcpTargetOptions),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
@@ -343,6 +387,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       label: Schema.NullOr(Schema.String),
+      /** Model options a target may select (for example reasoning effort). */
+      options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
     }),
   ),
   canRunChildTask: Schema.Boolean,
