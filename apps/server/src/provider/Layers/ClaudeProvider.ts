@@ -44,22 +44,6 @@ const EMPTY_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabiliti
   optionDescriptors: [],
 });
 
-const CUSTOM_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [
-    buildSelectOptionDescriptor({
-      id: "effort",
-      label: "Reasoning",
-      options: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High" },
-        { value: "xhigh", label: "Extra High" },
-        { value: "max", label: "Max" },
-      ],
-    }),
-  ],
-});
-
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
@@ -399,14 +383,17 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
 }
 
-export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
+export function getClaudeModelCapabilities(
+  model: string | null | undefined,
+  availableModels: ReadonlyArray<ClaudeModelInfo> = [],
+): ModelCapabilities {
   const slug = model?.trim();
   if (!slug) {
     return EMPTY_CLAUDE_MODEL_CAPABILITIES;
   }
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    CUSTOM_CLAUDE_MODEL_CAPABILITIES
+    customClaudeModelCapabilities(indexClaudeModels(availableModels).get(slug))
   );
 }
 
@@ -731,12 +718,14 @@ const probeClaudeCapabilities = (
       const customModels = [
         ...new Set(claudeSettings.customModels.map((model) => model.trim())),
       ].filter((model) => model.length > 0);
-      const results = await Promise.allSettled(
-        (customModels.length > 0 ? customModels : [undefined]).map((model) => initialize(model)),
-      );
-      const initializations = results.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
+      const initializations = [];
+      for (const model of customModels.length > 0 ? customModels : [undefined]) {
+        try {
+          initializations.push(await initialize(model));
+        } catch {
+          // One invalid custom model must not prevent the remaining probes.
+        }
+      }
       if (initializations.length === 0 && customModels.length > 0) {
         initializations.push(await initialize());
       }

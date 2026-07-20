@@ -27,6 +27,7 @@ import {
   type CanonicalRequestType,
   type ClaudeSettings,
   EventId,
+  type ModelCapabilities,
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -221,6 +222,9 @@ export interface ClaudeAdapterLiveOptions {
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly resolveModelCapabilities?: (
+    model: string | null | undefined,
+  ) => Effect.Effect<ModelCapabilities>;
 }
 
 function isUuid(value: string): boolean {
@@ -1359,6 +1363,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           stream: "native",
         })
       : undefined);
+  const resolveModelCapabilities =
+    options?.resolveModelCapabilities ??
+    ((model: string | null | undefined) => Effect.succeed(getClaudeModelCapabilities(model)));
 
   const createQuery =
     options?.createQuery ??
@@ -3414,7 +3421,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
+      const caps = yield* resolveModelCapabilities(modelSelection?.model);
       const descriptors = getProviderOptionDescriptors({ caps });
       const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
       const initialContextWindow = selectedClaudeContextWindow(modelSelection);

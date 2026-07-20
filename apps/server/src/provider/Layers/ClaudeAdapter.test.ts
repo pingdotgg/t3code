@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  type ModelCapabilities,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -21,7 +22,7 @@ import {
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -156,6 +157,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly resolveModelCapabilities?: ClaudeAdapterLiveOptions["resolveModelCapabilities"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -171,6 +173,9 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.resolveModelCapabilities
+      ? { resolveModelCapabilities: config.resolveModelCapabilities }
+      : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -203,6 +208,19 @@ function makeHarness(config?: {
     query,
     getLastCreateQueryInput: () => createInput,
   };
+}
+
+function customEffortCapabilities(...efforts: ReadonlyArray<string>): ModelCapabilities {
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: efforts.map((effort) => ({ id: effort, label: effort })),
+      },
+    ],
+  });
 }
 
 function makeDeterministicRandomService(seed = 0x1234_5678): {
@@ -439,7 +457,9 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("preserves xhigh effort for custom Claude models", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      resolveModelCapabilities: () => Effect.succeed(customEffortCapabilities("xhigh")),
+    });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -455,6 +475,31 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("ignores custom Claude effort levels not advertised by the SDK", () => {
+    const harness = makeHarness({
+      resolveModelCapabilities: () => Effect.succeed(customEffortCapabilities("low")),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "gpt-5.6-sol",
+          [{ id: "effort", value: "xhigh" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

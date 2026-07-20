@@ -30,6 +30,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
+  getClaudeModelCapabilities,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
 } from "../Layers/ClaudeProvider.ts";
@@ -141,14 +142,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
-      const adapterOptions = {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      };
-      const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
-      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
-
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
       const capabilitiesProbeCache = yield* Cache.make({
@@ -160,6 +153,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const resolveModelCapabilities = (model: string | null | undefined) =>
+        Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+          Effect.map((capabilities) => getClaudeModelCapabilities(model, capabilities?.models)),
+        );
+
+      const adapterOptions = {
+        instanceId,
+        environment: processEnv,
+        resolveModelCapabilities,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      };
+      const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
+      const textGeneration = yield* makeClaudeTextGeneration(
+        effectiveConfig,
+        processEnv,
+        resolveModelCapabilities,
+      );
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
