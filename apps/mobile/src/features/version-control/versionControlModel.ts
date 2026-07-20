@@ -1,7 +1,9 @@
 import type {
   VcsPanelChangeGroup,
   VcsPanelFileChange,
+  VcsPanelRemote,
   VcsPanelSnapshotResult,
+  VcsPanelStash,
   VcsPanelWorkingTreeFileEnrichmentResult,
   VcsPanelWorktreeChangeSet,
   VcsRef,
@@ -79,6 +81,26 @@ export function actionableLocalBranches(snapshot: VcsPanelSnapshotResult): VcsRe
     const { aheadCount, behindCount } = panelBranchSyncCounts(branch, snapshot);
     return !panelBranchHasUpstream(branch, snapshot) || aheadCount > 0 || behindCount > 0;
   });
+}
+
+export function stashIdentityKey(stash: Pick<VcsPanelStash, "refName" | "sha">): string {
+  return stash.sha ? `sha:${stash.sha}` : `ref:${stash.refName}`;
+}
+
+export function localBranchForRemoteBranch(
+  snapshot: VcsPanelSnapshotResult,
+  remote: Pick<VcsPanelRemote, "name">,
+  branch: VcsPanelRemote["branches"][number],
+): VcsRef | null {
+  return (
+    snapshot.localBranches.find((localBranch) => localBranch.upstreamName === branch.fullRefName) ??
+    snapshot.localBranches.find(
+      (localBranch) =>
+        localBranch.name === branch.name &&
+        localBranch.upstreamName === `${remote.name}/${branch.name}`,
+    ) ??
+    null
+  );
 }
 
 export function operationPaths(

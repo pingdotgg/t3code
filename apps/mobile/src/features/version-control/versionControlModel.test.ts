@@ -7,10 +7,12 @@ import {
   branchOwnsOperationCwd,
   discardableFiles,
   discardPathGroups,
+  localBranchForRemoteBranch,
   operationPaths,
   panelChangeSets,
   reconcileSelectedPaths,
   selectedFileStats,
+  stashIdentityKey,
   workingTreeEnrichmentRequests,
 } from "./versionControlModel";
 
@@ -109,6 +111,55 @@ describe("native Version Control model", () => {
       "feature/mobile-vcs",
       "local-only",
     ]);
+  });
+
+  it("keeps stash identity stable when positional refs are renumbered", () => {
+    expect(stashIdentityKey({ refName: "stash@{2}", sha: "abc123" })).toBe("sha:abc123");
+    expect(stashIdentityKey({ refName: "stash@{0}", sha: "abc123" })).toBe("sha:abc123");
+    expect(stashIdentityKey({ refName: "stash@{0}", sha: null })).toBe("ref:stash@{0}");
+  });
+
+  it("matches remote rows only to locals tracking that exact remote ref", () => {
+    const current = snapshot();
+    const localBranches = [
+      {
+        name: "release",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+        upstreamName: "upstream/release",
+      },
+      {
+        name: "release",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+        upstreamName: "origin/release",
+      },
+      {
+        name: "untracked",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+        upstreamName: null,
+      },
+    ];
+    const remoteBranch = {
+      name: "release",
+      fullRefName: "origin/release",
+      isDefaultRemoteHead: false,
+    };
+
+    expect(
+      localBranchForRemoteBranch({ ...current, localBranches }, { name: "origin" }, remoteBranch),
+    ).toBe(localBranches[1]);
+    expect(
+      localBranchForRemoteBranch(
+        { ...current, localBranches: [localBranches[0]!] },
+        { name: "origin" },
+        remoteBranch,
+      ),
+    ).toBeNull();
   });
 
   it("includes both rename sides once in operation paths", () => {

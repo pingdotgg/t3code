@@ -40,10 +40,12 @@ import {
   discardableFiles,
   discardPathGroups,
   fileStatusLetter,
+  localBranchForRemoteBranch,
   operationPaths,
   panelChangeSets,
   reconcileSelectedPaths,
   selectedFileStats,
+  stashIdentityKey,
   workingTreeEnrichmentRequests,
   type VersionControlChangeSet,
 } from "./versionControlModel";
@@ -346,7 +348,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const [showAddRemote, setShowAddRemote] = useState(false);
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
-  const openedCwd = useRef<string | null>(null);
+  const initiallyFetchedCwds = useRef(new Set<string>());
   const snapshotRequestId = useRef(0);
   const snapshotRevision = useRef(0);
   const snapshotFingerprint = useRef<string | null>(null);
@@ -487,16 +489,13 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       if (!selectedThreadCwd) return;
       const cwd = selectedThreadCwd;
       void refreshSnapshot();
-      if (openedCwd.current !== cwd) {
-        openedCwd.current = cwd;
+      if (!initiallyFetchedCwds.current.has(cwd)) {
+        initiallyFetchedCwds.current.add(cwd);
         void api
           .fetchAllRemotes({ cwd })
           .then(() => refreshSnapshot())
           .catch(() => undefined);
       }
-      return () => {
-        if (openedCwd.current === cwd) openedCwd.current = null;
-      };
     }, [api, refreshSnapshot, selectedThreadCwd]),
   );
 
@@ -848,17 +847,18 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   );
 
   const loadStashDetails = useCallback(
-    (stashRef: string) => {
-      const key = `stash:${stashRef}`;
+    (stash: VcsPanelSnapshotResult["stashes"][number]) => {
+      const detailsKey = stashIdentityKey(stash);
+      const key = `stash:${detailsKey}`;
       const wasExpanded = expandedRowsRef.current.has(key);
       toggleExpanded(key);
-      if (!selectedThreadCwd || stashDetails.has(stashRef) || wasExpanded) return;
+      if (!selectedThreadCwd || stashDetails.has(detailsKey) || wasExpanded) return;
       const revision = snapshotRevision.current;
       void api
-        .stashDetails({ cwd: selectedThreadCwd, stashRef })
+        .stashDetails({ cwd: selectedThreadCwd, stashRef: stash.refName })
         .then((details) => {
           if (revision !== snapshotRevision.current) return;
-          setStashDetails((current) => new Map(current).set(stashRef, details));
+          setStashDetails((current) => new Map(current).set(detailsKey, details));
         })
         .catch((cause) => {
           if (revision === snapshotRevision.current) setError(errorMessage(cause));
@@ -1286,16 +1286,17 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
               })}
 
               {snapshot.stashes.map((stash) => {
-                const key = `stash:${stash.refName}`;
-                const details = stashDetails.get(stash.refName);
+                const detailsKey = stashIdentityKey(stash);
+                const key = `stash:${detailsKey}`;
+                const details = stashDetails.get(detailsKey);
                 return (
                   <View
-                    key={stash.sha ?? stash.refName}
+                    key={detailsKey}
                     className="overflow-hidden rounded-[20px] border border-border bg-card"
                   >
                     <Pressable
                       className="min-h-14 flex-row items-center gap-3 px-4 py-3"
-                      onPress={() => loadStashDetails(stash.refName)}
+                      onPress={() => loadStashDetails(stash)}
                     >
                       <View className="min-w-0 flex-1 gap-0.5">
                         <Text className="text-base font-t3-bold text-foreground" numberOfLines={1}>
@@ -1538,8 +1539,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                       </View>
                     ) : null}
                     {remote.branches.map((remoteBranch) => {
-                      const localBranch = snapshot.localBranches.find(
-                        (candidate) => candidate.name === remoteBranch.name,
+                      const localBranch = localBranchForRemoteBranch(
+                        snapshot,
+                        remote,
+                        remoteBranch,
                       );
                       const branch: VcsRef = localBranch ?? {
                         name: remoteBranch.fullRefName,
