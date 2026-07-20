@@ -344,7 +344,7 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly effort?: ClaudeAgentSdkQueryOptions["effort"];
   readonly includePartialMessages?: true;
   readonly pathToClaudeCodeExecutable?: ClaudeAgentSdkQueryOptions["pathToClaudeCodeExecutable"];
-  readonly extraArgs?: ClaudeAgentSdkQueryOptions["extraArgs"];
+  readonly hasExtraArgs?: true;
   readonly allowDangerouslySkipPermissions?: true;
   readonly hasCanUseTool?: true;
   readonly hasEnvironment?: true;
@@ -436,7 +436,7 @@ export function loggedClaudeQueryOptions(
     ...(options.pathToClaudeCodeExecutable === undefined
       ? {}
       : { pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable }),
-    ...(options.extraArgs === undefined ? {} : { extraArgs: options.extraArgs }),
+    ...(options.extraArgs === undefined ? {} : { hasExtraArgs: true }),
     ...(options.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
