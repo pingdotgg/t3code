@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { isExternalWebLink, showExternalLinkContextMenu } from "./externalLinkContextMenu";
+import { resolveExternalWebLinkHost, showExternalLinkContextMenu } from "./externalLinkContextMenu";
 
 function createHarness(selection: "open-in-preview" | "open-external" | "copy-link" | null) {
   const showContextMenu = vi.fn().mockResolvedValue(selection);
@@ -114,14 +114,15 @@ describe("external chat link context menu", () => {
   });
 
   it.each([
-    ["https://example.com", true],
-    ["http://localhost:3000/path", true],
-    ["#details", false],
-    ["mailto:hello@example.com", false],
-    ["file:///tmp/example.txt", false],
-    ["javascript:void(0)", false],
-    ["not a URL", false],
-  ])("classifies %s as an external web link: %s", (href, expected) => {
-    expect(isExternalWebLink(href)).toBe(expected);
+    ["https://example.com", "example.com"],
+    ["http://localhost:3000/path", "localhost"],
+    ["#details", null],
+    ["mailto:hello@example.com", null],
+    ["file:///tmp/example.txt", null],
+    ["javascript:void(0)", null],
+    ["not a URL", null],
+    [undefined, null],
+  ])("resolves the external web-link host for %s as %s", (href, expected) => {
+    expect(resolveExternalWebLinkHost(href)).toBe(expected);
   });
 });

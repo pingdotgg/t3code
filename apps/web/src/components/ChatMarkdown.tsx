@@ -42,7 +42,10 @@ import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import { isExternalWebLink, showExternalLinkContextMenu } from "./chat/externalLinkContextMenu";
+import {
+  resolveExternalWebLinkHost,
+  showExternalLinkContextMenu,
+} from "./chat/externalLinkContextMenu";
 import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
@@ -833,17 +836,6 @@ const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 /** Hosts whose favicon request already failed this session — skip straight to the globe. */
 const failedFaviconHosts = new Set<string>();
 
-function resolveExternalLinkHost(href: string | undefined): string | null {
-  if (!href) return null;
-  try {
-    const url = new URL(href);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url.hostname || null;
-  } catch {
-    return null;
-  }
-}
-
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
   const [failedHost, setFailedHost] = useState<string | null>(null);
   return (
@@ -1395,7 +1387,7 @@ function ChatMarkdown({
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
-          const faviconHost = resolveExternalLinkHost(href);
+          const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
@@ -1412,7 +1404,7 @@ function ChatMarkdown({
                 }
               }}
               onContextMenu={(event) => {
-                if (!canOpenInPreview || !href || !isExternalWebLink(href)) return;
+                if (!canOpenInPreview || !href || !faviconHost) return;
                 event.preventDefault();
                 event.stopPropagation();
                 const api = readLocalApi();

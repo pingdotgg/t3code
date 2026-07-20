@@ -36,12 +36,14 @@ interface ShowExternalLinkContextMenuOptions {
   ) => void;
 }
 
-export function isExternalWebLink(href: string): boolean {
+export function resolveExternalWebLinkHost(href: string | undefined): string | null {
+  if (!href) return null;
   try {
     const url = new URL(href);
-    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname.length > 0;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.hostname || null;
   } catch {
-    return false;
+    return null;
   }
 }
 
