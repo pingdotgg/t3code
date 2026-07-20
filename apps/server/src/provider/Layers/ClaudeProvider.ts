@@ -571,6 +571,7 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const CAPABILITIES_PROBE_CONCURRENCY = 2;
 
 function nonEmptyProbeString(value: string): string | undefined {
   const candidate = value.trim();
@@ -683,18 +684,17 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ) => {
-  const abortControllers: AbortController[] = [];
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
-    return yield* Effect.tryPromise(async () => {
-      const initialize = (model?: string) => {
-        const abort = new AbortController();
-        abortControllers.push(abort);
-        const q = claudeQuery({
+    const initialize = (model?: string) => {
+      const abort = new AbortController();
+      let query: ReturnType<typeof claudeQuery> | undefined;
+      return Effect.tryPromise(() => {
+        query = claudeQuery({
           // Never yield — we only need initialization data, not a conversation.
           // This prevents any prompt from reaching the Anthropic API.
           // oxlint-disable-next-line require-yield
@@ -713,56 +713,60 @@ const probeClaudeCapabilities = (
             stderr: () => {},
           },
         });
-        return q.initializationResult();
-      };
-      const customModels = [
-        ...new Set(claudeSettings.customModels.map((model) => model.trim())),
-      ].filter((model) => model.length > 0);
-      const initializations = [];
-      for (const model of customModels.length > 0 ? customModels : [undefined]) {
-        try {
-          initializations.push(await initialize(model));
-        } catch {
-          // One invalid custom model must not prevent the remaining probes.
-        }
-      }
-      if (initializations.length === 0 && customModels.length > 0) {
-        initializations.push(await initialize());
-      }
-      const init = initializations[0]!;
-      const modelsByValue = indexClaudeModels(
-        initializations.flatMap((initialization) => initialization.models),
+        return query.initializationResult();
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (!abort.signal.aborted) abort.abort();
+            query?.close();
+          }),
+        ),
+        Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
+        Effect.result,
+        Effect.map((result) =>
+          Result.isFailure(result) ? undefined : Option.getOrUndefined(result.success),
+        ),
       );
-      const account = init.account as
-        | {
-            readonly email?: string;
-            readonly subscriptionType?: string;
-            readonly tokenSource?: string;
-            readonly apiProvider?: string;
-          }
-        | undefined;
-      return {
-        email: account?.email,
-        subscriptionType: account?.subscriptionType,
-        tokenSource: account?.tokenSource,
-        apiProvider: account?.apiProvider,
-        slashCommands: parseClaudeInitializationCommands(init.commands),
-        models: [...modelsByValue.values()],
-      } satisfies ClaudeCapabilitiesProbe;
-    });
-  }).pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        for (const abort of abortControllers) {
-          if (!abort.signal.aborted) abort.abort();
+    };
+    const customModels = [
+      ...new Set(claudeSettings.customModels.map((model) => model.trim())),
+    ].filter((model) => model.length > 0);
+    const initializations = (yield* Effect.forEach(
+      customModels.length > 0 ? customModels : [undefined],
+      initialize,
+      { concurrency: CAPABILITIES_PROBE_CONCURRENCY },
+    )).filter((initialization) => initialization !== undefined);
+    if (initializations.length === 0 && customModels.length > 0) {
+      const fallback = yield* initialize();
+      if (fallback) initializations.push(fallback);
+    }
+    const init = initializations[0];
+    if (!init) return undefined;
+
+    const modelsByValue = indexClaudeModels(
+      initializations.flatMap((initialization) => initialization.models),
+    );
+    const account = init.account as
+      | {
+          readonly email?: string;
+          readonly subscriptionType?: string;
+          readonly tokenSource?: string;
+          readonly apiProvider?: string;
         }
-      }),
-    ),
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
+      | undefined;
+    return {
+      email: account?.email,
+      subscriptionType: account?.subscriptionType,
+      tokenSource: account?.tokenSource,
+      apiProvider: account?.apiProvider,
+      slashCommands: parseClaudeInitializationCommands(init.commands),
+      models: [...modelsByValue.values()],
+    } satisfies ClaudeCapabilitiesProbe;
+  }).pipe(
     Effect.result,
     Effect.map((result) => {
       if (Result.isFailure(result)) return undefined;
-      return Option.isSome(result.success) ? result.success.value : undefined;
+      return result.success;
     }),
   );
 };
