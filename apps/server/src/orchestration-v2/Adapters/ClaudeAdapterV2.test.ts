@@ -497,6 +497,9 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       env: {
         ANTHROPIC_API_KEY: "secret",
       },
+      extraArgs: {
+        "append-system-prompt": "secret launch prompt",
+      },
       canUseTool: (_toolName, input, callbackOptions) =>
         Promise.resolve({
           behavior: "allow",
@@ -517,7 +520,9 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       cwd: "/workspace",
       hasCanUseTool: true,
       hasEnvironment: true,
+      hasExtraArgs: true,
     });
+    assert.notInclude(JSON.stringify(loggedClaudeQueryOptions(options)), "secret launch prompt");
   });
 });
 
