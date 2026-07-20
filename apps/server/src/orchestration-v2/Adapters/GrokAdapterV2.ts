@@ -160,14 +160,14 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     // prompt while Grok continued, freezing T3 projection mid-turn.
     settleRootTurnWhenIdle: false,
     interruptPromptOnCancel: false,
-    // User Stop (requestRuntimeRestart) still hard-kills the process group
-    // and respawns: Grok `session/cancel` is detach-and-continue (the CLI
-    // re-runs cancelled foreground work as a background task no client RPC
-    // can kill, E3 harness 2026-07-18), so only a process kill truly stops
-    // work. Non-Stop interrupts (mid-prompt steering, restart_active) omit
-    // requestRuntimeRestart and stay soft: the session survives in the same
-    // process, cancelled work backgrounds, and the model itself decides via
-    // kill_command_or_subagent whether it keeps running.
+    // User Stop (requestRuntimeRestart) still hard-kills the process group and
+    // respawns so existing background tasks stop too. Older 0.2.x builds could
+    // detach a cancelled foreground command (E3 harness 2026-07-18); current
+    // source kills foreground work but intentionally preserves already-
+    // backgrounded tasks. Non-Stop interrupts (mid-prompt steering,
+    // restart_active) omit requestRuntimeRestart and stay soft: session/cancel
+    // carries cancelTrigger=ctrl_c, the session survives, and background work
+    // remains available to the replacement turn.
     restartRuntimeAfterInterrupt: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     // Steering restarts on a settled turn additionally skip session/cancel so
