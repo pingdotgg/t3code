@@ -335,7 +335,7 @@ export const make = Effect.gen(function* () {
         return null;
       }
       const bounds =
-        window.isFullScreen() || window.isMaximized() || window.isMinimized()
+        window.isFullScreen() || window.isMinimized()
           ? window.getNormalBounds()
           : window.getBounds();
       const x = Math.round(bounds.x);
@@ -487,6 +487,8 @@ export const make = Effect.gen(function* () {
     });
     window.on("resize", scheduleBoundsPersist);
     window.on("move", scheduleBoundsPersist);
+    window.on("maximize", scheduleBoundsPersist);
+    window.on("unmaximize", scheduleBoundsPersist);
     window.on("close", () => {
       runFork(flushBoundsPersist);
     });

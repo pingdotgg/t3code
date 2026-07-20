@@ -496,7 +496,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("persists normal bounds for a maximized window", () =>
+  it.effect("persists current bounds for a maximized window", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       fakeWindow.isMaximized.mockReturnValue(true);
@@ -523,9 +523,42 @@ describe("DesktopWindow", () => {
         close();
         yield* Effect.promise(() => Promise.resolve());
 
-        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
-        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 0, y: 0, width: 1920, height: 1080 }]);
+        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 0);
+        assert.equal(fakeWindow.getBounds.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("persists maximized bounds from the native maximize event", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        mainWindowBoundsUpdates,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const maximize = fakeWindow.windowListeners.get("maximize");
+        if (!maximize) {
+          return yield* Effect.die("window maximize listener was not registered");
+        }
+
+        fakeWindow.isMaximized.mockReturnValue(true);
+        fakeWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 1920, height: 1080 });
+        maximize();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
+
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 0, y: 0, width: 1920, height: 1080 }]);
       }).pipe(Effect.provide(layer));
     }),
   );
