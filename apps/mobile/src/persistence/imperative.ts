@@ -5,7 +5,7 @@ import * as MobilePreferences from "./mobile-preferences";
 import * as MobileStorage from "./mobile-storage";
 
 export type { Preferences } from "./mobile-preferences";
-export type { AgentAwarenessRegistrationRecord } from "./mobile-storage";
+export type { AgentAwarenessRegistrationRecord, RecentThreadShortcut } from "./mobile-storage";
 export { MobilePreferencesLoadError, MobilePreferencesSaveError } from "./mobile-preferences";
 export {
   MobileDeviceIdGenerationError,
@@ -45,3 +45,9 @@ export const saveAgentAwarenessRegistrationRecord = (
 ) => runStorage((storage) => storage.saveAgentAwarenessRegistrationRecord(record));
 export const clearAgentAwarenessRegistrationRecord = () =>
   runStorage((storage) => storage.clearAgentAwarenessRegistrationRecord);
+
+export const loadRecentThreadShortcuts = () =>
+  runStorage((storage) => storage.loadRecentThreadShortcuts);
+export const saveRecentThreadShortcuts = (
+  threads: ReadonlyArray<MobileStorage.RecentThreadShortcut>,
+) => runStorage((storage) => storage.saveRecentThreadShortcuts(threads));
