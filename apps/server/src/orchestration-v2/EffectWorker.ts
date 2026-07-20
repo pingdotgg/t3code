@@ -25,6 +25,30 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedErrorClass<O
   },
 ) {}
 
+/**
+ * Pure interrupt races with hard process teardown or a dead session produce
+ * "not active" protocol errors. Retrying those only delays recovery.
+ *
+ * Do not apply this to `provider-turn.restart`: that compound effect also runs
+ * detach and start. Swallowing a start failure that happens to mention
+ * "is not active" would drop the outbox item without ever starting the
+ * replacement turn.
+ */
+export function isNonRetryableProviderTurnControlFailure(
+  effectType: string,
+  errorText: string,
+): boolean {
+  if (effectType !== "provider-turn.interrupt") {
+    return false;
+  }
+  return (
+    /is not active/i.test(errorText) ||
+    /hard teardown is already in progress/i.test(errorText) ||
+    /treating as already interrupted/i.test(errorText) ||
+    /treating as already stopped/i.test(errorText)
+  );
+}
+
 export interface OrchestrationEffectExecutorV2Shape {
   readonly execute: (
     effect: OrchestrationEffectV2,
@@ -348,14 +372,19 @@ export const layerWithOptions = (
         }
 
         const error = Cause.pretty(exit.cause);
+        const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
         yield* Effect.logWarning("Orchestration effect execution failed", {
           effectId: effect.id,
           effectType: effect.request.type,
           attemptCount: effect.attemptCount,
+          nonRetryable,
           error,
         });
-        const updated =
-          effect.attemptCount >= maxAttempts
+        // Prefer succeed for terminal interrupt races so the outbox does not
+        // keep a failed interrupt around; fail only when we must not retry.
+        const updated = nonRetryable
+          ? yield* outbox.succeed({ effectId: effect.id, workerId })
+          : effect.attemptCount >= maxAttempts
             ? yield* outbox.fail({ effectId: effect.id, workerId, error })
             : yield* outbox.retry({
                 effectId: effect.id,

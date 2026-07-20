@@ -31,7 +31,7 @@ import * as Stream from "effect/Stream";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import { layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import type { ProviderAdapterV2Event, ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
 import {
@@ -541,6 +541,194 @@ it.effect("does not pin ingestion on background items when the root turn is inte
     assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
   }),
 );
+
+it.effect("omits run_interrupt_result when a superseding attempt already owns the run", () =>
+  Effect.gen(function* () {
+    const written = yield* captureInterruptTerminalTurnItems({
+      key: "steer-supersede",
+      shouldFinalizeRun: () => Effect.succeed(false),
+    });
+    assert.deepEqual(
+      written.map((item) => item.type),
+      [],
+    );
+  }),
+);
+
+it.effect("emits run_interrupt_result when superseded attempt still has a hard-stop request", () =>
+  Effect.gen(function* () {
+    const written = yield* captureInterruptTerminalTurnItems({
+      key: "stop-then-steer-supersede",
+      shouldFinalizeRun: () => Effect.succeed(false),
+      hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
+    });
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+    const ids = backgroundScenarioIds("stop-then-steer-supersede");
+    const expectedRequestId = yield* Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      return idAllocator.derive.runSignalTurnItem({
+        runId: ids.runId,
+        signal: "interrupt-request",
+      });
+    }).pipe(Effect.provide(idAllocatorLayer));
+    assert.equal(written[0]?.parentItemId, expectedRequestId);
+  }),
+);
+
+it.effect("omits run_interrupt_result when superseded attempt request is already paired", () =>
+  Effect.gen(function* () {
+    const written = yield* captureInterruptTerminalTurnItems({
+      key: "stop-then-steer-already-paired",
+      shouldFinalizeRun: () => Effect.succeed(false),
+      hasUnpairedRunInterruptRequest: () => Effect.succeed(false),
+    });
+    assert.deepEqual(
+      written.map((item) => item.type),
+      [],
+    );
+  }),
+);
+
+it.effect("emits run_interrupt_result when hard-stop finalizes the active attempt", () =>
+  Effect.gen(function* () {
+    const written = yield* captureInterruptTerminalTurnItems({
+      key: "hard-stop",
+      shouldFinalizeRun: () => Effect.succeed(true),
+    });
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+  }),
+);
+
+function captureInterruptTerminalTurnItems(input: {
+  readonly key: string;
+  readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
+  readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+}) {
+  return Effect.gen(function* () {
+    const ids = backgroundScenarioIds(input.key);
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const writtenItems = yield* Ref.make<
+      ReadonlyArray<{ readonly type: string; readonly parentItemId: string | null }>
+    >([]);
+    const ingestionDone = yield* Deferred.make<void>();
+    const captureTurnItem = (payload: {
+      readonly type: string;
+      readonly parentItemId: string | null;
+    }) =>
+      Ref.update(writtenItems, (current) => [
+        ...current,
+        { type: payload.type, parentItemId: payload.parentItemId },
+      ]);
+    const testLayer = runExecutionServiceLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(EventSinkV2)({
+            write: (payload) =>
+              Effect.gen(function* () {
+                for (const event of payload.events) {
+                  if (event.type === "turn-item.updated") {
+                    yield* captureTurnItem(event.payload);
+                  }
+                }
+                return [];
+              }),
+            writeWithEffects: (payload) =>
+              Effect.gen(function* () {
+                for (const event of payload.events) {
+                  if (event.type === "turn-item.updated") {
+                    yield* captureTurnItem(event.payload);
+                  }
+                }
+                return [];
+              }),
+            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+          }),
+          idAllocatorLayer,
+          Layer.mock(ProviderEventIngestorV2)({
+            ingestNormalized: () => Effect.succeed([]),
+          }),
+          ServerSettingsService.layerTest(),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make(`command:${input.key}`),
+        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+        providerSessionId: ProviderSessionId.make(`session:${input.key}`),
+        session: {
+          events: Stream.empty,
+          subscribeEvents: Effect.succeed({
+            events: Stream.fromIterable([rootTerminalEvent(ids, "interrupted")]),
+            close: Deferred.succeed(ingestionDone, undefined),
+          }),
+          startTurn: () => Effect.void,
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: ids.runId,
+          threadId: ids.threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        rootNode: {
+          id: ids.rootNodeId,
+          providerTurnId: ids.rootProviderTurnId,
+        } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make(`checkpoint-scope:${input.key}`),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ids.providerThreadId,
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: ids.attemptId,
+          providerTurnId: ids.rootProviderTurnId,
+        } as OrchestrationV2RunAttempt,
+        attemptId: ids.attemptId,
+        providerTurnOrdinal: 1,
+        shouldFinalizeRun: input.shouldFinalizeRun,
+        ...(input.hasUnpairedRunInterruptRequest === undefined
+          ? {}
+          : {
+              hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
+            }),
+        message: {
+          messageId: MessageId.make(`message:${input.key}`),
+          text: "interrupt projection",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(Effect.provide(testLayer));
+
+    const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
+    assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
+    return yield* Ref.get(writtenItems);
+  });
+}
 
 interface BackgroundScenarioIds {
   readonly threadId: ThreadId;

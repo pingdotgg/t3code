@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderThreadId, ThreadId } from "@t3tools/contrac
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 
 export interface ProviderContinuationRequest {
@@ -9,6 +10,9 @@ export interface ProviderContinuationRequest {
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  readonly dispatchIfCurrent?: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
 }
 
 /**

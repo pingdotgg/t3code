@@ -868,31 +868,37 @@ export const makeCodexAgentMessageDeltaCoalescer = Effect.fn(
   }) =>
     flushLock.withPermit(
       Effect.gen(function* () {
-        const updates = yield* Ref.modify(buffered, (current) => {
+        const current = yield* Ref.get(buffered);
+        const updates: Array<CodexAgentMessageDeltaUpdate> = [];
+        for (const message of current.values()) {
+          if (!options.predicate(message) || (options.onlyDirty && !message.dirty)) {
+            continue;
+          }
+          updates.push({
+            turnId: message.turnId,
+            itemId: message.itemId,
+            text: message.text,
+            completed: options.completed,
+          });
+        }
+        const emitUpdates = Effect.forEach(updates, input.emit, { discard: true });
+        yield* options.releaseSchedule === true
+          ? emitUpdates.pipe(Effect.ensuring(Ref.set(flushScheduled, false)))
+          : emitUpdates;
+        yield* Ref.update(buffered, (current) => {
           const next = new Map(current);
-          const pending: Array<CodexAgentMessageDeltaUpdate> = [];
           for (const [key, message] of current) {
             if (!options.predicate(message) || (options.onlyDirty && !message.dirty)) {
               continue;
             }
-            pending.push({
-              turnId: message.turnId,
-              itemId: message.itemId,
-              text: message.text,
-              completed: options.completed,
-            });
             if (options.completed) {
               next.delete(key);
             } else {
               next.set(key, { ...message, dirty: false });
             }
           }
-          return [pending, next] as const;
+          return next;
         });
-        if (options.releaseSchedule === true) {
-          yield* Ref.set(flushScheduled, false);
-        }
-        yield* Effect.forEach(updates, input.emit, { discard: true });
       }),
     );
 
@@ -936,14 +942,15 @@ export const makeCodexAgentMessageDeltaCoalescer = Effect.fn(
     complete: ({ turnId, itemId, finalText }) =>
       flushLock.withPermit(
         Effect.gen(function* () {
-          const text = yield* Ref.modify(buffered, (current) => {
-            const key = codexAgentMessageBufferKey(turnId, itemId);
-            const existing = current.get(key);
+          const key = codexAgentMessageBufferKey(turnId, itemId);
+          const existing = (yield* Ref.get(buffered)).get(key);
+          const text = finalText && finalText.length > 0 ? finalText : (existing?.text ?? "");
+          yield* input.emit({ turnId, itemId, text, completed: true });
+          yield* Ref.update(buffered, (current) => {
             const next = new Map(current);
             next.delete(key);
-            return [finalText && finalText.length > 0 ? finalText : (existing?.text ?? ""), next];
+            return next;
           });
-          yield* input.emit({ turnId, itemId, text, completed: true });
           return text;
         }),
       ),
