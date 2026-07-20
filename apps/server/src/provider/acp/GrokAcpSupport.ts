@@ -81,6 +81,9 @@ export const makeGrokAcpRuntime = (
         ...input,
         spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
         authMethodId: resolveGrokAuthMethodId(input.environment),
+        // Current Grok treats Ctrl+C cancellation as a barrier against stale
+        // background-task wake prompts until the next genuine user turn.
+        cancelMeta: { ...input.cancelMeta, cancelTrigger: "ctrl_c" },
         ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
       }).pipe(
         Layer.provide(
