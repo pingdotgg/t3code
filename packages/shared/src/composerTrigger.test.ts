@@ -57,6 +57,18 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("keeps mid-line /model as a slash-command so the menu stays open", () => {
+    const text = "please run /model";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "model",
+      rangeStart: 11,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects slash-command trigger mid-line, not just at line start", () => {
     const text = "fix this /rev";
     const trigger = detectComposerTrigger(text, text.length);

@@ -90,14 +90,6 @@ export function detectComposerTrigger(
     const commandMatch = /^\/(\S*)$/.exec(token);
     if (commandMatch) {
       const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: tokenStart,
-          rangeEnd: cursor,
-        };
-      }
       return {
         kind: "slash-command",
         query: commandQuery,
