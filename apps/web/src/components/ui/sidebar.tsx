@@ -54,6 +54,16 @@ type SidebarResizableOptions = {
   storageKey?: string;
 };
 
+const SidebarStoredWidthSchema = Schema.Union([
+  Schema.Finite,
+  Schema.Struct({
+    unit: Schema.Literal("fraction"),
+    value: Schema.Finite,
+  }),
+]);
+
+type SidebarStoredWidth = typeof SidebarStoredWidthSchema.Type;
+
 type SidebarResolvedResizableOptions = {
   maxWidth: number;
   minWidth: number;
@@ -347,6 +357,26 @@ function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptio
   return Math.max(options.minWidth, Math.min(width, options.maxWidth));
 }
 
+function getSidebarWidthStorageBasis(wrapper: HTMLElement): number {
+  return wrapper.parentElement?.clientWidth || window.innerWidth;
+}
+
+function getStoredSidebarWidth(
+  storedWidth: SidebarStoredWidth,
+  wrapper: HTMLElement,
+): number | null {
+  if (typeof storedWidth === "number") {
+    return null;
+  }
+
+  return storedWidth.value * getSidebarWidthStorageBasis(wrapper);
+}
+
+function createStoredSidebarWidth(width: number, wrapper: HTMLElement): SidebarStoredWidth {
+  const basis = getSidebarWidthStorageBasis(wrapper);
+  return { unit: "fraction", value: basis > 0 ? width / basis : 0 };
+}
+
 function SidebarRail({
   className,
   onClick,
@@ -392,7 +422,11 @@ function SidebarRail({
         element.style.removeProperty("transition-duration");
       });
       if (resolvedResizable?.storageKey && typeof window !== "undefined") {
-        setLocalStorageItem(resolvedResizable.storageKey, resizeState.width, Schema.Finite);
+        setLocalStorageItem(
+          resolvedResizable.storageKey,
+          createStoredSidebarWidth(resizeState.width, resizeState.wrapper),
+          SidebarStoredWidthSchema,
+        );
       }
       resolvedResizable?.onResize?.(resizeState.width);
       resizeStateRef.current = null;
@@ -557,16 +591,34 @@ function SidebarRail({
 
   React.useEffect(() => {
     if (!resolvedResizable?.storageKey || typeof window === "undefined") return;
+    const storageKey = resolvedResizable.storageKey;
     const rail = railRef.current;
     if (!rail) return;
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
     if (!wrapper) return;
+    const storageBasisElement = wrapper.parentElement;
 
-    const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
-    if (storedWidth === null) return;
-    const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
-    wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
-    resolvedResizable.onResize?.(clampedWidth);
+    const applyStoredWidth = () => {
+      const storedWidth = getLocalStorageItem(storageKey, SidebarStoredWidthSchema);
+      if (storedWidth === null) return;
+      const width = getStoredSidebarWidth(storedWidth, wrapper);
+      if (width === null) return;
+      const clampedWidth = clampSidebarWidth(width, resolvedResizable);
+      wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
+      resolvedResizable.onResize?.(clampedWidth);
+    };
+
+    applyStoredWidth();
+    window.addEventListener("resize", applyStoredWidth);
+    const resizeObserver = new ResizeObserver(applyStoredWidth);
+    if (storageBasisElement) {
+      resizeObserver.observe(storageBasisElement);
+    }
+
+    return () => {
+      window.removeEventListener("resize", applyStoredWidth);
+      resizeObserver?.disconnect();
+    };
   }, [resolvedResizable]);
 
   React.useEffect(() => {
