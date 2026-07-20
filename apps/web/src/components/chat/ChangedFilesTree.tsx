@@ -6,11 +6,19 @@ import {
   summarizeTurnDiffStats,
   type TurnDiffTreeNode,
 } from "../../lib/turnDiffTree";
-import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
+import {
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  ChevronRightIcon,
+  FileDiffIcon,
+  FolderIcon,
+  FolderClosedIcon,
+} from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -34,8 +42,8 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div className="mt-4 rounded-2xl border border-input bg-background p-2 pt-4 shadow-xs/5 not-dark:bg-clip-padding dark:bg-input/32">
-      <div className="mb-3 flex items-center justify-between gap-2 px-2">
-        <p className="flex self-start items-center gap-1 font-medium text-foreground text-xs leading-4">
+      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between gap-2 bg-background px-2 before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-background before:content-[''] dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))] dark:before:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]">
+        <p className="flex items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
           <span>
             {files.length} changed file{files.length === 1 ? "" : "s"}
           </span>
@@ -49,25 +57,41 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           )}
         </p>
         <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            className="px-1.5"
-            data-scroll-anchor-ignore
-            onClick={onToggleAllDirectories}
-          >
-            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            className="px-1.5"
-            onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
-          >
-            View diff
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  aria-label={allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+                  data-scroll-anchor-ignore
+                  onClick={onToggleAllDirectories}
+                />
+              }
+            >
+              {allDirectoriesExpanded ? <ChevronsDownUpIcon /> : <ChevronsUpDownIcon />}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  aria-label="View diff"
+                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
+                />
+              }
+            >
+              <FileDiffIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="top">View diff</TooltipPopup>
+          </Tooltip>
         </div>
       </div>
       <ChangedFilesTree
