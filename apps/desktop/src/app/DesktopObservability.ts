@@ -438,9 +438,21 @@ const backendOutputLogFactoryLayer = Layer.effect(
   }),
 );
 
-const desktopLoggerLayer = Layer.mergeAll(
-  Logger.layer([Logger.consolePretty(), Logger.tracerLogger], { mergeWithExisting: false }),
-  Layer.succeed(References.MinimumLogLevel, "Info"),
+const desktopLoggerLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    // Packaged Windows launches can inherit a short-lived stdout pipe whose closed reader makes
+    // synchronous console writes throw EPIPE. The tracer still persists these logs locally.
+    const loggers =
+      environment.platform === "win32" && !environment.isDevelopment
+        ? [Logger.tracerLogger]
+        : [Logger.consolePretty(), Logger.tracerLogger];
+
+    return Layer.mergeAll(
+      Logger.layer(loggers, { mergeWithExisting: false }),
+      Layer.succeed(References.MinimumLogLevel, "Info"),
+    );
+  }),
 );
 
 const tracerLayer = Layer.unwrap(
