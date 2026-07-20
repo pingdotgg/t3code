@@ -156,7 +156,14 @@ export function requireThreadAbsent(input: {
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
-  if (!findThreadById(input.readModel, input.threadId)) {
+  const existing = findThreadById(input.readModel, input.threadId);
+  // A soft-deleted thread stays in the read model with `deletedAt` set, but it
+  // must not block re-creating a thread with the same id. This happens when a
+  // draft thread's bootstrap turn start fails partway (e.g. worktree prep
+  // fails): the server cleans up by deleting the just-created thread, and the
+  // client then retries with the same draft thread id. Treating the tombstone
+  // as absent lets the retry succeed instead of failing with "already exists".
+  if (!existing || existing.deletedAt !== null) {
     return Effect.void;
   }
   return Effect.fail(

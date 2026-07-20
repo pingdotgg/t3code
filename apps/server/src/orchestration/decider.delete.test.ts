@@ -214,4 +214,56 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
     }),
   );
+
+  it.effect("allows re-creating a thread id after it was soft-deleted", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = asThreadId("thread-delete-1");
+      let readModel = yield* seedReadModel;
+      let nextSequence = readModel.snapshotSequence;
+
+      const projectDecided = function* (command: OrchestrationCommand) {
+        const decided = yield* decideOrchestrationCommand({ command, readModel });
+        const events = Array.isArray(decided) ? decided : [decided];
+        for (const event of events) {
+          nextSequence += 1;
+          readModel = yield* projectEvent(readModel, { ...event, sequence: nextSequence });
+        }
+        return events;
+      };
+
+      // Soft-delete the thread (this is what the server does when a bootstrap
+      // turn start fails partway and cleans up the just-created thread).
+      yield* projectDecided({
+        type: "thread.delete",
+        commandId: asCommandId("cmd-thread-delete-recreate"),
+        threadId,
+      });
+      expect(readModel.threads.find((thread) => thread.id === threadId)?.deletedAt).not.toBeNull();
+
+      // Re-creating the same thread id (client retries with the same draft id)
+      // must succeed instead of failing with "already exists".
+      const recreatedEvents = yield* projectDecided({
+        type: "thread.create",
+        commandId: asCommandId("cmd-thread-recreate"),
+        threadId,
+        projectId: asProjectId("project-delete"),
+        title: "Recreated Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      });
+
+      expect(recreatedEvents.map((event) => event.type)).toEqual(["thread.created"]);
+      const resurrected = readModel.threads.find((thread) => thread.id === threadId);
+      expect(resurrected?.deletedAt).toBeNull();
+      expect(resurrected?.title).toBe("Recreated Thread");
+    }),
+  );
 });
