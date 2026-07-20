@@ -146,6 +146,46 @@ describe("CodexAdapterV2 assistant message streaming", () => {
       assert.equal((yield* Ref.get(updates)).length, 2);
     }),
   );
+
+  it.effect("retains buffered text until completion updates are emitted", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
+      const failNext = yield* Ref.make(true);
+      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) =>
+          Ref.getAndSet(failNext, false).pipe(
+            Effect.flatMap((shouldFail) =>
+              shouldFail
+                ? Effect.die("projection unavailable")
+                : Ref.update(updates, (current) => [...current, update]),
+            ),
+          ),
+      });
+
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-1", delta: "turn final" });
+      const failedFlush = yield* coalescer.flushTurn("turn-1").pipe(Effect.exit);
+      assert.equal(failedFlush._tag, "Failure");
+      yield* coalescer.flushTurn("turn-1");
+
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-2", delta: "item final" });
+      yield* Ref.set(failNext, true);
+      const failedComplete = yield* coalescer
+        .complete({ turnId: "turn-1", itemId: "message-2" })
+        .pipe(Effect.exit);
+      assert.equal(failedComplete._tag, "Failure");
+      const completedText = yield* coalescer.complete({
+        turnId: "turn-1",
+        itemId: "message-2",
+      });
+
+      assert.equal(completedText, "item final");
+      assert.deepEqual(yield* Ref.get(updates), [
+        { turnId: "turn-1", itemId: "message-1", text: "turn final", completed: true },
+        { turnId: "turn-1", itemId: "message-2", text: "item final", completed: true },
+      ]);
+    }),
+  );
 });
 
 describe("CodexAdapterV2 runtime policy", () => {

@@ -56,4 +56,20 @@ describe("projectThreadAwarenessV2", () => {
       }),
     ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
   });
+
+  it("does not present authentication refreshes as user approvals", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-auth-refresh"),
+            kind: "auth_refresh",
+            createdAt: updatedAt,
+          },
+        }),
+      }),
+    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
 });

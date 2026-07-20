@@ -21,17 +21,26 @@ import {
   resolveGrokAcpBaseModelId,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import {
+  extractXAiAcpBackgroundToolMutation,
+  extractXAiAcpSubagentEndNotice,
+  extractXAiAcpSubagentUpdate,
   extractXAiAskUserQuestionIdentity,
   extractXAiAskUserQuestions,
-  extractXAiAcpSubagentUpdate,
+  extractXAiBackgroundTaskCompletion,
+  extractXAiKilledBackgroundTasks,
+  extractXAiMonitorTaskId,
+  isXAiPersistentMonitor,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  normalizeXAiAcpToolCallState,
+  registerXAiBackgroundTaskTracking,
   XAiAskUserQuestionRequest,
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
+import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
 import { ProviderAdapterV2 } from "../ProviderAdapter.ts";
 import {
   ProviderAdapterDriverCreateError,
@@ -41,6 +50,7 @@ import {
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
+  type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
@@ -88,6 +98,7 @@ export interface GrokAdapterV2Options {
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
+  readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
   ) => Effect.Effect<
@@ -101,7 +112,16 @@ export interface GrokAdapterV2Options {
 export const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensions"]> = ({
   runtime,
   requestUserInput,
+  applyBackgroundTaskMutation,
 }) =>
+  registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation).pipe(
+    Effect.andThen(registerGrokAskUserQuestionExtensions({ runtime, requestUserInput })),
+  );
+
+const registerGrokAskUserQuestionExtensions = ({
+  runtime,
+  requestUserInput,
+}: Pick<AcpAdapterV2ExtensionContext, "runtime" | "requestUserInput">) =>
   Effect.forEach(
     ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
     (method) =>
@@ -115,37 +135,78 @@ export const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["register
         }));
         return requestUserInput({
           nativeItemId: `${identity.sessionId}:xai-question:${identity.toolCallId}`,
+          nativeMethod: method,
           nativeRequestId: identity.toolCallId,
+          nativeSessionId: identity.sessionId,
           questions,
         }).pipe(
-          Effect.map((answers) =>
-            answers === null
-              ? makeXAiAskUserQuestionCancelledResponse()
-              : makeXAiAskUserQuestionResponse(params, answers),
+          Effect.flatMap(({ acknowledgeNativeResponse, answers }) =>
+            Effect.succeed(
+              answers === null
+                ? makeXAiAskUserQuestionCancelledResponse()
+                : makeXAiAskUserQuestionResponse(params, answers),
+            ).pipe(Effect.tap(() => acknowledgeNativeResponse)),
           ),
         );
       }),
     { discard: true },
   );
 
-export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
-  const flavor: AcpAdapterV2Flavor = {
+export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdapterV2Flavor {
+  return {
     driver: GROK_PROVIDER,
     capabilities: GrokProviderCapabilitiesV2,
+    // Idle settle over-settled preamble-before-tools turns and cancelled the
+    // prompt while Grok continued, freezing T3 projection mid-turn.
+    settleRootTurnWhenIdle: false,
+    interruptPromptOnCancel: false,
+    // User Stop (requestRuntimeRestart) still hard-kills the process group
+    // and respawns: Grok `session/cancel` is detach-and-continue (the CLI
+    // re-runs cancelled foreground work as a background task no client RPC
+    // can kill, E3 harness 2026-07-18), so only a process kill truly stops
+    // work. Non-Stop interrupts (mid-prompt steering, restart_active) omit
+    // requestRuntimeRestart and stay soft: the session survives in the same
+    // process, cancelled work backgrounds, and the model itself decides via
+    // kill_command_or_subagent whether it keeps running.
+    restartRuntimeAfterInterrupt: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
+    // Steering restarts on a settled turn additionally skip session/cancel so
+    // fire-and-forget subagents survive the steer (E1 harness confirmed the
+    // Grok CLI accepts a concurrent session/prompt in that state).
+    preserveRuntimeOnSettledInterrupt: true,
+    // Grok ACP initialize reports promptCapabilities.image:false but the agent
+    // still accepts image content blocks (verified with real screenshots).
+    supportsImagePrompts: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     makeRuntime:
       options.makeRuntime ??
       ((input) =>
         makeGrokAcpRuntime({
           ...input,
+          interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
           environment: options.environment,
           childProcessSpawner: options.childProcessSpawner,
         })),
     registerExtensions: registerGrokAcpExtensions,
     extractSubagentUpdate: extractXAiAcpSubagentUpdate,
+    extractSubagentEndNotice: extractXAiAcpSubagentEndNotice,
+    normalizeToolCall: normalizeXAiAcpToolCallState,
+    extractBackgroundTaskId: extractXAiMonitorTaskId,
+    extractBackgroundToolMutation: extractXAiAcpBackgroundToolMutation,
+    extractBackgroundTaskCompletion: (toolCall) => [
+      ...extractXAiBackgroundTaskCompletion(toolCall),
+      ...extractXAiKilledBackgroundTasks(toolCall),
+    ],
+    isPersistentBackgroundTool: isXAiPersistentMonitor,
+    deferFinalizeForBackgroundWork: true,
+    enablePostSettleContinuation: true,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
+}
+
+export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
+  const flavor = makeGrokAcpAdapterFlavor(options);
   return makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor,
@@ -153,6 +214,9 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
+    ...(options.continuationRequests === undefined
+      ? {}
+      : { continuationRequests: options.continuationRequests }),
   });
 }
 
@@ -176,6 +240,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       const idAllocator = yield* IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
+      const continuationRequests = yield* ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       return makeGrokAdapterV2({
         instanceId: input.instanceId,
@@ -185,6 +250,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         fileSystem,
         idAllocator,
         serverConfig,
+        continuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,
@@ -226,6 +292,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocatorV2;
     const providerEventLoggers = yield* ProviderEventLoggers;
     const serverConfig = yield* ServerConfig;
+    const continuationRequests = yield* ProviderContinuationRequests;
     const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
     return makeGrokAdapterV2({
       instanceId: GROK_DEFAULT_INSTANCE_ID,
@@ -235,6 +302,7 @@ export const layer: Layer.Layer<
       fileSystem,
       idAllocator,
       serverConfig,
+      continuationRequests,
       nativeLogging: (threadId) =>
         makeNativeLogger({
           nativeEventLogger: providerEventLoggers.native,

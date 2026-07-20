@@ -93,7 +93,7 @@ describe("buildThreadActivityInspector", () => {
       } as never,
     };
 
-    const model = buildThreadActivityInspector(activityFor(item), support);
+    const model = buildThreadActivityInspector(activityFor(item), support, sourceThreadId);
     expect(model.fields).toEqual(
       expect.arrayContaining([
         { label: "Duration", value: "2.0s" },
@@ -119,7 +119,11 @@ describe("buildThreadActivityInspector", () => {
       pattern: "resolveSession",
       results: [{ fileName: "src/session.ts", line: 42, preview: "function resolveSession()" }],
     };
-    const fileModel = buildThreadActivityInspector(activityFor(fileSearch), EMPTY_V2_ITEM_SUPPORT);
+    const fileModel = buildThreadActivityInspector(
+      activityFor(fileSearch),
+      EMPTY_V2_ITEM_SUPPORT,
+      sourceThreadId,
+    );
     expect(fileModel.fileLinks).toEqual([
       {
         label: "src/session.ts — function resolveSession()",
@@ -136,7 +140,11 @@ describe("buildThreadActivityInspector", () => {
         { title: "Schema", url: "https://effect.website/docs/schema", snippet: "Typed schemas" },
       ],
     };
-    const webModel = buildThreadActivityInspector(activityFor(webSearch), EMPTY_V2_ITEM_SUPPORT);
+    const webModel = buildThreadActivityInspector(
+      activityFor(webSearch),
+      EMPTY_V2_ITEM_SUPPORT,
+      sourceThreadId,
+    );
     expect(webModel.webLinks).toEqual([
       { label: "Schema", url: "https://effect.website/docs/schema" },
     ]);
@@ -156,6 +164,7 @@ describe("buildThreadActivityInspector", () => {
     const dynamicModel = buildThreadActivityInspector(
       activityFor(dynamicTool),
       EMPTY_V2_ITEM_SUPPORT,
+      sourceThreadId,
     );
     expect(dynamicModel.blocks).toEqual(
       expect.arrayContaining([
@@ -177,11 +186,15 @@ describe("buildThreadActivityInspector", () => {
       files: [{ path: "src/main.ts", kind: "modified", additions: 2, deletions: 1 }],
     };
     const checkpoint = { id: checkpointId, scopeId, status: "ready" } as never;
-    const model = buildThreadActivityInspector(activityFor(item), {
-      ...EMPTY_V2_ITEM_SUPPORT,
-      item,
-      checkpoint,
-    });
+    const model = buildThreadActivityInspector(
+      activityFor(item),
+      {
+        ...EMPTY_V2_ITEM_SUPPORT,
+        item,
+        checkpoint,
+      },
+      sourceThreadId,
+    );
 
     expect(model.canRollback).toBe(true);
     expect(model.rollbackTarget).toEqual({
@@ -189,6 +202,18 @@ describe("buildThreadActivityInspector", () => {
       checkpointId,
       scopeId,
     });
+
+    const inheritedModel = buildThreadActivityInspector(
+      activityFor(item),
+      {
+        ...EMPTY_V2_ITEM_SUPPORT,
+        item,
+        checkpoint,
+      },
+      ThreadId.make("child-thread"),
+    );
+    expect(inheritedModel.canRollback).toBe(false);
+    expect(inheritedModel.rollbackTarget).toBeNull();
   });
 
   it("prefers live subagent progress from supporting state", () => {
@@ -204,16 +229,20 @@ describe("buildThreadActivityInspector", () => {
       progress: "Starting",
       result: null,
     };
-    const model = buildThreadActivityInspector(activityFor(item), {
-      ...EMPTY_V2_ITEM_SUPPORT,
-      item,
-      subagent: {
-        origin: "provider_native",
-        status: "running",
-        progress: "Reading projection tests",
-        result: null,
-      } as never,
-    });
+    const model = buildThreadActivityInspector(
+      activityFor(item),
+      {
+        ...EMPTY_V2_ITEM_SUPPORT,
+        item,
+        subagent: {
+          origin: "provider_native",
+          status: "running",
+          progress: "Reading projection tests",
+          result: null,
+        } as never,
+      },
+      sourceThreadId,
+    );
 
     expect(model.fields).toContainEqual({
       label: "Delegated task",

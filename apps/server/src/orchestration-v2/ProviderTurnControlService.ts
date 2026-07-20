@@ -129,6 +129,28 @@ export const layer: Layer.Layer<
         }
         const session = yield* sessions.get(input.providerSessionId);
         if (Option.isNone(session)) {
+          // Interrupt/restart against a already-released session must not fail
+          // the durable effect (and retry 5x). The turn may still look running
+          // in projection until recovery/finalization; there is no live adapter
+          // to interrupt.
+          if (input.operation === "interrupt" || input.operation === "restart") {
+            yield* Effect.logWarning(
+              "Provider interrupt/restart found no live session; treating as already stopped",
+              {
+                threadId: input.threadId,
+                operation: input.operation,
+                providerSessionId: input.providerSessionId,
+                providerTurnId: input.providerTurnId,
+                providerTurnStatus: providerTurn.status,
+              },
+            );
+            return {
+              projection,
+              providerThread: interruptProviderThread,
+              providerTurn,
+              session: Option.none(),
+            };
+          }
           return yield* new ProviderTurnControlError({
             threadId: input.threadId,
             operation: input.operation,
@@ -147,6 +169,7 @@ export const layer: Layer.Layer<
           yield* loaded.session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
+            requestRuntimeRestart: true,
           });
         }).pipe(
           Effect.mapError((cause) =>
@@ -163,12 +186,27 @@ export const layer: Layer.Layer<
       interruptAndAwaitTerminal: (input) =>
         Effect.gen(function* () {
           const loaded = yield* load({ ...input, operation: "restart" });
-          if (Option.isSome(loaded.session)) {
-            yield* loaded.session.value.interruptTurn({
-              providerThread: loaded.providerThread,
-              providerTurnId: loaded.providerTurn.id,
-            });
+          if (Option.isNone(loaded.session)) {
+            // No live adapter: nothing can emit a terminal provider-turn update
+            // from interrupt. Do not poll for projection terminalization or the
+            // restart effect stalls; let detach/start proceed.
+            if (loaded.providerTurn.status === "running") {
+              yield* Effect.logWarning(
+                "Provider restart interrupt skipped; no live session for a still-projected running turn",
+                {
+                  threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
+                  providerTurnId: input.providerTurnId,
+                },
+              );
+            }
+            return;
           }
+
+          yield* loaded.session.value.interruptTurn({
+            providerThread: loaded.providerThread,
+            providerTurnId: loaded.providerTurn.id,
+          });
 
           for (let remaining = 1_000; remaining > 0; remaining -= 1) {
             const projection = yield* projections.getThreadProjection(input.threadId);
