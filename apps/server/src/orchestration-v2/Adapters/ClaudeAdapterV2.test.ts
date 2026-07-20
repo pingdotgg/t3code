@@ -246,6 +246,21 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       installPermissionCallback: true,
     });
   });
+
+  it("installs the permission callback for approval-required plan mode", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "plan",
+      installPermissionCallback: true,
+    });
+  });
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
