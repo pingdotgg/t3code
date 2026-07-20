@@ -2,7 +2,11 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { ThreadId } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { sortThreads } from "./lib/threadSort";
-import { resolveProjectStatusIndicator, type ThreadStatusPill } from "./components/Sidebar.logic";
+import {
+  isActiveThreadStatus,
+  resolveProjectStatusIndicator,
+  type ThreadStatusPill,
+} from "./components/Sidebar.logic";
 import type { AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
 
@@ -95,7 +99,8 @@ interface ThreadTreeNode {
 export interface BuildSidebarThreadRowsInput {
   threads: readonly SidebarThreadSummary[];
   pinnedThreadKeys: readonly string[];
-  collapsedThreadKeys: ReadonlySet<string>;
+  activeThreadKey?: string | undefined;
+  expandedOverrideByThreadKey: ReadonlyMap<string, boolean>;
   sortOrder: SidebarThreadSortOrder;
   resolveThreadStatus: (thread: SidebarThreadSummary) => ThreadStatusPill | null;
 }
@@ -219,14 +224,29 @@ function resolveRollups(nodes: readonly ThreadTreeNode[]): void {
 
 function flattenRows(input: {
   nodes: readonly ThreadTreeNode[];
-  collapsedThreadKeys: ReadonlySet<string>;
+  activeThreadKey?: string | undefined;
+  expandedOverrideByThreadKey: ReadonlyMap<string, boolean>;
   output: SidebarThreadRowView[];
   depth?: number;
-}): void {
+}): boolean {
   const depth = input.depth ?? 0;
+  let containsActiveThread = false;
   for (const node of input.nodes) {
     const hasChildren = node.children.length > 0;
-    const isExpanded = hasChildren && !input.collapsedThreadKeys.has(node.threadKey);
+    const childRows: SidebarThreadRowView[] = [];
+    const containsActiveDescendant = hasChildren
+      ? flattenRows({
+          nodes: node.children,
+          activeThreadKey: input.activeThreadKey,
+          expandedOverrideByThreadKey: input.expandedOverrideByThreadKey,
+          output: childRows,
+          depth: depth + 1,
+        })
+      : false;
+    const override = input.expandedOverrideByThreadKey.get(node.threadKey);
+    const isExpanded =
+      hasChildren &&
+      (override ?? (containsActiveDescendant || isActiveThreadStatus(node.rolledUpStatus)));
     input.output.push({
       thread: node.thread,
       threadKey: node.threadKey,
@@ -237,14 +257,11 @@ function flattenRows(input: {
       rolledUpStatus: node.rolledUpStatus,
     });
     if (isExpanded) {
-      flattenRows({
-        nodes: node.children,
-        collapsedThreadKeys: input.collapsedThreadKeys,
-        output: input.output,
-        depth: depth + 1,
-      });
+      input.output.push(...childRows);
     }
+    containsActiveThread ||= node.threadKey === input.activeThreadKey || containsActiveDescendant;
   }
+  return containsActiveThread;
 }
 
 export function buildSidebarThreadRows(
@@ -254,7 +271,12 @@ export function buildSidebarThreadRows(
   resolveRollups(roots);
 
   const rowViews: SidebarThreadRowView[] = [];
-  flattenRows({ nodes: roots, collapsedThreadKeys: input.collapsedThreadKeys, output: rowViews });
+  flattenRows({
+    nodes: roots,
+    activeThreadKey: input.activeThreadKey,
+    expandedOverrideByThreadKey: input.expandedOverrideByThreadKey,
+    output: rowViews,
+  });
 
   const statusByThreadKey = new Map<string, ThreadStatusPill | null>();
   for (const node of nodeById.values()) {
