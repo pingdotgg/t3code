@@ -28,6 +28,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
 import {
   formatArchivedThreadRelativeTime,
+  archivedThreadTimestampValue,
   nextArchivedThreadSortState,
   type ArchivedThreadGroup,
   type ArchivedThreadSortField,
@@ -592,7 +593,7 @@ function ArchivedThreadRow(props: {
   const iconColor = useThemeColor("--color-icon-subtle");
   const separatorColor = useThemeColor("--color-separator");
   const archivedTimestamp = formatArchivedThreadRelativeTime(
-    props.thread.archivedAt ?? props.thread.createdAt,
+    archivedThreadTimestampValue(props.thread, "archivedAt"),
   );
   const createdTimestamp = formatArchivedThreadRelativeTime(props.thread.createdAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>

@@ -31,6 +31,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   archivedProjectBulkScopeLabel,
+  archivedProjectBulkFailureDescription,
+  archivedThreadTimestampValue,
   type ArchivedProjectBulkFailure,
   type ArchivedProjectBulkScope,
   type ArchivedProjectBulkThread,
@@ -218,35 +220,13 @@ export function ArchivedThreadsPanel() {
 
   const showArchivedBulkActionFailure = useCallback(
     (title: string, failures: ReadonlyArray<ArchivedProjectBulkFailure>, totalCount: number) => {
-      const visibleFailures = failures.filter((failure) => !isAtomCommandInterrupted(failure));
-      if (visibleFailures.length === 0) return;
-      const failureMessages = [
-        ...new Set(
-          visibleFailures.map((failure) => {
-            const error = squashAtomCommandFailure(failure);
-            return error instanceof Error ? error.message : "An error occurred.";
-          }),
-        ),
-      ];
-      const shownFailureMessages = failureMessages.slice(0, 3);
-      const interruptedCount = failures.length - visibleFailures.length;
-      const successCount = totalCount - failures.length;
+      const description = archivedProjectBulkFailureDescription(failures, totalCount);
+      if (!description) return;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title,
-          description: [
-            `${successCount} succeeded, ${visibleFailures.length} failed${
-              interruptedCount > 0 ? `, ${interruptedCount} interrupted` : ""
-            }.`,
-            visibleFailures.length === 1
-              ? (shownFailureMessages[0] ?? "An error occurred.")
-              : `Failures: ${shownFailureMessages.join("; ")}${
-                  failureMessages.length > shownFailureMessages.length
-                    ? `; ${failureMessages.length - shownFailureMessages.length} more`
-                    : ""
-                }`,
-          ].join(" "),
+          description,
         }),
       );
     },
@@ -639,7 +619,9 @@ export function ArchivedThreadsPanel() {
                           {thread.title}
                         </div>
                         <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
-                          {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                          {formatRelativeTimeLabel(
+                            archivedThreadTimestampValue(thread, "archivedAt"),
+                          )}
                         </div>
                         <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
                           {formatRelativeTimeLabel(thread.createdAt)}

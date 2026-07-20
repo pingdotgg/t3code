@@ -10,7 +10,11 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
@@ -196,14 +200,53 @@ export function archivedProjectBulkScopeLabel(scope: ArchivedProjectBulkScope): 
   return scope === "matching" ? "matching archived conversations" : "all archived conversations";
 }
 
+export function archivedThreadTimestampValue(
+  thread: { readonly archivedAt: string | null; readonly createdAt: string },
+  field: ArchivedThreadSortField,
+): string {
+  if (field === "createdAt" || thread.archivedAt === null) return thread.createdAt;
+  return Number.isNaN(Date.parse(thread.archivedAt)) ? thread.createdAt : thread.archivedAt;
+}
+
 function archivedThreadSortTimestamp(
   thread: { readonly archivedAt: string | null; readonly createdAt: string },
   field: ArchivedThreadSortField,
 ): number {
-  const timestamp = Date.parse(
-    field === "archivedAt" ? (thread.archivedAt ?? thread.createdAt) : thread.createdAt,
-  );
+  const timestamp = Date.parse(archivedThreadTimestampValue(thread, field));
   return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+export function archivedProjectBulkFailureDescription(
+  failures: ReadonlyArray<ArchivedProjectBulkFailure>,
+  totalCount: number,
+): string | null {
+  if (failures.length === 0) return null;
+  const visibleFailures = failures.filter((failure) => !isAtomCommandInterrupted(failure));
+  const interruptedCount = failures.length - visibleFailures.length;
+  const successCount = totalCount - failures.length;
+  const outcome = `${successCount} succeeded, ${visibleFailures.length} failed${
+    interruptedCount > 0 ? `, ${interruptedCount} interrupted` : ""
+  }.`;
+  if (visibleFailures.length === 0) return outcome;
+
+  const failureMessages = [
+    ...new Set(
+      visibleFailures.map((failure) => {
+        const error = squashAtomCommandFailure(failure);
+        return error instanceof Error ? error.message : "An error occurred.";
+      }),
+    ),
+  ];
+  const shownFailureMessages = failureMessages.slice(0, 3);
+  const details =
+    visibleFailures.length === 1
+      ? (shownFailureMessages[0] ?? "An error occurred.")
+      : `Failures: ${shownFailureMessages.join("; ")}${
+          failureMessages.length > shownFailureMessages.length
+            ? `; ${failureMessages.length - shownFailureMessages.length} more`
+            : ""
+        }`;
+  return `${outcome} ${details}`;
 }
 
 export function compareArchivedThreads<
@@ -249,6 +292,7 @@ export function buildArchivedThreadGroups(input: {
     }
 
     for (const thread of snapshot.threads) {
+      if (thread.archivedAt === null) continue;
       const normalizedTitle = normalizeSearchQuery(thread.title);
       const searchScore = archivedThreadSearchScore({
         normalizedTitle,

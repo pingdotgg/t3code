@@ -16,7 +16,9 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  archivedProjectBulkFailureDescription,
   archivedThreadSearchScore,
+  archivedThreadTimestampValue,
   buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
@@ -184,6 +186,62 @@ describe("buildArchivedThreadGroups", () => {
       "thread-phrase",
       "thread-partial",
     ]);
+  });
+
+  it("ignores active threads returned in archive snapshots", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const activeThread = makeThread({
+      archivedAt: null,
+      id: ThreadId.make("thread-active"),
+      projectId: project.id,
+      title: "Active thread",
+    });
+    const search = parseArchivedThreadSearchInput("");
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([project], [activeThread])],
+      normalizedSearchQuery: search.normalizedQuery,
+      searchTokens: search.tokens,
+      isSearching: search.isSearching,
+      sort: { field: "archivedAt", direction: "desc" },
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it("falls back to created time when an archived timestamp is invalid", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const invalidArchivedAt = makeThread({
+      archivedAt: "not-a-timestamp",
+      createdAt: "2026-06-05T00:00:00.000Z",
+      id: ThreadId.make("thread-invalid-archive"),
+      projectId: project.id,
+      title: "Invalid archived time",
+    });
+    const validArchivedAt = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-valid-archive"),
+      projectId: project.id,
+      title: "Valid archived time",
+    });
+    const search = parseArchivedThreadSearchInput("");
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([project], [validArchivedAt, invalidArchivedAt])],
+      normalizedSearchQuery: search.normalizedQuery,
+      searchTokens: search.tokens,
+      isSearching: search.isSearching,
+      sort: { field: "archivedAt", direction: "desc" },
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-invalid-archive",
+      "thread-valid-archive",
+    ]);
+    expect(archivedThreadTimestampValue(invalidArchivedAt, "archivedAt")).toBe(
+      invalidArchivedAt.createdAt,
+    );
   });
 
   it("uses the latest duplicate project metadata and ignores threads without projects", () => {
@@ -372,6 +430,14 @@ describe("runArchivedProjectThreadActions", () => {
     expect(new Set(attemptedThreadIds)).toEqual(
       new Set(["thread-0", "thread-1", "thread-2", "thread-3"]),
     );
+  });
+});
+
+describe("archivedProjectBulkFailureDescription", () => {
+  it("reports interrupted-only partial outcomes", () => {
+    expect(
+      archivedProjectBulkFailureDescription([AsyncResult.failure(Cause.interrupt(1))], 2),
+    ).toBe("1 succeeded, 0 failed, 1 interrupted.");
   });
 });
 

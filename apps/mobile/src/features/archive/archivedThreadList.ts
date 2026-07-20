@@ -10,7 +10,6 @@ import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRan
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
-import { scopedProjectKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 
 const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
@@ -43,13 +42,23 @@ export interface ArchivedThreadActionSummary {
   readonly failed: number;
 }
 
+function archivedProjectGroupKey(environmentId: EnvironmentId, projectId: string): string {
+  return JSON.stringify([environmentId, projectId]);
+}
+
+export function archivedThreadTimestampValue(
+  thread: Pick<EnvironmentThreadShell, "archivedAt" | "createdAt">,
+  field: ArchivedThreadSortField,
+): string {
+  if (field === "createdAt" || thread.archivedAt === null) return thread.createdAt;
+  return Number.isNaN(Date.parse(thread.archivedAt)) ? thread.createdAt : thread.archivedAt;
+}
+
 function archivedThreadTimestamp(
   thread: Pick<EnvironmentThreadShell, "archivedAt" | "createdAt">,
   field: ArchivedThreadSortField,
 ): number {
-  const timestamp = Date.parse(
-    field === "archivedAt" ? (thread.archivedAt ?? thread.createdAt) : thread.createdAt,
-  );
+  const timestamp = Date.parse(archivedThreadTimestampValue(thread, field));
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
@@ -170,7 +179,7 @@ export function buildArchivedThreadGroups(input: {
         Number.POSITIVE_INFINITY,
       );
       groups.push({
-        key: scopedProjectKey(project.environmentId, project.id),
+        key: archivedProjectGroupKey(project.environmentId, project.id),
         project,
         threads: projectThreads
           .sort((left, right) =>
@@ -196,10 +205,14 @@ export function buildArchivedThreadGroups(input: {
   return Arr.sort(
     groups,
     Order.mapInput(
-      Order.Struct({ timestamp: Order.flip(Order.Number), title: Order.String, key: Order.String }),
+      Order.Struct({
+        timestamp: input.sort.direction === "asc" ? Order.Number : Order.flip(Order.Number),
+        title: Order.String,
+        key: Order.String,
+      }),
       (group: ArchivedThreadGroup) => ({
         timestamp: Math.max(
-          ...group.threads.map((thread) => archivedThreadTimestamp(thread, "archivedAt")),
+          ...group.threads.map((thread) => archivedThreadTimestamp(thread, input.sort.field)),
         ),
         title: group.project.title,
         key: group.key,

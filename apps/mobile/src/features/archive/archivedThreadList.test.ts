@@ -4,6 +4,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  archivedThreadTimestampValue,
   buildArchivedThreadGroups,
   formatArchivedThreadRelativeTime,
   nextArchivedThreadSortState,
@@ -130,6 +131,62 @@ describe("buildArchivedThreadGroups", () => {
     ]);
   });
 
+  it("orders project sections by the selected field and direction", () => {
+    const olderProject = makeProject({ id: ProjectId.make("project-older"), title: "Older" });
+    const newerProject = makeProject({ id: ProjectId.make("project-newer"), title: "Newer" });
+    const olderCreated = makeThread({
+      archivedAt: "2026-06-02T00:00:00.000Z",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      id: ThreadId.make("thread-older-created"),
+      projectId: olderProject.id,
+      title: "Older created",
+    });
+    const newerCreated = makeThread({
+      archivedAt: "2026-06-04T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-newer-created"),
+      projectId: newerProject.id,
+      title: "Newer created",
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([newerProject, olderProject], [newerCreated, olderCreated])],
+      sort: { field: "createdAt", direction: "asc" },
+    });
+
+    expect(result.map((group) => group.project.id)).toEqual(["project-older", "project-newer"]);
+  });
+
+  it("falls back to created time when an archived timestamp is invalid", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const invalidArchivedAt = makeThread({
+      archivedAt: "not-a-timestamp",
+      createdAt: "2026-06-05T00:00:00.000Z",
+      id: ThreadId.make("thread-invalid-archive"),
+      projectId: project.id,
+      title: "Invalid archived time",
+    });
+    const validArchivedAt = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-valid-archive"),
+      projectId: project.id,
+      title: "Valid archived time",
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([project], [validArchivedAt, invalidArchivedAt])],
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-invalid-archive",
+      "thread-valid-archive",
+    ]);
+    expect(archivedThreadTimestampValue(invalidArchivedAt, "archivedAt")).toBe(
+      invalidArchivedAt.createdAt,
+    );
+  });
+
   it("ranks phrase and all-token title matches ahead of partial token matches", () => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const partial = makeThread({
@@ -198,6 +255,35 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(buildGroups({ snapshots: [makeSnapshot([project], [active])] })).toEqual([]);
+  });
+
+  it("keeps archive group keys distinct when scoped ids contain colons", () => {
+    const firstEnvironmentId = EnvironmentId.make("environment:one");
+    const secondEnvironmentId = EnvironmentId.make("environment");
+    const firstProject = makeProject({ id: ProjectId.make("project"), title: "First" });
+    const secondProject = makeProject({ id: ProjectId.make("one:project"), title: "Second" });
+    const firstThread = makeThread({
+      id: ThreadId.make("thread-first"),
+      projectId: firstProject.id,
+      title: "First thread",
+    });
+    const secondThread = makeThread({
+      id: ThreadId.make("thread-second"),
+      projectId: secondProject.id,
+      title: "Second thread",
+    });
+
+    const result = buildGroups({
+      snapshots: [
+        makeSnapshot([firstProject], [firstThread], firstEnvironmentId),
+        makeSnapshot([secondProject], [secondThread], secondEnvironmentId),
+      ],
+    });
+
+    expect(result.map((group) => group.key)).toEqual([
+      '["environment:one","project"]',
+      '["environment","one:project"]',
+    ]);
   });
 });
 
