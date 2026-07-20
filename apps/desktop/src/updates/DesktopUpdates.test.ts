@@ -38,6 +38,7 @@ const flushCallbacks = Effect.yieldNow;
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let allowDowngrade = false;
+  let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
@@ -72,6 +73,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     setAllowDowngrade: (value) =>
       Effect.sync(() => {
         allowDowngrade = value;
+      }),
+    setFullChangelog: (value) =>
+      Effect.sync(() => {
+        fullChangelog = value;
       }),
     setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
     checkForUpdates: Effect.sync(() => {
@@ -153,6 +158,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
         get: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
         load: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+        setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
         setServerExposureMode: () => Effect.die("unexpected server exposure update"),
         setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
         setUpdateChannel: () => Effect.fail(setUpdateChannelError),
@@ -186,6 +192,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     layer,
     checkCount: () => checkCount,
     feedUrls: () => feedUrls,
+    fullChangelog: () => fullChangelog,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
@@ -283,6 +290,49 @@ describe("DesktopUpdates", () => {
         assert.equal(state.availableVersion, "1.2.4");
         assert.isNotNull(state.checkedAt);
         assert.equal(harness.sentStates.at(-1)?.status, "available");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* updates.setChannel("nightly");
+        assert.equal(harness.fullChangelog(), true);
+
+        harness.emit("update-available", {
+          version: "1.2.4-nightly.20260709.766",
+          releaseNotes: [
+            {
+              version: "1.2.4-nightly.20260709.766",
+              note: `<h2>What's Changed</h2><ul><li>feat(client): persist offline environment data by <a>@juliusmarminge</a> in <a>#3795</a></li></ul><h2>Full Changelog</h2>`,
+            },
+            {
+              version: "1.2.4-nightly.20260709.765",
+              note: "- [codex] Upgrade Clerk stack by @juliusmarminge in #3821",
+            },
+          ],
+        });
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.deepEqual(state.releaseNotes, [
+          {
+            version: "1.2.4-nightly.20260709.766",
+            items: ["feat(client): persist offline environment data by @juliusmarminge in #3795"],
+          },
+          {
+            version: "1.2.4-nightly.20260709.765",
+            items: ["[codex] Upgrade Clerk stack by @juliusmarminge in #3821"],
+          },
+        ]);
+        assert.deepEqual(harness.sentStates.at(-1)?.releaseNotes, state.releaseNotes);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
