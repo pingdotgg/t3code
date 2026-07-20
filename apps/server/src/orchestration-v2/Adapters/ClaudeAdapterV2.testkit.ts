@@ -338,9 +338,6 @@ function permissionRequestOptionsFromFrame(
     ...(options.description === undefined ? {} : { description: options.description }),
     toolUseID: options.toolUseID,
     ...(options.agentID === undefined ? {} : { agentID: options.agentID }),
-    // Replay transcripts predate the SDK requiring requestId on canUseTool
-    // options; the adapter only reads toolUseID, so a derived id is safe.
-    requestId: options.toolUseID,
   };
 }
 
