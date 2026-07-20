@@ -13,10 +13,6 @@ import { useEffect, useMemo, useRef } from "react";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentQuery } from "../state/query";
 
-export function invalidateProviderWorkspaceSkills(): void {
-  // Workspace skill requests are now owned by the environment query cache.
-}
-
 export function useProviderWorkspaceSkills(
   target: ProviderWorkspaceSkillsTarget,
 ): ProviderWorkspaceSkillsState {
@@ -42,12 +38,6 @@ export function useProviderWorkspaceSkills(
       : null,
   );
 
-  const previousFallbackSkillsRef = useRef(target.fallbackSkills);
-  useEffect(() => {
-    if (previousFallbackSkillsRef.current === target.fallbackSkills) return;
-    previousFallbackSkillsRef.current = target.fallbackSkills;
-    if (key !== null) query.refresh();
-  }, [key, query, target.fallbackSkills]);
   const previousWorkspaceSkillsRef = useRef<ProviderWorkspaceSkillsSnapshot | null>(null);
   const querySkills = query.data?.skills ?? null;
   useEffect(() => {

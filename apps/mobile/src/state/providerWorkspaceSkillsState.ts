@@ -38,12 +38,6 @@ export function useProviderWorkspaceSkills(
       : null,
   );
 
-  const previousFallbackSkillsRef = useRef(target.fallbackSkills);
-  useEffect(() => {
-    if (previousFallbackSkillsRef.current === target.fallbackSkills) return;
-    previousFallbackSkillsRef.current = target.fallbackSkills;
-    if (key !== null) query.refresh();
-  }, [key, query, target.fallbackSkills]);
   const previousWorkspaceSkillsRef = useRef<ProviderWorkspaceSkillsSnapshot | null>(null);
   const querySkills = query.data?.skills ?? null;
   useEffect(() => {
