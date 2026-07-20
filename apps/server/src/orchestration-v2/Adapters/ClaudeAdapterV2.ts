@@ -693,8 +693,28 @@ export function makeClaudeQueryOptions(input: {
   return input.cwd === null ? options : { ...options, cwd: input.cwd };
 }
 
+export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
+
+// Must stay in sync with the Tool.Readonly annotations on OrchestratorToolkit;
+// ClaudeAdapterV2.test.ts cross-checks this list against the toolkit.
+export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
+  "mcp__t3-code__orchestrator_capabilities",
+  "mcp__t3-code__task_status",
+  "mcp__t3-code__list_scheduled_tasks",
+  "mcp__t3-code__t3_thread_list",
+  "mcp__t3-code__t3_thread_read",
+  "mcp__t3-code__t3_thread_wait",
+];
+
+// The SDK's `allowedTools` only pre-approves tool calls; availability is the
+// separate `tools` option. Attaching the t3-code MCP server therefore always
+// pre-approves its tools (headless modes like `dontAsk` deny anything that is
+// not pre-approved), but read-only sandboxes pre-approve only the annotated
+// read-only orchestrator tools so a read-only session cannot silently spawn
+// threads or scheduled tasks.
 export function claudeMcpQueryOverrides(input: {
   readonly threadId: ThreadId;
+  readonly readOnlySandbox: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
@@ -704,8 +724,11 @@ export function claudeMcpQueryOverrides(input: {
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
+  const mcpAllowedTools = input.readOnlySandbox
+    ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
+    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), "mcp__t3-code__*"])),
+    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
       "t3-code": {
         type: "http",
@@ -1189,6 +1212,19 @@ function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
     allowedTools: policy.allowedTools,
     allowDangerouslySkipPermissions: policy.allowDangerouslySkipPermissions,
     installPermissionCallback: policy.installPermissionCallback,
+  });
+}
+
+// Live-query reuse must key on the effective allowlist (including the
+// MCP-derived pre-approvals), not just the runtime policy: policies that
+// share a policy key can still differ in MCP pre-approvals.
+export function claudeEffectiveQueryPolicyKey(
+  queryPolicy: ClaudeRuntimeQueryPolicy,
+  mcpOverrides: { readonly allowedTools?: ReadonlyArray<string> },
+): string {
+  return claudeRuntimeQueryPolicyKey({
+    ...queryPolicy,
+    ...(mcpOverrides.allowedTools === undefined ? {} : { allowedTools: mcpOverrides.allowedTools }),
   });
 }
 
@@ -3344,11 +3380,13 @@ export function makeClaudeAdapterV2(
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
           const mcpOverrides = claudeMcpQueryOverrides({
             threadId: turnInput.threadId,
+            readOnlySandbox:
+              sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
             ...(queryPolicy.allowedTools === undefined
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeRuntimeQueryPolicyKey(queryPolicy);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
