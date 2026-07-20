@@ -9,6 +9,7 @@ import { type ServerProviderSkill } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
+  $createRangeSelectionFromDom,
   $createRangeSelection,
   $getSelection,
   $setSelection,
@@ -23,10 +24,14 @@ import {
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
+  COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
+  BLUR_COMMAND,
+  FOCUS_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
   DecoratorNode,
@@ -63,7 +68,7 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
@@ -75,6 +80,7 @@ import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -182,7 +188,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "inline-flex align-middle leading-none";
+    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
     return dom;
   }
 
@@ -320,7 +326,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "inline-flex align-middle leading-none";
+    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
     return dom;
   }
 
@@ -391,7 +397,7 @@ class ComposerTerminalContextNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "inline-flex align-middle leading-none";
+    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
     return dom;
   }
 
@@ -1022,6 +1028,53 @@ function ComposerInlineTokenArrowPlugin() {
   return null;
 }
 
+function ComposerHomeEndKeyPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        if (!isMacPlatform(navigator.platform)) {
+          return false;
+        }
+        if (event.key !== "Home" && event.key !== "End") {
+          return false;
+        }
+        if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+          return false;
+        }
+
+        const rootElement = editor.getRootElement();
+        const selection = window.getSelection();
+        const anchorNode = selection?.anchorNode;
+        if (!rootElement || !selection || !anchorNode || !rootElement.contains(anchorNode)) {
+          return false;
+        }
+        if (selection.rangeCount === 0 || typeof selection.modify !== "function") {
+          return false;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        selection.modify(
+          event.shiftKey ? "extend" : "move",
+          event.key === "Home" ? "backward" : "forward",
+          "lineboundary",
+        );
+        editor.update(() => {
+          $setSelection($createRangeSelectionFromDom(selection, editor));
+        });
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function ComposerInlineTokenSelectionNormalizePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1113,6 +1166,95 @@ function ComposerInlineTokenBackspacePlugin() {
       COMMAND_PRIORITY_HIGH,
     );
   }, [editor, onRemoveTerminalContext]);
+
+  return null;
+}
+
+/**
+ * Chips render as non-editable decorators, so the browser never paints the
+ * native text selection over them; without help, a selection spanning chips
+ * is only visible in the slivers between them. Mirror the selection onto the
+ * chips with a data attribute the stylesheet turns into a highlight overlay.
+ */
+function ComposerChipSelectionPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    let selectedKeys = new Set<string>();
+    // Lexical keeps the range selection on blur without emitting an update,
+    // so focus is tracked separately; while blurred the native highlight is
+    // gone and the mirrored one has to go with it.
+    let hasFocus = editor.getRootElement() === document.activeElement;
+
+    const applyKeys = (nextKeys: Set<string>) => {
+      for (const key of selectedKeys) {
+        if (!nextKeys.has(key)) {
+          editor.getElementByKey(key)?.removeAttribute("data-composer-chip-selected");
+        }
+      }
+      for (const key of nextKeys) {
+        editor.getElementByKey(key)?.setAttribute("data-composer-chip-selected", "true");
+      }
+      selectedKeys = nextKeys;
+    };
+
+    const readSelectedKeys = () => {
+      const nextKeys = new Set<string>();
+      editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection) && !selection.isCollapsed()) {
+          for (const node of selection.getNodes()) {
+            if (node instanceof DecoratorNode) {
+              nextKeys.add(node.getKey());
+            }
+          }
+        }
+      });
+      return nextKeys;
+    };
+
+    const unregisterUpdate = editor.registerUpdateListener(() => {
+      applyKeys(hasFocus ? readSelectedKeys() : new Set());
+    });
+    const unregisterFocus = editor.registerCommand(
+      FOCUS_COMMAND,
+      () => {
+        hasFocus = true;
+        applyKeys(readSelectedKeys());
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    const unregisterBlur = editor.registerCommand(
+      BLUR_COMMAND,
+      () => {
+        hasFocus = false;
+        applyKeys(new Set());
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    return () => {
+      unregisterUpdate();
+      unregisterFocus();
+      unregisterBlur();
+    };
+  }, [editor]);
+
+  return null;
+}
+
+function ComposerInlineTokenPastePlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(
+    () =>
+      registerComposerInlineTokenPaste(editor, {
+        createMentionNode: $createComposerMentionNode,
+        getExpandedAbsoluteOffsetForPoint,
+      }),
+    [editor],
+  );
 
   return null;
 }
@@ -1631,9 +1773,12 @@ function ComposerPromptEditorInner({
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+        <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
+        <ComposerInlineTokenPastePlugin />
+        <ComposerChipSelectionPlugin />
         <HistoryPlugin />
       </div>
     </ComposerTerminalContextActionsContext>
