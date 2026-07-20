@@ -91,6 +91,61 @@ layer("ThreadColdStorage", (it) => {
     }),
   );
 
+  it.effect("re-archives hot rows after restored-bundle finalization fails", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-rearchive-stale-restored");
+
+      yield* insertArchivedThread(threadId, "Re-archive stale restore");
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-rearchive-stale-restored', ${threadId}, NULL, 'user',
+          'move cold after the next archive', '[]', 0,
+          '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+        )
+      `;
+
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      yield* sql`
+        UPDATE projection_threads
+        SET archived_at = NULL, updated_at = '2026-07-03T00:00:00.000Z'
+        WHERE thread_id = ${threadId}
+      `;
+      // Simulate finishRestoreTree failing after the unarchive transaction,
+      // then the user archiving the same thread again.
+      yield* sql`
+        UPDATE projection_threads
+        SET archived_at = '2026-07-04T00:00:00.000Z',
+            updated_at = '2026-07-04T00:00:00.000Z'
+        WHERE thread_id = ${threadId}
+      `;
+
+      yield* storage.archiveThread(threadId);
+
+      const messages = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+      `;
+      const manifest = yield* sql<{
+        readonly status: string;
+        readonly archivedAt: string;
+      }>`
+        SELECT status, archived_at AS "archivedAt"
+        FROM thread_archive_manifests
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(messages, [{ count: 0 }]);
+      assert.deepStrictEqual(manifest, [
+        { status: "cold", archivedAt: "2026-07-04T00:00:00.000Z" },
+      ]);
+    }),
+  );
+
   it.effect("compresses conversation data, destroys logs, restores content, and hard-deletes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

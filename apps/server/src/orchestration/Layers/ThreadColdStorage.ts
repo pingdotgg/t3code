@@ -360,9 +360,20 @@ const make = Effect.gen(function* () {
       }
       return;
     }
-    if (source.status === "restored" && !allowRestored) return;
+    // A restored manifest reserves this archive epoch for an in-flight
+    // unarchive. A later archive has a new shell timestamp and may replace a
+    // reservation that finishRestoreTree failed to remove after commit.
+    if (
+      source.status === "restored" &&
+      !allowRestored &&
+      String(source.archived_at) === String(threadRows[0]?.archived_at)
+    ) {
+      return;
+    }
     const rootThreadId = String(source.root_thread_id ?? threadId);
-    const archivedAt = String(source.archived_at ?? DateTime.formatIso(yield* DateTime.now));
+    const archivedAt = String(
+      threadRows[0]?.archived_at ?? source.archived_at ?? DateTime.formatIso(yield* DateTime.now),
+    );
 
     yield* sql.unsafe(
       `INSERT INTO thread_archive_manifests
