@@ -55,6 +55,9 @@ const FAILING_CHECK_CONCLUSIONS = new Set([
   "TIMED_OUT",
   "ACTION_REQUIRED",
   "STARTUP_FAILURE",
+  // GitHub only treats SUCCESS, SKIPPED, and NEUTRAL as satisfied; a STALE
+  // required check still blocks merging.
+  "STALE",
 ]);
 const PENDING_CHECK_STATUSES = new Set([
   "QUEUED",

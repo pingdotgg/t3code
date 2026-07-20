@@ -950,6 +950,12 @@ export function syncThreadGroups(
   args: { liveThreadKeys: ReadonlySet<string>; liveProjectKeys: ReadonlySet<string> },
 ): UiState {
   const { liveThreadKeys, liveProjectKeys } = args;
+  // An entirely empty snapshot is indistinguishable from a client that has
+  // not finished bootstrapping; pruning against it would destroy all
+  // persisted folder state. Callers should also gate on readiness.
+  if (liveThreadKeys.size === 0 && liveProjectKeys.size === 0) {
+    return state;
+  }
   let changed = false;
   const nextGroups: Record<string, ThreadGroup> = {};
   for (const [id, group] of Object.entries(state.threadGroupsById)) {

@@ -540,6 +540,21 @@ describe("uiStateStore thread folders", () => {
     expect(next).toBe(state);
   });
 
+  it("syncThreadGroups ignores an entirely empty snapshot (bootstrap guard)", () => {
+    let state = createThreadGroup(makeUiState(), {
+      projectKey: P,
+      id: "g1",
+      name: "A",
+      threadKeys: ["t1"],
+    });
+    state = reorderThreads(state, P, ["t1", "t2"], ["t2"], "t1");
+    const next = syncThreadGroups(state, {
+      liveThreadKeys: new Set<string>(),
+      liveProjectKeys: new Set<string>(),
+    });
+    expect(next).toBe(state);
+  });
+
   it("syncThreadGroups prunes stale manual ungrouped order entries", () => {
     const state = reorderThreads(makeUiState(), P, ["t1", "t2", "t3"], ["t3"], "t1");
     const next = syncThreadGroups(state, {

@@ -4256,6 +4256,14 @@ export default function Sidebar() {
   // drives the cleanup: drop memberships for deleted threads and prune empty
   // folders whose project is gone.
   useEffect(() => {
+    // Projects and threads start as empty arrays while the shell snapshot
+    // bootstraps (and go empty again on disconnect). Treating that transient
+    // state as authoritative would wipe every persisted folder and manual
+    // order, and the persistence subscriber would write the loss to disk —
+    // so only GC against a snapshot that actually has content.
+    if (sidebarProjects.length === 0 || sidebarThreads.length === 0) {
+      return;
+    }
     const liveThreadKeys = new Set(
       sidebarThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),

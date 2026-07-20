@@ -129,6 +129,8 @@ describe("GitHubCli.layer", () => {
                 { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" },
                 { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE" },
                 { __typename: "StatusContext", state: "ERROR" },
+                // A stale required check still blocks merging on GitHub.
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "STALE" },
                 { __typename: "CheckRun", status: "IN_PROGRESS", conclusion: null },
               ],
             }),
@@ -139,7 +141,7 @@ describe("GitHubCli.layer", () => {
       const gh = yield* GitHubCli.GitHubCli;
       const result = yield* gh.getPullRequest({ cwd: "/repo", reference: "#42" });
 
-      assert.deepStrictEqual(result.checks, { state: "failing", failingCount: 2 });
+      assert.deepStrictEqual(result.checks, { state: "failing", failingCount: 3 });
     }).pipe(Effect.provide(layer)),
   );
 

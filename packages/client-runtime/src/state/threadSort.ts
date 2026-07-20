@@ -73,11 +73,10 @@ export function sortThreads<T extends { readonly id: string } & ThreadSortInput>
   threads: readonly T[],
   sortOrder: SidebarThreadSortOrder,
 ): T[] {
-  // Manual sort preserves the incoming order; the caller layers the
-  // user-defined order on top via `orderItemsByPreferredIds`.
-  if (sortOrder === "manual") {
-    return [...threads];
-  }
+  // Manual mode still sorts by recency here: the sidebar layers the
+  // user-defined order on top via `orderItemsByPreferredIds`, while callers
+  // that pick "latest" or render flat lists need a deterministic order
+  // rather than whatever the input array happened to contain.
   return Arr.sort(
     threads,
     Order.mapInput(
