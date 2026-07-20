@@ -1231,11 +1231,19 @@ function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
 // share a policy key can still differ in MCP pre-approvals.
 export function claudeEffectiveQueryPolicyKey(
   queryPolicy: ClaudeRuntimeQueryPolicy,
-  mcpOverrides: { readonly allowedTools?: ReadonlyArray<string> },
+  mcpOverrides: {
+    readonly allowedTools?: ReadonlyArray<string>;
+    readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  },
 ): string {
-  return claudeRuntimeQueryPolicyKey({
-    ...queryPolicy,
-    ...(mcpOverrides.allowedTools === undefined ? {} : { allowedTools: mcpOverrides.allowedTools }),
+  return JSON.stringify({
+    runtimePolicy: claudeRuntimeQueryPolicyKey({
+      ...queryPolicy,
+      ...(mcpOverrides.allowedTools === undefined
+        ? {}
+        : { allowedTools: mcpOverrides.allowedTools }),
+    }),
+    mcpServers: mcpOverrides.mcpServers,
   });
 }
 
