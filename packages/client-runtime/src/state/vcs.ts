@@ -182,6 +182,24 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
     }),
+    fetch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:fetch",
+      tag: WS_METHODS.vcsFetch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    push: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:push",
+      tag: WS_METHODS.vcsPush,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    sync: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:sync",
+      tag: WS_METHODS.vcsSync,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     refreshStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:refresh-status",
       tag: WS_METHODS.vcsRefreshStatus,

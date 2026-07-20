@@ -320,6 +320,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsFetch, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPush, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsSync, AuthOrchestrationOperateScope],
   [WS_METHODS.gitRunStackedAction, AuthOrchestrationOperateScope],
   [WS_METHODS.gitResolvePullRequest, AuthOrchestrationOperateScope],
   [WS_METHODS.gitPreparePullRequestThread, AuthOrchestrationOperateScope],
@@ -1764,6 +1767,47 @@ const makeWsRpcLayer = (
                   refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
               }),
             ),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.vcsFetch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsFetch,
+            gitWorkflow.fetchCurrentBranch(input.cwd).pipe(
+              Effect.matchCauseEffect({
+                onFailure: (cause) => Effect.failCause(cause),
+                onSuccess: (result) =>
+                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+              }),
+            ),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.vcsPush]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPush,
+            gitWorkflow.pushCurrentBranch(input.cwd).pipe(
+              Effect.matchCauseEffect({
+                onFailure: (cause) => Effect.failCause(cause),
+                onSuccess: (result) =>
+                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+              }),
+            ),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.vcsSync]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsSync,
+            gitWorkflow
+              .syncCurrentBranch(input.cwd, input.mode ? { mode: input.mode } : undefined)
+              .pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Effect.failCause(cause),
+                  onSuccess: (result) =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.ignore({ log: true }),
+                      Effect.as(result),
+                    ),
+                }),
+              ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>

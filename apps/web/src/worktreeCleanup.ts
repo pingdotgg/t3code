@@ -43,3 +43,21 @@ export function formatWorktreePathForDisplay(worktreePath: string): string {
   const lastPart = parts[parts.length - 1]?.trim() ?? "";
   return lastPart.length > 0 ? lastPart : trimmed;
 }
+
+/**
+ * Resolve the name to show for a worktree: the user-assigned label if one exists
+ * for this path, otherwise the path-derived display name. Labels are keyed by
+ * worktree PATH (not thread) so threads sharing a worktree show the same name.
+ *
+ * Use this everywhere a worktree name renders so the UI stays consistent.
+ */
+export function worktreeDisplayName(
+  worktreePath: string,
+  labelByPath: Readonly<Record<string, string>>,
+): string {
+  const trimmedLabel = labelByPath[worktreePath]?.trim();
+  if (trimmedLabel && trimmedLabel.length > 0) {
+    return trimmedLabel;
+  }
+  return formatWorktreePathForDisplay(worktreePath);
+}
