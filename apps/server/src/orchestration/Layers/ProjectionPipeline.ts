@@ -1379,6 +1379,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyPendingApprovalsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created": {
+          // Clear stale pending approvals when a soft-deleted thread id is
+          // reused. These rows are keyed by requestId (no thread-level delete),
+          // so drop each row the prior lifecycle left for this thread.
+          const staleApprovals = yield* projectionPendingApprovalRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(
+            staleApprovals,
+            (row) =>
+              projectionPendingApprovalRepository.deleteByRequestId({ requestId: row.requestId }),
+            { concurrency: 1 },
+          );
+          return;
+        }
+
         case "thread.activity-appended": {
           const requestId =
             extractActivityRequestId(event.payload.activity.payload) ??

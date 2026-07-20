@@ -2747,10 +2747,13 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-recr
             threadId,
             activity: {
               id: EventId.make("activity-recreate"),
-              tone: "info",
-              kind: "setup-script.requested",
-              summary: "Starting setup script",
-              payload: {},
+              tone: "approval",
+              kind: "approval.requested",
+              summary: "Command approval requested",
+              payload: {
+                requestId: "approval-recreate-1",
+                requestKind: "command",
+              },
               turnId: null,
               createdAt: now,
             },
@@ -2764,6 +2767,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-recr
 
         assert.equal(yield* countRows("projection_thread_messages"), 1);
         assert.equal(yield* countRows("projection_thread_activities"), 1);
+        assert.equal(yield* countRows("projection_pending_approvals"), 1);
 
         // Soft-delete (bootstrap cleanup), then recreate with the same id.
         yield* appendAndProject({
@@ -2787,6 +2791,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-recr
         // The re-created thread must not inherit stale child rows.
         assert.equal(yield* countRows("projection_thread_messages"), 0);
         assert.equal(yield* countRows("projection_thread_activities"), 0);
+        assert.equal(yield* countRows("projection_pending_approvals"), 0);
 
         const threadRows = yield* sql<{
           readonly threadId: string;
