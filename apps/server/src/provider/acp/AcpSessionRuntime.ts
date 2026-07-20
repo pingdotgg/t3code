@@ -112,61 +112,186 @@ export interface AcpSessionRuntimeStartResult {
   readonly modelConfigId: string | undefined;
 }
 
-export interface AcpSessionRuntimeShape {
-  readonly handleRequestPermission: EffectAcpClient.AcpClientShape["handleRequestPermission"];
-  readonly handleElicitation: EffectAcpClient.AcpClientShape["handleElicitation"];
-  readonly handleReadTextFile: EffectAcpClient.AcpClientShape["handleReadTextFile"];
-  readonly handleWriteTextFile: EffectAcpClient.AcpClientShape["handleWriteTextFile"];
-  readonly handleCreateTerminal: EffectAcpClient.AcpClientShape["handleCreateTerminal"];
-  readonly handleTerminalOutput: EffectAcpClient.AcpClientShape["handleTerminalOutput"];
-  readonly handleTerminalWaitForExit: EffectAcpClient.AcpClientShape["handleTerminalWaitForExit"];
-  readonly handleTerminalKill: EffectAcpClient.AcpClientShape["handleTerminalKill"];
-  readonly handleTerminalRelease: EffectAcpClient.AcpClientShape["handleTerminalRelease"];
-  readonly handleSessionUpdate: EffectAcpClient.AcpClientShape["handleSessionUpdate"];
-  readonly handleElicitationComplete: EffectAcpClient.AcpClientShape["handleElicitationComplete"];
-  readonly handleUnknownExtRequest: EffectAcpClient.AcpClientShape["handleUnknownExtRequest"];
-  readonly handleUnknownExtNotification: EffectAcpClient.AcpClientShape["handleUnknownExtNotification"];
-  readonly handleExtRequest: EffectAcpClient.AcpClientShape["handleExtRequest"];
-  readonly handleExtNotification: EffectAcpClient.AcpClientShape["handleExtNotification"];
-  readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
-  readonly getEvents: () => Stream.Stream<AcpParsedSessionEvent, never>;
-  readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
-  readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
-  readonly loadSession: (
-    sessionId: string,
-  ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
-  readonly resumeSession: (
-    sessionId: string,
-  ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
-  readonly forkSession: (
-    sessionId: string,
-  ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
-  readonly listSessions: (
-    cursor?: string,
-  ) => Effect.Effect<EffectAcpSchema.ListSessionsResponse, EffectAcpErrors.AcpError>;
-  readonly closeSession: (
-    sessionId?: string,
-  ) => Effect.Effect<EffectAcpSchema.CloseSessionResponse, EffectAcpErrors.AcpError>;
-  readonly prompt: (
-    payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
-  ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
-  readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
-  readonly setMode: (
-    modeId: string,
-  ) => Effect.Effect<EffectAcpSchema.SetSessionModeResponse, EffectAcpErrors.AcpError>;
-  readonly setConfigOption: (
-    configId: string,
-    value: string | boolean,
-  ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
-  readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-  readonly request: (
-    method: string,
-    payload: unknown,
-  ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
-  readonly notify: (
-    method: string,
-    payload: unknown,
-  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+export interface AcpSessionActivationOptions {
+  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+}
+
+export class AcpSessionRuntime extends Context.Service<
+  AcpSessionRuntime,
+  {
+    /**
+     * Registers a handler for `session/request_permission`.
+     * @see https://agentclientprotocol.com/protocol/schema#session/request_permission
+     */
+    readonly handleRequestPermission: EffectAcpClient.AcpClient["Service"]["handleRequestPermission"];
+    /**
+     * Registers a handler for `session/elicitation`.
+     * @see https://agentclientprotocol.com/protocol/schema#session/elicitation
+     */
+    readonly handleElicitation: EffectAcpClient.AcpClient["Service"]["handleElicitation"];
+    /**
+     * Registers a handler for `fs/read_text_file`.
+     * @see https://agentclientprotocol.com/protocol/schema#fs/read_text_file
+     */
+    readonly handleReadTextFile: EffectAcpClient.AcpClient["Service"]["handleReadTextFile"];
+    /**
+     * Registers a handler for `fs/write_text_file`.
+     * @see https://agentclientprotocol.com/protocol/schema#fs/write_text_file
+     */
+    readonly handleWriteTextFile: EffectAcpClient.AcpClient["Service"]["handleWriteTextFile"];
+    /**
+     * Registers a handler for `terminal/create`.
+     * @see https://agentclientprotocol.com/protocol/schema#terminal/create
+     */
+    readonly handleCreateTerminal: EffectAcpClient.AcpClient["Service"]["handleCreateTerminal"];
+    /**
+     * Registers a handler for `terminal/output`.
+     * @see https://agentclientprotocol.com/protocol/schema#terminal/output
+     */
+    readonly handleTerminalOutput: EffectAcpClient.AcpClient["Service"]["handleTerminalOutput"];
+    /**
+     * Registers a handler for `terminal/wait_for_exit`.
+     * @see https://agentclientprotocol.com/protocol/schema#terminal/wait_for_exit
+     */
+    readonly handleTerminalWaitForExit: EffectAcpClient.AcpClient["Service"]["handleTerminalWaitForExit"];
+    /**
+     * Registers a handler for `terminal/kill`.
+     * @see https://agentclientprotocol.com/protocol/schema#terminal/kill
+     */
+    readonly handleTerminalKill: EffectAcpClient.AcpClient["Service"]["handleTerminalKill"];
+    /**
+     * Registers a handler for `terminal/release`.
+     * @see https://agentclientprotocol.com/protocol/schema#terminal/release
+     */
+    readonly handleTerminalRelease: EffectAcpClient.AcpClient["Service"]["handleTerminalRelease"];
+    /**
+     * Registers a handler for `session/update`.
+     * @see https://agentclientprotocol.com/protocol/schema#session/update
+     */
+    readonly handleSessionUpdate: EffectAcpClient.AcpClient["Service"]["handleSessionUpdate"];
+    /**
+     * Registers a handler for `session/elicitation/complete`.
+     * @see https://agentclientprotocol.com/protocol/schema#session/elicitation/complete
+     */
+    readonly handleElicitationComplete: EffectAcpClient.AcpClient["Service"]["handleElicitationComplete"];
+    /**
+     * Registers a fallback extension request handler.
+     * @see https://agentclientprotocol.com/protocol/extensibility
+     */
+    readonly handleUnknownExtRequest: EffectAcpClient.AcpClient["Service"]["handleUnknownExtRequest"];
+    /**
+     * Registers a fallback extension notification handler.
+     * @see https://agentclientprotocol.com/protocol/extensibility
+     */
+    readonly handleUnknownExtNotification: EffectAcpClient.AcpClient["Service"]["handleUnknownExtNotification"];
+    /**
+     * Registers a typed extension request handler.
+     * @see https://agentclientprotocol.com/protocol/extensibility
+     */
+    readonly handleExtRequest: EffectAcpClient.AcpClient["Service"]["handleExtRequest"];
+    /**
+     * Registers a typed extension notification handler.
+     * @see https://agentclientprotocol.com/protocol/extensibility
+     */
+    readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
+    /**
+     * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
+     * Concurrent calls share the same in-flight startup and a failed startup may be retried.
+     */
+    readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+    /** Stream of parsed ACP session events emitted after startup. */
+    readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
+    /** Waits until the current event consumer has processed every queued event. */
+    readonly drainEvents: Effect.Effect<void>;
+    /** Latest mode state observed from session setup and `session/update` notifications. */
+    readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
+    /** Latest configuration options observed from session setup and configuration writes. */
+    readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    readonly loadSession: (
+      sessionId: string,
+      options?: AcpSessionActivationOptions,
+    ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+    readonly resumeSession: (
+      sessionId: string,
+      options?: AcpSessionActivationOptions,
+    ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+    readonly forkSession: (
+      sessionId: string,
+      options?: AcpSessionActivationOptions,
+    ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+    readonly listSessions: (
+      cursor?: string,
+    ) => Effect.Effect<EffectAcpSchema.ListSessionsResponse, EffectAcpErrors.AcpError>;
+    readonly closeSession: (
+      sessionId?: string,
+    ) => Effect.Effect<EffectAcpSchema.CloseSessionResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Sends a prompt turn to the active session.
+     * @see https://agentclientprotocol.com/protocol/schema#session/prompt
+     */
+    readonly prompt: (
+      payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
+    ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Sends a real ACP `session/cancel` notification for the active session.
+     * @see https://agentclientprotocol.com/protocol/schema#session/cancel
+     */
+    readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /**
+     * Selects the active mode through the negotiated `mode` configuration option.
+     * This is a no-op when the requested mode is already active.
+     * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
+     */
+    readonly setMode: (
+      modeId: string,
+    ) => Effect.Effect<EffectAcpSchema.SetSessionModeResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Updates a session configuration option and the runtime configuration snapshot.
+     * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
+     */
+    readonly setConfigOption: (
+      configId: string,
+      value: string | boolean,
+    ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Selects the base model through the negotiated model configuration option.
+     * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
+     */
+    readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /**
+     * Selects the active model through the unstable ACP `session/set_model` capability.
+     * @see https://agentclientprotocol.com/protocol/schema#session/set_model
+     */
+    readonly setSessionModel: (
+      modelId: string,
+    ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Sends a generic ACP extension request and records it through the request logger.
+     * @see https://agentclientprotocol.com/protocol/extensibility
+     */
+    readonly request: (
+      method: string,
+      payload: unknown,
+    ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
+    /**
+     * Sends a generic ACP extension notification.
+     * @see https://agentclientprotocol.com/protocol/extensibility
+     */
+    readonly notify: (
+      method: string,
+      payload: unknown,
+    ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  }
+>()("t3/provider/acp/AcpSessionRuntime") {
+  static layer(
+    options: AcpSessionRuntimeOptions,
+  ): Layer.Layer<
+    AcpSessionRuntime,
+    EffectAcpErrors.AcpError,
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  > {
+    return Layer.effect(AcpSessionRuntime, make(options));
+  }
 }
 
 interface AcpStartedState extends AcpSessionRuntimeStartResult {}
@@ -653,13 +778,13 @@ export const make = (
       getEvents: () => Stream.fromQueue(eventQueue),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
-      loadSession: (sessionId) =>
+      loadSession: (sessionId, activationOptions) =>
         start.pipe(
           Effect.flatMap(() => {
             const requestPayload = {
               sessionId,
               cwd: options.cwd,
-              mcpServers: options.mcpServers ?? [],
+              mcpServers: activationOptions?.mcpServers ?? options.mcpServers ?? [],
             } satisfies EffectAcpSchema.LoadSessionRequest;
             return runLoggedRequest(
               "session/load",
@@ -669,13 +794,13 @@ export const make = (
           }),
           Effect.flatMap((response) => adoptSession(sessionId, response)),
         ),
-      resumeSession: (sessionId) =>
+      resumeSession: (sessionId, activationOptions) =>
         start.pipe(
           Effect.flatMap(() => {
             const requestPayload = {
               sessionId,
               cwd: options.cwd,
-              mcpServers: options.mcpServers ?? [],
+              mcpServers: activationOptions?.mcpServers ?? options.mcpServers ?? [],
             } satisfies EffectAcpSchema.ResumeSessionRequest;
             return runLoggedRequest(
               "session/resume",
@@ -685,13 +810,13 @@ export const make = (
           }),
           Effect.flatMap((response) => adoptSession(sessionId, response)),
         ),
-      forkSession: (sessionId) =>
+      forkSession: (sessionId, activationOptions) =>
         start.pipe(
           Effect.flatMap(() => {
             const requestPayload = {
               sessionId,
               cwd: options.cwd,
-              mcpServers: options.mcpServers ?? [],
+              mcpServers: activationOptions?.mcpServers ?? options.mcpServers ?? [],
             } satisfies EffectAcpSchema.ForkSessionRequest;
             return runLoggedRequest(
               "session/fork",
