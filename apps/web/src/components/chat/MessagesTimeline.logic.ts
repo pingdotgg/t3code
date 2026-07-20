@@ -66,6 +66,7 @@ export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number)
 
 export const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
 export const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
+export const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
 
 /**
  * The minimap overlays the viewport's left edge while the content column is
@@ -88,6 +89,18 @@ export function resolveTimelineMinimapHitStripWidth(viewportWidth: number): numb
       Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
     ),
   );
+}
+
+/**
+ * Once the preview is open, keep the full preview and the space leading to it
+ * interactive. The collapsed strip remains gutter-capped so it cannot block
+ * selecting message text.
+ */
+export function resolveTimelineMinimapInteractiveWidth(
+  collapsedWidth: number,
+  expanded: boolean,
+): number | string {
+  return expanded ? TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH : collapsedWidth;
 }
 
 function computeElapsedMs(startIso: string, endIso: string): number | null {
