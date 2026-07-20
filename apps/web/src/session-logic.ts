@@ -1467,13 +1467,18 @@ function extractToolDetail(
   const normalizedHeading = normalizePreviewForComparison(heading);
   const normalizedDetail = normalizePreviewForComparison(detail);
   const commandTool = isCommandToolDetail(payload, heading);
-  const command = commandTool ? extractToolCommand(payload).command : null;
+  const commandPreview = commandTool
+    ? extractToolCommand(payload)
+    : { command: null, rawCommand: null };
+  const command = commandPreview.command;
   const normalizedCommand = normalizePreviewForComparison(command);
+  const normalizedRawCommand = normalizePreviewForComparison(commandPreview.rawCommand);
 
   if (
     detail &&
     normalizedHeading !== normalizedDetail &&
-    (!commandTool || normalizedCommand !== normalizedDetail)
+    (!commandTool ||
+      (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))
   ) {
     return detail;
   }

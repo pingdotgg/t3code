@@ -24,11 +24,12 @@ describe("deriveWorkLogEntries command output", () => {
       makeCommandActivity("codex-command", {
         itemType: "command_execution",
         title: "Ran command",
-        detail: "printf hello",
+        detail: "/bin/zsh -lc \"printf 'hello\\n'\"",
         data: {
           item: {
             type: "commandExecution",
-            command: "printf hello",
+            command: "/bin/zsh -lc \"printf 'hello\\n'\"",
+            commandActions: [{ command: "printf 'hello\\n'", type: "unknown" }],
             aggregatedOutput: "hello\n<exited with exit code 0>",
             status: "completed",
           },
@@ -37,7 +38,8 @@ describe("deriveWorkLogEntries command output", () => {
     ]);
 
     expect(entry).toMatchObject({
-      command: "printf hello",
+      command: "printf 'hello\\n'",
+      rawCommand: "/bin/zsh -lc \"printf 'hello\\n'\"",
       detail: "hello",
     });
   });
