@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ClientSettingsPatch,
   ClientSettingsSchema,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
@@ -10,6 +11,7 @@ import {
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -28,6 +30,21 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings changed-files default", () => {
+  it("defaults changed-files blocks to expanded for existing users", () => {
+    expect(decodeClientSettings({}).defaultOpenChangedFiles).toBe(true);
+  });
+
+  it("accepts persisted defaults and partial updates", () => {
+    expect(decodeClientSettings({ defaultOpenChangedFiles: false }).defaultOpenChangedFiles).toBe(
+      false,
+    );
+    expect(decodeClientSettingsPatch({ defaultOpenChangedFiles: false })).toEqual({
+      defaultOpenChangedFiles: false,
+    });
   });
 });
 

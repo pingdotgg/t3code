@@ -185,6 +185,7 @@ function buildProps() {
     markdownCwd: undefined,
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
+    defaultOpenChangedFiles: true,
     workspaceRoot: undefined,
     anchorMessageId: null,
     onAnchorReady: () => {},
@@ -269,6 +270,50 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Collapse all"');
     expect(markup).toContain('aria-label="View diff"');
     expect(markup).toContain("1 changed file");
+  });
+
+  it("uses the collapsed setting default when no turn override exists", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const assistantMessageId = MessageId.make("message-assistant-setting-default");
+    const turnId = TurnId.make("turn-setting-default");
+    const props = {
+      ...buildProps(),
+      defaultOpenChangedFiles: false,
+      timelineEntries: [
+        {
+          id: "entry-assistant-setting-default",
+          kind: "message" as const,
+          createdAt: MESSAGE_CREATED_AT,
+          message: {
+            id: assistantMessageId,
+            role: "assistant" as const,
+            text: "Updated the fixture.",
+            turnId,
+            createdAt: MESSAGE_CREATED_AT,
+            updatedAt: MESSAGE_CREATED_AT,
+            streaming: false,
+          },
+        },
+      ],
+      turnDiffSummaryByAssistantMessageId: new Map([
+        [
+          assistantMessageId,
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("checkpoint-setting-default"),
+            status: "ready" as const,
+            files: [{ path: "README.md", kind: "modified" as const, additions: 2, deletions: 1 }],
+            assistantMessageId,
+            completedAt: MESSAGE_CREATED_AT,
+          },
+        ],
+      ]),
+    };
+
+    expect(renderToStaticMarkup(<MessagesTimeline {...props} />)).toContain(
+      'aria-label="Expand all"',
+    );
   });
 
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
