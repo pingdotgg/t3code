@@ -185,7 +185,10 @@ interface MessagesTimelineProps {
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
   autoFollowEnabled: boolean;
-  onIsAtEndChange: (isAtEnd: boolean) => void;
+  onIsAtEndChange: (change: {
+    readonly isAtEnd: boolean;
+    readonly manualNavigationReachedEnd: boolean;
+  }) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
 }
@@ -402,13 +405,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     const manualNavigation = manualNavigationRef.current;
     const scrollNodeIsAtEnd = resolveTimelineScrollableNodeIsAtEnd(scrollNode) ?? false;
+    const manualNavigationReachedEnd = Boolean(
+      manualNavigation &&
+      scrollTop !== null &&
+      timelineManualNavigationReachedEnd({
+        previousScrollTop: manualNavigation.scrollTop,
+        scrollTop,
+        isAtEnd: scrollNodeIsAtEnd,
+      }),
+    );
     const isAtEnd =
       manualNavigation && scrollTop !== null
-        ? timelineManualNavigationReachedEnd({
-            previousScrollTop: manualNavigation.scrollTop,
-            scrollTop,
-            isAtEnd: scrollNodeIsAtEnd,
-          })
+        ? manualNavigationReachedEnd
         : resolveTimelineIsAtEnd(state);
     if (manualNavigation && scrollTop !== null) {
       manualNavigation.scrollTop = scrollTop;
@@ -417,7 +425,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
     }
     if (isAtEnd !== undefined) {
-      onIsAtEndChange(isAtEnd);
+      onIsAtEndChange({ isAtEnd, manualNavigationReachedEnd });
     }
     if (!state || minimapItems.length === 0) {
       return;
@@ -715,7 +723,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             hasPersistentGutter={minimapHasPersistentGutter}
             stripMap={minimapStripMap}
             onSelect={(item) => {
-              onManualNavigation();
+              markTimelineManualNavigation();
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
                 animated: true,

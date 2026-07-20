@@ -86,7 +86,11 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
-import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
+import {
+  getAnchoredTurnMetrics,
+  shouldResumeTimelineAutoFollow,
+  type TimelineScrollMode,
+} from "./chat/timelineScrollAnchoring";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -3491,31 +3495,49 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, []);
 
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (
-      !isAtEnd &&
-      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-    ) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEnd) {
-      isAtEndRef.current = true;
-      setTimelineAutoFollowEnabled(true);
-      timelineScrollModeRef.current = "following-end";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      if (!isAtEndRef.current) return;
-      isAtEndRef.current = false;
-      setTimelineAutoFollowEnabled(false);
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
+  const onIsAtEndChange = useCallback(
+    ({
+      isAtEnd,
+      manualNavigationReachedEnd,
+    }: {
+      readonly isAtEnd: boolean;
+      readonly manualNavigationReachedEnd: boolean;
+    }) => {
+      if (
+        !isAtEnd &&
+        liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
+      ) {
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+        return;
+      }
+      if (isAtEnd) {
+        if (
+          !shouldResumeTimelineAutoFollow({
+            scrollMode: timelineScrollModeRef.current,
+            isAtEnd,
+            manualNavigationReachedEnd,
+          })
+        ) {
+          return;
+        }
+        isAtEndRef.current = true;
+        setTimelineAutoFollowEnabled(true);
+        timelineScrollModeRef.current = "following-end";
+        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+      } else {
+        if (!isAtEndRef.current) return;
+        isAtEndRef.current = false;
+        setTimelineAutoFollowEnabled(false);
+        timelineScrollModeRef.current = "free-scrolling";
+        liveFollowUserScrollGenerationRef.current = null;
+        showScrollDebouncer.current.maybeExecute();
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!activeThread?.id) {

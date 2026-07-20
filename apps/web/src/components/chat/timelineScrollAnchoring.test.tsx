@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getAnchoredTurnMetrics, getRowBottom } from "./timelineScrollAnchoring";
+import {
+  getAnchoredTurnMetrics,
+  getRowBottom,
+  shouldResumeTimelineAutoFollow,
+} from "./timelineScrollAnchoring";
 
 function buildState({
   positions,
@@ -22,6 +26,40 @@ function buildState({
 }
 
 describe("timeline scroll anchoring", () => {
+  it("only resumes detached follow after confirmed manual navigation reaches the end", () => {
+    expect(
+      shouldResumeTimelineAutoFollow({
+        scrollMode: "free-scrolling",
+        isAtEnd: true,
+        manualNavigationReachedEnd: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResumeTimelineAutoFollow({
+        scrollMode: "free-scrolling",
+        isAtEnd: true,
+        manualNavigationReachedEnd: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not let end observations collapse new-turn anchoring", () => {
+    expect(
+      shouldResumeTimelineAutoFollow({
+        scrollMode: "anchoring-new-turn",
+        isAtEnd: true,
+        manualNavigationReachedEnd: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResumeTimelineAutoFollow({
+        scrollMode: "following-end",
+        isAtEnd: true,
+        manualNavigationReachedEnd: false,
+      }),
+    ).toBe(true);
+  });
+
   it("measures row bottoms from LegendList row position and size", () => {
     const state = buildState({
       positions: [0, 120],
