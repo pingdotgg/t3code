@@ -14,6 +14,7 @@ import {
   type ArchivedThreadsHeaderEnvironment,
 } from "./ArchivedThreadsScreen";
 import {
+  archivedThreadActionExceptionDescription,
   buildArchivedThreadGroups,
   parseArchivedThreadSearchInput,
   runArchivedThreadActions,
@@ -164,7 +165,7 @@ export function ArchivedThreadsRouteScreen() {
       } catch (error) {
         Alert.alert(
           `Archived threads not fully ${action === "unarchive" ? "unarchived" : "deleted"}`,
-          error instanceof Error ? error.message : "One or more archived thread actions failed.",
+          archivedThreadActionExceptionDescription(error),
         );
       } finally {
         updateBusyThreads(threads, false);

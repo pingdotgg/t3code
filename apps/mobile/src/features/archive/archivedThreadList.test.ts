@@ -4,6 +4,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  archivedThreadActionExceptionDescription,
   archivedThreadTimestampValue,
   buildArchivedThreadGroups,
   formatArchivedThreadRelativeTime,
@@ -316,6 +317,20 @@ describe("archive list controls", () => {
 
     expect(maximumActive).toBe(2);
     expect(summary).toEqual({ succeeded: 4, failed: 1 });
+  });
+
+  it("surfaces distinct underlying bulk action exceptions", () => {
+    const error = new AggregateError([
+      new Error("Connection failed"),
+      new Error("Connection failed"),
+      "unknown failure",
+      new Error("Permission denied"),
+      new Error("Session expired"),
+    ]);
+
+    expect(archivedThreadActionExceptionDescription(error)).toBe(
+      "One or more archived thread actions failed unexpectedly. Failures: Connection failed; An error occurred.; Permission denied; 1 more",
+    );
   });
 });
 

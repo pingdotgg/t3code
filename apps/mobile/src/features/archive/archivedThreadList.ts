@@ -42,6 +42,26 @@ export interface ArchivedThreadActionSummary {
   readonly failed: number;
 }
 
+export function archivedThreadActionExceptionDescription(error: unknown): string {
+  const errors = error instanceof AggregateError ? error.errors : [error];
+  const failureMessages = [
+    ...new Set(
+      errors.map((entry) => (entry instanceof Error ? entry.message : "An error occurred.")),
+    ),
+  ];
+  const shownFailureMessages = failureMessages.slice(0, 3);
+  return [
+    "One or more archived thread actions failed unexpectedly.",
+    failureMessages.length <= 1
+      ? (shownFailureMessages[0] ?? "An error occurred.")
+      : `Failures: ${shownFailureMessages.join("; ")}${
+          failureMessages.length > shownFailureMessages.length
+            ? `; ${failureMessages.length - shownFailureMessages.length} more`
+            : ""
+        }`,
+  ].join(" ");
+}
+
 function archivedProjectGroupKey(environmentId: EnvironmentId, projectId: string): string {
   return JSON.stringify([environmentId, projectId]);
 }
