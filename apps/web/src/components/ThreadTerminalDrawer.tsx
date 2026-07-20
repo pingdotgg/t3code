@@ -124,11 +124,18 @@ function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
 
 const TERMINAL_SCROLLBACK_LIMIT = 5_000;
 
+interface ScrollbackTerminal {
+  getScrollbackLength(): number;
+  getViewportY(): number;
+  scrollLines(amount: number): void;
+  write(data: string): void;
+}
+
 // ghostty-web snaps the viewport to the bottom on every write, unlike
 // xterm.js which keeps a scrolled-back viewport anchored. Restore the anchor
 // by advancing viewportY by however many lines the write pushed into
 // scrollback (viewportY counts lines back from the bottom).
-function writePreservingScrollback(terminal: Terminal, data: string): void {
+export function writePreservingScrollback(terminal: ScrollbackTerminal, data: string): void {
   const viewportY = terminal.getViewportY();
   if (viewportY <= 0) {
     terminal.write(data);
@@ -146,7 +153,10 @@ function writePreservingScrollback(terminal: Terminal, data: string): void {
     scrollbackAfter >= TERMINAL_SCROLLBACK_LIMIT
       ? Math.max(measuredGrowth, data.split("\n").length - 1)
       : measuredGrowth;
-  terminal.scrollToLine(Math.round(viewportY) + scrollbackAdded);
+  // scrollToLine() is documented in absolute buffer coordinates, while
+  // scrollLines() explicitly accepts a relative delta. The write reset us to
+  // the bottom, so a negative delta restores the bottom-relative anchor.
+  terminal.scrollLines(-(Math.round(viewportY) + scrollbackAdded));
 }
 
 function fitTerminalSafely(fitAddon: FitAddon): boolean {
@@ -448,6 +458,7 @@ export function TerminalViewport({
   const terminalStyle = serverConfig?.terminalStyle;
   const terminalStyleKey = JSON.stringify(terminalStyle ?? null);
   const readTerminalStyle = useEffectEvent(() => terminalStyle);
+  const readThreadRef = useEffectEvent(() => threadRef);
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -834,7 +845,7 @@ export function TerminalViewport({
                   void openTerminalLinkInPreview({
                     url: match.text,
                     position: { x: event.clientX, y: event.clientY },
-                    threadRef,
+                    threadRef: readThreadRef(),
                     openPreview,
                     localApi,
                     fallbackToBrowser: openExternally,
@@ -975,7 +986,6 @@ export function TerminalViewport({
     terminalId,
     terminalStyleKey,
     threadId,
-    threadRef,
     worktreePath,
   ]);
 

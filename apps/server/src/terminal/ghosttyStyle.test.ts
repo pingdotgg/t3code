@@ -22,16 +22,23 @@ const windowsPath = {
 };
 
 describe("parseGhosttyConfig", () => {
-  it("omits empty scalar color assignments", () => {
+  it("resets scalar and palette colors with empty assignments", () => {
     const config = parseGhosttyConfig(`
+      background = #000000
+      foreground = #ffffff
+      palette = 0=#111111
+      palette = 1=#222222
       background =
       foreground = ""
+      palette = 0=
       cursor-color = #c0ffee
     `);
 
     expect(config.colors.background).toBeUndefined();
     expect(config.colors.foreground).toBeUndefined();
     expect(config.colors.cursor).toBe("#c0ffee");
+    expect(config.colors.palette[0]).toBe("");
+    expect(config.colors.palette[1]).toBe("#222222");
   });
 });
 
