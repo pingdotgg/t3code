@@ -100,11 +100,19 @@ export interface OpenCodeCommandResult {
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  readonly skills: ReadonlyArray<OpenCodeSkill>;
 }
 
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
+}
+
+export interface OpenCodeSkill {
+  readonly name?: string | null;
+  readonly description?: string | null;
+  readonly location?: string | null;
+  readonly content?: string | null;
 }
 
 export interface OpenCodeRuntimeShape {
@@ -537,10 +545,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
-  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+  const loadSkills = (client: OpencodeClient) =>
+    runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
+      Effect.map((result) => (result.data ?? []) as ReadonlyArray<OpenCodeSkill>),
     );
+
+  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
+    Effect.all([loadProviders(client), loadAgents(client), loadSkills(client)], {
+      concurrency: "unbounded",
+    }).pipe(Effect.map(([providerList, agents, skills]) => ({ providerList, agents, skills })));
 
   return {
     startOpenCodeServerProcess,

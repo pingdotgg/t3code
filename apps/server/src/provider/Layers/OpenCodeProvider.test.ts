@@ -38,6 +38,7 @@ const runtimeMock = {
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      skills: [] as unknown[],
     } as unknown,
   },
   reset() {
@@ -48,6 +49,7 @@ const runtimeMock = {
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      skills: [] as unknown[],
     };
   },
 };
@@ -193,6 +195,76 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
+      );
+    }),
+  );
+
+  it.effect("includes OpenCode skills in the provider snapshot", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-5.4": {
+                  id: "gpt-5.4",
+                  name: "GPT-5.4",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [
+          {
+            name: "openclaw-review",
+            description: "Review OpenClaw workflow changes.",
+            location: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
+            content: "---\nname: openclaw-review\n---\n",
+          },
+          {
+            name: "openclaw-triage",
+            description: "Triage OpenClaw routing issues.",
+            location: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
+            content: "---\nname: openclaw-triage\n---\n",
+          },
+          {
+            name: "missing-location",
+            description: "This incomplete SDK row should be skipped.",
+            location: "",
+            content: "---\nname: missing-location\n---\n",
+          },
+        ],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      assert.deepEqual(
+        snapshot.skills.map((skill) => ({
+          name: skill.name,
+          path: skill.path,
+          enabled: skill.enabled,
+          shortDescription: skill.shortDescription,
+        })),
+        [
+          {
+            name: "openclaw-review",
+            path: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
+            enabled: true,
+            shortDescription: "Review OpenClaw workflow changes.",
+          },
+          {
+            name: "openclaw-triage",
+            path: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
+            enabled: true,
+            shortDescription: "Triage OpenClaw routing issues.",
+          },
+        ],
       );
     }),
   );
