@@ -23,6 +23,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,9 +34,11 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { Tool } from "effect/unstable/ai";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -48,7 +51,10 @@ import {
   CLAUDE_DEFAULT_INSTANCE_ID,
   CLAUDE_PROVIDER,
   CLAUDE_READ_ONLY_ALLOWED_TOOLS,
+  CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
+  CLAUDE_T3_MCP_TOOL_WILDCARD,
   ClaudeProviderCapabilitiesV2,
+  claudeEffectiveQueryPolicyKey,
   claudeMcpQueryOverrides,
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
@@ -224,6 +230,148 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
   });
 });
 
+describe("ClaudeAdapterV2 MCP query overrides", () => {
+  const T3_MCP_SERVERS = {
+    "t3-code": {
+      type: "http",
+      url: "http://127.0.0.1:43123/mcp",
+      headers: {
+        Authorization: "Bearer secret-claude-token",
+      },
+    },
+  } as const;
+
+  const withMcpSession = (threadId: ThreadId, run: () => void) => {
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make(`environment-${threadId}`),
+      threadId,
+      providerSessionId: `mcp-session-${threadId}`,
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-claude-token",
+    });
+    try {
+      run();
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+  };
+
+  it("leaves an absent allowlist absent when no MCP session exists", () => {
+    const overrides = claudeMcpQueryOverrides({
+      threadId: ThreadId.make("thread-claude-no-mcp-no-allowlist"),
+      readOnlySandbox: false,
+    });
+
+    assert.deepEqual(overrides, {});
+  });
+
+  it("preserves an explicit allowlist when no MCP session exists", () => {
+    const overrides = claudeMcpQueryOverrides({
+      threadId: ThreadId.make("thread-claude-no-mcp-with-allowlist"),
+      readOnlySandbox: false,
+      allowedTools: ["Read"],
+    });
+
+    assert.deepEqual(overrides, { allowedTools: ["Read"] });
+  });
+
+  it("pre-approves all t3-code tools when attaching an MCP session without an allowlist", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-no-allowlist");
+    withMcpSession(threadId, () => {
+      const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: false });
+
+      assert.deepEqual(overrides, {
+        allowedTools: [CLAUDE_T3_MCP_TOOL_WILDCARD],
+        mcpServers: T3_MCP_SERVERS,
+      });
+    });
+  });
+
+  it("extends an explicit allowlist with the t3-code wildcard", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-with-allowlist");
+    withMcpSession(threadId, () => {
+      const overrides = claudeMcpQueryOverrides({
+        threadId,
+        readOnlySandbox: false,
+        allowedTools: ["Read", "mcp__t3-code__*"],
+      });
+
+      assert.deepEqual(overrides, {
+        allowedTools: ["Read", "mcp__t3-code__*"],
+        mcpServers: T3_MCP_SERVERS,
+      });
+    });
+  });
+
+  it("pre-approves only read-only t3-code tools in a read-only sandbox", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-read-only");
+    withMcpSession(threadId, () => {
+      const overrides = claudeMcpQueryOverrides({
+        threadId,
+        readOnlySandbox: true,
+        allowedTools: [...CLAUDE_READ_ONLY_ALLOWED_TOOLS],
+      });
+
+      assert.deepEqual(overrides, {
+        allowedTools: [...CLAUDE_READ_ONLY_ALLOWED_TOOLS, ...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS],
+        mcpServers: T3_MCP_SERVERS,
+      });
+      assert.isFalse(overrides.allowedTools?.includes(CLAUDE_T3_MCP_TOOL_WILDCARD));
+    });
+  });
+
+  it("pre-approves only read-only t3-code tools in a read-only sandbox without an allowlist", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-read-only-no-allowlist");
+    withMcpSession(threadId, () => {
+      const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: true });
+
+      assert.deepEqual(overrides.allowedTools, [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS]);
+    });
+  });
+
+  it("keys live-query reuse on the MCP-derived pre-approvals", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-query-key");
+    withMcpSession(threadId, () => {
+      const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+          approvalPolicy: "on-request",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        }),
+      );
+
+      const readOnlyKey = claudeEffectiveQueryPolicyKey(
+        queryPolicy,
+        claudeMcpQueryOverrides({ threadId, readOnlySandbox: true }),
+      );
+      const fullAccessKey = claudeEffectiveQueryPolicyKey(
+        queryPolicy,
+        claudeMcpQueryOverrides({ threadId, readOnlySandbox: false }),
+      );
+      const detachedKey = claudeEffectiveQueryPolicyKey(queryPolicy, {});
+
+      assert.notEqual(readOnlyKey, fullAccessKey);
+      assert.notEqual(fullAccessKey, detachedKey);
+    });
+  });
+
+  it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
+    const readOnlyToolNames = Object.values(OrchestratorToolkit.tools)
+      .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
+      .map((tool) => `mcp__t3-code__${tool.name}`)
+      .sort();
+
+    assert.deepEqual([...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS].sort(), readOnlyToolNames);
+  });
+});
+
 describe("ClaudeAdapterV2 native protocol logging", () => {
   it("injects thread-scoped MCP configuration without logging the credential", () => {
     const threadId = ThreadId.make("thread-claude-mcp");
@@ -239,6 +387,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     try {
       const overrides = claudeMcpQueryOverrides({
         threadId,
+        readOnlySandbox: false,
         allowedTools: ["Read"],
       });
       assert.deepEqual(overrides, {
