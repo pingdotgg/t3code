@@ -44,6 +44,17 @@ const runtimeMock = {
     promptAsyncError: null as Error | null,
     messages: [] as Array<unknown>,
     subscribedEvents: [] as unknown[],
+    /**
+     * Optional gate the mocked `session.abort` RPC awaits before
+     * resolving. Tests install a gate so they can pin `interruptTurn`
+     * inside the in-flight abort RPC and then exercise concurrent
+     * `sendTurn`. While the gate is installed, all registered
+     * `abortEnteredCallbacks` are invoked synchronously when the abort
+     * RPC is entered so the test can wake up deterministically before
+     * allowing the RPC to make progress.
+     */
+    abortGate: null as { readonly promise: Promise<void> } | null,
+    abortEnteredCallbacks: [] as Array<() => void>,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -56,6 +67,8 @@ const runtimeMock = {
     this.state.promptAsyncError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.abortGate = null;
+    this.state.abortEnteredCallbacks.length = 0;
   },
 };
 
@@ -104,6 +117,18 @@ const KiloRuntimeTestDouble: KiloRuntimeShape = {
         },
         abort: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.abortCalls.push(sessionID);
+          const gate = runtimeMock.state.abortGate;
+          if (gate) {
+            // Fire any "abort entered" callbacks so the test fiber
+            // wakes up, THEN await the gate's promise. Resolving the
+            // entered callbacks here is safe — they schedule an Effect
+            // that resumes when the test fiber gets a chance to run.
+            while (runtimeMock.state.abortEnteredCallbacks.length > 0) {
+              const cb = runtimeMock.state.abortEnteredCallbacks.shift()!;
+              cb();
+            }
+            await gate.promise;
+          }
         },
         promptAsync: async (input: unknown) => {
           runtimeMock.state.promptCalls.push(input);
@@ -431,6 +456,84 @@ it.layer(KiloAdapterTestLayer)("KiloAdapter", (it) => {
           "http://127.0.0.1:4301/session",
         ),
       );
+    }),
+  );
+
+  it.effect(
+    "keeps the active turn claim during in-flight session.abort so a concurrent sendTurn steers instead of opening a new turn",
+    Effect.fn(function* () {
+      const adapter = yield* KiloAdapter;
+      const threadId = asThreadId("thread-kilo-abort-race");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("kilo"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const modelSelection = createModelSelection(
+        ProviderInstanceId.make("kilo"),
+        "anthropic/claude-sonnet-4-5",
+      );
+      const first = yield* adapter.sendTurn({
+        threadId,
+        input: "first",
+        modelSelection,
+      });
+
+      // Install an "abort entered" callback so we can wait until
+      // `interruptTurn` has reached the in-flight abort RPC, then a
+      // gate that holds the RPC open until we are ready.
+      runtimeMock.state.abortCalls.length = 0;
+      let releaseAbort!: () => void;
+      let abortReached = false;
+      let abortEnteredDeferred!: (value: void | PromiseLike<void>) => void;
+      const abortEnteredPromise = new Promise<void>((resolve) => {
+        abortEnteredDeferred = resolve;
+      });
+      runtimeMock.state.abortGate = {
+        promise: new Promise<void>((resolve) => {
+          releaseAbort = resolve;
+        }),
+      };
+      runtimeMock.state.abortEnteredCallbacks.push(() => {
+        abortReached = true;
+        abortEnteredDeferred();
+      });
+
+      const interruptFiber = yield* adapter
+        .interruptTurn(threadId, first.turnId)
+        .pipe(Effect.forkChild);
+
+      // Wait (with a generous timeout) until the abort RPC has been
+      // invoked, proving that interruptTurn is parked inside it.
+      yield* Effect.tryPromise({
+        try: () => abortEnteredPromise,
+        catch: () => new Error("abort RPC was never entered"),
+      }).pipe(Effect.timeout("2 seconds"));
+
+      // While the abort RPC is still in flight, run a concurrent
+      // sendTurn. With the fix in place, the adapter MUST keep
+      // `activeTurnId` set so concurrent `sendTurn` steers into the
+      // in-flight turn id rather than opening a new one that the
+      // session-wide `session.abort` would unintentionally cancel.
+      const second = yield* adapter.sendTurn({
+        threadId,
+        input: "second",
+        modelSelection,
+      });
+      NodeAssert.equal(String(second.turnId), String(first.turnId));
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+
+      // Release the abort RPC and let interruptTurn complete.
+      releaseAbort();
+      yield* Fiber.join(interruptFiber);
+
+      // Session should be ready with no active turn after the abort
+      // settles.
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions[0]?.status, "ready");
+      NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
+      NodeAssert.equal(abortReached, true);
     }),
   );
 

@@ -1388,14 +1388,19 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         );
         const ownsClaimAndAborted = yield* claim.ownedClaim
           ? Effect.gen(function* () {
-              // Clear the claim BEFORE the remote abort so concurrent
-              // sendTurn cannot steer into a turn that is about to be
-              // aborted.
-              yield* Ref.set(context.activeTurnId, undefined);
+              // Keep `activeTurnId` set during the remote abort. The Kilo
+              // SDK's `session.abort` is session-wide: clearing the claim
+              // first opens a window where a concurrent `sendTurn` can
+              // claim a fresh turn id which the in-flight abort then
+              // unintentionally cancels. Leaving the claim in place makes
+              // concurrent `sendTurn` steer into the same (about-to-be
+              // aborted) turn instead of opening a new one. The claim is
+              // cleared below once the abort RPC has completed.
               const abortResult = yield* runKiloSdk("session.abort", () =>
                 context.client.session.abort({ sessionID: context.kiloSessionId }),
               ).pipe(Effect.mapError(toRequestError), Effect.result);
               if (Result.isSuccess(abortResult)) {
+                yield* Ref.set(context.activeTurnId, undefined);
                 return { aborted: true as const };
               }
               return {
@@ -1405,22 +1410,16 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
             })
           : Effect.succeed({ aborted: true as const });
         if (!ownsClaimAndAborted.aborted) {
-          // Abort failed: restore the claim so the orchestration sees a
-          // still-running turn (and so subsequent idle/busy events stay
-          // consistent with `activeTurnId`). If a concurrent caller has
-          // already taken over the slot, leave its claim in place — we
-          // still emit turn.completed(failed) so upstream can clean up
-          // the half-aborted turn we *intended* to interrupt.
+          // Abort failed: the claim was never cleared, so the session
+          // still reports `interruptTurn`'s target as the busy turn id
+          // (matching what a subsequent SDK idle/busy event will see).
+          // Emit turn.completed(failed) for the turn we tried to interrupt
+          // so orchestration can clear the half-interrupted running turn.
+          // Do NOT flip the session to `ready` — the turn is still
+          // considered busy from the orchestrator's perspective and the
+          // SDK may yet emit an idle/busy event that drives the state
+          // correctly.
           const abortError: ProviderAdapterRequestError = ownsClaimAndAborted.abortError;
-          const restoredClaim: TurnId | undefined = yield* Ref.modify(
-            context.activeTurnId,
-            (current): [TurnId | undefined, TurnId | undefined] => {
-              if (current === undefined) {
-                return [claim.interruptedTurnId, claim.interruptedTurnId];
-              }
-              return [undefined, current];
-            },
-          );
           if (claim.interruptedTurnId) {
             yield* emit({
               ...(yield* buildEventBase({
@@ -1434,23 +1433,16 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
               },
             });
           }
-          if (restoredClaim !== undefined) {
-            context.activeAgent = undefined;
-            context.activeVariant = undefined;
-            yield* updateProviderSession(
-              context,
-              {
-                status: "ready",
-                lastError: abortError.detail,
-              },
-              { clearActiveTurnId: true },
-            );
-          }
           return yield* abortError;
         }
-        // Only flip session ready if nothing new claimed the turn during abort.
-        const stillIdle = (yield* Ref.get(context.activeTurnId)) === undefined;
-        if (stillIdle) {
+        // Abort succeeded and we just cleared the claim. Flip the session
+        // back to `ready` so the orchestration observes an idle thread.
+        // No concurrent sendTurn can race past our clear: any call that
+        // observed the set claim during the abort steered (or queued)
+        // into the (now aborted) turn, and clearing the ref after the
+        // abort returns ownership of subsequent turns to fresh sendTurn
+        // calls.
+        {
           context.activeAgent = undefined;
           context.activeVariant = undefined;
           yield* updateProviderSession(
