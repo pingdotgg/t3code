@@ -1045,6 +1045,39 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
     });
 
+  const withTemporarySelectedIndex = <A, E>(
+    cwd: string,
+    paths: readonly string[],
+    body: (env: NodeJS.ProcessEnv) => Effect.Effect<A, E>,
+  ) =>
+    Effect.gen(function* () {
+      const tempDir = yield* fileSystem
+        .makeTempDirectory({ prefix: "t3-vcs-selected-index-" })
+        .pipe(
+          Effect.mapError(asGitCommandError("vcs.panel.commitStaged.tempIndex", cwd, ["commit"])),
+        );
+      return yield* Effect.gen(function* () {
+        const env = {
+          ...globalThis.process.env,
+          GIT_INDEX_FILE: path.join(tempDir, "index"),
+        };
+        yield* run("vcs.panel.commitStaged.tempIndexReadTree", cwd, ["read-tree", "HEAD"], {
+          env,
+        }).pipe(Effect.asVoid);
+        yield* run(
+          "vcs.panel.commitStaged.tempIndexAddSelected",
+          cwd,
+          ["add", "-A", "--", ...paths],
+          { env },
+        ).pipe(Effect.asVoid);
+        return yield* body(env);
+      }).pipe(
+        Effect.ensuring(
+          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
+        ),
+      );
+    });
+
   const branchWithExistingWorktreePath = (branch: VcsRef) => {
     if (!branch.worktreePath) return Effect.succeed(branch);
     return fileSystem.exists(branch.worktreePath).pipe(
@@ -2380,7 +2413,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     const paths = uniquePaths(input.paths ?? []);
     const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths));
     const args = ["commit", "-m", message];
-    yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
+    if (paths.length > 0) {
+      yield* withTemporarySelectedIndex(input.cwd, paths, (env) =>
+        run("vcs.panel.commitStaged", input.cwd, args, { env }).pipe(Effect.asVoid),
+      );
+    } else {
+      yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
+    }
     if (input.push) {
       const status = yield* workflow
         .status({ cwd: input.cwd })

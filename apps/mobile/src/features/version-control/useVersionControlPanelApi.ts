@@ -17,13 +17,9 @@ import { useCallback, useMemo } from "react";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { vcsEnvironment } from "../../state/vcs";
+import { VersionControlCommandInterrupted } from "./versionControlRequest";
 
-export class VersionControlCommandInterrupted extends Error {
-  constructor() {
-    super("The Version Control command was interrupted.");
-    this.name = "VersionControlCommandInterrupted";
-  }
-}
+export { VersionControlCommandInterrupted } from "./versionControlRequest";
 
 async function unwrapPanelCommand<TResult>(
   result: AtomCommandResult<TResult, unknown>,

@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/sourceControl";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -53,6 +53,7 @@ import {
   VersionControlCommandInterrupted,
   useVersionControlPanelApi,
 } from "./useVersionControlPanelApi";
+import { retryInterruptedVersionControlRequest } from "./versionControlRequest";
 
 type VersionControlRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -103,6 +104,65 @@ function ActionButton(props: {
         {props.label}
       </Text>
     </Pressable>
+  );
+}
+
+interface PublishRequest {
+  readonly branchName: string;
+  readonly targetCwd: string;
+}
+
+function PublishRemoteDialog(props: {
+  readonly request: PublishRequest | null;
+  readonly remoteNames: readonly string[];
+  readonly disabled: boolean;
+  readonly onCancel: () => void;
+  readonly onSelect: (remoteName: string) => void;
+}) {
+  const pressedOverlay = useThemeColor("--color-subtle");
+  return (
+    <Modal
+      visible={props.request !== null}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={props.onCancel}
+    >
+      {props.request ? (
+        <View className="flex-1 items-center justify-center bg-backdrop px-8">
+          <View className="w-full max-w-md rounded-[24px] bg-card px-5 pb-5 pt-5">
+            <Text className="text-lg font-t3-medium">Publish branch</Text>
+            <Text className="mt-2 text-sm text-foreground-secondary">
+              Choose a remote for {props.request.branchName}.
+            </Text>
+            <View className="mt-4 gap-2">
+              {props.remoteNames.map((remoteName) => (
+                <View key={remoteName} className="overflow-hidden rounded-2xl">
+                  <Pressable
+                    accessibilityRole="button"
+                    className="min-h-12 justify-center border border-border bg-subtle px-4"
+                    disabled={props.disabled}
+                    android_ripple={{ color: pressedOverlay }}
+                    onPress={() => props.onSelect(remoteName)}
+                  >
+                    <Text className="text-base font-t3-medium text-foreground">{remoteName}</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              className="mt-3 min-h-10 self-end justify-center px-4"
+              disabled={props.disabled}
+              onPress={props.onCancel}
+            >
+              <Text className="text-base font-t3-medium text-foreground">Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+    </Modal>
   );
 }
 
@@ -348,6 +408,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const [showAddRemote, setShowAddRemote] = useState(false);
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
+  const [publishRequest, setPublishRequest] = useState<PublishRequest | null>(null);
   const initiallyFetchedCwds = useRef(new Set<string>());
   const snapshotRequestId = useRef(0);
   const snapshotRevision = useRef(0);
@@ -662,19 +723,25 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       toggleExpanded(key);
       if (!snapshot || branchDetails.has(key) || wasExpanded) return;
       const revision = snapshotRevision.current;
-      void api
-        .branchDetails({
+      void retryInterruptedVersionControlRequest(() =>
+        api.branchDetails({
           cwd: selectedThreadCwd ?? "",
           branch,
           defaultCompareRef: snapshot.defaultCompareRef,
           ...(compareBaseRef ? { compareBaseRef } : {}),
-        })
+        }),
+      )
         .then((details) => {
           if (revision !== snapshotRevision.current) return;
           setBranchDetails((current) => new Map(current).set(key, details));
         })
         .catch((cause) => {
-          if (revision === snapshotRevision.current) setError(errorMessage(cause));
+          if (
+            revision === snapshotRevision.current &&
+            !(cause instanceof VersionControlCommandInterrupted)
+          ) {
+            setError(errorMessage(cause));
+          }
         });
     },
     [api, branchDetails, selectedThreadCwd, snapshot, toggleExpanded],
@@ -683,28 +750,41 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const publishBranch = useCallback(
     (branch: VcsRef, targetCwd: string) => {
       if (!snapshot) return;
-      const preferredRemote =
-        snapshot.remotes.find((remote) => remote.name === "origin") ?? snapshot.remotes[0];
-      if (!preferredRemote) {
+      if (snapshot.remotes.length === 0) {
         setError("Add a remote before publishing this branch.");
         return;
       }
-      const publish = () =>
-        void runAction("publish", () =>
-          api.pushBranch({
-            cwd: targetCwd,
-            branchName: branch.name,
-            remoteName: preferredRemote.name,
-          }),
-        );
       if (snapshot.remotes.length > 1) {
-        Alert.alert("Publish branch?", `Publish ${branch.name} to ${preferredRemote.name}?`, [
-          { text: "Cancel", style: "cancel" },
-          { text: "Publish", onPress: publish },
-        ]);
-      } else publish();
+        setPublishRequest({ branchName: branch.name, targetCwd });
+        return;
+      }
+      const remote = snapshot.remotes[0];
+      if (!remote) return;
+      void runAction("publish", () =>
+        api.pushBranch({
+          cwd: targetCwd,
+          branchName: branch.name,
+          remoteName: remote.name,
+        }),
+      );
     },
     [api, runAction, snapshot],
+  );
+
+  const publishToRemote = useCallback(
+    (remoteName: string) => {
+      const request = publishRequest;
+      if (!request) return;
+      setPublishRequest(null);
+      void runAction("publish", () =>
+        api.pushBranch({
+          cwd: request.targetCwd,
+          branchName: request.branchName,
+          remoteName,
+        }),
+      );
+    },
+    [api, publishRequest, runAction],
   );
 
   const syncBranch = useCallback(
@@ -854,14 +934,20 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       toggleExpanded(key);
       if (!selectedThreadCwd || stashDetails.has(detailsKey) || wasExpanded) return;
       const revision = snapshotRevision.current;
-      void api
-        .stashDetails({ cwd: selectedThreadCwd, stashRef: stash.refName })
+      void retryInterruptedVersionControlRequest(() =>
+        api.stashDetails({ cwd: selectedThreadCwd, stashRef: stash.refName }),
+      )
         .then((details) => {
           if (revision !== snapshotRevision.current) return;
           setStashDetails((current) => new Map(current).set(detailsKey, details));
         })
         .catch((cause) => {
-          if (revision === snapshotRevision.current) setError(errorMessage(cause));
+          if (
+            revision === snapshotRevision.current &&
+            !(cause instanceof VersionControlCommandInterrupted)
+          ) {
+            setError(errorMessage(cause));
+          }
         });
     },
     [api, selectedThreadCwd, stashDetails, toggleExpanded],
@@ -946,6 +1032,13 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   return (
     <>
       {headerToolbar}
+      <PublishRemoteDialog
+        request={publishRequest}
+        remoteNames={snapshot.remotes.map((remote) => remote.name)}
+        disabled={busy}
+        onCancel={() => setPublishRequest(null)}
+        onSelect={publishToRemote}
+      />
       <ScrollView
         className="flex-1 bg-screen"
         contentInsetAdjustmentBehavior="automatic"

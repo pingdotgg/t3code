@@ -23,10 +23,8 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
-import {
-  VersionControlCommandInterrupted,
-  useVersionControlPanelApi,
-} from "./useVersionControlPanelApi";
+import { useVersionControlPanelApi } from "./useVersionControlPanelApi";
+import { retryInterruptedVersionControlRequest } from "./versionControlRequest";
 
 const EMPTY_IDS: readonly string[] = [];
 const EMPTY_COMMENTS: NonNullable<BuildNativeReviewDiffDataInput["comments"]> = [];
@@ -84,18 +82,19 @@ export function VersionControlDiffRouteScreen(props: VersionControlDiffRouteScre
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    void api
-      .readFileDiff({
+    void retryInterruptedVersionControlRequest(() =>
+      api.readFileDiff({
         cwd,
         path: file.path,
         ...(file.originalPath ? { originalPath: file.originalPath } : {}),
         source,
-      })
+      }),
+    )
       .then((result) => {
         if (!cancelled) setState({ status: "loaded", patch: result.patch });
       })
       .catch((cause) => {
-        if (!cancelled && !(cause instanceof VersionControlCommandInterrupted)) {
+        if (!cancelled) {
           setState({ status: "error", message: errorMessage(cause) });
         }
       });

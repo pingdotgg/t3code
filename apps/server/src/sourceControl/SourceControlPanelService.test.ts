@@ -664,7 +664,7 @@ describe("SourceControlPanelService", () => {
     );
   });
 
-  it.effect("commits the staged index without pathspecs after staging selected files", () => {
+  it.effect("commits selected files through an isolated temporary index", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
@@ -676,9 +676,26 @@ describe("SourceControlPanelService", () => {
       });
 
       assert.deepStrictEqual(
-        calls.map((call) => call.args),
-        [["commit", "-m", "Commit selected file"]],
+        calls.map((call) => ({ operation: call.operation, args: call.args })),
+        [
+          {
+            operation: "vcs.panel.commitStaged.tempIndexReadTree",
+            args: ["read-tree", "HEAD"],
+          },
+          {
+            operation: "vcs.panel.commitStaged.tempIndexAddSelected",
+            args: ["add", "-A", "--", "src/mixed.ts"],
+          },
+          {
+            operation: "vcs.panel.commitStaged",
+            args: ["commit", "-m", "Commit selected file"],
+          },
+        ],
       );
+      const selectedIndexCalls = calls.filter((call) =>
+        call.operation.startsWith("vcs.panel.commitStaged"),
+      );
+      assert.isTrue(selectedIndexCalls.every((call) => Boolean(call.env?.GIT_INDEX_FILE?.length)));
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>
