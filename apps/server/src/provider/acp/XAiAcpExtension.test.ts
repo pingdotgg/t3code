@@ -20,6 +20,7 @@ import {
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
+  registerXAiBackgroundTaskTracking,
   resolveXAiAcpToolTitle,
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
@@ -710,6 +711,57 @@ describe("XAiAcpExtension", () => {
     ).toBeNull();
   });
 
+  it.effect("tracks canonical Grok task lifecycle notifications", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const mutations: Array<{
+        readonly sessionId: string;
+        readonly taskId: string;
+        readonly status: "running" | "completed";
+      }> = [];
+      const runtime = {
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+      } as unknown as Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">;
+
+      yield* registerXAiBackgroundTaskTracking(runtime, (mutation) =>
+        Effect.sync(() => mutations.push(mutation)),
+      );
+
+      const backgrounded = handlers.get("x.ai/task_backgrounded");
+      const completed = handlers.get("x.ai/task_completed");
+      expect(backgrounded).toBeDefined();
+      expect(completed).toBeDefined();
+      yield* backgrounded!({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "task_backgrounded",
+          tool_call_id: "call-bg-1",
+          task_id: "task-bg-1",
+        },
+      });
+      yield* completed!({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "task_completed",
+          task_snapshot: { task_id: "task-bg-1" },
+        },
+      });
+      expect(mutations).toEqual([
+        { sessionId: "session-1", taskId: "task-bg-1", status: "running" },
+        { sessionId: "session-1", taskId: "task-bg-1", status: "completed" },
+      ]);
+      expect(handlers.has("_x.ai/task_backgrounded")).toBe(true);
+      expect(handlers.has("_x.ai/task_completed")).toBe(true);
+    }),
+  );
+
   it("detects persistent Monitor start ACKs", () => {
     expect(
       isXAiPersistentMonitor({
@@ -1187,7 +1239,7 @@ describe("XAiAcpExtension", () => {
         .prompt({ prompt: [{ type: "text", text: "hi" }] })
         .pipe(Effect.forkChild);
       yield* Effect.yieldNow;
-      const promptCompleteHandler = handlers.get("_x.ai/session/prompt_complete");
+      const promptCompleteHandler = handlers.get("x.ai/session/prompt_complete");
       expect(promptCompleteHandler).toBeDefined();
       yield* promptCompleteHandler!({
         sessionId: "root-session",
@@ -1195,6 +1247,7 @@ describe("XAiAcpExtension", () => {
       });
       const response = yield* Fiber.join(promptFiber);
       expect(response.stopReason).toBe("end_turn");
+      expect(handlers.has("_x.ai/session/prompt_complete")).toBe(true);
     }),
   );
 
@@ -1246,6 +1299,52 @@ describe("XAiAcpExtension", () => {
       });
       const response = yield* Fiber.join(promptFiber);
       expect(response.stopReason).toBe("end_turn");
+    }),
+  );
+
+  it.effect("settles a hung prompt from released _x.ai/session_notification turns", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const sessionNotificationHandler = handlers.get("_x.ai/session_notification");
+      expect(sessionNotificationHandler).toBeDefined();
+      yield* sessionNotificationHandler!({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "t3-xai-prompt-1",
+          stop_reason: "end_turn",
+        },
+      });
+      const response = yield* Fiber.join(promptFiber);
+      expect(response.stopReason).toBe("end_turn");
+      expect(handlers.has("_x.ai/session/update")).toBe(true);
     }),
   );
 

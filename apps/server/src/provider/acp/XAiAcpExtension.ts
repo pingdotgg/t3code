@@ -24,10 +24,14 @@ const XAiPromptCompleteNotification = Schema.Struct({
 type XAiPromptCompleteNotification = typeof XAiPromptCompleteNotification.Type;
 
 /**
- * Live Grok CLI (0.2.x) emits root turn completion as an extension session
- * update, not as top-level `_x.ai/session/prompt_complete`:
- * `{ method: "_x.ai/session/update", params: { sessionId, update: {
+ * Grok persists root turn completion as an extension session update:
+ * `{ params: { sessionId, update: {
  *   sessionUpdate: "turn_completed", prompt_id, stop_reason } } }`.
+ * The open-source runtime forwards it as `x.ai/session_notification` and
+ * stores/replays it as `_x.ai/session/update`; released 0.2.106 forwards the
+ * underscore alias `_x.ai/session_notification`. Current source also emits
+ * the fire-and-forget canonical `x.ai/session/prompt_complete`, while released
+ * builds use the underscore alias.
  */
 const XAiSessionUpdateNotification = Schema.Struct({
   sessionId: Schema.String,
@@ -324,7 +328,7 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
 
 /**
  * A finished kill_command_or_subagent call is the genuine end signal for every
- * task id it names: the Grok CLI emits no `_x.ai/task_completed` for a killed
+ * task id it names: the Grok CLI emits no `x.ai/task_completed` for a killed
  * task. A failed kill usually means the task was already gone, so it ends the
  * id too (failing open to a continuation beats pinning the running set).
  */
@@ -392,36 +396,32 @@ export function xAiBackgroundTaskLifecycleMutation(
 }
 
 /**
- * Grok `session/cancel` is detach-and-continue: the CLI reaps the foreground
- * tool shell, then re-runs the command as a background task
- * (`_x.ai/task_backgrounded`) that executes to completion
- * (`_x.ai/task_completed`). Soft interrupts keep the process alive, so those
- * tasks must be tracked like monitors: residual frames buffer instead of
- * waking synthetic continuations, and pending-background-work stays truthful
- * until the task ends (or the model kills it via kill_command_or_subagent).
+ * Grok task lifecycle notifications use canonical `x.ai/task_*` methods in
+ * current builds; older 0.2.x builds used `_x.ai/task_*`. Interactive cancel
+ * preserves tasks that were already backgrounded (and some older builds could
+ * background the cancelled foreground command), so both spellings must be
+ * tracked. Residual frames then buffer instead of waking synthetic
+ * continuations, and pending-background-work stays truthful until the task
+ * ends (or the model kills it via kill_command_or_subagent).
  */
 export const registerXAiBackgroundTaskTracking = (
   runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">,
   apply: (mutation: XAiBackgroundTaskLifecycleMutation) => Effect.Effect<void>,
 ): Effect.Effect<void, EffectAcpErrors.AcpError> =>
-  Effect.gen(function* () {
-    yield* runtime.handleExtNotification(
-      "_x.ai/task_backgrounded",
-      XAiTaskLifecycleNotification,
-      (notification) => {
-        const mutation = xAiBackgroundTaskLifecycleMutation(notification, "running");
+  Effect.forEach(
+    [
+      ["x.ai/task_backgrounded", "running"],
+      ["_x.ai/task_backgrounded", "running"],
+      ["x.ai/task_completed", "completed"],
+      ["_x.ai/task_completed", "completed"],
+    ] as const,
+    ([method, status]) =>
+      runtime.handleExtNotification(method, XAiTaskLifecycleNotification, (notification) => {
+        const mutation = xAiBackgroundTaskLifecycleMutation(notification, status);
         return mutation === null ? Effect.void : apply(mutation);
-      },
-    );
-    yield* runtime.handleExtNotification(
-      "_x.ai/task_completed",
-      XAiTaskLifecycleNotification,
-      (notification) => {
-        const mutation = xAiBackgroundTaskLifecycleMutation(notification, "completed");
-        return mutation === null ? Effect.void : apply(mutation);
-      },
-    );
-  });
+      }),
+    { discard: true },
+  );
 
 /**
  * Grok ACP often sends `title: "Tool"` even when rawInput has a useful
@@ -1139,8 +1139,9 @@ const rememberCompletedXAiPromptId = (
 /**
  * Grok-specific ACP runtime wrapper. Races `session/prompt` against root-matched
  * terminal notifications:
- * - `_x.ai/session/update` + `turn_completed` + matching `prompt_id` (current CLI)
- * - `_x.ai/session/prompt_complete` (legacy / alternate builds)
+ * - session notification/update + `turn_completed` + matching `prompt_id`
+ * - `x.ai/session/prompt_complete` (open-source fire-and-forget signal)
+ * - `_x.ai/session/prompt_complete` (released-build alias)
  *
  * Pending entries are keyed by root sessionId + T3-injected promptId, so
  * foreign/child sessions and `task-completed-*` ids do not settle the root turn.
@@ -1164,22 +1165,28 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
         notification,
       }).pipe(Effect.catch(() => Effect.void));
 
-    yield* runtime.handleExtNotification(
-      "_x.ai/session/prompt_complete",
-      XAiPromptCompleteNotification,
-      settleFromPromptComplete,
+    yield* Effect.forEach(
+      ["x.ai/session/prompt_complete", "_x.ai/session/prompt_complete"] as const,
+      (method) =>
+        runtime.handleExtNotification(
+          method,
+          XAiPromptCompleteNotification,
+          settleFromPromptComplete,
+        ),
+      { discard: true },
     );
 
-    yield* runtime.handleExtNotification(
-      "_x.ai/session/update",
-      XAiSessionUpdateNotification,
-      (notification) => {
-        const complete = xAiPromptCompleteFromSessionUpdate(notification);
-        if (complete === null) {
-          return Effect.void;
-        }
-        return settleFromPromptComplete(complete);
-      },
+    yield* Effect.forEach(
+      ["x.ai/session_notification", "_x.ai/session_notification", "_x.ai/session/update"] as const,
+      (method) =>
+        runtime.handleExtNotification(method, XAiSessionUpdateNotification, (notification) => {
+          const complete = xAiPromptCompleteFromSessionUpdate(notification);
+          if (complete === null) {
+            return Effect.void;
+          }
+          return settleFromPromptComplete(complete);
+        }),
+      { discard: true },
     );
 
     return {
