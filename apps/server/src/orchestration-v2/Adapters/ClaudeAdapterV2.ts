@@ -1136,7 +1136,7 @@ function permissionModeForClaudeRuntimePolicy(
     case "readOnly":
       return "dontAsk";
     case "dangerFullAccess":
-      return "bypassPermissions";
+      return runtimePolicy.runtimeMode === "approval-required" ? "default" : "bypassPermissions";
     case "externalSandbox":
     case "workspaceWrite":
     case undefined:
