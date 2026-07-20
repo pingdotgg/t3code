@@ -1510,6 +1510,45 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      it.effect("adds reasoning effort options to custom Claude models", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            {
+              ...defaultClaudeSettings,
+              customModels: ["gpt-5.6-sol"],
+            },
+            claudeCapabilities(),
+          );
+          const customModel = status.models.find((model) => model.slug === "gpt-5.6-sol");
+          const effortDescriptor = customModel?.capabilities?.optionDescriptors?.find(
+            (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
+          );
+
+          assert.strictEqual(customModel?.isCustom, true);
+          assert.deepStrictEqual(effortDescriptor, {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+              { id: "max", label: "Max" },
+            ],
+            currentValue: "high",
+          });
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.215\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
         Effect.gen(function* () {
           // Bedrock authenticates via external AWS credentials, so the SDK init

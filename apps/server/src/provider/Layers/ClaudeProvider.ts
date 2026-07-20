@@ -39,8 +39,24 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 
-const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+const EMPTY_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
+});
+
+const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    buildSelectOptionDescriptor({
+      id: "effort",
+      label: "Reasoning",
+      options: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "xhigh", label: "Extra High" },
+        { value: "max", label: "Max" },
+      ],
+    }),
+  ],
 });
 
 const CLAUDE_PRESENTATION = {
@@ -312,6 +328,9 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
 
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
+  if (!slug) {
+    return EMPTY_CLAUDE_MODEL_CAPABILITIES;
+  }
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
@@ -353,6 +372,7 @@ export function normalizeClaudeCliEffort(
   }
   if (
     effort === "xhigh" &&
+    BUILT_IN_MODELS.some((candidate) => candidate.slug === model) &&
     model !== "claude-fable-5" &&
     model !== "claude-opus-4-8" &&
     model !== "claude-sonnet-5"

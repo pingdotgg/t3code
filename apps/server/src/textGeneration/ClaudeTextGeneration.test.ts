@@ -255,6 +255,33 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("preserves xhigh effort for custom Claude models", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use custom reasoning effort",
+          },
+        }),
+        argsMustContain: "--model gpt-5.6-sol --effort xhigh",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "gpt-5.6-sol",
+              [{ id: "effort", value: "xhigh" }],
+            ),
+          });
+
+          expect(generated.title).toBe("Use custom reasoning effort");
+        }),
+    ),
+  );
+
   it.effect("generates thread titles through the Claude provider", () =>
     withFakeClaudeEnv(
       {
