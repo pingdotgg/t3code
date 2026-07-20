@@ -35,6 +35,10 @@ function stripQuotes(value: string): string {
 }
 
 function applyColorEntry(colors: MutableThemeColors, key: string, value: string): void {
+  // Empty assignments are resets, not colors. Keeping an empty scalar here
+  // would later violate ServerConfig's TrimmedNonEmptyString schema and make
+  // the whole server.getConfig response fail to encode.
+  if (value.length === 0) return;
   switch (key) {
     case "background":
       colors.background = value;
@@ -109,20 +113,22 @@ export function parseGhosttyConfig(source: string): GhosttyConfigValues {
 
 /** Split `theme = light:A,dark:B` into per-mode names; a bare name applies to both. */
 export function splitThemeSelection(theme: string): { light?: string; dark?: string } {
-  if (!theme.includes(":")) {
-    return { light: theme, dark: theme };
-  }
   const result: { light?: string; dark?: string } = {};
+  let hasModeSelection = false;
   for (const part of theme.split(",")) {
-    const separatorIndex = part.indexOf(":");
-    if (separatorIndex <= 0) continue;
-    const mode = part.slice(0, separatorIndex).trim();
-    const name = part.slice(separatorIndex + 1).trim();
+    const match = /^\s*(light|dark):(.*)$/.exec(part);
+    if (!match) continue;
+    const mode = match[1];
+    const name = (match[2] ?? "").trim();
     if (name.length === 0) continue;
+    hasModeSelection = true;
     if (mode === "light") result.light = name;
     if (mode === "dark") result.dark = name;
   }
-  return result;
+  // A colon is also part of a Windows drive path (C:/theme), and may be part
+  // of another valid bare theme identifier. Only enter per-mode parsing when
+  // an explicit light: or dark: selection was recognized.
+  return hasModeSelection ? result : { light: theme, dark: theme };
 }
 
 function hasAnyColor(colors: MutableThemeColors): boolean {
@@ -173,6 +179,25 @@ const GHOSTTY_SYSTEM_THEME_DIRS = [
   "/usr/share/ghostty/themes",
   "/usr/local/share/ghostty/themes",
 ];
+
+export function ghosttyThemeSearchPaths(
+  path: Pick<Path.Path, "isAbsolute" | "join">,
+  input: { readonly home: string; readonly xdgConfigHome: string; readonly themeName: string },
+): ReadonlyArray<string> {
+  return [
+    ...(path.isAbsolute(input.themeName) ? [input.themeName] : []),
+    path.join(input.xdgConfigHome, "ghostty", "themes", input.themeName),
+    path.join(
+      input.home,
+      "Library",
+      "Application Support",
+      "com.mitchellh.ghostty",
+      "themes",
+      input.themeName,
+    ),
+    ...GHOSTTY_SYSTEM_THEME_DIRS.map((dir) => path.join(dir, input.themeName)),
+  ];
+}
 
 /**
  * Load terminal font and theme colors from the user's local Ghostty config.
@@ -230,10 +255,9 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
 
   const loadThemeColors = (themeName: string) =>
     Effect.gen(function* () {
-      const themeSource = yield* readFirstExisting([
-        path.join(xdgConfigHome, "ghostty", "themes", themeName),
-        ...GHOSTTY_SYSTEM_THEME_DIRS.map((dir) => dir + "/" + themeName),
-      ]);
+      const themeSource = yield* readFirstExisting(
+        ghosttyThemeSearchPaths(path, { home, xdgConfigHome, themeName }),
+      );
       if (themeSource === undefined) return emptyColors();
       return parseGhosttyConfig(themeSource).colors;
     });

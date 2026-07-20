@@ -35,6 +35,7 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { useOpenInPreferredEditor } from "../editorPreferences";
+import { shouldFocusTerminalAfterSetup } from "../terminal-focus";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
@@ -445,7 +446,7 @@ export function TerminalViewport({
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const terminalStyle = serverConfig?.terminalStyle;
-  const terminalStyleKey = useMemo(() => JSON.stringify(terminalStyle ?? null), [terminalStyle]);
+  const terminalStyleKey = JSON.stringify(terminalStyle ?? null);
   const readTerminalStyle = useEffectEvent(() => terminalStyle);
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
@@ -462,6 +463,9 @@ export function TerminalViewport({
     reportFailure: false,
   });
   const hasHandledExitRef = useRef(false);
+  const hasMountedTerminalRef = useRef(false);
+  const restoreTerminalFocusOnSetupRef = useRef(false);
+  const focusOnInitialSessionSyncRef = useRef(false);
   // Bumped when the async WASM gate finishes creating a terminal, so the
   // session sync effect re-runs against the live terminal even when no
   // session field changed while the WASM module was loading.
@@ -545,6 +549,18 @@ export function TerminalViewport({
       };
       applyMountBackground(initialTheme);
       const fitAddon = new FitAddon();
+      const previouslyFocusedElement =
+        document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+          ? document.activeElement
+          : null;
+      const shouldFocusAfterSetup = shouldFocusTerminalAfterSetup({
+        autoFocus: readAutoFocus(),
+        hasMounted: hasMountedTerminalRef.current,
+        restorePreviousTerminalFocus: restoreTerminalFocusOnSetupRef.current,
+      });
+      restoreTerminalFocusOnSetupRef.current = false;
+      hasMountedTerminalRef.current = true;
+      focusOnInitialSessionSyncRef.current = shouldFocusAfterSetup;
       const terminal = new Terminal({
         cursorBlink: true,
         // Ghostty font-size is in points; treat it as CSS px, which reads
@@ -560,10 +576,15 @@ export function TerminalViewport({
       fitTerminalSafely(fitAddon);
       // ghostty-web's open() focuses unconditionally; in split view the
       // last-mounted terminal would steal focus from the active one.
-      if (readAutoFocus()) {
+      if (shouldFocusAfterSetup) {
         terminal.focus();
       } else {
         terminal.blur();
+        // open() focuses unconditionally. Restore whatever external control
+        // (commonly the chat composer) had focus before a style-driven remount.
+        if (previouslyFocusedElement?.isConnected) {
+          previouslyFocusedElement.focus({ preventScroll: true });
+        }
       }
 
       terminalRef.current = terminal;
@@ -912,6 +933,7 @@ export function TerminalViewport({
       }, 30);
 
       return () => {
+        restoreTerminalFocusOnSetupRef.current = mount.contains(document.activeElement);
         window.clearTimeout(fitTimer);
         inputDisposable.dispose();
         selectionDisposable.dispose();
@@ -945,7 +967,17 @@ export function TerminalViewport({
       effectDisposed = true;
       teardown?.();
     };
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, terminalStyleKey, threadId, worktreePath]);
+  }, [
+    cwd,
+    environmentId,
+    openPreview,
+    runtimeEnvKey,
+    terminalId,
+    terminalStyleKey,
+    threadId,
+    threadRef,
+    worktreePath,
+  ]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1003,11 +1035,12 @@ export function TerminalViewport({
       }, 0);
     }
 
-    if (previous.version === 0 && autoFocus) {
+    if (previous.version === 0 && autoFocus && focusOnInitialSessionSyncRef.current) {
       window.requestAnimationFrame(() => {
         terminal.focus();
       });
     }
+    focusOnInitialSessionSyncRef.current = false;
     previousSessionRef.current = current;
   }, [autoFocus, terminalBuffer, terminalEpoch, terminalError, terminalStatus, terminalVersion]);
 
