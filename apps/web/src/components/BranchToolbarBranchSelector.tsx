@@ -313,7 +313,11 @@ export function BranchToolbarBranchSelector({
     if (!api || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
     if (isSelectingWorktreeBase) {
-      setThreadBranch(branch.name, null);
+      if (hasServerThread) {
+        onActiveThreadBranchOverrideChange?.(branch.name);
+      } else {
+        setThreadBranch(branch.name, null);
+      }
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;

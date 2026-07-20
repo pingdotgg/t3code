@@ -57,6 +57,7 @@ const COPILOT_MCP_TOOLSETS = [
   "preview_click",
   "preview_type",
   "preview_annotate",
+  "create_isolated_workspace",
 ] as const;
 
 type CopilotAcpRuntimeCopilotSettings = {
@@ -70,6 +71,7 @@ export interface CopilotAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly copilotSettings: CopilotAcpRuntimeCopilotSettings | null | undefined;
   readonly runtimeMode: RuntimeMode;
+  readonly threadId?: string;
 }
 
 export function buildCopilotRuntimeModeArgs(runtimeMode: RuntimeMode): ReadonlyArray<string> {
@@ -90,6 +92,7 @@ export function buildCopilotAcpSpawnInput(
 
 export function buildCopilotMcpServers(
   cwd: string,
+  threadId: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   if (env.T3_COPILOT_ACP_ENABLE_MCP !== "1" && env.HERMES_COPILOT_ACP_ENABLE_MCP !== "1") {
@@ -107,7 +110,10 @@ export function buildCopilotMcpServers(
       name: "t3-tools",
       command,
       args: ["mcp", "serve", "--cwd", cwd, "--toolsets", toolsets],
-      env: [],
+      env: [
+        ...(threadId === undefined ? [] : [{ name: "T3_MCP_THREAD_ID", value: threadId }]),
+        { name: "T3_MCP_CLI_COMMAND", value: command },
+      ],
     },
   ];
 }
@@ -159,7 +165,7 @@ export const makeCopilotAcpRuntime = (
         clientInfo: COPILOT_CLIENT_INFO,
         clientCapabilities: COPILOT_CLIENT_CAPABILITIES,
         modeSwitchMethod: "set_mode",
-        mcpServers: buildCopilotMcpServers(input.cwd),
+        mcpServers: buildCopilotMcpServers(input.cwd, input.threadId),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

@@ -29,6 +29,8 @@ interface McpTool {
 interface McpServeOptions {
   readonly cwd: string;
   readonly toolsets: ReadonlySet<string>;
+  readonly threadId: string | undefined;
+  readonly cliCommand: string;
 }
 
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -54,6 +56,8 @@ const TOOL_ALIASES: ReadonlyMap<string, string> = new Map([
   ["preview_click", "preview_click"],
   ["preview_type", "preview_type"],
   ["preview_annotate", "preview_annotate"],
+  ["create_isolated_workspace", "create_isolated_workspace"],
+  ["worktree_handoff", "create_isolated_workspace"],
 ] as const);
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -233,6 +237,93 @@ async function terminalTool(root: string, args: Record<string, unknown>): Promis
   });
 }
 
+interface TerminalResult {
+  readonly code: number | null;
+  readonly signal: string | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+async function runCommand(
+  root: string,
+  command: string,
+  args: ReadonlyArray<string>,
+): Promise<TerminalResult> {
+  const output = await terminalTool(root, { command, args });
+  const result = JSON.parse(output) as TerminalResult;
+  if (result.code !== 0) {
+    const detail =
+      result.stderr.trim() || result.stdout.trim() || `exited with code ${result.code}`;
+    throw new Error(`${command} ${args.join(" ")} failed: ${detail}`);
+  }
+  return result;
+}
+
+function requireAbsolutePath(value: string | undefined): string {
+  if (!value) {
+    throw new Error("create_isolated_workspace requires an absolute path");
+  }
+  if (!path.isAbsolute(value)) {
+    throw new Error(`create_isolated_workspace path must be absolute: ${value}`);
+  }
+  return value;
+}
+
+async function createIsolatedWorkspaceTool(
+  options: McpServeOptions,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!options.threadId) {
+    throw new Error("create_isolated_workspace is only available from a T3 provider session");
+  }
+
+  const branch = asString(args.branch);
+  if (!branch?.trim()) {
+    throw new Error("create_isolated_workspace requires a non-empty branch");
+  }
+  const targetPath = requireAbsolutePath(asString(args.path));
+  const baseRef = asString(args.baseRef);
+
+  const currentBranch =
+    baseRef ?? (await runCommand(options.cwd, "git", ["branch", "--show-current"])).stdout.trim();
+  if (!currentBranch) {
+    throw new Error("Could not determine the current branch; pass baseRef explicitly.");
+  }
+
+  await runCommand(options.cwd, "git", [
+    "worktree",
+    "add",
+    targetPath,
+    "-b",
+    branch.trim(),
+    currentBranch,
+  ]);
+
+  try {
+    await runCommand(options.cwd, options.cliCommand, [
+      "chat",
+      "set-branch",
+      options.threadId,
+      "--branch",
+      branch.trim(),
+      "--worktree",
+      targetPath,
+    ]);
+  } catch (error) {
+    await runCommand(options.cwd, "git", ["worktree", "remove", "--force", targetPath]).catch(
+      () => undefined,
+    );
+    throw error;
+  }
+
+  return JSON.stringify({
+    worktreePath: targetPath,
+    branch: branch.trim(),
+    baseRef: currentBranch,
+    note: "Handoff recorded. Finish this turn normally; the next turn starts in the worktree.",
+  });
+}
+
 const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "read_file",
@@ -337,6 +428,20 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
       properties: { tabId: { type: "string" }, selector: { type: "string" } },
     },
   },
+  {
+    name: "create_isolated_workspace",
+    description:
+      "Use this instead of git worktree add when work needs an isolated checkout. It creates a git worktree and binds this T3 thread to it, so the next turn resumes there. Finish the current turn normally after calling it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        branch: { type: "string" },
+        path: { type: "string", description: "Absolute path for the new worktree." },
+        baseRef: { type: "string", description: "Optional branch or ref to start from." },
+      },
+      required: ["branch", "path"],
+    },
+  },
 ];
 
 function availableTools(toolsets: ReadonlySet<string>): ReadonlyArray<McpTool> {
@@ -369,6 +474,8 @@ async function callTool(options: McpServeOptions, name: string, args: Record<str
     case "preview_type":
     case "preview_annotate":
       return `${name} requires the desktop preview bridge. This lightweight MCP adapter runs in the backend process and cannot access Electron webviews directly yet.`;
+    case "create_isolated_workspace":
+      return await createIsolatedWorkspaceTool(options, args);
     default:
       throw new Error(`Unsupported MCP tool: ${name}`);
   }
@@ -447,5 +554,13 @@ export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: 
     serveMcp({
       cwd: path.resolve(input.cwd),
       toolsets: normalizeToolsets(input.toolsets),
+      threadId: process.env.T3_MCP_THREAD_ID,
+      cliCommand: process.env.T3_MCP_CLI_COMMAND?.trim() || "t3",
     }),
   );
+
+/** Exposed for tests. */
+export const __testing = {
+  availableTools,
+  createIsolatedWorkspaceTool,
+};

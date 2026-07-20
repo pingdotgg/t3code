@@ -678,6 +678,9 @@ export function setThreadExpanded(state: UiState, threadId: string, expanded: bo
     return state;
   }
 
+  // Persist the explicit choice in both directions. Parents default to
+  // collapsed once settled, so an explicit "expanded" must be recorded rather
+  // than cleared back to the (now collapsed) default.
   return {
     ...state,
     threadExpandedById: {
@@ -950,8 +953,14 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadPinned(state, projectId, threadId, pinned)),
   reorderPinnedThreads: (projectId, draggedThreadId, targetThreadId) =>
     set((state) => reorderPinnedThreads(state, projectId, draggedThreadId, targetThreadId)),
-  setAgentRunDismissed: (agentRunKey, dismissed) =>
-    set((state) => setAgentRunDismissed(state, agentRunKey, dismissed)),
+  setAgentRunDismissed: (agentRunKey, dismissed) => {
+    set((state) => setAgentRunDismissed(state, agentRunKey, dismissed));
+    // Archiving an agent run is a deliberate, low-frequency action the user
+    // expects to survive an immediate restart. The 500ms persist debounce (and
+    // an unreliable `beforeunload` flush in the desktop webview) can drop the
+    // write if the app closes before it fires, so persist synchronously here.
+    debouncedPersistState.flush();
+  },
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

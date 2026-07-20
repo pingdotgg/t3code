@@ -3,8 +3,8 @@ import { ThreadId } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { sortThreads } from "./lib/threadSort";
 import {
-  isActiveThreadStatus,
   resolveProjectStatusIndicator,
+  isActiveThreadStatus,
   type ThreadStatusPill,
 } from "./components/Sidebar.logic";
 import type { AgentRun } from "./session-logic";
@@ -100,6 +100,11 @@ export interface BuildSidebarThreadRowsInput {
   threads: readonly SidebarThreadSummary[];
   pinnedThreadKeys: readonly string[];
   activeThreadKey?: string | undefined;
+  /**
+   * Explicit per-thread expand/collapse choices keyed by thread key. When a
+   * parent has no entry, expansion falls back to the status-driven default:
+   * expanded only while it (or a descendant) is active.
+   */
   expandedOverrideByThreadKey: ReadonlyMap<string, boolean>;
   sortOrder: SidebarThreadSortOrder;
   resolveThreadStatus: (thread: SidebarThreadSummary) => ThreadStatusPill | null;

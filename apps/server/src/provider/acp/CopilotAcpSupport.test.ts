@@ -35,12 +35,12 @@ describe("buildCopilotAcpSpawnInput", () => {
 
   describe("buildCopilotMcpServers", () => {
     it("keeps MCP disabled by default", () => {
-      expect(buildCopilotMcpServers("/tmp/project", {})).toEqual([]);
+      expect(buildCopilotMcpServers("/tmp/project", "thread-1", {})).toEqual([]);
     });
 
     it("builds an env-gated T3 MCP stdio server descriptor", () => {
       expect(
-        buildCopilotMcpServers("/tmp/project", {
+        buildCopilotMcpServers("/tmp/project", "thread-1", {
           T3_COPILOT_ACP_ENABLE_MCP: "1",
           T3_COPILOT_ACP_MCP_COMMAND: "t3-dev",
           T3_COPILOT_ACP_MCP_TOOLSETS: "read_file,search_files",
@@ -50,7 +50,10 @@ describe("buildCopilotAcpSpawnInput", () => {
           name: "t3-tools",
           command: "t3-dev",
           args: ["mcp", "serve", "--cwd", "/tmp/project", "--toolsets", "read_file,search_files"],
-          env: [],
+          env: [
+            { name: "T3_MCP_THREAD_ID", value: "thread-1" },
+            { name: "T3_MCP_CLI_COMMAND", value: "t3-dev" },
+          ],
         },
       ]);
     });

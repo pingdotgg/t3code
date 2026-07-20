@@ -1,8 +1,10 @@
 import type { ReviewResult } from "@t3tools/contracts";
 import { AlertCircleIcon, MessageSquareTextIcon } from "lucide-react";
 
+import { formatReviewFinding, formatReviewFindings } from "~/lib/reviewFindingFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { MessageCopyButton } from "./MessageCopyButton";
 
 const PRIORITY_LABELS = {
   critical: "P0",
@@ -43,9 +45,14 @@ export function ReviewFindingsCard({
             {result.findings.length} {result.findings.length === 1 ? "comment" : "comments"}
           </span>
         </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {result.verdict.replace("-", " ")}
-        </span>
+        {result.findings.length > 0 && (
+          <MessageCopyButton
+            size="icon-xs"
+            variant="ghost"
+            className="shrink-0 text-muted-foreground"
+            text={formatReviewFindings(result.findings)}
+          />
+        )}
       </div>
       <p className="px-3 pb-2 pt-2 text-[length:var(--app-chat-font-size)] text-muted-foreground">
         {result.summary}
@@ -53,25 +60,32 @@ export function ReviewFindingsCard({
       {result.findings.length > 0 && (
         <div className="border-t border-border/60">
           {result.findings.map((finding) => (
-            <Button
-              key={finding.id}
-              variant="ghost"
-              className="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-left hover:bg-accent/50"
-              onClick={() => onSelectFinding(finding.id)}
-            >
-              <Badge size="sm" variant={priorityVariant(finding.priority)}>
-                {PRIORITY_LABELS[finding.priority]}
-              </Badge>
-              <span className="min-w-0 flex-1 truncate text-[length:var(--app-chat-font-size)]">
-                {finding.title}
-              </span>
-              <span
-                className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-xs text-muted-foreground"
-                title={`${finding.location.path}:${finding.location.startLine}`}
+            <div key={finding.id} className="group/finding relative">
+              <Button
+                variant="ghost"
+                className="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 pr-10 text-left hover:bg-accent/50"
+                onClick={() => onSelectFinding(finding.id)}
               >
-                {finding.location.path.split("/").pop()}:{finding.location.startLine}
-              </span>
-            </Button>
+                <Badge size="sm" variant={priorityVariant(finding.priority)}>
+                  {PRIORITY_LABELS[finding.priority]}
+                </Badge>
+                <span className="min-w-0 flex-1 truncate text-[length:var(--app-chat-font-size)]">
+                  {finding.title}
+                </span>
+                <span
+                  className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-[length:var(--app-chat-font-size)] text-muted-foreground"
+                  title={`${finding.location.path}:${finding.location.startLine}`}
+                >
+                  {finding.location.path.split("/").pop()}:{finding.location.startLine}
+                </span>
+              </Button>
+              <MessageCopyButton
+                size="icon-xs"
+                variant="ghost"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover/finding:opacity-100 focus-visible:opacity-100"
+                text={formatReviewFinding(finding)}
+              />
+            </div>
           ))}
         </div>
       )}

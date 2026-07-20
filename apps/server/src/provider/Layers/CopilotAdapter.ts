@@ -852,6 +852,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             ? { binaryPath: input.copilotSettings.binaryPath }
             : undefined,
           childProcessSpawner,
+          threadId: input.threadId,
           cwd: input.cwd,
           runtimeMode: input.runtimeMode,
           ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
