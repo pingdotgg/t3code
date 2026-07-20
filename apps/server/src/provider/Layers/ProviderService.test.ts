@@ -642,6 +642,81 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("ProviderServiceLive touches lastSeenAt on background runtime activity, throttled", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+
+    // Spy directory: records every touchLastSeen call so we assert the wiring
+    // directly (a runtime event triggers a touch) rather than inferring it from
+    // DB timestamp noise, and confirms throttling collapses a burst.
+    const touched: string[] = [];
+    const spyDirectoryLayer = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+      upsert: () => Effect.void,
+      getProvider: () => Effect.die(new Error("getProvider unused in test")),
+      getBinding: () => Effect.succeed(Option.none()),
+      listThreadIds: () => Effect.succeed([]),
+      listBindings: () => Effect.succeed([]),
+      touchLastSeen: (threadId) =>
+        Effect.sync(() => {
+          touched.push(threadId);
+        }),
+    });
+
+    const threadId = asThreadId("thread-runtime-activity-touch");
+
+    const providerLayer = makeProviderServiceLive({
+      // Tight throttle window so the test can prove both "touches" and
+      // "throttles a rapid burst" deterministically with the test clock.
+      runtimeActivityTouchThrottleMs: 1_000,
+    }).pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(spyDirectoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    const emitTaskProgress = (id: string) =>
+      codex.emit({
+        eventId: asEventId(id),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:05:00.000Z",
+        type: "task.progress",
+        payload: {},
+      });
+
+    yield* Effect.gen(function* () {
+      yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      // First background event → one touch.
+      emitTaskProgress("evt-task-progress-1");
+      yield* advanceTestClock(20);
+      assert.deepEqual(touched, [threadId]);
+
+      // Rapid second event within the throttle window → collapsed (no new touch).
+      emitTaskProgress("evt-task-progress-2");
+      yield* advanceTestClock(20);
+      assert.deepEqual(touched, [threadId]);
+
+      // After the throttle window elapses, a further event touches again.
+      yield* advanceTestClock(1_000);
+      emitTaskProgress("evt-task-progress-3");
+      yield* advanceTestClock(20);
+      assert.deepEqual(touched, [threadId, threadId]);
+    }).pipe(Effect.provide(providerLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-service-"));

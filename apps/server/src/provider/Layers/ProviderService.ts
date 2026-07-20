@@ -25,6 +25,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -64,6 +65,11 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  /**
+   * Minimum interval between `lastSeenAt` refreshes triggered by runtime
+   * activity, per thread. Defaults to 60s. Exposed for tests.
+   */
+  readonly runtimeActivityTouchThrottleMs?: number;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -213,6 +219,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  // Throttle `lastSeenAt` refreshes keyed by thread. A running dynamic workflow
+  // emits many runtime events per second (`task.progress`, token-usage updates,
+  // …); we only need to bump the inactivity clock often enough that the session
+  // reaper never mistakes an active background session for an idle one. One
+  // write per thread per window is plenty and keeps the DB churn negligible.
+  const lastSeenTouchMs = options?.runtimeActivityTouchThrottleMs ?? 60_000;
+  const lastSeenTouchByThread = new Map<ThreadId, number>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
@@ -281,6 +294,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  // Keep a live session's inactivity clock fresh from runtime activity. This
+  // matters for work that runs *after* the foreground turn settles — a
+  // background dynamic workflow / subagents keep emitting runtime events (e.g.
+  // `task.progress`) while the adapter session has already gone `ready` with no
+  // active turn. Without this, the session reaper sees a stale `lastSeenAt` and
+  // tears the session down mid-workflow. Throttled per thread so a burst of
+  // events is at most one lightweight `last_seen_at` write per window.
+  const refreshLastSeenForActivity = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const threadId = event.threadId;
+      if (threadId === undefined) return;
+      const now = yield* Clock.currentTimeMillis;
+      const previous = lastSeenTouchByThread.get(threadId);
+      if (previous !== undefined && now - previous < lastSeenTouchMs) return;
+      lastSeenTouchByThread.set(threadId, now);
+      // Best-effort: a failed touch must never break event processing. The row
+      // may be absent/stopped (touch is a no-op) or the write may transiently
+      // fail; the next event refreshes it.
+      yield* directory.touchLastSeen(threadId).pipe(Effect.catchCause(() => Effect.void));
+    });
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -293,7 +327,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(refreshLastSeenForActivity(canonicalEvent)),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
       ),
     );
 
