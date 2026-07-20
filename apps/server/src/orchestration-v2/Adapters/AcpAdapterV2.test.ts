@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -29,6 +30,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import {
@@ -106,6 +108,21 @@ function rawProtocolMethod(event: EffectAcpProtocol.AcpProtocolLogEvent): string
   return undefined;
 }
 
+function rawProtocolRequest(
+  event: EffectAcpProtocol.AcpProtocolLogEvent,
+): { readonly method?: unknown; readonly params?: unknown } | undefined {
+  if (event.stage !== "raw" || typeof event.payload !== "string") return undefined;
+  for (const line of event.payload.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const decoded = Option.getOrUndefined(decodeUnknownJson(trimmed));
+    if (typeof decoded === "object" && decoded !== null && "method" in decoded) {
+      return decoded;
+    }
+  }
+  return undefined;
+}
+
 function makeTurnInput(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -174,7 +191,8 @@ describe("AcpAdapterV2", () => {
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
-      const makeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const makeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents });
 
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
@@ -190,6 +208,17 @@ describe("AcpAdapterV2", () => {
       });
       const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
       const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-acp-native-fork"),
+        threadId: targetThreadId,
+        providerSessionId: "mcp-session-acp-native-fork",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer target-thread-token",
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(targetThreadId)),
+      );
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -215,11 +244,33 @@ describe("AcpAdapterV2", () => {
         sourceProviderThread,
         targetThreadId,
       });
+      const forkRequest = Option.getOrThrow(
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) =>
+              event.direction === "outgoing" && rawProtocolMethod(event) === "session/fork",
+          ),
+          Stream.map(rawProtocolRequest),
+          Stream.runHead,
+        ),
+      );
 
       assert.equal(sourceProviderThread.nativeThreadRef?.nativeId, "mock-session-1");
       assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "mock-session-1-fork");
       assert.equal(forkedProviderThread.appThreadId, targetThreadId);
       assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
+      assert.deepEqual(forkRequest.params, {
+        sessionId: "mock-session-1",
+        cwd: process.cwd(),
+        mcpServers: [
+          {
+            type: "http",
+            name: "t3-code",
+            url: "http://127.0.0.1:43123/mcp",
+            headers: [{ name: "Authorization", value: "Bearer target-thread-token" }],
+          },
+        ],
+      });
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
