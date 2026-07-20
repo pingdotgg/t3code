@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -76,6 +77,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
     const projectId = ProjectId.make("project-force-delete-cold");
     const threadId = ThreadId.make("thread-force-delete-cold");
     const commandId = CommandId.make("command-force-delete-cold");
+    const deleteStarted = yield* Deferred.make<void>();
 
     const orchestrationEngineLayer = Layer.succeed(OrchestrationEngineService, {
       readEvents: () => Stream.empty,
@@ -83,7 +85,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
       streamDomainEvents: Stream.fromSubscription(eventSubscription),
     });
     const providerLayer = Layer.mock(ProviderService)({
-      stopSession: () => Effect.void,
+      stopSession: () => Deferred.succeed(deleteStarted, undefined).pipe(Effect.asVoid),
     });
     const terminalLayer = Layer.mock(TerminalManager.TerminalManager)({
       close: () => Effect.void,
@@ -214,6 +216,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
 
       yield* reactor.start();
       yield* PubSub.publish(events, { ...deletedEvent, sequence: 4 });
+      yield* Deferred.await(deleteStarted);
       yield* reactor.drain;
 
       const hotRows = yield* sql<{ readonly count: number }>`
