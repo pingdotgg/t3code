@@ -11,6 +11,20 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 
+// Permissions granted to preview web content. `clipboard-sanitized-write` is the
+// Electron permission behind `navigator.clipboard.writeText()` — note it is NOT
+// `clipboard-write`, which is not a valid Electron permission name. Async
+// clipboard writes are gated by the permission *check* handler (not only the
+// request handler), so both handlers must allow it; otherwise built-in "Copy"
+// buttons — e.g. the Next.js / Vercel error overlay — fail with
+// `Failed to execute 'writeText' on 'Clipboard': Write permission denied`.
+const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
+  "clipboard-read",
+  "clipboard-sanitized-write",
+  "notifications",
+  "geolocation",
+]);
+
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedErrorClass<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
@@ -120,9 +134,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             .replace(/\s*t3code\/[\d.]+/, "");
           browserSession.setUserAgent(userAgent);
           browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-            const allowed = ["clipboard-read", "clipboard-write", "notifications", "geolocation"];
-            callback(allowed.includes(permission));
+            callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
           });
+          browserSession.setPermissionCheckHandler((_webContents, permission) =>
+            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          );
           const next = new Map(sessions);
           next.set(partition, browserSession);
           return [browserSession, next] as const;

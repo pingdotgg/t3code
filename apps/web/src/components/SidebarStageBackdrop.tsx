@@ -201,9 +201,9 @@ function DevBlueprintArt() {
           gradientUnits="userSpaceOnUse"
           spreadMethod="reflect"
         >
-          <stop style={{ stopColor: "var(--stage-bp-top)" }} />
+          <stop style={{ stopColor: "var(--stage-bp-bottom)" }} />
           <stop offset="0.5" style={{ stopColor: "var(--stage-bp-mid)" }} />
-          <stop offset="1" style={{ stopColor: "var(--stage-bp-bottom)" }} />
+          <stop offset="1" style={{ stopColor: "var(--stage-bp-top)" }} />
         </linearGradient>
         <radialGradient
           id="stage-bp-glow"

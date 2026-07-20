@@ -1,20 +1,14 @@
 import type { ProjectEntry } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  Platform,
-  Pressable,
-  RefreshControl,
-  View,
-} from "react-native";
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import {
   buildFileTree,
   defaultExpandedTreePaths,
@@ -129,7 +123,7 @@ export function FileTreeBrowser(props: {
   const insets = useSafeAreaInsets();
   // Native transparent-header height ≈ safe-area top + nav bar (~44). Matches the
   // observed adjustedContentInset bottom (~102) seen in the native trace.
-  const headerInset = Platform.OS === "ios" ? insets.top + 44 : 0;
+  const headerInset = NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 44 : 0;
   const iconColor = String(useThemeColor("--color-icon-muted"));
   const { onPreviewFile, onSelectFile, selectedPath: controlledSelectedPath } = props;
   const controlledSelectedPathRef = useRef(controlledSelectedPath);
@@ -249,9 +243,11 @@ export function FileTreeBrowser(props: {
       className="flex-1"
       data={visibleNodes}
       keyExtractor={(item) => item.node.path}
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
       scrollIndicatorInsets={
-        Platform.OS === "ios" ? { top: headerInset, left: 0, right: 0, bottom: 0 } : undefined
+        NATIVE_LIQUID_GLASS_SUPPORTED
+          ? { top: headerInset, left: 0, right: 0, bottom: 0 }
+          : undefined
       }
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
