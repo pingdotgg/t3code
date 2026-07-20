@@ -196,6 +196,49 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       ]);
     }));
 
+  it("skips invalid providers while returning valid persisted bindings", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const invalidThreadId = ThreadId.make("thread-runtime-invalid-provider");
+      const validThreadId = ThreadId.make("thread-runtime-valid-provider");
+
+      yield* runtimeRepository.upsert({
+        threadId: invalidThreadId,
+        providerName: "invalid-provider",
+        providerInstanceId: null,
+        adapterKey: "invalid-provider",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T12:00:00.000Z",
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+      yield* runtimeRepository.upsert({
+        threadId: validThreadId,
+        providerName: "codex",
+        providerInstanceId: null,
+        adapterKey: "codex",
+        runtimeMode: "approval-required",
+        status: "running",
+        lastSeenAt: "2026-04-14T12:05:00.000Z",
+        resumeCursor: {
+          opaque: "resume-valid",
+        },
+        runtimePayload: null,
+      });
+
+      const bindings = yield* directory.listBindings();
+
+      assert.equal(bindings.length, 1);
+      assert.equal(bindings[0]?.threadId, validThreadId);
+      assert.equal(bindings[0]?.provider, ProviderDriverKind.make("codex"));
+      assert.equal(bindings[0]?.runtimeMode, "approval-required");
+      assert.deepEqual(bindings[0]?.resumeCursor, {
+        opaque: "resume-valid",
+      });
+    }));
+
   it("resets adapterKey to the new provider when provider changes without an explicit adapter key", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;

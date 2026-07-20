@@ -180,9 +180,16 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         Effect.forEach(
           rows,
-          (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
+          (row) =>
+            toRuntimeBinding(row, "ProviderSessionDirectory.listBindings").pipe(
+              Effect.tapError(Effect.logWarning),
+              Effect.option,
+            ),
           { concurrency: "unbounded" },
         ),
+      ),
+      Effect.map((bindings) =>
+        bindings.flatMap((binding) => (Option.isSome(binding) ? [binding.value] : [])),
       ),
     );
 

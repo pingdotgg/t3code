@@ -39,7 +39,10 @@ import {
 } from "../Services/ProviderAdapterRegistry.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderSessionDirectoryShape,
+} from "../Services/ProviderSessionDirectory.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
@@ -451,6 +454,62 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
     assert.equal(Exit.isSuccess(closeExit), true);
     assert.equal(codex.stopAll.mock.calls.length, 1);
   }),
+);
+
+it.effect("ProviderServiceLive lists persisted bindings with one directory read", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const threadId = asThreadId("thread-list-bindings");
+    yield* codex.startSession({
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      threadId,
+      cwd: "/tmp/project",
+      runtimeMode: "full-access",
+    });
+
+    const listBindings = vi.fn(() =>
+      Effect.succeed([
+        {
+          threadId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access" as const,
+          lastSeenAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]),
+    );
+    const directory = {
+      upsert: () => Effect.void,
+      getProvider: () => Effect.die(new Error("getProvider should not be called")),
+      getBinding: () => Effect.die(new Error("getBinding should not be called")),
+      listThreadIds: () => Effect.die(new Error("listThreadIds should not be called")),
+      listBindings,
+    } satisfies ProviderSessionDirectoryShape;
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(
+        Layer.succeed(
+          ProviderAdapterRegistry,
+          makeAdapterRegistryMock({
+            [CODEX_DRIVER]: codex.adapter,
+          }),
+        ),
+      ),
+      Layer.provide(Layer.succeed(ProviderSessionDirectory, directory)),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    );
+
+    const sessions = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      return yield* provider.listSessions();
+    }).pipe(Effect.provide(providerLayer));
+
+    assert.equal(listBindings.mock.calls.length, 1);
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.threadId, threadId);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
