@@ -261,6 +261,45 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       installPermissionCallback: true,
     });
   });
+
+  it("honors never approvals for approval-required workspace-write policy", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+        },
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "dontAsk",
+      installPermissionCallback: false,
+    });
+  });
+
+  it("honors never approvals for externally sandboxed policy", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "externalSandbox",
+        },
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      installPermissionCallback: false,
+    });
+  });
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
