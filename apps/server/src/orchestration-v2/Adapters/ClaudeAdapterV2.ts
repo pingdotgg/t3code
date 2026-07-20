@@ -1174,20 +1174,19 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
+  const installPermissionCallback =
+    runtimePolicy.approvalPolicy === undefined
+      ? runtimePolicy.runtimeMode === "approval-required"
+      : runtimePolicy.approvalPolicy !== "never";
 
   if (permissionMode === "plan") {
     return {
       permissionMode,
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
-      installPermissionCallback: false,
+      installPermissionCallback,
     };
   }
-
-  const installPermissionCallback =
-    runtimePolicy.approvalPolicy === undefined
-      ? runtimePolicy.runtimeMode === "approval-required"
-      : runtimePolicy.approvalPolicy !== "never";
 
   return {
     permissionMode,
@@ -1199,9 +1198,6 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 }
 
 function shouldInstallClaudePermissionCallback(policy: ClaudeRuntimeQueryPolicy): boolean {
-  if (policy.permissionMode === "plan") {
-    return false;
-  }
   return policy.installPermissionCallback;
 }
 
