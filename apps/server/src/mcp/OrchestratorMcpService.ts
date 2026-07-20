@@ -43,6 +43,8 @@ import {
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
   ProviderInstanceId,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
@@ -208,6 +210,48 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/**
+ * Checks requested option selections for duplicates and, when the model
+ * advertises option descriptors, against those descriptors. Models without
+ * descriptors skip the descriptor checks (mirroring how model slugs are only
+ * validated when the provider advertises models), but duplicate ids always
+ * fail: downstream consumers disagree on whether the first or last value of
+ * a duplicated id wins.
+ */
+function invalidOptionSelections(
+  selections: ReadonlyArray<ProviderOptionSelection>,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+): ReadonlyArray<string> {
+  const problems: Array<string> = [];
+  const seen = new Set<string>();
+  for (const selection of selections) {
+    if (seen.has(selection.id)) {
+      problems.push(`Option ${selection.id} was specified more than once.`);
+      continue;
+    }
+    seen.add(selection.id);
+    if (descriptors === undefined) continue;
+    const descriptor = descriptors.find((candidate) => candidate.id === selection.id);
+    if (descriptor === undefined) {
+      const known = descriptors.map((candidate) => candidate.id).join(", ");
+      problems.push(`Unknown option ${selection.id}; supported options: ${known || "none"}.`);
+      continue;
+    }
+    if (descriptor.type === "boolean" && typeof selection.value !== "boolean") {
+      problems.push(`Option ${selection.id} expects a boolean value.`);
+      continue;
+    }
+    if (
+      descriptor.type === "select" &&
+      !descriptor.options.some((choice) => choice.id === selection.value)
+    ) {
+      const choices = descriptor.options.map((choice) => choice.id).join(", ");
+      problems.push(`Option ${selection.id} must be one of: ${choices}.`);
+    }
+  }
+  return problems;
 }
 
 function taskStatusForRun(
@@ -676,11 +720,28 @@ const make = Effect.gen(function* () {
         );
       }
 
+      const requestedOptions = input.target?.options;
+      if (requestedOptions !== undefined) {
+        const descriptors = provider.models.find((candidate) => candidate.slug === model)
+          ?.capabilities?.optionDescriptors;
+        const invalid = invalidOptionSelections(requestedOptions, descriptors);
+        if (invalid.length > 0) {
+          return yield* failure(
+            "invalid_request",
+            `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
+          );
+        }
+      }
+
       return {
         modelSelection:
-          instanceId === inheritedSelection.instanceId && model === inheritedSelection.model
+          instanceId === inheritedSelection.instanceId &&
+          model === inheritedSelection.model &&
+          requestedOptions === undefined
             ? inheritedSelection
-            : { instanceId, model },
+            : requestedOptions === undefined
+              ? { instanceId, model }
+              : { instanceId, model, options: requestedOptions },
       };
     });
 
@@ -919,6 +980,9 @@ const make = Effect.gen(function* () {
                 provider?.models.map((model) => ({
                   id: model.slug,
                   label: model.name ?? null,
+                  ...(model.capabilities?.optionDescriptors === undefined
+                    ? {}
+                    : { options: model.capabilities.optionDescriptors }),
                 })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
