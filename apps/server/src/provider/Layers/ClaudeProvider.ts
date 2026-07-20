@@ -349,12 +349,27 @@ function customClaudeModelCapabilities(model: ClaudeModelInfo | undefined): Mode
   });
 }
 
+function indexClaudeModels(models: Iterable<ClaudeModelInfo>): Map<string, ClaudeModelInfo> {
+  const modelsBySlug = new Map<string, ClaudeModelInfo>();
+  for (const model of models) {
+    const existing = modelsBySlug.get(model.value);
+    if (
+      (existing?.supportedEffortLevels?.length ?? 0) > 0 &&
+      (model.supportedEffortLevels?.length ?? 0) === 0
+    ) {
+      continue;
+    }
+    modelsBySlug.set(model.value, model);
+  }
+  return modelsBySlug;
+}
+
 function claudeModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
   availableModels: ReadonlyArray<ClaudeModelInfo> = [],
 ): ReadonlyArray<ServerProviderModel> {
-  const availableModelsBySlug = new Map(availableModels.map((model) => [model.value, model]));
+  const availableModelsBySlug = indexClaudeModels(availableModels);
   return providerModelsFromSettings(
     builtInModels,
     customModels,
@@ -726,12 +741,9 @@ const probeClaudeCapabilities = (
         initializations.push(await initialize());
       }
       const init = initializations[0]!;
-      const modelsByValue = new Map<string, ClaudeModelInfo>();
-      for (const initialization of initializations) {
-        for (const model of initialization.models) {
-          modelsByValue.set(model.value, model);
-        }
-      }
+      const modelsByValue = indexClaudeModels(
+        initializations.flatMap((initialization) => initialization.models),
+      );
       const account = init.account as
         | {
             readonly email?: string;
