@@ -1,0 +1,63 @@
+name: Publish AUR packages
+
+# See packaging/aur/README.md.
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to publish (empty = newest matching release)"
+        required: false
+        type: string
+      pkgrel:
+        description: "pkgrel override (bump to republish the same version)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish (${{ matrix.package }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        package:
+          - t3code-bin
+          - t3code-nightly-bin
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Install tooling
+        run: pacman -Sy --noconfirm --needed git openssh curl github-cli jq
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create non-root build user
+        run: useradd -m builder
+
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.release_tag }}
+          PKGREL: ${{ github.event.inputs.pkgrel }}
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_COMMIT_NAME: ${{ vars.AUR_COMMIT_NAME }}
+          AUR_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
+        run: packaging/aur/scripts/release.sh "packaging/aur/${{ matrix.package }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.package }}-package
+          if-no-files-found: ignore
+          path: packaging/aur/${{ matrix.package }}/*.pkg.tar.zst
