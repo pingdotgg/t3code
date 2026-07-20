@@ -723,6 +723,62 @@ describe("deriveWorkLogEntries", () => {
     expect(entries[0]?.agentRun?.entries.map((entry) => entry.id)).toEqual(["agent-tool"]);
   });
 
+  it("uses the full task.completed summary for the run while keeping a compact inline label", () => {
+    const fullSummary = `Verdict: NO-MERGE — CI gate is failing.\n\n${"detail ".repeat(60)}`;
+    const detailPreview = `${fullSummary.slice(0, 177)}...`;
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "agent-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.started",
+        summary: "Explore repository",
+        payload: {
+          taskId: "agent-1",
+          taskType: "background-agent",
+          name: "review-pr-30",
+          agentType: "explore",
+          prompt: "Review PR #30",
+        },
+      }),
+      makeActivity({
+        id: "agent-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        payload: {
+          taskId: "agent-1",
+          status: "completed",
+          detail: detailPreview,
+          summary: fullSummary,
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.agentRun?.summary).toBe(fullSummary);
+  });
+
+  it("keeps a completed background task's inline label from the truncated detail preview", () => {
+    const detailPreview = `${"detail ".repeat(60).slice(0, 177)}...`;
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-completed-with-full-summary",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        payload: {
+          detail: detailPreview,
+          summary: `Verdict: approve\n\n${"detail ".repeat(60)}`,
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries[0]?.label).toBe(detailPreview);
+  });
+
   it("keeps ambiguously attributed concurrent work at the parent level", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

@@ -832,7 +832,6 @@ describe("incremental orchestration updates", () => {
       scope: { kind: "uncommitted" as const, branch: "main", untrackedFiles: [] },
       diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
       diffHash: "review-hash",
-      truncated: false,
     };
     const state = makeState(makeThread({ id: threadId, reviewSnapshot }));
     const result = {

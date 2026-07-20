@@ -24,6 +24,7 @@ export interface PersistedUiState {
   threadExpandedById?: Record<string, boolean>;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   changedFilesDiffScope?: TurnDiffScope;
+  dismissedAgentRunKeys?: string[];
 }
 
 export interface UiProjectState {
@@ -37,6 +38,12 @@ export interface UiThreadState {
   threadExpandedById: Record<string, boolean>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
   changedFilesDiffScope: TurnDiffScope;
+  /**
+   * Keys of background-agent runs the user has archived from the sidebar.
+   * These rows are virtual (derived from a parent thread's activity timeline)
+   * and have no backing thread, so archiving is a persisted UI-side dismissal.
+   */
+  dismissedAgentRunKeys: Record<string, true>;
 }
 
 export interface UiState extends UiProjectState, UiThreadState {}
@@ -62,6 +69,7 @@ const initialState: UiState = {
   threadExpandedById: {},
   threadChangedFilesExpandedById: {},
   changedFilesDiffScope: "turn",
+  dismissedAgentRunKeys: {},
 };
 
 const persistedCollapsedProjectCwds = new Set<string>();
@@ -106,6 +114,7 @@ function readPersistedState(): UiState {
         parsed.threadChangedFilesExpandedById,
       ),
       changedFilesDiffScope: sanitizePersistedDiffScope(parsed.changedFilesDiffScope),
+      dismissedAgentRunKeys: sanitizePersistedDismissedAgentRunKeys(parsed.dismissedAgentRunKeys),
     };
   } catch {
     return initialState;
@@ -157,6 +166,21 @@ function sanitizePersistedPinnedThreadKeysByProjectId(
 
 function sanitizePersistedDiffScope(value: unknown): TurnDiffScope {
   return value === "snapshot" ? "snapshot" : "turn";
+}
+
+function sanitizePersistedDismissedAgentRunKeys(
+  value: PersistedUiState["dismissedAgentRunKeys"],
+): Record<string, true> {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const nextState: Record<string, true> = {};
+  for (const key of value) {
+    if (typeof key === "string" && key.length > 0) {
+      nextState[key] = true;
+    }
+  }
+  return nextState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -253,6 +277,7 @@ export function persistState(state: UiState): void {
         threadExpandedById,
         threadChangedFilesExpandedById,
         changedFilesDiffScope: state.changedFilesDiffScope,
+        dismissedAgentRunKeys: Object.keys(state.dismissedAgentRunKeys),
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -830,6 +855,27 @@ export function reorderPinnedThreads(
   };
 }
 
+export function setAgentRunDismissed(
+  state: UiState,
+  agentRunKey: string,
+  dismissed: boolean,
+): UiState {
+  const isDismissed = state.dismissedAgentRunKeys[agentRunKey] === true;
+  if (isDismissed === dismissed) {
+    return state;
+  }
+  const nextDismissedAgentRunKeys = { ...state.dismissedAgentRunKeys };
+  if (dismissed) {
+    nextDismissedAgentRunKeys[agentRunKey] = true;
+  } else {
+    delete nextDismissedAgentRunKeys[agentRunKey];
+  }
+  return {
+    ...state,
+    dismissedAgentRunKeys: nextDismissedAgentRunKeys,
+  };
+}
+
 interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
@@ -851,6 +897,7 @@ interface UiStateStore extends UiState {
     draggedThreadId: string,
     targetThreadId: string,
   ) => void;
+  setAgentRunDismissed: (agentRunKey: string, dismissed: boolean) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -876,6 +923,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadPinned(state, projectId, threadId, pinned)),
   reorderPinnedThreads: (projectId, draggedThreadId, targetThreadId) =>
     set((state) => reorderPinnedThreads(state, projectId, draggedThreadId, targetThreadId)),
+  setAgentRunDismissed: (agentRunKey, dismissed) =>
+    set((state) => setAgentRunDismissed(state, agentRunKey, dismissed)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

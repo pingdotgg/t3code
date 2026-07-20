@@ -58,12 +58,14 @@ import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceip
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
+import { ReviewSnapshotVerifier } from "../src/orchestration/Services/ReviewSnapshotVerifier.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
 import { QueuedTurnReactor } from "../src/orchestration/Services/QueuedTurnReactor.ts";
+import { WorkflowCoordinatorReactor } from "../src/orchestration/Services/WorkflowCoordinatorReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -309,6 +311,11 @@ export const makeOrchestrationIntegrationHarness = (
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
+      Layer.provideMerge(
+        Layer.succeed(ReviewSnapshotVerifier, {
+          isCurrent: () => Effect.succeed(true),
+        }),
+      ),
     );
     const gitCoreLayer = Layer.succeed(GitCore, {
       renameBranch: (input: Parameters<GitCoreShape["renameBranch"]>[0]) =>
@@ -358,6 +365,12 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         Layer.succeed(QueuedTurnReactor, {
           start: () => Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(WorkflowCoordinatorReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
         }),
       ),
       Layer.provideMerge(

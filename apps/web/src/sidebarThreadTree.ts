@@ -6,18 +6,37 @@ import { resolveProjectStatusIndicator, type ThreadStatusPill } from "./componen
 import type { AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
 
+/**
+ * Stable key identifying an archived (dismissed) background-agent run. Combines
+ * the parent thread id with the run's task id so dismissals survive re-renders
+ * and persist across sessions.
+ */
+export function agentRunDismissKey(
+  parentThreadId: SidebarThreadSummary["id"],
+  taskId: string,
+): string {
+  return `agent-run:${parentThreadId}:${taskId}`;
+}
+
 export function expandSidebarThreadsWithAgentRuns(input: {
   threads: readonly SidebarThreadSummary[];
   agentRunsByThreadKey: ReadonlyMap<string, readonly AgentRun[]>;
+  dismissedAgentRunKeys?: Record<string, true>;
 }): SidebarThreadSummary[] {
+  const dismissedAgentRunKeys = input.dismissedAgentRunKeys ?? {};
   return input.threads.flatMap((thread) => {
     const threadKey = getThreadKey(thread);
     const agentRuns = input.agentRunsByThreadKey.get(threadKey) ?? thread.backgroundAgentRuns;
     if (!agentRuns?.length) return [thread];
 
+    const visibleAgentRuns = agentRuns.filter(
+      (agentRun) => dismissedAgentRunKeys[agentRunDismissKey(thread.id, agentRun.taskId)] !== true,
+    );
+    if (visibleAgentRuns.length === 0) return [thread];
+
     return [
       thread,
-      ...agentRuns.map(
+      ...visibleAgentRuns.map(
         (agentRun): SidebarThreadSummary => ({
           id: ThreadId.make(`agent-run:${thread.id}:${agentRun.taskId}`),
           environmentId: thread.environmentId,

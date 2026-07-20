@@ -17,6 +17,7 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 ## Maintainability
 
 Long-term maintainability is a core priority. Before adding functionality, check whether shared logic should be extracted. Avoid duplicated logic, don't be afraid to change existing code, and don't solve problems with narrow local shortcuts.
+Write only the small, concise amount of code needed to solve the problem; avoid unnecessary abstraction, features, and complexity.
 
 ## Project Structure
 
@@ -54,6 +55,7 @@ Long-term maintainability is a core priority. Before adding functionality, check
 - Before a Copilot session exits, emit `task.completed` with `status = stopped` for every running background agent, and reconcile unmatched starts on server startup so crashes cannot leave sidebar runs permanently active.
 - Packaged desktop startup builds cloud runtime services eagerly; `CloudRuntimeLayerLive` must provide its own auth control plane, server environment, orchestration, repository identity, and persistence dependencies, and startup logs should include a clear cloud-runtime-ready marker.
 - macOS native sidebar vibrancy can leave stale/ghosted row pixels when translucent sidebar rows animate opacity/transform/color over the visual-effect backing; keep vibrancy stable across focus changes and isolate native-vibrancy thread rows with paint containment, compositor promotion, and disabled row transitions.
+- External-store selectors must return a referentially stable snapshot when their input state is unchanged; fresh arrays or wrapper objects can trigger React error #185 (maximum update depth exceeded).
 
 ## Keep This File Updated
 

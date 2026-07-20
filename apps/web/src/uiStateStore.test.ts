@@ -11,6 +11,7 @@ import {
   persistState,
   reorderPinnedThreads,
   reorderProjects,
+  setAgentRunDismissed,
   setChangedFilesDiffScope,
   setProjectExpanded,
   setThreadExpanded,
@@ -30,6 +31,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadExpandedById: {},
     threadChangedFilesExpandedById: {},
     changedFilesDiffScope: "turn",
+    dismissedAgentRunKeys: {},
     ...overrides,
   };
 }
@@ -64,6 +66,19 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.changedFilesDiffScope).toBe("snapshot");
     expect(setChangedFilesDiffScope(next, "snapshot")).toBe(next);
+  });
+
+  it("setAgentRunDismissed adds and removes stable dismissal keys", () => {
+    const initialState = makeUiState();
+    const dismissed = setAgentRunDismissed(initialState, "agent-run:thread-1:agent-1", true);
+
+    expect(dismissed.dismissedAgentRunKeys).toEqual({
+      "agent-run:thread-1:agent-1": true,
+    });
+    expect(setAgentRunDismissed(dismissed, "agent-run:thread-1:agent-1", true)).toBe(dismissed);
+    expect(
+      setAgentRunDismissed(dismissed, "agent-run:thread-1:agent-1", false).dismissedAgentRunKeys,
+    ).toEqual({});
   });
 
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {

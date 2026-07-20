@@ -14,53 +14,68 @@ index 1111111..2222222 100644
  context();
 `,
   diffHash: "snapshot-hash",
-  truncated: false,
 };
 
 describe("parseReviewResult", () => {
-  it("accepts schema-valid findings on changed lines", () => {
+  it("accepts Codex findings on changed lines", () => {
     expect(
       parseReviewResult({
         snapshot,
         output: JSON.stringify({
           findings: [
             {
-              id: "new-value",
-              priority: "high",
-              title: "New behavior is unsafe",
+              priority: 1,
+              title: "[P1] New behavior is unsafe",
               body: "The new call needs validation.",
-              confidence: 0.9,
-              location: { path: "src/example.ts", side: "new", startLine: 2, endLine: 2 },
+              confidence_score: 0.9,
+              code_location: {
+                absolute_file_path: "/workspace/project/src/example.ts",
+                line_range: { start: 2, end: 2 },
+              },
             },
           ],
-          verdict: "request-changes",
-          summary: "One issue found.",
+          overall_correctness: "patch is incorrect",
+          overall_explanation: "One issue found.",
+          overall_confidence_score: 0.9,
         }),
       }),
     ).toMatchObject({
       status: "parsed",
-      findings: [{ id: "new-value" }],
+      findings: [{ id: "finding-1" }],
       verdict: "request-changes",
     });
   });
 
-  it("rejects findings outside changed lines and non-JSON output", () => {
+  it("rejects findings outside changed lines, non-Codex, and non-JSON output", () => {
     expect(
       parseReviewResult({
         snapshot,
         output: JSON.stringify({
           findings: [
             {
-              id: "unchanged",
-              priority: "low",
-              title: "Unchanged line",
+              priority: 3,
+              title: "[P3] Unchanged line",
               body: "This is out of scope.",
-              confidence: 0.5,
-              location: { path: "src/example.ts", side: "new", startLine: 3, endLine: 3 },
+              confidence_score: 0.5,
+              code_location: {
+                absolute_file_path: "/workspace/project/src/example.ts",
+                line_range: { start: 3, end: 3 },
+              },
             },
           ],
-          verdict: "comment",
-          summary: "One issue found.",
+          overall_correctness: "patch is incorrect",
+          overall_explanation: "One issue found.",
+          overall_confidence_score: 0.5,
+        }),
+      }),
+    ).toMatchObject({ status: "invalid-output" });
+    expect(
+      parseReviewResult({
+        snapshot,
+        output: JSON.stringify({
+          findings: [],
+          verdict: "approve",
+          summary: "Legacy output.",
         }),
       }),
     ).toMatchObject({ status: "invalid-output" });

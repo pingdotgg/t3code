@@ -514,7 +514,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => harness.turnStartOrder.length === 2);
 
     expect(harness.checkpointStore.captureCheckpoint).toHaveBeenCalledWith({
       cwd: "/tmp/provider-project",

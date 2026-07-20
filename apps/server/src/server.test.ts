@@ -3975,6 +3975,105 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("stops descendant sessions and terminals when archiving a parent thread", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread-archive-parent");
+      const childThreadId = ThreadId.make("thread-archive-child");
+      const effects: string[] = [];
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const now = new Date().toISOString();
+      const readModel = makeDefaultOrchestrationReadModel();
+      const template = readModel.threads[0]!;
+      const session = (threadId: ThreadId) => ({
+        threadId,
+        status: "ready" as const,
+        providerName: "claudeAgent",
+        runtimeMode: "full-access" as const,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: now,
+      });
+
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            close: (input) =>
+              Effect.sync(() => {
+                effects.push(`terminal.close:${input.threadId}`);
+              }),
+          },
+          orchestrationEngine: {
+            getReadModel: () =>
+              Effect.succeed({
+                ...readModel,
+                threads: [
+                  {
+                    ...template,
+                    id: parentThreadId,
+                    parentThreadId: null,
+                    session: session(parentThreadId),
+                  },
+                  {
+                    ...template,
+                    id: childThreadId,
+                    parentThreadId,
+                    session: session(childThreadId),
+                  },
+                ],
+              }),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                effects.push(
+                  `dispatch:${command.type}:${"threadId" in command ? command.threadId : ""}`,
+                );
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(
+                  makeDefaultOrchestrationThreadShell({
+                    id: parentThreadId,
+                    updatedAt: now,
+                    session: session(parentThreadId),
+                  }),
+                ),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-thread-archive-parent"),
+            threadId: parentThreadId,
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.archive", "thread.session.stop", "thread.session.stop"],
+      );
+      assert.deepEqual(
+        dispatchedCommands
+          .filter((command) => command.type === "thread.session.stop")
+          .map((command) => command.threadId)
+          .toSorted(),
+        [parentThreadId, childThreadId].toSorted(),
+      );
+      assert.deepEqual(
+        effects.filter((effect) => effect.startsWith("terminal.close:")).toSorted(),
+        [`terminal.close:${parentThreadId}`, `terminal.close:${childThreadId}`].toSorted(),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("checks session status before archiving removes the thread from active lookups", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-archive-precheck");

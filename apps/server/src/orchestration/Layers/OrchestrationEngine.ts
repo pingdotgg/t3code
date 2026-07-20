@@ -3,6 +3,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
+  WorkflowRunId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import {
@@ -56,8 +57,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "project" | "thread" | "workflow";
+  readonly aggregateId: ProjectId | ThreadId | WorkflowRunId;
 } {
   switch (command.type) {
     case "project.create":
@@ -66,6 +67,14 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    case "workflow.run.request":
+    case "workflow.node.worker.start":
+    case "workflow.worker-result.record":
+    case "workflow.run.finalize":
+      return {
+        aggregateKind: "workflow",
+        aggregateId: command.runId,
       };
     default:
       return {

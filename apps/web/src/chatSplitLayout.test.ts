@@ -8,14 +8,17 @@ import {
   closeLeaf,
   countLeafNodes,
   createInitialChatSplitLayout,
+  diffRouteStatesEqual,
   findNeighborLeafId,
   focusLeaf,
   focusNeighbor,
   getFocusedLeaf,
   getLeafIds,
+  getLeafNode,
   getLeafTargetsInRenderOrder,
   isSplitNode,
   replaceLeafTarget,
+  sanitizeDiffRouteState,
   setSplitRatio,
   splitLeaf,
   splitLeafWithTarget,
@@ -230,5 +233,49 @@ describe("chatSplitLayout — maximize", () => {
     layout = toggleLeafMaximized(layout, focused);
     layout = closeLeaf(layout, focused);
     expect(layout.maximizedLeafId).toBeNull();
+  });
+});
+
+describe("chatSplitLayout — diff route state", () => {
+  it("preserves reviewFinding when sanitizing an open diff state", () => {
+    expect(sanitizeDiffRouteState({ diff: "1", reviewFinding: "finding-3" })).toEqual({
+      diff: "1",
+      reviewFinding: "finding-3",
+    });
+  });
+
+  it("drops reviewFinding when the diff is closed", () => {
+    expect(sanitizeDiffRouteState({ reviewFinding: "finding-3" })).toEqual({});
+  });
+
+  it("treats states with different reviewFinding as not equal", () => {
+    expect(
+      diffRouteStatesEqual(
+        { diff: "1", reviewFinding: "finding-1" },
+        { diff: "1", reviewFinding: "finding-2" },
+      ),
+    ).toBe(false);
+  });
+
+  it("retains reviewFinding on the leaf so it can reach the diff panel via the URL", () => {
+    const layout = replaceLeafTarget(initial(), "root", serverTarget(envA, "t-1"), {
+      diff: "1",
+      reviewFinding: "finding-7",
+    });
+    const leaf = getLeafNode(layout, "root");
+    expect(leaf?.diff).toEqual({ diff: "1", reviewFinding: "finding-7" });
+  });
+
+  it("updates the leaf when only the selected reviewFinding changes", () => {
+    let layout = replaceLeafTarget(initial(), "root", serverTarget(envA, "t-1"), {
+      diff: "1",
+      reviewFinding: "finding-1",
+    });
+    layout = replaceLeafTarget(layout, "root", serverTarget(envA, "t-1"), {
+      diff: "1",
+      reviewFinding: "finding-2",
+    });
+    const leaf = getLeafNode(layout, "root");
+    expect(leaf?.diff).toEqual({ diff: "1", reviewFinding: "finding-2" });
   });
 });

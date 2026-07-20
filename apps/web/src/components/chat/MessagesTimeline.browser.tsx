@@ -192,4 +192,32 @@ describe("MessagesTimeline", () => {
       await screen.unmount();
     }
   });
+
+  it("renders system messages supplied by workflow orchestration", async () => {
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "workflow-1",
+            kind: "message",
+            createdAt: "2026-04-22T19:00:45.000Z",
+            message: {
+              id: MessageId.make("workflow-message-1"),
+              role: "system",
+              text: "Workflow started: repository review",
+              createdAt: "2026-04-22T19:00:45.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("Workflow started: repository review")).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

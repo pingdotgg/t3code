@@ -188,6 +188,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import {
+  agentRunDismissKey,
   expandSidebarThreadsWithAgentRuns,
   buildSidebarThreadRows,
   selectVisibleThreadRows,
@@ -303,6 +304,7 @@ interface SidebarThreadRowProps {
   ) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  dismissAgentRun: (parentThreadId: ThreadId, taskId: string) => void;
   setThreadPinned: (projectKey: string, threadKey: string, pinned: boolean) => void;
   toggleThreadExpanded: (threadKey: string) => void;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
@@ -347,6 +349,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     sortable,
     thread,
     threadProjectCwd,
+    dismissAgentRun,
   } = props;
   const navigate = useNavigate();
   const virtualAgentRun = thread.virtualAgentRun;
@@ -476,7 +479,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handleRowContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
-      if (virtualAgentRun) return;
+      if (virtualAgentRun) {
+        if (virtualAgentRun.status === "running") return;
+        const api = readLocalApi();
+        if (!api) return;
+        void api.contextMenu
+          .show([{ id: "archive", label: "Archive" }], resolveContextMenuPosition(event))
+          .then((clicked) => {
+            if (clicked === "archive") {
+              dismissAgentRun(virtualAgentRun.parentThreadId, virtualAgentRun.taskId);
+            }
+          });
+        return;
+      }
       if (hasSelection && isSelected) {
         void handleMultiSelectContextMenu(resolveContextMenuPosition(event));
         return;
@@ -489,6 +504,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [
       clearSelection,
+      dismissAgentRun,
       handleMultiSelectContextMenu,
       handleThreadContextMenu,
       hasSelection,
@@ -586,6 +602,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       void attemptArchiveThread(threadRef);
     },
     [attemptArchiveThread, threadRef],
+  );
+  const handleDismissAgentRunClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!virtualAgentRun || virtualAgentRun.status === "running") return;
+      dismissAgentRun(virtualAgentRun.parentThreadId, virtualAgentRun.taskId);
+    },
+    [dismissAgentRun, virtualAgentRun],
   );
   const handleTogglePinnedClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -722,7 +747,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
-            {virtualAgentRun ? null : isConfirmingArchive ? (
+            {virtualAgentRun && virtualAgentRun.status !== "running" ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <div className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                      <button
+                        type="button"
+                        data-thread-selection-safe
+                        data-testid={`thread-archive-${thread.id}`}
+                        aria-label={`Archive ${thread.title}`}
+                        className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                        onPointerDown={stopPropagationOnPointerDown}
+                        onClick={handleDismissAgentRunClick}
+                      >
+                        <ArchiveIcon className="size-3.5" />
+                      </button>
+                    </div>
+                  }
+                />
+                <TooltipPopup side="top">Archive</TooltipPopup>
+              </Tooltip>
+            ) : isConfirmingArchive ? (
               <button
                 ref={handleConfirmArchiveRef}
                 type="button"
@@ -917,6 +963,7 @@ interface SidebarProjectThreadListProps {
   ) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  dismissAgentRun: (parentThreadId: ThreadId, taskId: string) => void;
   setThreadPinned: (projectKey: string, threadKey: string, pinned: boolean) => void;
   toggleThreadExpanded: (threadKey: string) => void;
   reorderPinnedThreads: (
@@ -973,6 +1020,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
     commitRename,
     cancelRename,
     attemptArchiveThread,
+    dismissAgentRun,
     setThreadPinned,
     toggleThreadExpanded,
     reorderPinnedThreads,
@@ -1039,6 +1087,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         commitRename,
         cancelRename,
         attemptArchiveThread,
+        dismissAgentRun,
         setThreadPinned,
         toggleThreadExpanded,
         openPrLink,
@@ -1056,6 +1105,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
       activeAgentId,
       appSettingsConfirmThreadArchive,
       attemptArchiveThread,
+      dismissAgentRun,
       cancelRename,
       clearSelection,
       commitRename,
@@ -1373,6 +1423,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ),
     ),
   );
+  const dismissedAgentRunKeys = useUiStateStore((state) => state.dismissedAgentRunKeys);
+  const setAgentRunDismissed = useUiStateStore((state) => state.setAgentRunDismissed);
   const projectThreads = useMemo(() => {
     const agentRunsByThreadKey = new Map<string, ReturnType<typeof deriveAgentRuns>>();
     for (const [index, thread] of sidebarThreads.entries()) {
@@ -1387,8 +1439,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         );
       }
     }
-    return expandSidebarThreadsWithAgentRuns({ threads: sidebarThreads, agentRunsByThreadKey });
-  }, [sidebarThreadActivities, sidebarThreads]);
+    return expandSidebarThreadsWithAgentRuns({
+      threads: sidebarThreads,
+      agentRunsByThreadKey,
+      dismissedAgentRunKeys,
+    });
+  }, [dismissedAgentRunKeys, sidebarThreadActivities, sidebarThreads]);
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );
@@ -2128,6 +2184,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [archiveThread],
   );
 
+  const dismissAgentRun = useCallback(
+    (parentThreadId: ThreadId, taskId: string) => {
+      setAgentRunDismissed(agentRunDismissKey(parentThreadId, taskId), true);
+    },
+    [setAgentRunDismissed],
+  );
+
   const cancelRename = useCallback(() => {
     setRenamingThreadKey(null);
     renamingInputRef.current = null;
@@ -2316,6 +2379,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
+          ...(isThreadActivelyWorking(thread.latestTurn, thread.session)
+            ? []
+            : [{ id: "archive", label: "Archive" }]),
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
@@ -2355,6 +2421,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         copyThreadIdToClipboard(thread.id, { threadId: thread.id });
         return;
       }
+      if (clicked === "archive") {
+        await attemptArchiveThread(threadRef);
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -2371,6 +2441,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
     [
       appSettingsConfirmThreadDelete,
+      attemptArchiveThread,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       createSubchatForThread,
@@ -2517,6 +2588,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         commitRename={commitRename}
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
+        dismissAgentRun={dismissAgentRun}
         setThreadPinned={setThreadPinned}
         toggleThreadExpanded={toggleThreadExpanded}
         reorderPinnedThreads={reorderPinnedThreads}

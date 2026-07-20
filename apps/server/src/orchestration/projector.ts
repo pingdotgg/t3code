@@ -32,6 +32,11 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  WorkflowArtifactCreatedPayload,
+  WorkflowNodeWorkerStartedPayload,
+  WorkflowRunFinalizedPayload,
+  WorkflowRunRequestedPayload,
+  WorkflowWorkerResultRecordedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -207,6 +212,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    workflowRuns: [],
     updatedAt: nowIso,
   };
 }
@@ -300,6 +306,9 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            ...(payload.parentThreadId !== undefined
+              ? { parentThreadId: payload.parentThreadId }
+              : {}),
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
@@ -862,6 +871,144 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    case "workflow.run-requested":
+      return decodeForEvent(WorkflowRunRequestedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workflowRuns: [
+            ...(nextBase.workflowRuns ?? []).filter((run) => run.id !== payload.run.id),
+            payload.run,
+          ],
+        })),
+      );
+
+    case "workflow.artifact-created":
+      return decodeForEvent(
+        WorkflowArtifactCreatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          if (payload.artifact.payload.kind !== "input-context") {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            workflowRuns: (nextBase.workflowRuns ?? []).map((run) =>
+              run.id !== payload.artifact.runId
+                ? run
+                : {
+                    ...run,
+                    nodes: run.nodes.map((node) =>
+                      node.nodeId === payload.artifact.nodeId
+                        ? { ...node, inputArtifactId: payload.artifact.id }
+                        : node,
+                    ),
+                    updatedAt: event.occurredAt,
+                  },
+            ),
+          };
+        }),
+      );
+
+    case "workflow.node-worker-started":
+      return decodeForEvent(
+        WorkflowNodeWorkerStartedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workflowRuns: (nextBase.workflowRuns ?? []).map((run) =>
+            run.id !== payload.runId
+              ? run
+              : {
+                  ...run,
+                  status: "running",
+                  nodes: run.nodes.map((node) =>
+                    node.nodeId === payload.nodeId
+                      ? {
+                          ...node,
+                          status: "running",
+                          workerThreadId: payload.workerThreadId,
+                          startedAt: payload.startedAt,
+                        }
+                      : node,
+                  ),
+                  updatedAt: event.occurredAt,
+                },
+          ),
+        })),
+      );
+
+    case "workflow.worker-result-recorded":
+      return decodeForEvent(
+        WorkflowWorkerResultRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const artifactPayload = payload.artifact.payload;
+          if (artifactPayload.kind !== "worker-result") {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            workflowRuns: (nextBase.workflowRuns ?? []).map((run) =>
+              run.id !== payload.runId
+                ? run
+                : {
+                    ...run,
+                    nodes: run.nodes.map((node) =>
+                      node.nodeId === payload.artifact.nodeId
+                        ? {
+                            ...node,
+                            status: artifactPayload.status,
+                            resultArtifactId: payload.artifact.id,
+                            completedAt: payload.completedAt,
+                          }
+                        : node,
+                    ),
+                    updatedAt: event.occurredAt,
+                  },
+            ),
+          };
+        }),
+      );
+
+    case "workflow.run-finalized":
+      return decodeForEvent(WorkflowRunFinalizedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workflowRuns: (nextBase.workflowRuns ?? []).map((run) =>
+            run.id !== payload.runId
+              ? run
+              : {
+                  ...run,
+                  status: payload.status,
+                  nodes:
+                    payload.status === "failed"
+                      ? run.nodes.map((node) =>
+                          node.status === "pending"
+                            ? {
+                                ...node,
+                                status: "failed" as const,
+                                completedAt: payload.completedAt,
+                              }
+                            : node,
+                        )
+                      : run.nodes,
+                  finalArtifactId: payload.artifact.id,
+                  updatedAt: payload.completedAt,
+                  completedAt: payload.completedAt,
+                },
+          ),
+        })),
       );
 
     default:

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE } from "@t3tools/contracts";
+import {
+  DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+} from "@t3tools/contracts";
 
 import { buildReviewChangesPrompt, reviewChangesVariantIdForScope } from "./reviewChanges.ts";
 
@@ -8,12 +11,6 @@ describe("buildReviewChangesPrompt", () => {
     const prompt = buildReviewChangesPrompt({
       context: { scope: "uncommitted" },
       settings: { promptTemplate: "Custom reviewer instructions." },
-      snapshot: {
-        scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
-        diff: "diff --git a/a.ts b/a.ts\n",
-        diffHash: "snapshot-hash",
-        truncated: false,
-      },
     });
 
     expect(prompt).toContain("Review scope: uncommitted changes.");
@@ -22,8 +19,11 @@ describe("buildReviewChangesPrompt", () => {
     expect(prompt).toContain("git ls-files --others --exclude-standard");
     expect(prompt).toContain("Do not review already committed branch changes");
     expect(prompt).toContain("Custom reviewer instructions.");
-    expect(prompt).toContain('"diffHash":"snapshot-hash"');
     expect(prompt).toContain("Return exactly one JSON object");
+    expect(prompt).toContain('"code_location"');
+    expect(prompt).not.toContain('"location":{"path":"relative/path"');
+    expect(prompt).not.toContain("<review-snapshot>");
+    expect(prompt.length).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
   });
 
   it("builds the base branch review scope with merge-base instructions", () => {
@@ -34,18 +34,6 @@ describe("buildReviewChangesPrompt", () => {
         mergeBaseSha: "abc123",
       },
       settings: { promptTemplate: "Custom reviewer instructions." },
-      snapshot: {
-        scope: {
-          kind: "against-base",
-          branch: "feature",
-          baseBranch: "origin/main",
-          mergeBaseSha: "abc123",
-          untrackedFiles: [],
-        },
-        diff: "diff --git a/a.ts b/a.ts\n",
-        diffHash: "snapshot-hash",
-        truncated: false,
-      },
     });
 
     expect(prompt).toContain("Review scope: changes against base branch.");
@@ -60,12 +48,6 @@ describe("buildReviewChangesPrompt", () => {
     const prompt = buildReviewChangesPrompt({
       context: { scope: "uncommitted" },
       settings: { promptTemplate: "   " },
-      snapshot: {
-        scope: { kind: "uncommitted", branch: null, untrackedFiles: [] },
-        diff: "",
-        diffHash: "snapshot-hash",
-        truncated: false,
-      },
     });
 
     expect(prompt).toContain(DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE);

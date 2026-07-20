@@ -17,14 +17,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeCodexOutput(decoded: unknown, changedLines: ChangedLines): unknown {
-  if (!isRecord(decoded) || !Array.isArray(decoded.findings)) return decoded;
-  if (!decoded.findings.some((finding) => isRecord(finding) && "code_location" in finding)) {
-    return decoded;
+  if (
+    !isRecord(decoded) ||
+    !Array.isArray(decoded.findings) ||
+    (decoded.overall_correctness !== "patch is correct" &&
+      decoded.overall_correctness !== "patch is incorrect") ||
+    typeof decoded.overall_confidence_score !== "number"
+  ) {
+    return null;
   }
 
   const paths = [...changedLines.keys()];
-  const priority = (value: unknown) =>
-    value === 0 ? "critical" : value === 1 ? "high" : value === 3 ? "low" : "medium";
   return {
     findings: decoded.findings.flatMap((value, index) => {
       if (!isRecord(value) || !isRecord(value.code_location)) return [];
@@ -35,15 +38,32 @@ function normalizeCodexOutput(decoded: unknown, changedLines: ChangedLines): unk
       const path = paths.find(
         (candidate) => absolutePath === candidate || absolutePath.endsWith(`/${candidate}`),
       );
-      if (!path) return [];
-      const rawTitle = typeof value.title === "string" ? value.title : `Finding ${index + 1}`;
+      const priority =
+        value.priority === 0
+          ? "critical"
+          : value.priority === 1
+            ? "high"
+            : value.priority === 2
+              ? "medium"
+              : value.priority === 3
+                ? "low"
+                : null;
+      if (
+        !path ||
+        !priority ||
+        typeof value.title !== "string" ||
+        typeof value.body !== "string" ||
+        typeof value.confidence_score !== "number"
+      ) {
+        return [];
+      }
       return [
         {
           id: `finding-${index + 1}`,
-          priority: priority(value.priority),
-          title: rawTitle.replace(/^\[P[0-3]\]\s*/, ""),
-          body: typeof value.body === "string" ? value.body : rawTitle,
-          confidence: typeof value.confidence_score === "number" ? value.confidence_score : 0.5,
+          priority,
+          title: value.title.replace(/^\[P[0-3]\]\s*/, ""),
+          body: value.body,
+          confidence: value.confidence_score,
           location: {
             path,
             side: "new",
@@ -54,10 +74,7 @@ function normalizeCodexOutput(decoded: unknown, changedLines: ChangedLines): unk
       ];
     }),
     verdict: decoded.overall_correctness === "patch is incorrect" ? "request-changes" : "approve",
-    summary:
-      typeof decoded.overall_explanation === "string"
-        ? decoded.overall_explanation
-        : "Review completed.",
+    summary: decoded.overall_explanation,
   };
 }
 

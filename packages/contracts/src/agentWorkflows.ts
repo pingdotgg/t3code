@@ -4,59 +4,18 @@ import {
   CommandId,
   IsoDateTime,
   MessageId,
-  NonNegativeInt,
   PositiveInt,
-  ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 
 export const ReviewChangesScope = Schema.Literals(["uncommitted", "against-base"]);
 export type ReviewChangesScope = typeof ReviewChangesScope.Type;
 
 export const DEFAULT_REVIEW_CHANGES_SCOPE: ReviewChangesScope = "uncommitted";
 
-export const DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE = `Act as a code reviewer, focusing on newly introduced, discrete, actionable defects.
-Prioritize correctness, performance, security, reliability, and maintainability.
-Avoid speculative, stylistic, or low-signal feedback.
-Verify concerns using surrounding code and tests where useful.
-Report findings concisely in normal Markdown.
-State briefly if no actionable issues are found.
-Follow repository rules, including using bun run test rather than bun test; code changes would additionally require bun fmt, bun lint, and bun typecheck.
-Use the code-review skill's systematic review workflow.`;
-
-export const ReviewChangesWorkflowSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
-  defaultScope: ReviewChangesScope.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_REVIEW_CHANGES_SCOPE)),
-  ),
-  promptTemplate: Schema.String.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE)),
-  ),
-});
-export type ReviewChangesWorkflowSettings = typeof ReviewChangesWorkflowSettings.Type;
-
 export const AgentWorkflowTrigger = Schema.Literals(["manual", "after-assistant-turn-completes"]);
 export type AgentWorkflowTrigger = typeof AgentWorkflowTrigger.Type;
-
-export const DEFAULT_AGENT_WORKFLOW_AUTOMATION_COOLDOWN_MS = 5 * 60 * 1000;
-export const DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD = 1;
-
-export const CustomAgentWorkflowAutomationSettings = Schema.Struct({
-  afterAssistantTurnCompletes: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
-  cooldownMs: NonNegativeInt.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_WORKFLOW_AUTOMATION_COOLDOWN_MS)),
-  ),
-  maxRunsPerThread: NonNegativeInt.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD)),
-  ),
-});
-export type CustomAgentWorkflowAutomationSettings =
-  typeof CustomAgentWorkflowAutomationSettings.Type;
 
 export const AgentWorkflowDestinationMode = Schema.Literals([
   "same-chat",
@@ -65,38 +24,138 @@ export const AgentWorkflowDestinationMode = Schema.Literals([
 ]);
 export type AgentWorkflowDestinationMode = typeof AgentWorkflowDestinationMode.Type;
 
-export const AgentWorkflowSettings = Schema.Struct({
-  reviewChanges: ReviewChangesWorkflowSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  builtInOverrides: Schema.Record(
-    TrimmedNonEmptyString,
-    Schema.Struct({
-      enabled: Schema.optionalKey(Schema.Boolean),
-      promptTemplate: Schema.optionalKey(Schema.String),
-      defaultInput: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-    }),
-  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  customWorkflows: Schema.Array(
-    Schema.Struct({
-      id: TrimmedNonEmptyString,
-      enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-      name: TrimmedNonEmptyString,
-      buttonLabel: TrimmedNonEmptyString,
-      promptTemplate: Schema.String,
-      modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
-      showInHeader: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-      destinationMode: AgentWorkflowDestinationMode.pipe(
-        Schema.withDecodingDefault(Effect.succeed("child-chat" as const)),
-      ),
-      automation: CustomAgentWorkflowAutomationSettings.pipe(
-        Schema.withDecodingDefault(Effect.succeed({})),
-      ),
-    }),
-  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-});
-export type AgentWorkflowSettings = typeof AgentWorkflowSettings.Type;
-
 export const WorkflowRunId = TrimmedNonEmptyString.pipe(Schema.brand("WorkflowRunId"));
 export type WorkflowRunId = typeof WorkflowRunId.Type;
+
+export const WorkflowNodeId = TrimmedNonEmptyString.pipe(Schema.brand("WorkflowNodeId"));
+export type WorkflowNodeId = typeof WorkflowNodeId.Type;
+
+export const WorkflowArtifactId = TrimmedNonEmptyString.pipe(Schema.brand("WorkflowArtifactId"));
+export type WorkflowArtifactId = typeof WorkflowArtifactId.Type;
+
+/**
+ * A workflow intentionally chooses the minimum parent conversation context a
+ * worker receives. Full transcripts are never an implicit default.
+ */
+export const WorkflowContextPolicy = Schema.Literals(["none", "summary", "selected-messages"]);
+export type WorkflowContextPolicy = typeof WorkflowContextPolicy.Type;
+
+export const WorkflowContextMessage = Schema.Struct({
+  messageId: MessageId,
+  role: Schema.Literals(["user", "assistant", "system"]),
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type WorkflowContextMessage = typeof WorkflowContextMessage.Type;
+
+export const WorkflowInputArtifact = Schema.Struct({
+  kind: Schema.Literal("input-context"),
+  contextPolicy: WorkflowContextPolicy,
+  parentThreadId: ThreadId,
+  messages: Schema.Array(WorkflowContextMessage),
+  summary: Schema.optional(TrimmedNonEmptyString),
+  truncated: Schema.Boolean,
+});
+export type WorkflowInputArtifact = typeof WorkflowInputArtifact.Type;
+
+export const WorkflowEvidence = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  threadId: Schema.optional(ThreadId),
+  messageId: Schema.optional(MessageId),
+});
+export type WorkflowEvidence = typeof WorkflowEvidence.Type;
+
+export const WorkflowWorkerResultArtifact = Schema.Struct({
+  kind: Schema.Literal("worker-result"),
+  status: Schema.Literals(["completed", "failed"]),
+  summary: TrimmedNonEmptyString,
+  body: Schema.String,
+  evidence: Schema.Array(WorkflowEvidence),
+  changedPaths: Schema.Array(TrimmedNonEmptyString),
+});
+export type WorkflowWorkerResultArtifact = typeof WorkflowWorkerResultArtifact.Type;
+
+export const WorkflowFinalResultArtifact = Schema.Struct({
+  kind: Schema.Literal("final-result"),
+  summary: TrimmedNonEmptyString,
+  body: Schema.String,
+  evidence: Schema.Array(WorkflowEvidence),
+});
+export type WorkflowFinalResultArtifact = typeof WorkflowFinalResultArtifact.Type;
+
+export const WorkflowArtifactPayload = Schema.Union([
+  WorkflowInputArtifact,
+  WorkflowWorkerResultArtifact,
+  WorkflowFinalResultArtifact,
+]);
+export type WorkflowArtifactPayload = typeof WorkflowArtifactPayload.Type;
+
+export const WorkflowArtifact = Schema.Struct({
+  id: WorkflowArtifactId,
+  runId: WorkflowRunId,
+  nodeId: Schema.optional(WorkflowNodeId),
+  producerThreadId: Schema.optional(ThreadId),
+  payload: WorkflowArtifactPayload,
+  createdAt: IsoDateTime,
+});
+export type WorkflowArtifact = typeof WorkflowArtifact.Type;
+
+export const WorkflowNodeStatus = Schema.Literals([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export type WorkflowNodeStatus = typeof WorkflowNodeStatus.Type;
+
+export const WorkflowNodeDefinition = Schema.Struct({
+  id: WorkflowNodeId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  contextPolicy: WorkflowContextPolicy,
+});
+export type WorkflowNodeDefinition = typeof WorkflowNodeDefinition.Type;
+
+export const WorkflowDefinition = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  nodes: Schema.Array(WorkflowNodeDefinition),
+});
+export type WorkflowDefinition = typeof WorkflowDefinition.Type;
+
+export const WorkflowRunStatus = Schema.Literals([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;
+
+export const WorkflowNodeRun = Schema.Struct({
+  nodeId: WorkflowNodeId,
+  status: WorkflowNodeStatus,
+  workerThreadId: Schema.optional(ThreadId),
+  inputArtifactId: Schema.optional(WorkflowArtifactId),
+  resultArtifactId: Schema.optional(WorkflowArtifactId),
+  startedAt: Schema.optional(IsoDateTime),
+  completedAt: Schema.optional(IsoDateTime),
+});
+export type WorkflowNodeRun = typeof WorkflowNodeRun.Type;
+
+export const WorkflowRun = Schema.Struct({
+  id: WorkflowRunId,
+  workflowId: TrimmedNonEmptyString,
+  parentThreadId: ThreadId,
+  status: WorkflowRunStatus,
+  nodes: Schema.Array(WorkflowNodeRun),
+  finalArtifactId: Schema.optional(WorkflowArtifactId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.optional(IsoDateTime),
+});
+export type WorkflowRun = typeof WorkflowRun.Type;
 
 export const WorkflowRunSource = Schema.Struct({
   kind: Schema.Literal("workflow"),
@@ -105,22 +164,6 @@ export const WorkflowRunSource = Schema.Struct({
   trigger: AgentWorkflowTrigger,
 });
 export type WorkflowRunSource = typeof WorkflowRunSource.Type;
-
-export const WorkflowRunInput = Schema.Struct({
-  workflowId: TrimmedNonEmptyString,
-  threadId: ThreadId,
-  projectId: Schema.optional(ProjectId),
-  cwd: Schema.optional(TrimmedNonEmptyString),
-  input: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  destinationMode: Schema.optional(AgentWorkflowDestinationMode),
-  title: Schema.optional(TrimmedNonEmptyString),
-  trigger: AgentWorkflowTrigger.pipe(Schema.withDecodingDefault(Effect.succeed("manual" as const))),
-  idempotencyKey: TrimmedNonEmptyString,
-  modelSelection: Schema.optional(ModelSelection),
-  runtimeMode: Schema.optional(RuntimeMode),
-  interactionMode: Schema.optional(ProviderInteractionMode),
-});
-export type WorkflowRunInput = typeof WorkflowRunInput.Type;
 
 export const WorkflowSkipReason = Schema.Literals([
   "workflow-disabled",
@@ -154,14 +197,14 @@ export const WorkflowRunResult = Schema.Union([
 ]);
 export type WorkflowRunResult = typeof WorkflowRunResult.Type;
 
-export const WorkflowRunStatus = Schema.Literals(["started", "skipped", "failed"]);
-export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;
+export const WorkflowLaunchStatus = Schema.Literals(["started", "skipped", "failed"]);
+export type WorkflowLaunchStatus = typeof WorkflowLaunchStatus.Type;
 
 export const WorkflowRunRecord = Schema.Struct({
   runId: WorkflowRunId,
   workflowId: TrimmedNonEmptyString,
   workflowName: TrimmedNonEmptyString,
-  status: WorkflowRunStatus,
+  status: WorkflowLaunchStatus,
   trigger: AgentWorkflowTrigger,
   requestedThreadId: ThreadId,
   targetThreadId: Schema.optional(ThreadId),

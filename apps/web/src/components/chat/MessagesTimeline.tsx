@@ -34,6 +34,7 @@ import {
   GitForkIcon,
   GlobeIcon,
   HammerIcon,
+  InfoIcon,
   type LucideIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -536,6 +537,18 @@ function TimelineRowContent(props: { row: TimelineRow }) {
             </>
           );
         })()}
+
+      {row.kind === "message" && row.message.role === "system" && (
+        <div className="mx-1 flex items-start gap-2 rounded-lg border border-border/50 bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
+          <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="whitespace-pre-wrap break-words">{row.message.text}</p>
+            <p className="mt-1 text-[length:var(--app-status-line-font-size)] text-muted-foreground/60">
+              {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
+            </p>
+          </div>
+        </div>
+      )}
 
       {row.kind === "proposed-plan" && (
         <div className="min-w-0 px-1 py-0.5">

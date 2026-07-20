@@ -710,6 +710,51 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect(
+      "keeps a later untracked file in a complete review snapshot beyond the provider input budget",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+          yield* writeTextFile(path.join(tmp, "large-before.ts"), buildLargeText(9_000));
+          yield* writeTextFile(
+            path.join(tmp, "late-reviewable.ts"),
+            "export const later = true;\n",
+          );
+
+          const result = yield* (yield* GitCore).resolveReviewChangesContext({
+            cwd: tmp,
+            scope: "uncommitted",
+          });
+
+          if (!result.snapshot) {
+            throw new Error("expected review snapshot");
+          }
+          expect(Buffer.byteLength(result.snapshot.diff)).toBeGreaterThan(96_000);
+          expect(result.snapshot.diff).toContain("late-reviewable.ts");
+        }),
+    );
+
+    it.effect("captures large files without omitting later reviewable file diffs", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* writeTextFile(path.join(tmp, "large-before.ts"), buildLargeText(30_000));
+        yield* writeTextFile(path.join(tmp, "late-reviewable.ts"), "export const later = true;\n");
+
+        const result = yield* (yield* GitCore).resolveReviewChangesContext({
+          cwd: tmp,
+          scope: "uncommitted",
+        });
+
+        if (!result.snapshot) {
+          throw new Error("expected review snapshot");
+        }
+        expect(result.snapshot.diff).toContain("large-before.ts");
+        expect(result.snapshot.diff).toContain("late-reviewable.ts");
+      }),
+    );
+
     it.effect("resolves against-base scope with merge-base and untracked files", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

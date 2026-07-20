@@ -37,6 +37,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { ReviewSnapshotVerifier } from "../Services/ReviewSnapshotVerifier.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -57,6 +58,28 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+function buildLargeReviewDiff(): string {
+  const earlyLines = Array.from(
+    { length: 9_000 },
+    (_, index) => `+const early${index} = ${index};`,
+  ).join("\n");
+  return `diff --git a/src/early.ts b/src/early.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/early.ts
+@@ -0,0 +1,9000 @@
+${earlyLines}
+diff --git a/src/later.ts b/src/later.ts
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/src/later.ts
+@@ -0,0 +1 @@
++export const later = true;
+`;
+}
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -234,6 +257,11 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
+      Layer.provideMerge(
+        Layer.succeed(ReviewSnapshotVerifier, {
+          isCurrent: () => Effect.succeed(true),
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -364,19 +392,13 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("parses and persists a reviewer child thread's final structured result", async () => {
+    const diff = buildLargeReviewDiff();
+    expect(Buffer.byteLength(diff)).toBeGreaterThan(96_000);
     const harness = await createHarness({
       reviewSnapshot: {
         scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
-        diff: `diff --git a/src/example.ts b/src/example.ts
-index 1111111..2222222 100644
---- a/src/example.ts
-+++ b/src/example.ts
-@@ -1 +1 @@
--oldValue();
-+newValue();
-`,
+        diff,
         diffHash: "snapshot-hash",
-        truncated: false,
       },
     });
     const startedAt = new Date().toISOString();
@@ -405,16 +427,19 @@ index 1111111..2222222 100644
         delta: JSON.stringify({
           findings: [
             {
-              id: "new-value",
-              priority: "high",
-              title: "Unsafe new value",
+              priority: 1,
+              title: "[P1] Unsafe new value",
               body: "The replacement needs validation.",
-              confidence: 0.9,
-              location: { path: "src/example.ts", side: "new", startLine: 1, endLine: 1 },
+              confidence_score: 0.9,
+              code_location: {
+                absolute_file_path: "/workspace/project/src/later.ts",
+                line_range: { start: 1, end: 1 },
+              },
             },
           ],
-          verdict: "request-changes",
-          summary: "One issue found.",
+          overall_correctness: "patch is incorrect",
+          overall_explanation: "One issue found.",
+          overall_confidence_score: 0.9,
         }),
       },
     });
@@ -434,7 +459,7 @@ index 1111111..2222222 100644
     );
     expect(thread.reviewResult).toMatchObject({
       status: "parsed",
-      findings: [{ id: "new-value" }],
+      findings: [{ id: "finding-1", location: { path: "src/later.ts" } }],
       verdict: "request-changes",
     });
   });
@@ -3297,6 +3322,44 @@ index 1111111..2222222 100644
         completedAt,
       },
     ]);
+  });
+
+  it("preserves the full task.completed summary while truncating the inline detail preview", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const fullSummary = `Verdict: NO-MERGE — CI gate is failing.\n\n${"detail ".repeat(80)}`;
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-task-completed-full"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-full"),
+      payload: {
+        taskId: "agent-full",
+        status: "completed",
+        summary: fullSummary,
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-completed-full",
+      ),
+    );
+
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-completed-full",
+    );
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(completedPayload?.summary).toBe(fullSummary);
+    expect(completedPayload?.detail).toBe(`${fullSummary.slice(0, 177)}...`);
+    expect((completedPayload?.detail as string).length).toBe(180);
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

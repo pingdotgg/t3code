@@ -22,7 +22,6 @@ export const ReviewSnapshot = Schema.Struct({
   scope: ReviewSnapshotScope,
   diff: Schema.String,
   diffHash: TrimmedNonEmptyString,
-  truncated: Schema.Boolean,
 });
 export type ReviewSnapshot = typeof ReviewSnapshot.Type;
 

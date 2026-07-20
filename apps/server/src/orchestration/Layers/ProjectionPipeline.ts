@@ -30,6 +30,7 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionWorkflowRepository } from "../../persistence/Services/ProjectionWorkflows.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -40,6 +41,7 @@ import { ProjectionQueuedTurnRepositoryLive } from "../../persistence/Layers/Pro
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionWorkflowRepositoryLive } from "../../persistence/Layers/ProjectionWorkflows.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -63,6 +65,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   queuedTurns: "projection.queued-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  workflows: "projection.workflows",
 } as const;
 
 type ProjectorName =
@@ -456,6 +459,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionQueuedTurnRepository = yield* ProjectionQueuedTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+    const projectionWorkflowRepository = yield* ProjectionWorkflowRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1400,6 +1404,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingRow = yield* projectionPendingApprovalRepository.getByRequestId({
             requestId,
           });
+
           if (event.payload.activity.kind === "approval.resolved") {
             const resolvedDecisionRaw =
               typeof event.payload.activity.payload === "object" &&
@@ -1509,6 +1514,66 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyWorkflowsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyWorkflowsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "workflow.run-requested":
+          yield* projectionWorkflowRepository.upsertRun({
+            ...event.payload.run,
+            definition: event.payload.definition,
+            workerConfig: event.payload.workerConfig,
+          });
+          return;
+
+        case "workflow.artifact-created":
+          yield* projectionWorkflowRepository.upsertArtifact(event.payload.artifact);
+          if (
+            event.payload.artifact.payload.kind === "input-context" &&
+            event.payload.artifact.nodeId !== undefined
+          ) {
+            yield* projectionWorkflowRepository.setNodeInputArtifact({
+              runId: event.payload.artifact.runId,
+              nodeId: event.payload.artifact.nodeId,
+              artifactId: event.payload.artifact.id,
+              updatedAt: event.occurredAt,
+            });
+          }
+          return;
+
+        case "workflow.node-worker-started":
+          yield* projectionWorkflowRepository.startNode({
+            runId: event.payload.runId,
+            nodeId: event.payload.nodeId,
+            workerThreadId: event.payload.workerThreadId,
+            startedAt: event.payload.startedAt,
+          });
+          return;
+
+        case "workflow.worker-result-recorded":
+          yield* projectionWorkflowRepository.upsertArtifact(event.payload.artifact);
+          yield* projectionWorkflowRepository.recordNodeResult({
+            runId: event.payload.runId,
+            artifact: event.payload.artifact,
+            completedAt: event.payload.completedAt,
+          });
+          return;
+
+        case "workflow.run-finalized":
+          yield* projectionWorkflowRepository.upsertArtifact(event.payload.artifact);
+          yield* projectionWorkflowRepository.finalizeRun({
+            runId: event.payload.runId,
+            artifact: event.payload.artifact,
+            status: event.payload.status,
+            completedAt: event.payload.completedAt,
+          });
+          return;
+
+        default:
+          return;
+      }
+    });
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -1545,6 +1610,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.pendingApprovals,
         apply: applyPendingApprovalsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.workflows,
+        apply: applyWorkflowsProjection,
       },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
@@ -1653,5 +1722,6 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
+  Layer.provideMerge(ProjectionWorkflowRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
 );

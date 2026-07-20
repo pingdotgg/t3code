@@ -5,12 +5,8 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
-import {
-  AgentWorkflowDestinationMode,
-  AgentWorkflowSettings,
-  CustomAgentWorkflowAutomationSettings,
-  ReviewChangesScope,
-} from "./agentWorkflows.ts";
+import { AgentWorkflowDestinationMode, ReviewChangesScope } from "./agentWorkflows.ts";
+import { AgentWorkflowSettings, CustomAgentWorkflowAutomationSettings } from "./workflowRuntime.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 

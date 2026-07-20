@@ -79,7 +79,8 @@ import type {
 } from "./orchestration.ts";
 import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
-import type { WorkflowRunInput, WorkflowRunResult } from "./agentWorkflows.ts";
+import type { WorkflowRunResult } from "./agentWorkflows.ts";
+import type { WorkflowRunInput } from "./workflowRuntime.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
 import { Schema } from "effect";
 

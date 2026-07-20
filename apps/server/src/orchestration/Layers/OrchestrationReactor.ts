@@ -9,6 +9,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { QueuedTurnReactor } from "../Services/QueuedTurnReactor.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import { WorkflowCoordinatorReactor } from "../Services/WorkflowCoordinatorReactor.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -16,12 +17,14 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const checkpointReactor = yield* CheckpointReactor;
   const queuedTurnReactor = yield* QueuedTurnReactor;
   const threadDeletionReactor = yield* ThreadDeletionReactor;
+  const workflowCoordinatorReactor = yield* WorkflowCoordinatorReactor;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
     yield* providerCommandReactor.start();
     yield* checkpointReactor.start();
     yield* queuedTurnReactor.start();
+    yield* workflowCoordinatorReactor.start();
     yield* threadDeletionReactor.start();
   });
 

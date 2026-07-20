@@ -266,8 +266,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
+  // Only progress activities carry a short, ticker-sized summary. A completed task keeps its full
+  // result in `summary`, so the compact work-log label falls back to the truncated `detail` preview.
   const taskSummary =
-    isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
+    activity.kind === "task.progress" &&
+    typeof payload?.summary === "string" &&
+    payload.summary.length > 0
       ? payload.summary
       : null;
   const taskDetailAsLabel =

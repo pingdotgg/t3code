@@ -63,6 +63,7 @@ export function sanitizeDiffRouteState(diff: DiffRouteSearch | null | undefined)
     ...(diff.diffTurnId ? { diffTurnId: diff.diffTurnId } : {}),
     ...(diff.diffTurnId && diff.diffFilePath ? { diffFilePath: diff.diffFilePath } : {}),
     ...(diff.diffTurnId && diff.diffScope ? { diffScope: diff.diffScope } : {}),
+    ...(diff.reviewFinding ? { reviewFinding: diff.reviewFinding } : {}),
   };
 }
 
@@ -76,7 +77,8 @@ export function diffRouteStatesEqual(
     nextLeft.diff === nextRight.diff &&
     nextLeft.diffTurnId === nextRight.diffTurnId &&
     nextLeft.diffFilePath === nextRight.diffFilePath &&
-    nextLeft.diffScope === nextRight.diffScope
+    nextLeft.diffScope === nextRight.diffScope &&
+    nextLeft.reviewFinding === nextRight.reviewFinding
   );
 }
 

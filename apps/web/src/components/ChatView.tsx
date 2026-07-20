@@ -91,7 +91,12 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { selectExistingThreadKeys, selectProjectsAcrossEnvironments, useStore } from "../store";
+import {
+  selectExistingThreadKeys,
+  selectProjectsAcrossEnvironments,
+  selectWorkflowRunsForParentThread,
+  useStore,
+} from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -657,6 +662,16 @@ function ChatViewBody(
       [routeKind, routeThreadRef],
     ),
   );
+  const parentThreadRef = useMemo(
+    () =>
+      routeKind === "server" && serverThread?.parentThreadId
+        ? scopeThreadRef(environmentId, serverThread.parentThreadId)
+        : null,
+    [environmentId, routeKind, serverThread?.parentThreadId],
+  );
+  const parentThread = useStore(
+    useMemo(() => createThreadSelectorByRef(parentThreadRef), [parentThreadRef]),
+  );
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
@@ -669,6 +684,15 @@ function ChatViewBody(
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
+  const navigateToThread = useCallback(
+    (targetThreadId: ThreadId) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId: targetThreadId },
+      });
+    },
+    [environmentId, navigate],
+  );
   const diffSearch = controlledDiffSearch ?? resolvedDiffSearch;
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
@@ -837,6 +861,11 @@ function ChatViewBody(
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const workflowRuns = useStore(
+    useShallow((state) =>
+      selectWorkflowRunsForParentThread(state, routeKind === "server" ? routeThreadRef : null),
+    ),
+  );
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -4006,6 +4035,7 @@ function ChatViewBody(
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
+          parentThread={parentThread ? { id: parentThread.id, title: parentThread.title } : null}
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
@@ -4025,8 +4055,11 @@ function ChatViewBody(
           gitCwd={gitCwd}
           diffOpen={diffOpen}
           workflowActions={workflowHeaderActions}
+          workflowRuns={workflowRuns}
           onRunProjectScript={runProjectScript}
           onRunWorkflow={onRunWorkflow}
+          onNavigateToParentThread={navigateToThread}
+          onNavigateThread={navigateToThread}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}

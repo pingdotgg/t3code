@@ -25,4 +25,5 @@ export * from "./environmentConnection.ts";
 export * from "./composerPathSearchState.ts";
 export * from "./archivedThreadsState.ts";
 export * from "./checkpointDiffState.ts";
+export * from "./workflowRuntimeState.ts";
 export * from "./remote.ts";

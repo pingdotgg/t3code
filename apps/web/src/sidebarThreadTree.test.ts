@@ -2,7 +2,11 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { ThreadStatusPill } from "./components/Sidebar.logic";
-import { buildSidebarThreadRows, expandSidebarThreadsWithAgentRuns } from "./sidebarThreadTree";
+import {
+  agentRunDismissKey,
+  buildSidebarThreadRows,
+  expandSidebarThreadsWithAgentRuns,
+} from "./sidebarThreadTree";
 import type { AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
 
@@ -77,6 +81,32 @@ describe("buildSidebarThreadRows", () => {
       taskId: agentRun.taskId,
       status: "completed",
     });
+  });
+
+  it("omits dismissed background-agent runs", () => {
+    const parent = thread("thread-1");
+    const dismissedRun: AgentRun = {
+      taskId: "agent-dismissed",
+      name: "Dismissed run",
+      startedAt: "2026-01-01T00:00:02.000Z",
+      status: "completed",
+      entries: [],
+    };
+    const visibleRun: AgentRun = {
+      ...dismissedRun,
+      taskId: "agent-visible",
+      name: "Visible run",
+    };
+
+    const threads = expandSidebarThreadsWithAgentRuns({
+      threads: [parent],
+      agentRunsByThreadKey: new Map([[key(parent.id), [dismissedRun, visibleRun]]]),
+      dismissedAgentRunKeys: {
+        [agentRunDismissKey(parent.id, dismissedRun.taskId)]: true,
+      },
+    });
+
+    expect(threads.map((candidate) => candidate.title)).toEqual([parent.title, visibleRun.name]);
   });
 
   it("renders child chats indented directly below expanded parents", () => {

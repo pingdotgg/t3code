@@ -152,9 +152,13 @@ describe("ChatMarkdown", () => {
     );
 
     try {
-      const header = page.getByRole("columnheader", { name: "Rank" });
-      await expect.element(header).toBeInTheDocument();
-      expect(getComputedStyle(await header.element()).overflowWrap).not.toBe("anywhere");
+      await vi.waitFor(() => {
+        const header = [...document.querySelectorAll("th")].find(
+          (candidate) => candidate.textContent?.trim() === "Rank",
+        );
+        expect(header).toBeInstanceOf(HTMLTableCellElement);
+        expect(getComputedStyle(header!).overflowWrap).not.toBe("anywhere");
+      });
     } finally {
       await screen.unmount();
     }

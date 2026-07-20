@@ -47,6 +47,8 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionQueuedTurn } from "../../persistence/Services/ProjectionQueuedTurns.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionWorkflowRepository } from "../../persistence/Services/ProjectionWorkflows.ts";
+import { ProjectionWorkflowRepositoryLive } from "../../persistence/Layers/ProjectionWorkflows.ts";
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -187,6 +189,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
+  ORCHESTRATION_PROJECTOR_NAMES.workflows,
 ] as const;
 
 function maxIso(left: string | null, right: string): string {
@@ -348,6 +351,7 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
+  const projectionWorkflowRepository = yield* ProjectionWorkflowRepository;
   const repositoryIdentityResolutionConcurrency = 4;
 
   const listProjectRows = SqlSchema.findAll({
@@ -988,6 +992,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          projectionWorkflowRepository.listAll(),
         ]),
       )
       .pipe(
@@ -1003,6 +1008,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             checkpointRows,
             latestTurnRows,
             stateRows,
+            workflowRuns,
           ]) =>
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
@@ -1023,6 +1029,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }
               for (const row of stateRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+              for (const run of workflowRuns) {
+                updatedAt = maxIso(updatedAt, run.updatedAt);
               }
 
               for (const row of messageRows) {
@@ -1210,6 +1219,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
                 threads,
+                workflowRuns,
                 updatedAt: updatedAt ?? new Date(0).toISOString(),
               };
 
@@ -1280,6 +1290,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          projectionWorkflowRepository.listShellSnapshot(),
         ]),
       )
       .pipe(
@@ -1291,8 +1302,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             latestTurnRows,
             backgroundAgentActivityRows,
             stateRows,
+            workflowSnapshot,
           ]) =>
             Effect.gen(function* () {
+              const { artifacts: workflowArtifacts, runs: workflowRuns } = workflowSnapshot;
               let updatedAt: string | null = null;
               for (const row of projectRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -1314,6 +1327,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }
               for (const row of stateRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+              for (const run of workflowRuns) {
+                updatedAt = maxIso(updatedAt, run.run.updatedAt);
+              }
+              for (const artifact of workflowArtifacts) {
+                updatedAt = maxIso(updatedAt, artifact.createdAt);
               }
 
               const repositoryIdentities = new Map(
@@ -1379,6 +1398,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         : {}),
                     };
                   }),
+                workflowRuns,
+                workflowArtifacts,
                 updatedAt: updatedAt ?? new Date(0).toISOString(),
               };
 
@@ -1782,9 +1803,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   return {
     getSnapshot,
     getShellSnapshot,
+    getSnapshotSequence,
     getCounts,
     getActiveProjectByWorkspaceRoot,
-    getSnapshotSequence,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
@@ -1796,4 +1817,4 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 export const OrchestrationProjectionSnapshotQueryLive = Layer.effect(
   ProjectionSnapshotQuery,
   makeProjectionSnapshotQuery,
-);
+).pipe(Layer.provideMerge(ProjectionWorkflowRepositoryLive));

@@ -169,7 +169,8 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
-import { WorkflowRunError, WorkflowRunInput, WorkflowRunResult } from "./agentWorkflows.ts";
+import { WorkflowRunError, WorkflowRunResult } from "./agentWorkflows.ts";
+import { WorkflowRunInput } from "./workflowRuntime.ts";
 
 export const WS_METHODS = {
   // Project registry methods

@@ -27,6 +27,11 @@ import {
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
+  WorkflowArtifactCreatedPayload as ContractsWorkflowArtifactCreatedPayloadSchema,
+  WorkflowNodeWorkerStartedPayload as ContractsWorkflowNodeWorkerStartedPayloadSchema,
+  WorkflowRunFinalizedPayload as ContractsWorkflowRunFinalizedPayloadSchema,
+  WorkflowRunRequestedPayload as ContractsWorkflowRunRequestedPayloadSchema,
+  WorkflowWorkerResultRecordedPayload as ContractsWorkflowWorkerResultRecordedPayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -64,3 +69,9 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+export const WorkflowRunRequestedPayload = ContractsWorkflowRunRequestedPayloadSchema;
+export const WorkflowArtifactCreatedPayload = ContractsWorkflowArtifactCreatedPayloadSchema;
+export const WorkflowNodeWorkerStartedPayload = ContractsWorkflowNodeWorkerStartedPayloadSchema;
+export const WorkflowWorkerResultRecordedPayload =
+  ContractsWorkflowWorkerResultRecordedPayloadSchema;
+export const WorkflowRunFinalizedPayload = ContractsWorkflowRunFinalizedPayloadSchema;

@@ -20,6 +20,7 @@ import {
   requireThreadReadyForTurnStart,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import { collectActiveThreadSubtree } from "./threadHierarchy.ts";
 import { assistantTurnCount } from "./Utils.ts";
 
 const FORK_TITLE_PREFIX = "Forked: ";
@@ -478,20 +479,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const threadsToArchive = collectActiveThreadSubtree(readModel, command.threadId);
+      return threadsToArchive.map(
+        (thread): PlannedOrchestrationEvent => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: thread.id,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.archived",
+          payload: {
+            threadId: thread.id,
+            archivedAt: occurredAt,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.archived",
-        payload: {
-          threadId: command.threadId,
-          archivedAt: occurredAt,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.unarchive": {
@@ -1216,6 +1220,190 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           activity: command.activity,
+        },
+      };
+    }
+
+    case "workflow.run.request": {
+      const parentThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.parentThreadId,
+      });
+      if (parentThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Parent thread '${command.parentThreadId}' is deleted.`,
+        });
+      }
+      if (command.definition.nodes.length !== 1) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The durable workflow coordinator currently supports exactly one worker node.",
+        });
+      }
+      if ((readModel.workflowRuns ?? []).some((run) => run.id === command.runId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Workflow run '${command.runId}' already exists.`,
+        });
+      }
+      const node = command.definition.nodes[0];
+      const inputContext =
+        command.inputArtifact.payload.kind === "input-context"
+          ? command.inputArtifact.payload
+          : undefined;
+      if (
+        command.inputArtifact.runId !== command.runId ||
+        command.inputArtifact.nodeId !== node.id ||
+        inputContext === undefined ||
+        command.inputArtifact.producerThreadId !== command.parentThreadId ||
+        inputContext.parentThreadId !== command.parentThreadId ||
+        inputContext.contextPolicy !== node.contextPolicy ||
+        (inputContext.contextPolicy === "none" &&
+          (inputContext.messages.length > 0 || inputContext.summary !== undefined)) ||
+        (inputContext.contextPolicy === "summary" && inputContext.messages.length > 0) ||
+        (inputContext.contextPolicy === "selected-messages" && inputContext.summary !== undefined)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            "Workflow input artifact must be a parent-produced, policy-scoped artifact for the requested run and node.",
+        });
+      }
+      const run = {
+        id: command.runId,
+        workflowId: command.definition.id,
+        parentThreadId: command.parentThreadId,
+        status: "pending" as const,
+        nodes: [{ nodeId: node.id, status: "pending" as const }],
+        createdAt: command.createdAt,
+        updatedAt: command.createdAt,
+      };
+      const runRequested = {
+        ...withEventBase({
+          aggregateKind: "workflow",
+          aggregateId: command.runId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "workflow.run-requested" as const,
+        payload: {
+          run,
+          definition: command.definition,
+          workerConfig: command.workerConfig,
+        },
+      };
+      return [
+        runRequested,
+        {
+          ...withEventBase({
+            aggregateKind: "workflow",
+            aggregateId: command.runId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          causationEventId: runRequested.eventId,
+          type: "workflow.artifact-created" as const,
+          payload: {
+            artifact: command.inputArtifact,
+          },
+        },
+      ];
+    }
+
+    case "workflow.node.worker.start": {
+      const run = (readModel.workflowRuns ?? []).find((entry) => entry.id === command.runId);
+      const node = run?.nodes.find((entry) => entry.nodeId === command.nodeId);
+      if (!run || !node || node.status !== "pending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Workflow node '${command.nodeId}' is not pending in run '${command.runId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "workflow",
+          aggregateId: command.runId,
+          occurredAt: command.startedAt,
+          commandId: command.commandId,
+        }),
+        type: "workflow.node-worker-started",
+        payload: {
+          runId: command.runId,
+          nodeId: command.nodeId,
+          workerThreadId: command.workerThreadId,
+          startedAt: command.startedAt,
+        },
+      };
+    }
+
+    case "workflow.worker-result.record": {
+      const run = (readModel.workflowRuns ?? []).find((entry) => entry.id === command.runId);
+      const nodeId = command.artifact.nodeId;
+      const node =
+        nodeId === undefined ? undefined : run?.nodes.find((entry) => entry.nodeId === nodeId);
+      if (
+        !run ||
+        !node ||
+        node.status !== "running" ||
+        command.artifact.runId !== command.runId ||
+        command.artifact.payload.kind !== "worker-result" ||
+        command.artifact.producerThreadId !== node.workerThreadId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Worker result does not match the running node in workflow run '${command.runId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "workflow",
+          aggregateId: command.runId,
+          occurredAt: command.completedAt,
+          commandId: command.commandId,
+        }),
+        type: "workflow.worker-result-recorded",
+        payload: {
+          runId: command.runId,
+          artifact: command.artifact,
+          completedAt: command.completedAt,
+        },
+      };
+    }
+
+    case "workflow.run.finalize": {
+      const run = (readModel.workflowRuns ?? []).find((entry) => entry.id === command.runId);
+      const node = run?.nodes[0];
+      if (
+        !run ||
+        run.parentThreadId !== command.parentThreadId ||
+        !node ||
+        (node.status !== "completed" && node.status !== "failed" && node.status !== "pending") ||
+        (node.status === "pending" && command.status !== "failed") ||
+        (node.status !== "pending" && command.status !== node.status) ||
+        command.artifact.runId !== command.runId ||
+        command.artifact.payload.kind !== "final-result"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Workflow run '${command.runId}' is not ready to finalize.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "workflow",
+          aggregateId: command.runId,
+          occurredAt: command.completedAt,
+          commandId: command.commandId,
+        }),
+        type: "workflow.run-finalized",
+        payload: {
+          runId: command.runId,
+          parentThreadId: command.parentThreadId,
+          artifact: command.artifact,
+          status: command.status,
+          completedAt: command.completedAt,
         },
       };
     }

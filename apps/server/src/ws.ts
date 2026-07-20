@@ -37,6 +37,8 @@ import {
   type WorkflowRunInput,
   type WorkflowRunResult,
   WorkflowRunId,
+  WorkflowArtifactId,
+  WorkflowNodeId,
   SourceControlRepositoryError,
   ServerProviderUpdateError,
   KeybindingsConfigError,
@@ -77,6 +79,7 @@ import { makeClientCommandDispatcher } from "./orchestration/clientCommandDispat
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
+import { collectActiveThreadSubtree } from "./orchestration/threadHierarchy.ts";
 import {
   createThreadMarkdownExportFilename,
   formatThreadMarkdownExport,
@@ -295,6 +298,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }),
             );
           default:
+            if (event.aggregateKind === "workflow") {
+              return Effect.succeed(
+                Option.some({
+                  kind: "workflow-event" as const,
+                  sequence: event.sequence,
+                  event,
+                }),
+              );
+            }
             if (event.aggregateKind !== "thread") {
               return Effect.succeed(Option.none());
             }
@@ -441,11 +453,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             settings: {
               promptTemplate: override?.promptTemplate ?? reviewSettings.promptTemplate,
             },
-            snapshot: reviewContext.snapshot,
           });
-          const threadId = ThreadId.make(crypto.randomUUID());
-          const commandId = CommandId.make(crypto.randomUUID());
-          const messageId = MessageId.make(crypto.randomUUID());
+          const nodeId = WorkflowNodeId.make("review-changes");
+          const threadId = ThreadId.make(`workflow:${runId}:node:${nodeId}:worker`);
+          const commandId = CommandId.make(`workflow:${runId}:request`);
+          const messageId = MessageId.make(`workflow:${runId}:node:${nodeId}:input`);
           const modelSelection =
             reviewSettings.modelSelection ??
             input.modelSelection ??
@@ -453,43 +465,47 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             thread.modelSelection;
           const runtimeMode = input.runtimeMode ?? thread.runtimeMode;
           const interactionMode = input.interactionMode ?? thread.interactionMode;
-          const normalizedCommand = yield* normalizeDispatchCommand({
-            type: "thread.turn.start",
+          const dispatchResult = yield* orchestrationEngine.dispatch({
+            type: "workflow.run.request",
             commandId,
-            threadId,
-            message: {
-              messageId,
-              role: "user",
-              text: prompt,
-              attachments: [],
+            runId,
+            parentThreadId: input.threadId,
+            definition: {
+              id: REVIEW_CHANGES_WORKFLOW_ID,
+              name: title,
+              nodes: [
+                {
+                  id: nodeId,
+                  title,
+                  prompt,
+                  contextPolicy: "none",
+                },
+              ],
             },
-            modelSelection,
-            titleSeed: title,
-            runtimeMode,
-            interactionMode,
-            bootstrap: {
-              createThread: {
-                projectId: project.id,
-                parentThreadId: input.threadId,
-                title,
-                modelSelection,
-                runtimeMode,
-                interactionMode,
-                branch: reviewContext.branch,
-                worktreePath: cwd === project.workspaceRoot ? null : cwd,
-                reviewSnapshot: reviewContext.snapshot,
-                createdAt,
-              },
+            workerConfig: {
+              modelSelection,
+              runtimeMode,
+              interactionMode,
+              branch: reviewContext.branch,
+              worktreePath: cwd === project.workspaceRoot ? null : cwd,
+              reviewSnapshot: reviewContext.snapshot,
             },
-            source: {
-              kind: "workflow",
-              workflowId: REVIEW_CHANGES_WORKFLOW_ID,
+            inputArtifact: {
+              id: WorkflowArtifactId.make(`workflow:${runId}:input`),
               runId,
-              trigger: input.trigger,
+              nodeId,
+              producerThreadId: input.threadId,
+              payload: {
+                kind: "input-context",
+                contextPolicy: "none",
+                parentThreadId: input.threadId,
+                messages: [],
+                truncated: false,
+              },
+              createdAt,
             },
             createdAt,
           });
-          const dispatchResult = yield* dispatchNormalizedCommand(normalizedCommand);
           return {
             status: "started" as const,
             runId,
@@ -515,52 +531,72 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              const shouldStopSessionAfterArchive =
+              const threadsToArchive =
                 normalizedCommand.type === "thread.archive"
-                  ? yield* projectionSnapshotQuery
-                      .getThreadShellById(normalizedCommand.threadId)
-                      .pipe(
-                        Effect.map(
-                          Option.match({
-                            onNone: () => false,
-                            onSome: (thread) =>
-                              thread.session !== null && thread.session.status !== "stopped",
+                  ? yield* Effect.gen(function* () {
+                      const rootShell = yield* projectionSnapshotQuery
+                        .getThreadShellById(normalizedCommand.threadId)
+                        .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+                      const subtree = collectActiveThreadSubtree(
+                        yield* orchestrationEngine.getReadModel(),
+                        normalizedCommand.threadId,
+                      );
+                      const rootFromReadModel = subtree.find(
+                        (thread) => thread.id === normalizedCommand.threadId,
+                      );
+                      return [
+                        {
+                          id: normalizedCommand.threadId,
+                          session: Option.match(rootShell, {
+                            onNone: () => rootFromReadModel?.session ?? null,
+                            onSome: (thread) => thread.session,
                           }),
+                        },
+                        ...subtree.flatMap((thread) =>
+                          thread.id === normalizedCommand.threadId
+                            ? []
+                            : [{ id: thread.id, session: thread.session }],
                         ),
-                        Effect.catch(() => Effect.succeed(false)),
-                      )
-                  : false;
+                      ];
+                    })
+                  : [];
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
-                if (shouldStopSessionAfterArchive) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-archive:${normalizedCommand.commandId}`,
-                      ),
-                      threadId: normalizedCommand.threadId,
-                      createdAt: new Date().toISOString(),
-                    });
+                yield* Effect.forEach(
+                  threadsToArchive,
+                  (thread) =>
+                    Effect.gen(function* () {
+                      if (thread.session !== null && thread.session.status !== "stopped") {
+                        yield* Effect.gen(function* () {
+                          const stopCommand = yield* normalizeDispatchCommand({
+                            type: "thread.session.stop",
+                            commandId: CommandId.make(
+                              `session-stop-for-archive:${normalizedCommand.commandId}:${thread.id}`,
+                            ),
+                            threadId: thread.id,
+                            createdAt: new Date().toISOString(),
+                          });
+                          yield* dispatchNormalizedCommand(stopCommand);
+                        }).pipe(
+                          Effect.catchCause((cause) =>
+                            Effect.logWarning("failed to stop provider session during archive", {
+                              threadId: thread.id,
+                              cause,
+                            }),
+                          ),
+                        );
+                      }
 
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("failed to stop provider session during archive", {
-                        threadId: normalizedCommand.threadId,
-                        cause,
-                      }),
-                    ),
-                  );
-                }
-
-                yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
-                  Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: normalizedCommand.threadId,
-                      error: error.message,
+                      yield* terminalManager.close({ threadId: thread.id }).pipe(
+                        Effect.catch((error) =>
+                          Effect.logWarning("failed to close thread terminals after archive", {
+                            threadId: thread.id,
+                            error: error.message,
+                          }),
+                        ),
+                      );
                     }),
-                  ),
+                  { concurrency: 4 },
                 );
               }
               return result;

@@ -35,6 +35,7 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { parseReviewResult } from "../reviewResult.ts";
+import { ReviewSnapshotVerifier } from "../Services/ReviewSnapshotVerifier.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
@@ -462,7 +463,11 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             status: event.payload.status,
-            ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
+            // `detail` stays a short preview for compact inline work-log rows, while `summary`
+            // preserves the full final result so the read-only agent-run view can render it in full.
+            ...(event.payload.summary
+              ? { detail: truncateDetail(event.payload.summary), summary: event.payload.summary }
+              : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -591,6 +596,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const reviewSnapshotVerifier = yield* ReviewSnapshotVerifier;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -935,6 +941,36 @@ const make = Effect.gen(function* () {
         !thread?.reviewSnapshot ||
         (thread.reviewResult !== undefined && thread.reviewResult !== null)
       ) {
+        return;
+      }
+      const cwd = resolveThreadWorkspaceCwd({
+        thread,
+        projects: readModel.projects,
+      });
+      if (cwd === null) {
+        yield* Effect.logWarning("Discarding review result because the worktree changed", {
+          threadId: input.threadId,
+          snapshotHash: thread.reviewSnapshot.diffHash,
+        });
+        return;
+      }
+      const snapshotIsCurrent = yield* reviewSnapshotVerifier
+        .isCurrent({ cwd, snapshot: thread.reviewSnapshot })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Discarding review result because snapshot could not be verified", {
+              threadId: input.threadId,
+              snapshotHash: thread.reviewSnapshot.diffHash,
+              error,
+            }),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+      if (!snapshotIsCurrent) {
+        yield* Effect.logWarning("Discarding review result because the worktree changed", {
+          threadId: input.threadId,
+          snapshotHash: thread.reviewSnapshot.diffHash,
+        });
         return;
       }
 
