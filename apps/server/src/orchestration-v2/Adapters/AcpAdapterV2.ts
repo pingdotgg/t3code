@@ -120,8 +120,8 @@ export interface AcpAdapterV2ExtensionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
   /**
    * Session-scoped background-task lifecycle reported via extension
-   * notifications (e.g. Grok `_x.ai/task_backgrounded` after a soft cancel
-   * detaches foreground work). Mutations for non-root sessions are ignored.
+   * notifications (e.g. Grok `x.ai/task_backgrounded`; older builds use the
+   * underscore alias). Mutations for non-root sessions are ignored.
    */
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
@@ -225,8 +225,9 @@ export interface AcpAdapterV2Flavor {
   /**
    * Optional parse of root-session synthetic text announcing a background
    * subagent's end ("Background subagent "<uuid>" ... completed successfully").
-   * The agent may never hydrate via get_command_or_subagent_output, so this
-   * notice can be the only terminal signal for the subagent row.
+   * Older builds may never hydrate via get_command_or_subagent_output, so this
+   * remains a terminal fallback. Current Grok additionally emits structured
+   * `subagent_finished` session notifications.
    */
   readonly extractSubagentEndNotice?: (text: string) =>
     | {
