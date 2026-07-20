@@ -490,7 +490,12 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         projection.providerTurns.map((turn) => turn.status),
         ["interrupted", "completed"],
       );
-      assert.isTrue(projection.turnItems.some((item) => item.type === "run_interrupt_result"));
+      assert.isFalse(
+        projection.turnItems.some(
+          (item) => item.type === "run_interrupt_request" || item.type === "run_interrupt_result",
+        ),
+        "selection restart supersede must not project hard-Stop interrupt items",
+      );
       assert.equal(projection.runs[0]?.modelSelection.model, replacementSelection.model);
       assert.isTrue(captured.failedReplacementOpen);
       // The old pooled process remains available to its other threads; this

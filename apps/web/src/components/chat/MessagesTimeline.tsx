@@ -1291,10 +1291,6 @@ function ProposedPlanTimelineRow({
 
 type V2EventTone = "muted" | "warning" | "danger" | "success";
 
-function subagentDisplayTitle(title: string): string {
-  return title.replace(/^Subagent:\s*/i, "");
-}
-
 function v2EventPresentation(item: OrchestrationV2TurnItem): {
   readonly label: string;
   readonly detail: string | null;
@@ -1351,14 +1347,6 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
         icon: MinusIcon,
       };
     }
-    case "subagent":
-      return {
-        label: subagentDisplayTitle(item.title ?? "Subagent"),
-        detail: item.result ?? item.progress ?? item.prompt,
-        tone:
-          item.status === "failed" ? "danger" : item.status === "completed" ? "success" : "muted",
-        icon: BotIcon,
-      };
     case "approval_request":
       return {
         label: "Approval requested",
@@ -1433,7 +1421,14 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-xs font-medium text-foreground/90">{presentation.label}</span>
             {item.status !== "completed" ? (
-              <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              <span
+                className={cn(
+                  "rounded-full border px-1.5 py-0.5 font-mono text-[10px]",
+                  item.status === "failed"
+                    ? "border-destructive/40 text-destructive"
+                    : "border-border/70 text-muted-foreground",
+                )}
+              >
                 {item.status}
               </span>
             ) : null}
@@ -2231,8 +2226,19 @@ function workEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
   workspaceRoot: string | undefined,
 ) {
+  // Prefer stdout/detail so completed shell/monitor results are visible collapsed
+  // (command alone hid ls listings behind expand-only inspector JSON).
+  if (workEntry.detail?.trim()) {
+    const lines = workEntry.detail
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length > 0) {
+      return lines.slice(0, 3).join(" · ");
+    }
+  }
   if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;

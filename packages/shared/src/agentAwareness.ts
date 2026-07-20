@@ -87,7 +87,10 @@ function resolveThreadAwarenessPhaseV2(
   if (thread.pendingRuntimeRequest?.kind === "user_input") {
     return "waiting_for_input";
   }
-  if (thread.pendingRuntimeRequest !== null) {
+  if (
+    thread.pendingRuntimeRequest !== null &&
+    thread.pendingRuntimeRequest.kind !== "auth_refresh"
+  ) {
     return "waiting_for_approval";
   }
   switch (thread.status) {

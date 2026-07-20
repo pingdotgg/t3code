@@ -130,6 +130,7 @@ function ThreadActivityThreadLink(props: {
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
+  readonly currentThreadId: ThreadId;
   readonly environmentId: EnvironmentId;
   readonly expanded: boolean;
   readonly expandedRows: Readonly<Record<string, boolean>>;
@@ -263,6 +264,7 @@ export function ThreadWorkLog(props: {
                 <View className="ml-7 border-l border-neutral-300/60 pb-1.5 pl-3 pt-0.5 dark:border-white/[0.12]">
                   <ThreadActivityInspector
                     activity={row}
+                    currentThreadId={props.currentThreadId}
                     environmentId={props.environmentId}
                     iconColor={props.iconSubtleColor}
                     workspaceRoot={props.workspaceRoot}

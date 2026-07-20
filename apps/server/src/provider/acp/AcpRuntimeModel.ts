@@ -459,8 +459,38 @@ export function sessionUpdateIsReplay(params: EffectAcpSchema.SessionNotificatio
   return isRecord(meta) && meta.isReplay === true;
 }
 
+/** Replay chunks and substantive updates during session/load; not Grok keepalives. */
+export function sessionUpdateCountsAsLoadReplayActivity(
+  params: EffectAcpSchema.SessionNotification,
+  gatedSessionId?: string,
+): boolean {
+  if (gatedSessionId !== undefined && params.sessionId !== gatedSessionId) {
+    return false;
+  }
+  if (sessionUpdateIsReplay(params)) return true;
+  const update = params.update;
+  switch (update.sessionUpdate) {
+    case "agent_message_chunk":
+    case "agent_thought_chunk":
+      return update.content.type === "text" && update.content.text.length > 0;
+    case "tool_call":
+    case "tool_call_update":
+    case "plan":
+    case "available_commands_update":
+    case "current_mode_update":
+    case "config_option_update":
+    case "session_info_update":
+    case "usage_update":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export interface SessionLoadGate {
   readonly active: boolean;
+  /** Only notifications for this session refresh load-replay idle activity. */
+  readonly sessionId: string;
   readonly lastActivityAtMillis: number | undefined;
   readonly idleGap: Duration.Duration;
   readonly initializeResult: EffectAcpSchema.InitializeResponse;

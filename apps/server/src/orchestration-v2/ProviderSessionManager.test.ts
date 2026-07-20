@@ -1233,6 +1233,99 @@ it.effect(
     }),
 );
 
+it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replacement session", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const firstCheck = yield* Ref.make(true);
+    const checkEntered = yield* Deferred.make<void>();
+    const checkGate = yield* Deferred.make<void>();
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-stale-pin",
+        projectId: yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-stale-pin",
+        }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      // Park the first idle fiber inside an uninterruptible pending-work probe.
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(checkEntered);
+
+      // close removes the map entry first, then waits to interrupt the idle
+      // fiber (still uninterruptible). That window lets a replacement open
+      // under the same providerSessionId before the stale probe finishes.
+      const closeFiber = yield* manager.close(providerSessionId).pipe(Effect.forkDetach);
+      for (let i = 0; i < 20; i += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+
+      // Stale probe reports pending work against the old runtime; the pin
+      // stamp must no-op on the replacement (runtime / generation mismatch).
+      yield* Deferred.succeed(checkGate, undefined);
+      yield* Fiber.join(closeFiber);
+      for (let i = 0; i < 10; i += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+
+      // Replacement has no pending background work. After one idle window it
+      // must release. A stale pin stamp would have deferred release until
+      // maxIdlePinMs.
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 1000,
+          maxIdlePinMs: 60_000,
+          hasPendingBackgroundWork: Effect.uninterruptible(
+            Effect.gen(function* () {
+              if (yield* Ref.getAndSet(firstCheck, false)) {
+                yield* Deferred.succeed(checkEntered, undefined);
+                yield* Deferred.await(checkGate);
+                return true;
+              }
+              return false;
+            }),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 keeps active sessions alive until the provider turn terminates",
   () =>

@@ -39,6 +39,7 @@ function shouldShowLocalTurnItem(
     item,
     runs: projection.runs,
     attempts: projection.attempts,
+    items: projection.turnItems,
   });
 }
 
