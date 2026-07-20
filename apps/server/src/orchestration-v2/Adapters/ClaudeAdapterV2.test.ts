@@ -183,6 +183,8 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
     assert.deepEqual(queryPolicy, {
       permissionMode: "default",
+      tools: CLAUDE_READ_ONLY_ALLOWED_TOOLS,
+      allowedTools: CLAUDE_READ_ONLY_ALLOWED_TOOLS,
       installPermissionCallback: true,
     });
   });
