@@ -9,7 +9,11 @@ import { HttpClient } from "effect/unstable/http";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
+import {
+  executeEnvironmentHttpRequest,
+  makeEnvironmentHttpApiClient,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
 import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
 
 // Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
@@ -58,7 +62,7 @@ export class ShellSnapshotLoader extends Context.Service<
   {
     readonly load: (
       prepared: PreparedConnection,
-    ) => Effect.Effect<Option.Option<OrchestrationV2ShellSnapshot>>;
+    ) => Effect.Effect<Option.Option<OrchestrationV2ShellSnapshot>, RemoteEnvironmentRequestError>;
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
 

@@ -17,6 +17,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
@@ -225,7 +226,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               Stream.runHead,
             );
             return Option.isSome(prepared)
-              ? yield* snapshotLoader.load(prepared.value, threadId)
+              ? yield* snapshotLoader.load(prepared.value, threadId).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
+                    ).pipe(
+                      Effect.annotateLogs({
+                        environmentId,
+                        threadId,
+                        ...safeErrorLogAttributes(error),
+                      }),
+                      Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>()),
+                    ),
+                  ),
+                )
               : Option.none<OrchestrationV2ThreadDetailSnapshot>();
           });
 

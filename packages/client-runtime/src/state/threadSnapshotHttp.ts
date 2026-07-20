@@ -72,7 +72,10 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
-    ) => Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
+    ) => Effect.Effect<
+      Option.Option<OrchestrationV2ThreadDetailSnapshot>,
+      RemoteEnvironmentRequestError
+    >;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
 

@@ -171,7 +171,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               Stream.runHead,
             );
             return Option.isSome(prepared)
-              ? yield* snapshotLoader.load(prepared.value)
+              ? yield* snapshotLoader.load(prepared.value).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
+                    ).pipe(
+                      Effect.annotateLogs({
+                        environmentId,
+                        ...safeErrorLogAttributes(error),
+                      }),
+                      Effect.as(Option.none<OrchestrationV2ShellSnapshot>()),
+                    ),
+                  ),
+                )
               : Option.none<OrchestrationV2ShellSnapshot>();
           });
 
