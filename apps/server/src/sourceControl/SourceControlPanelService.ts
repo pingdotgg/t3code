@@ -2228,7 +2228,12 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     ]).pipe(Effect.asVoid);
 
   const unstageFiles: SourceControlPanelService["Service"]["unstageFiles"] = (input) =>
-    run("vcs.panel.unstageFiles", input.cwd, ["reset", "--", ...input.paths]).pipe(Effect.asVoid);
+    run("vcs.panel.unstageFiles", input.cwd, [
+      "--literal-pathspecs",
+      "reset",
+      "--",
+      ...input.paths,
+    ]).pipe(Effect.asVoid);
 
   const discardFiles: SourceControlPanelService["Service"]["discardFiles"] = (input) =>
     Effect.gen(function* () {

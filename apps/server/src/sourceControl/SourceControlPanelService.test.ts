@@ -664,6 +664,34 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("stages and unstages selected files with literal pathspecs", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      const paths = ["src/[literal].ts"];
+
+      yield* service.stageFiles({ cwd: "/repo", paths });
+      yield* service.unstageFiles({ cwd: "/repo", paths });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
+          ["--literal-pathspecs", "reset", "--", "src/[literal].ts"],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("commits selected files through an isolated temporary index", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
