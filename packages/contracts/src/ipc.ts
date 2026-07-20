@@ -20,6 +20,7 @@ import type {
   VcsPanelFileActionInput,
   VcsPanelFileDiffInput,
   VcsPanelFileDiffResult,
+  VcsPanelFetchAllRemotesInput,
   VcsPanelRemoteInput,
   VcsPanelRefActionInput,
   VcsPanelSnapshotInput,
@@ -1251,7 +1252,7 @@ export interface EnvironmentApi {
     rebaseCurrentOnto: (input: VcsPanelRefActionInput) => Promise<void>;
     fetchBranch: (input: VcsPanelBranchActionInput) => Promise<void>;
     fetchRemote: (input: VcsPanelRemoteInput) => Promise<void>;
-    fetchAllRemotes: (input: VcsPanelSnapshotInput) => Promise<void>;
+    fetchAllRemotes: (input: VcsPanelFetchAllRemotesInput) => Promise<void>;
     addRemote: (input: VcsPanelAddRemoteInput) => Promise<void>;
     removeRemote: (input: VcsPanelRemoteInput) => Promise<void>;
     createStash: (input: VcsPanelStashInput) => Promise<void>;

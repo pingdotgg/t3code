@@ -49,6 +49,7 @@ import {
   VcsPanelRefActionInput,
   VcsPanelSnapshotInput,
   VcsPanelSnapshotResult,
+  VcsPanelFetchAllRemotesInput,
   VcsPanelStashDetails,
   VcsPanelStashDetailsInput,
   VcsPanelStashInput,
@@ -591,7 +592,7 @@ export const WsVcsPanelFetchRemoteRpc = Rpc.make(WS_METHODS.vcsPanelFetchRemote,
 });
 
 export const WsVcsPanelFetchAllRemotesRpc = Rpc.make(WS_METHODS.vcsPanelFetchAllRemotes, {
-  payload: VcsPanelSnapshotInput,
+  payload: VcsPanelFetchAllRemotesInput,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 

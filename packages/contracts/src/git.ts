@@ -469,8 +469,17 @@ export const VcsPanelStashDetails = Schema.Struct({
 });
 export type VcsPanelStashDetails = typeof VcsPanelStashDetails.Type;
 
-export const VcsPanelSnapshotInput = VcsStatusInput;
+export const VcsPanelSnapshotInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refresh: Schema.optional(Schema.Literals(["full", "working-tree"])),
+});
 export type VcsPanelSnapshotInput = typeof VcsPanelSnapshotInput.Type;
+
+export const VcsPanelFetchAllRemotesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  force: Schema.optional(Schema.Boolean),
+});
+export type VcsPanelFetchAllRemotesInput = typeof VcsPanelFetchAllRemotesInput.Type;
 
 export const VcsPanelSnapshotResult = Schema.Struct({
   status: VcsStatusResult,

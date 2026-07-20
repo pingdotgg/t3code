@@ -2683,4 +2683,122 @@ describe("SourceControlPanelService", () => {
       ),
     ),
   );
+
+  it.effect("refreshes only working-tree slices when repository status is unchanged", () => {
+    const calls: ExecuteGitInput[] = [];
+    let dirty = false;
+    let aheadCount = 0;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const initial = yield* service.snapshot({ cwd: "/repo", refresh: "full" });
+      assert.deepStrictEqual(
+        initial.localBranches.map((branch) => branch.name),
+        ["main"],
+      );
+      calls.length = 0;
+      dirty = true;
+
+      const incremental = yield* service.snapshot({ cwd: "/repo", refresh: "working-tree" });
+
+      assert.deepStrictEqual(incremental.localBranches, initial.localBranches);
+      assert.deepStrictEqual(
+        incremental.changeGroups.flatMap((group) => group.files.map((file) => file.path)),
+        ["changed.txt"],
+      );
+      assert.deepStrictEqual(calls.map((call) => call.operation).toSorted(), [
+        "vcs.panel.stagedNameStatus",
+        "vcs.panel.stagedNumstat",
+        "vcs.panel.statusPorcelain",
+        "vcs.panel.unstagedNumstat",
+      ]);
+
+      calls.length = 0;
+      aheadCount = 1;
+      const fallback = yield* service.snapshot({ cwd: "/repo", refresh: "working-tree" });
+      assert.equal(fallback.status.aheadCount, 1);
+      assert.isTrue(calls.some((call) => call.operation === "vcs.panel.localBranches"));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success("main\t*\t/repo\t2026-07-20T10:00:00.000Z\torigin/main\t");
+                case "vcs.panel.statusPorcelain":
+                  return success(
+                    dirty
+                      ? [
+                          "# branch.oid abc",
+                          "# branch.head main",
+                          "# branch.upstream origin/main",
+                          `# branch.ab +${aheadCount} -0`,
+                          "1 .M N... 100644 100644 100644 222222 333333 changed.txt",
+                        ].join("\n")
+                      : [
+                          "# branch.oid abc",
+                          "# branch.head main",
+                          "# branch.upstream origin/main",
+                          `# branch.ab +${aheadCount} -0`,
+                        ].join("\n"),
+                  );
+                case "vcs.panel.unstagedNumstat":
+                  return success(dirty ? "1\t0\tchanged.txt\0" : "");
+                case "vcs.panel.worktrees":
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.stagedNameStatus":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "main",
+                isDefaultRef: true,
+                hasWorkingTreeChanges: dirty,
+                hasUpstream: true,
+                aheadCount,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("deduplicates automatic fetch-all requests and preserves forced refreshes", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.fetchAllRemotes({ cwd: "/repo" });
+      yield* service.fetchAllRemotes({ cwd: "/repo-linked" });
+      yield* service.fetchAllRemotes({ cwd: "/repo", force: true });
+
+      const fetchCalls = calls.filter((call) => call.operation === "vcs.panel.fetchAllRemotes");
+      assert.equal(fetchCalls.length, 2);
+      assert.deepStrictEqual(fetchCalls[0]?.args, ["--git-dir", "/repo/.git", "fetch", "--all"]);
+      assert.equal(fetchCalls[0]?.cwd, "/repo");
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.resolveGitCommonDir"
+              ? success("/repo/.git\n")
+              : success();
+          }),
+        ),
+      ),
+    );
+  });
 });

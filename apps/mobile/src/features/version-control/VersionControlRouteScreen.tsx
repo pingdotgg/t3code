@@ -385,7 +385,12 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   }, []);
 
   const refreshSnapshot = useCallback(
-    async (options: { readonly pull?: boolean } = {}) => {
+    async (
+      options: {
+        readonly pull?: boolean;
+        readonly refresh?: "full" | "working-tree";
+      } = {},
+    ) => {
       const requestId = ++snapshotRequestId.current;
       setRefreshing(options.pull === true);
       if (!selectedThreadCwd) {
@@ -396,7 +401,10 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         return;
       }
       try {
-        const rawSnapshot = await api.snapshot({ cwd: selectedThreadCwd });
+        const rawSnapshot = await api.snapshot({
+          cwd: selectedThreadCwd,
+          refresh: options.refresh ?? "full",
+        });
         if (requestId !== snapshotRequestId.current) return;
         const enrichmentResults = await Promise.allSettled(
           workingTreeEnrichmentRequests(rawSnapshot, selectedThreadCwd).map(
@@ -505,7 +513,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       data: statusQuery.data,
       fingerprint: statusFingerprint,
     };
-    if (previous) void refreshSnapshot();
+    if (previous) void refreshSnapshot({ refresh: "working-tree" });
   }, [refreshSnapshot, statusFingerprint, statusQuery.data]);
 
   const changeSets = useMemo(
@@ -993,7 +1001,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                 icon="arrow.clockwise"
                 disabled={busy}
                 onPress={() =>
-                  void runAction("fetch-all", () => api.fetchAllRemotes({ cwd: selectedThreadCwd }))
+                  void runAction("fetch-all", () =>
+                    api.fetchAllRemotes({ cwd: selectedThreadCwd, force: true }),
+                  )
                 }
               />
             }

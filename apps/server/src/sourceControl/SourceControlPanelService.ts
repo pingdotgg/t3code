@@ -1,9 +1,13 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
@@ -25,6 +29,7 @@ import {
   type VcsPanelFileChange,
   type VcsPanelFileDiffInput,
   type VcsPanelFileDiffResult,
+  type VcsPanelFetchAllRemotesInput,
   type VcsPanelFileStatus,
   type VcsPanelRemote,
   type VcsPanelRemoteInput,
@@ -82,6 +87,30 @@ interface WorktreeBranchEntry {
   readonly worktreePath: string;
 }
 
+interface PanelSnapshotCacheState {
+  readonly latestRequestByCwd: ReadonlyMap<string, number>;
+  readonly snapshotsByCwd: ReadonlyMap<string, VcsPanelSnapshotResult>;
+}
+
+const PANEL_SNAPSHOT_CACHE_CAPACITY = 64;
+
+function setBoundedMapEntry<K, V>(
+  source: ReadonlyMap<K, V>,
+  key: K,
+  value: V,
+  capacity: number,
+): ReadonlyMap<K, V> {
+  const next = new Map(source);
+  next.delete(key);
+  next.set(key, value);
+  while (next.size > capacity) {
+    const oldestKey = next.keys().next().value;
+    if (oldestKey === undefined) break;
+    next.delete(oldestKey);
+  }
+  return next;
+}
+
 export class SourceControlPanelService extends Context.Service<
   SourceControlPanelService,
   {
@@ -137,7 +166,7 @@ export class SourceControlPanelService extends Context.Service<
     ) => Effect.Effect<void, GitCommandError>;
     readonly fetchRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly fetchAllRemotes: (
-      input: VcsPanelSnapshotInput,
+      input: VcsPanelFetchAllRemotesInput,
     ) => Effect.Effect<void, GitCommandError>;
     readonly addRemote: (input: VcsPanelAddRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly removeRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
@@ -924,6 +953,48 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         );
       }),
     );
+
+  const snapshotCacheRef = yield* Ref.make<PanelSnapshotCacheState>({
+    latestRequestByCwd: new Map(),
+    snapshotsByCwd: new Map(),
+  });
+
+  const fetchAllRemotesCache = yield* Cache.makeWith(
+    (gitCommonDir: string) => {
+      const fetchCwd =
+        path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+      return run("vcs.panel.fetchAllRemotes", fetchCwd, [
+        "--git-dir",
+        gitCommonDir,
+        "fetch",
+        "--all",
+      ]).pipe(Effect.asVoid);
+    },
+    {
+      capacity: 128,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(5) : Duration.seconds(5)),
+    },
+  );
+
+  const resolveGitCommonDir = Effect.fn("SourceControlPanelService.resolveGitCommonDir")(function* (
+    cwd: string,
+  ) {
+    const commonDir = (yield* run("vcs.panel.resolveGitCommonDir", cwd, [
+      "rev-parse",
+      "--git-common-dir",
+    ])).trim();
+    return path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir);
+  });
+
+  const fetchAllRemotes: SourceControlPanelService["Service"]["fetchAllRemotes"] = Effect.fn(
+    "fetchAllRemotes",
+  )(function* (input) {
+    const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+    if (input.force === true) {
+      yield* Cache.invalidate(fetchAllRemotesCache, gitCommonDir);
+    }
+    yield* Cache.get(fetchAllRemotesCache, gitCommonDir);
+  });
 
   const withTemporaryIntentToAddIndex = <A, E>(
     input: {
@@ -1877,145 +1948,226 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       };
     });
 
-  const snapshot: SourceControlPanelService["Service"]["snapshot"] = Effect.fn("snapshot")(
-    function* (input) {
-      const [
-        localStatus,
-        localBranchesOutput,
-        worktreeListOutput,
-        workingTree,
-        remotesOutput,
-        stashes,
-      ] = yield* Effect.all(
-        [
-          workflow
-            .status(input)
-            .pipe(Effect.mapError(asGitCommandError("vcs.panel.status", input.cwd, ["status"]))),
-          runResult("vcs.panel.localBranches", input.cwd, LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS, {
-            allowNonZeroExit: true,
-          }).pipe(
-            Effect.flatMap((result) => {
-              if (result.exitCode === 0) return Effect.succeed(result.stdout);
-              const detail = result.stderr.trim() || result.stdout.trim();
-              return isUnsupportedWorktreePathFormat(detail)
-                ? run(
-                    "vcs.panel.localBranches",
-                    input.cwd,
-                    LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS,
-                  )
-                : Effect.fail(
-                    gitError(
-                      "vcs.panel.localBranches",
-                      input.cwd,
-                      LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS,
-                      detail,
-                    ),
-                  );
-            }),
-          ),
-          run("vcs.panel.worktrees", input.cwd, ["worktree", "list", "--porcelain"], {
-            allowNonZeroExit: true,
-          }),
-          readWorkingTreeChangeGroups(input.cwd),
-          run("vcs.panel.remotes", input.cwd, ["remote", "-v"]),
-          run("vcs.panel.stashes", input.cwd, [
-            "stash",
-            "list",
-            "--format=%gd%x09%H%x09%cI%x09%gs",
-          ]),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      const localBranches = yield* Effect.forEach(
-        parseLocalBranches(
-          localBranchesOutput,
-          parseWorktreeBranchPaths(worktreeListOutput),
-          localStatus.isDefaultRef ? localStatus.refName : null,
-        ),
-        branchWithExistingWorktreePath,
-        { concurrency: "unbounded" },
-      );
-      const remotes = parseRemoteVerbose(remotesOutput);
-      const remotesWithBranches = yield* Effect.forEach(
-        remotes,
-        (remote) =>
-          run("vcs.panel.remoteBranches", input.cwd, [
-            "branch",
-            "-r",
-            "--list",
-            `${remote.name}/*`,
-            "--format=%(refname:short)%09%(committerdate:iso-strict)",
-          ]).pipe(
-            Effect.map((branchesOutput) => ({
-              ...remote,
-              branches: parseRemoteBranches(branchesOutput, remote.name),
-            })),
-            Effect.orElseSucceed(() => remote),
-          ),
-        { concurrency: "unbounded" },
-      );
-      const defaultCompareRef =
-        localBranches.find((ref) => ref.isDefault)?.name ??
-        localBranches.find((ref) => !ref.current)?.name ??
-        null;
-      const forkBranches = yield* actionableForkBranches(
-        input.cwd,
-        localBranches,
-        remotesWithBranches,
-      );
-      const worktreeBranchEntries = parseWorktreeBranchEntries(worktreeListOutput);
-      const worktreeChangeSets = yield* Effect.forEach(
-        localBranches.filter((branch) => {
-          if (branch.current || !branch.worktreePath) return false;
-          if (path.resolve(branch.worktreePath) === path.resolve(input.cwd)) return false;
-          return worktreeBranchEntries.some(
+  const readWorktreeChangeSets = Effect.fn("readWorktreeChangeSets")(function* (
+    cwd: string,
+    localBranches: ReadonlyArray<VcsRef>,
+    worktreeBranchEntries: ReadonlyArray<WorktreeBranchEntry> | null,
+  ) {
+    return yield* Effect.forEach(
+      localBranches.filter((branch) => {
+        if (branch.current || !branch.worktreePath) return false;
+        if (path.resolve(branch.worktreePath) === path.resolve(cwd)) return false;
+        return (
+          worktreeBranchEntries === null ||
+          worktreeBranchEntries.some(
             (entry) =>
               entry.branchName === branch.name && entry.worktreePath === branch.worktreePath,
-          );
-        }),
-        (branch) =>
-          readWorkingTreeChangeGroups(branch.worktreePath!).pipe(
-            Effect.map((result): VcsPanelWorktreeChangeSet | null =>
-              changeGroupsHaveFiles(result.changeGroups)
-                ? {
-                    branchName: branch.name,
-                    worktreePath: branch.worktreePath!,
-                    current: false,
-                    lastActivityAt: branch.lastActivityAt ?? null,
-                    changeGroups: result.changeGroups,
-                  }
-                : null,
-            ),
-            Effect.orElseSucceed(() => null),
+          )
+        );
+      }),
+      (branch) =>
+        readWorkingTreeChangeGroups(branch.worktreePath!).pipe(
+          Effect.map((result): VcsPanelWorktreeChangeSet | null =>
+            changeGroupsHaveFiles(result.changeGroups)
+              ? {
+                  branchName: branch.name,
+                  worktreePath: branch.worktreePath!,
+                  current: false,
+                  lastActivityAt: branch.lastActivityAt ?? null,
+                  changeGroups: result.changeGroups,
+                }
+              : null,
           ),
-        { concurrency: 4 },
-      ).pipe(
-        Effect.map((sets) =>
-          sets
-            .filter((set): set is VcsPanelWorktreeChangeSet => set !== null)
-            .toSorted((left, right) => {
-              const leftTime = Date.parse(left.lastActivityAt ?? "");
-              const rightTime = Date.parse(right.lastActivityAt ?? "");
-              const activity =
-                (Number.isFinite(rightTime) ? rightTime : 0) -
-                (Number.isFinite(leftTime) ? leftTime : 0);
-              return activity !== 0 ? activity : left.branchName.localeCompare(right.branchName);
-            }),
+          Effect.orElseSucceed(() => null),
         ),
-      );
-      return {
-        status: panelStatusFromLocal(localStatus, workingTree.porcelain),
-        changeGroups: workingTree.changeGroups,
-        worktreeChangeSets,
-        localBranches,
-        branchDetails: [],
-        remotes: remotesWithBranches,
-        actionableForkBranches: forkBranches,
-        stashes: parseStashes(stashes),
-        recentCommits: [],
-        defaultCompareRef,
-      };
+      { concurrency: 4 },
+    ).pipe(
+      Effect.map((sets) =>
+        sets
+          .filter((set): set is VcsPanelWorktreeChangeSet => set !== null)
+          .toSorted((left, right) => {
+            const leftTime = Date.parse(left.lastActivityAt ?? "");
+            const rightTime = Date.parse(right.lastActivityAt ?? "");
+            const activity =
+              (Number.isFinite(rightTime) ? rightTime : 0) -
+              (Number.isFinite(leftTime) ? leftTime : 0);
+            return activity !== 0 ? activity : left.branchName.localeCompare(right.branchName);
+          }),
+      ),
+    );
+  });
+
+  const readFullSnapshot = Effect.fn("readFullSnapshot")(function* (cwd: string) {
+    const [
+      localStatus,
+      localBranchesOutput,
+      worktreeListOutput,
+      workingTree,
+      remotesOutput,
+      stashes,
+    ] = yield* Effect.all(
+      [
+        workflow
+          .status({ cwd })
+          .pipe(Effect.mapError(asGitCommandError("vcs.panel.status", cwd, ["status"]))),
+        runResult("vcs.panel.localBranches", cwd, LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS, {
+          allowNonZeroExit: true,
+        }).pipe(
+          Effect.flatMap((result) => {
+            if (result.exitCode === 0) return Effect.succeed(result.stdout);
+            const detail = result.stderr.trim() || result.stdout.trim();
+            return isUnsupportedWorktreePathFormat(detail)
+              ? run("vcs.panel.localBranches", cwd, LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS)
+              : Effect.fail(
+                  gitError(
+                    "vcs.panel.localBranches",
+                    cwd,
+                    LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS,
+                    detail,
+                  ),
+                );
+          }),
+        ),
+        run("vcs.panel.worktrees", cwd, ["worktree", "list", "--porcelain"], {
+          allowNonZeroExit: true,
+        }),
+        readWorkingTreeChangeGroups(cwd),
+        run("vcs.panel.remotes", cwd, ["remote", "-v"]),
+        run("vcs.panel.stashes", cwd, ["stash", "list", "--format=%gd%x09%H%x09%cI%x09%gs"]),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    const localBranches = yield* Effect.forEach(
+      parseLocalBranches(
+        localBranchesOutput,
+        parseWorktreeBranchPaths(worktreeListOutput),
+        localStatus.isDefaultRef ? localStatus.refName : null,
+      ),
+      branchWithExistingWorktreePath,
+      { concurrency: "unbounded" },
+    );
+    const remotes = parseRemoteVerbose(remotesOutput);
+    const remotesWithBranches = yield* Effect.forEach(
+      remotes,
+      (remote) =>
+        run("vcs.panel.remoteBranches", cwd, [
+          "branch",
+          "-r",
+          "--list",
+          `${remote.name}/*`,
+          "--format=%(refname:short)%09%(committerdate:iso-strict)",
+        ]).pipe(
+          Effect.map((branchesOutput) => ({
+            ...remote,
+            branches: parseRemoteBranches(branchesOutput, remote.name),
+          })),
+          Effect.orElseSucceed(() => remote),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const defaultCompareRef =
+      localBranches.find((ref) => ref.isDefault)?.name ??
+      localBranches.find((ref) => !ref.current)?.name ??
+      null;
+    const forkBranches = yield* actionableForkBranches(cwd, localBranches, remotesWithBranches);
+    const worktreeBranchEntries = parseWorktreeBranchEntries(worktreeListOutput);
+    const worktreeChangeSets = yield* readWorktreeChangeSets(
+      cwd,
+      localBranches,
+      worktreeBranchEntries,
+    );
+    return {
+      status: panelStatusFromLocal(localStatus, workingTree.porcelain),
+      changeGroups: workingTree.changeGroups,
+      worktreeChangeSets,
+      localBranches,
+      branchDetails: [],
+      remotes: remotesWithBranches,
+      actionableForkBranches: forkBranches,
+      stashes: parseStashes(stashes),
+      recentCommits: [],
+      defaultCompareRef,
+    };
+  });
+
+  const readWorkingTreeSnapshot = Effect.fn("readWorkingTreeSnapshot")(function* (
+    cwd: string,
+    cached: VcsPanelSnapshotResult,
+  ) {
+    const [localStatus, workingTree] = yield* Effect.all(
+      [
+        workflow
+          .status({ cwd })
+          .pipe(Effect.mapError(asGitCommandError("vcs.panel.status", cwd, ["status"]))),
+        readWorkingTreeChangeGroups(cwd),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const status = panelStatusFromLocal(localStatus, workingTree.porcelain);
+    const worktreeChangeSets = yield* readWorktreeChangeSets(cwd, cached.localBranches, null);
+    return { status, workingTree, worktreeChangeSets };
+  });
+
+  const repositoryStatusChanged = (left: VcsStatusResult, right: VcsStatusResult): boolean =>
+    left.isRepo !== right.isRepo ||
+    left.hasPrimaryRemote !== right.hasPrimaryRemote ||
+    left.isDefaultRef !== right.isDefaultRef ||
+    left.refName !== right.refName ||
+    left.hasUpstream !== right.hasUpstream ||
+    left.aheadCount !== right.aheadCount ||
+    left.behindCount !== right.behindCount ||
+    left.aheadOfDefaultCount !== right.aheadOfDefaultCount ||
+    JSON.stringify(left.sourceControlProvider ?? null) !==
+      JSON.stringify(right.sourceControlProvider ?? null) ||
+    JSON.stringify(left.pr) !== JSON.stringify(right.pr);
+
+  const snapshot: SourceControlPanelService["Service"]["snapshot"] = Effect.fn("snapshot")(
+    function* (input) {
+      const cacheKey = path.resolve(input.cwd);
+      const request = yield* Ref.modify(snapshotCacheRef, (state) => {
+        const requestId = (state.latestRequestByCwd.get(cacheKey) ?? 0) + 1;
+        const latestRequestByCwd = setBoundedMapEntry(
+          state.latestRequestByCwd,
+          cacheKey,
+          requestId,
+          PANEL_SNAPSHOT_CACHE_CAPACITY,
+        );
+        return [
+          {
+            requestId,
+            cached: state.snapshotsByCwd.get(cacheKey) ?? null,
+          },
+          { ...state, latestRequestByCwd },
+        ] as const;
+      });
+
+      let nextSnapshot: VcsPanelSnapshotResult;
+      if (input.refresh === "working-tree" && request.cached !== null) {
+        const incremental = yield* readWorkingTreeSnapshot(input.cwd, request.cached);
+        nextSnapshot = repositoryStatusChanged(request.cached.status, incremental.status)
+          ? yield* readFullSnapshot(input.cwd)
+          : {
+              ...request.cached,
+              status: incremental.status,
+              changeGroups: incremental.workingTree.changeGroups,
+              worktreeChangeSets: incremental.worktreeChangeSets,
+            };
+      } else {
+        nextSnapshot = yield* readFullSnapshot(input.cwd);
+      }
+
+      yield* Ref.update(snapshotCacheRef, (state) => {
+        if (state.latestRequestByCwd.get(cacheKey) !== request.requestId) return state;
+        const snapshotsByCwd = setBoundedMapEntry(
+          state.snapshotsByCwd,
+          cacheKey,
+          nextSnapshot,
+          PANEL_SNAPSHOT_CACHE_CAPACITY,
+        );
+        return { ...state, snapshotsByCwd };
+      });
+      return nextSnapshot;
     },
   );
 
@@ -2532,8 +2684,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     fetchBranch,
     fetchRemote: (input) =>
       run("vcs.panel.fetchRemote", input.cwd, ["fetch", input.remoteName]).pipe(Effect.asVoid),
-    fetchAllRemotes: (input) =>
-      run("vcs.panel.fetchAllRemotes", input.cwd, ["fetch", "--all"]).pipe(Effect.asVoid),
+    fetchAllRemotes,
     addRemote: (input) =>
       Effect.gen(function* () {
         const remoteName = yield* validateGitPositionalName({

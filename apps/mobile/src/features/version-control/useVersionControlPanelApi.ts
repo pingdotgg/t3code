@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   VcsPanelBranchDetails,
   VcsPanelFileDiffResult,
+  VcsPanelSnapshotInput,
   VcsPanelSnapshotResult,
   VcsPanelStashDetails,
   VcsPanelWorkingTreeFileEnrichmentResult,
@@ -122,7 +123,7 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
 
   return useMemo(
     () => ({
-      snapshot: (input: { readonly cwd: string }) =>
+      snapshot: (input: VcsPanelSnapshotInput) =>
         runPanelCommand<typeof input, VcsPanelSnapshotResult>(panelSnapshot, input),
       branchDetails: (input: Parameters<typeof panelBranchDetails>[0]["input"]) =>
         runPanelCommand<typeof input, VcsPanelBranchDetails>(panelBranchDetails, input),

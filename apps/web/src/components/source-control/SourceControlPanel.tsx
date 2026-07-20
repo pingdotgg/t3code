@@ -1205,7 +1205,7 @@ export function SourceControlPanel({
       : new Map(),
   );
   const refreshInFlightRef = useRef(false);
-  const refreshQueuedRef = useRef(false);
+  const refreshQueuedModeRef = useRef<"full" | "working-tree" | null>(null);
   const enrichedWorkingTreeFilesRef = useRef<ReadonlyMap<string, VcsPanelFileChange>>(
     cachedPanelState?.enrichedWorkingTreeFilesByPath ?? new Map(),
   );
@@ -1812,58 +1812,66 @@ export function SourceControlPanel({
     [api, cwd],
   );
 
-  const refresh = useCallback(async () => {
-    if (!api) {
-      setError("Version Control panel is unavailable for this connection runtime.");
-      setLoading(false);
-      return;
-    }
-    if (refreshInFlightRef.current) {
-      refreshQueuedRef.current = true;
-      return;
-    }
-    refreshInFlightRef.current = true;
-    setLoading(true);
-    try {
-      do {
-        refreshQueuedRef.current = false;
-        setError(null);
-        const nextSnapshot = await api.vcs.panelSnapshot({ cwd });
-        const nextSnapshotFingerprint = vcsPanelSnapshotFingerprint(cwd, nextSnapshot);
-        if (snapshotFingerprintRef.current === nextSnapshotFingerprint) {
-          reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
-          await hydrateExpandedBranchDetails(nextSnapshot);
-          await hydrateExpandedStashDetails(nextSnapshot);
-          continue;
-        }
-        snapshotFingerprintRef.current = nextSnapshotFingerprint;
-        snapshotRef.current = nextSnapshot;
-        resetWorkingTreeFileEnrichment();
-        syncChangedPathSelection(nextSnapshot.changeGroups);
-        syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
-        setSnapshot(nextSnapshot);
-        reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
-        await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: true });
-        await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: true });
-      } while (refreshQueuedRef.current);
-    } catch (nextError) {
-      if (isSourceControlPanelCommandInterrupted(nextError)) return;
-      setError(errorMessage(nextError));
-    } finally {
-      refreshInFlightRef.current = false;
-      setLoadingBranchDetails((current) => (current.size === 0 ? current : new Set()));
-      setLoading(false);
-    }
-  }, [
-    api,
-    cwd,
-    hydrateExpandedBranchDetails,
-    hydrateExpandedStashDetails,
-    reloadExpandedWorkingTreeDiffs,
-    resetWorkingTreeFileEnrichment,
-    syncChangedPathSelection,
-    syncWorktreeChangedPathSelection,
-  ]);
+  const refresh = useCallback(
+    async (refreshMode: "full" | "working-tree" = "full") => {
+      if (!api) {
+        setError("Version Control panel is unavailable for this connection runtime.");
+        setLoading(false);
+        return;
+      }
+      if (refreshInFlightRef.current) {
+        refreshQueuedModeRef.current =
+          refreshQueuedModeRef.current === "full" || refreshMode === "full"
+            ? "full"
+            : "working-tree";
+        return;
+      }
+      refreshInFlightRef.current = true;
+      setLoading(true);
+      try {
+        do {
+          refreshQueuedModeRef.current = null;
+          setError(null);
+          const nextSnapshot = await api.vcs.panelSnapshot({ cwd, refresh: refreshMode });
+          const nextSnapshotFingerprint = vcsPanelSnapshotFingerprint(cwd, nextSnapshot);
+          if (snapshotFingerprintRef.current === nextSnapshotFingerprint) {
+            reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
+            await hydrateExpandedBranchDetails(nextSnapshot);
+            await hydrateExpandedStashDetails(nextSnapshot);
+          } else {
+            snapshotFingerprintRef.current = nextSnapshotFingerprint;
+            snapshotRef.current = nextSnapshot;
+            resetWorkingTreeFileEnrichment();
+            syncChangedPathSelection(nextSnapshot.changeGroups);
+            syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
+            setSnapshot(nextSnapshot);
+            reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
+            await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: true });
+            await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: true });
+          }
+          const queuedMode = refreshQueuedModeRef.current;
+          if (queuedMode !== null) refreshMode = queuedMode;
+        } while (refreshQueuedModeRef.current !== null);
+      } catch (nextError) {
+        if (isSourceControlPanelCommandInterrupted(nextError)) return;
+        setError(errorMessage(nextError));
+      } finally {
+        refreshInFlightRef.current = false;
+        setLoadingBranchDetails((current) => (current.size === 0 ? current : new Set()));
+        setLoading(false);
+      }
+    },
+    [
+      api,
+      cwd,
+      hydrateExpandedBranchDetails,
+      hydrateExpandedStashDetails,
+      reloadExpandedWorkingTreeDiffs,
+      resetWorkingTreeFileEnrichment,
+      syncChangedPathSelection,
+      syncWorktreeChangedPathSelection,
+    ],
+  );
 
   useEffect(() => {
     void refresh();
@@ -1878,7 +1886,7 @@ export function SourceControlPanel({
       data: vcsStatus.data,
       fingerprint: vcsStatusFingerprint,
     };
-    void refresh();
+    void refresh("working-tree");
   }, [refresh, vcsStatus.data, vcsStatusFingerprint]);
 
   useEffect(() => {
@@ -1895,7 +1903,16 @@ export function SourceControlPanel({
       const now = Date.now();
       if (now - lastFocusRefreshAtRef.current < 1_000) return;
       lastFocusRefreshAtRef.current = now;
-      void refresh();
+      void (async () => {
+        try {
+          await api?.vcs.fetchAllRemotes({ cwd });
+        } catch {
+          // Focus refresh still reconciles the local repository snapshot when
+          // an automatic network refresh is temporarily unavailable.
+        } finally {
+          await refresh();
+        }
+      })();
     };
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshOnFocus);
@@ -1903,7 +1920,7 @@ export function SourceControlPanel({
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnFocus);
     };
-  }, [refresh]);
+  }, [api, cwd, refresh]);
 
   const runAction = useCallback(
     async (actionKey: string, action: () => Promise<void>) => {
@@ -2322,7 +2339,12 @@ export function SourceControlPanel({
   );
 
   const fetchActionableBranches = useCallback(
-    () => runAction("work-fetch", () => api?.vcs.fetchAllRemotes({ cwd }) ?? Promise.resolve()),
+    (force = false) =>
+      runAction(
+        "work-fetch",
+        () =>
+          api?.vcs.fetchAllRemotes({ cwd, ...(force ? { force: true } : {}) }) ?? Promise.resolve(),
+      ),
     [api, cwd, runAction],
   );
 
@@ -4481,7 +4503,7 @@ export function SourceControlPanel({
                     label="Fetch"
                     disabled={isActionRunning("work-fetch")}
                     loading={isActionRunning("work-fetch")}
-                    onClick={() => void fetchActionableBranches()}
+                    onClick={() => void fetchActionableBranches(true)}
                   >
                     <RefreshCw className="size-3.5" />
                   </IconButton>,
@@ -4498,7 +4520,7 @@ export function SourceControlPanel({
                       onClick={() =>
                         void runAction(
                           "remotes-fetch-all",
-                          () => api?.vcs.fetchAllRemotes({ cwd }) ?? Promise.resolve(),
+                          () => api?.vcs.fetchAllRemotes({ cwd, force: true }) ?? Promise.resolve(),
                         )
                       }
                     >

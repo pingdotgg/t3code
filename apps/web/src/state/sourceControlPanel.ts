@@ -4,6 +4,7 @@ import type {
   VcsPanelBranchDetails,
   VcsPanelCompareResult,
   VcsPanelFileDiffResult,
+  VcsPanelSnapshotInput,
   VcsPanelSnapshotResult,
   VcsPanelStashDetails,
   VcsPanelWorkingTreeFileEnrichmentResult,
@@ -148,7 +149,7 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
   return useMemo(
     () => ({
       vcs: {
-        panelSnapshot: (input: { readonly cwd: string }) =>
+        panelSnapshot: (input: VcsPanelSnapshotInput) =>
           runPanelCommand<typeof input, VcsPanelSnapshotResult>(panelSnapshot, input),
         branchDetails: (input: Parameters<typeof panelBranchDetails>[0]["input"]) =>
           runPanelCommand<typeof input, VcsPanelBranchDetails>(panelBranchDetails, input),
