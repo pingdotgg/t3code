@@ -35,28 +35,29 @@ function stripQuotes(value: string): string {
 }
 
 function applyColorEntry(colors: MutableThemeColors, key: string, value: string): void {
-  // Empty assignments are resets, not colors. Keeping an empty scalar here
-  // would later violate ServerConfig's TrimmedNonEmptyString schema and make
-  // the whole server.getConfig response fail to encode.
-  if (value.length === 0) return;
   switch (key) {
     case "background":
-      colors.background = value;
+      if (value.length === 0) delete colors.background;
+      else colors.background = value;
       return;
     case "foreground":
-      colors.foreground = value;
+      if (value.length === 0) delete colors.foreground;
+      else colors.foreground = value;
       return;
     case "cursor-color":
-      colors.cursor = value;
+      if (value.length === 0) delete colors.cursor;
+      else colors.cursor = value;
       return;
     case "selection-background":
-      colors.selectionBackground = value;
+      if (value.length === 0) delete colors.selectionBackground;
+      else colors.selectionBackground = value;
       return;
     case "selection-foreground":
-      colors.selectionForeground = value;
+      if (value.length === 0) delete colors.selectionForeground;
+      else colors.selectionForeground = value;
       return;
     case "palette": {
-      const match = value.match(/^(\d+)\s*=\s*(\S+)$/);
+      const match = value.match(/^(\d+)\s*=\s*(\S*)$/);
       if (!match) return;
       const index = Number(match[1]);
       if (!Number.isInteger(index) || index < 0 || index >= PALETTE_SIZE) return;

@@ -4,7 +4,44 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
+  writePreservingScrollback,
 } from "./ThreadTerminalDrawer";
+
+describe("writePreservingScrollback", () => {
+  it("restores a scrolled-back viewport with a relative scroll delta", () => {
+    let scrollbackLength = 100;
+    const writes: Array<string> = [];
+    const scrollDeltas: Array<number> = [];
+    const terminal = {
+      getScrollbackLength: () => scrollbackLength,
+      getViewportY: () => 20,
+      scrollLines: (amount: number) => scrollDeltas.push(amount),
+      write: (data: string) => {
+        writes.push(data);
+        scrollbackLength = 103;
+      },
+    };
+
+    writePreservingScrollback(terminal, "one\ntwo\nthree\n");
+
+    expect(writes).toEqual(["one\ntwo\nthree\n"]);
+    expect(scrollDeltas).toEqual([-23]);
+  });
+
+  it("accounts for evicted lines when scrollback is already capped", () => {
+    const scrollDeltas: Array<number> = [];
+    const terminal = {
+      getScrollbackLength: () => 5_000,
+      getViewportY: () => 20,
+      scrollLines: (amount: number) => scrollDeltas.push(amount),
+      write: (_data: string) => undefined,
+    };
+
+    writePreservingScrollback(terminal, "one\ntwo\n");
+
+    expect(scrollDeltas).toEqual([-22]);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {
