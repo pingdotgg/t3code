@@ -270,10 +270,12 @@ function LinearIntegrationRow() {
 }
 
 export function IntegrationsSettings() {
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
   return (
     <SettingsPageContainer>
       <SettingsSection title="Integrations">
-        <LinearIntegrationRow />
+        {/* Key remounts the row per environment so typed keys, pending flows, and settle refs never leak across environments. */}
+        <LinearIntegrationRow key={environmentId ?? "none"} />
       </SettingsSection>
     </SettingsPageContainer>
   );
