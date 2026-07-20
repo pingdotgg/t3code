@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./Array": {
+      "types": "./src/Array.ts",
+      "import": "./src/Array.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

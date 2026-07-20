@@ -9,6 +9,7 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
+import { copySorted } from "./Array.ts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -80,12 +81,21 @@ export function getModelSelectionBooleanOptionValue(
 function canonicalModelSelectionOptions(
   modelSelection: ModelSelection,
 ): ReadonlyArray<readonly [id: string, value: string | boolean]> {
-  return (modelSelection.options ?? [])
-    .map((selection) => [selection.id, selection.value] as const)
-    .toSorted(([leftId, leftValue], [rightId, rightValue]) => {
+  return copySorted(
+    (modelSelection.options ?? []).map(
+      (selection): readonly [id: string, value: string | boolean] => [
+        selection.id,
+        selection.value,
+      ],
+    ),
+    (
+      [leftId, leftValue]: readonly [id: string, value: string | boolean],
+      [rightId, rightValue]: readonly [id: string, value: string | boolean],
+    ) => {
       const idOrder = leftId.localeCompare(rightId);
       return idOrder !== 0 ? idOrder : String(leftValue).localeCompare(String(rightValue));
-    });
+    },
+  );
 }
 
 /**
