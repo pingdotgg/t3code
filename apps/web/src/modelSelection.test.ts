@@ -101,6 +101,39 @@ describe("instance-scoped model selection", () => {
     ).toBe("openai/gpt-5.5");
   });
 
+  it("preserves a custom slug that collides with a provider alias", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_openrouter",
+        models: ["claude-opus-4-8"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: ["opus"] },
+        },
+      },
+    };
+    const openrouter = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(
+      getAppModelOptionsForInstance(settings, openrouter).map((option) => option.slug),
+    ).toEqual(["claude-opus-4-8", "opus"]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        settings,
+        providers,
+        "opus",
+      ),
+    ).toBe("opus");
+  });
+
   it("includes Grok custom models from the selected provider instance", () => {
     const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
     const settings: UnifiedSettings = {

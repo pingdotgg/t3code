@@ -236,11 +236,7 @@ export function normalizeModelSlug(
   model: string | null | undefined,
   provider: ProviderDriverKind = DEFAULT_PROVIDER_DRIVER_KIND,
 ): string | null {
-  if (typeof model !== "string") {
-    return null;
-  }
-
-  const trimmed = model.trim();
+  const trimmed = normalizeCustomModelSlug(model);
   if (!trimmed) {
     return null;
   }
@@ -250,6 +246,15 @@ export function normalizeModelSlug(
     ? aliases[trimmed]
     : undefined;
   return typeof aliased === "string" ? aliased : trimmed;
+}
+
+/** Custom model identifiers are provider-owned, so only trim them; never expand aliases. */
+export function normalizeCustomModelSlug(model: string | null | undefined): string | null {
+  if (typeof model !== "string") {
+    return null;
+  }
+
+  return model.trim() || null;
 }
 
 export function resolveSelectableModel(
