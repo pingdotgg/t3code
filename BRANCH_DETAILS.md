@@ -5,7 +5,7 @@ The settings Archive panel uses a dense layout so large archives remain scannabl
 Expected behavior:
 
 - Archived conversations are grouped by project, and each project group is collapsed by default.
-- The Archive panel fetches archived thread snapshots from all configured environments, not only environments that currently have active projects, so archived-only workspaces remain visible.
+- The Archive panel fetches archived thread snapshots from all configured environments, not only environments that currently have active projects, so archived-only workspaces remain visible, while active rows returned in those snapshots remain excluded from archive content and empty-state counts.
 - The page includes a search box that filters archived thread titles across all projects case-insensitively. Multi-word searches match any term, rank exact phrase matches first, rank titles matching every term ahead of partial term matches, and auto-open matching project groups while search is active.
 - Expanded project headers include sortable `Archived` and `Created` columns; clicking either header toggles ascending/descending order for the conversations inside each group, with `Archived` descending as the default.
 - Native project-section ordering follows the selected archive sort field and direction. Invalid archived timestamps fall back to the conversation's created timestamp for sorting and display on both surfaces.

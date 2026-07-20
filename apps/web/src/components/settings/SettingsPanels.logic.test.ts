@@ -22,6 +22,7 @@ import {
   buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasArchivedThreads,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
   runArchivedProjectThreadActions,
@@ -357,6 +358,28 @@ describe("buildArchivedThreadGroups", () => {
         threadIds: ["thread-second"],
       },
     ]);
+  });
+});
+
+describe("hasArchivedThreads", () => {
+  it("ignores active threads when determining whether the archive has content", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const activeThread = makeThread({
+      archivedAt: null,
+      id: ThreadId.make("thread-active"),
+      projectId: project.id,
+      title: "Active thread",
+    });
+    const archivedThread = makeThread({
+      id: ThreadId.make("thread-archived"),
+      projectId: project.id,
+      title: "Archived thread",
+    });
+
+    expect(hasArchivedThreads([makeSnapshot([project], [activeThread])])).toBe(false);
+    expect(hasArchivedThreads([makeSnapshot([project], [activeThread, archivedThread])])).toBe(
+      true,
+    );
   });
 });
 

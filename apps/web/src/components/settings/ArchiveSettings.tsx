@@ -39,6 +39,7 @@ import {
   type ArchivedThreadSortField,
   type ArchivedThreadSortState,
   buildArchivedThreadGroups,
+  hasArchivedThreads as archiveHasThreads,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
   runArchivedProjectThreadActions,
@@ -142,7 +143,7 @@ export function ArchivedThreadsPanel() {
     [archiveSearchQuery],
   );
   const hasArchivedThreads = useMemo(
-    () => archivedSnapshots.some(({ snapshot }) => snapshot.threads.length > 0),
+    () => archiveHasThreads(archivedSnapshots),
     [archivedSnapshots],
   );
 
@@ -182,11 +183,7 @@ export function ArchivedThreadsPanel() {
 
   const confirmArchivedAction = useCallback(async (message: string) => {
     const localApi = readLocalApi();
-    if (!localApi) {
-      if (typeof window === "undefined") return false;
-      if (typeof window.confirm !== "function") return false;
-      return window.confirm(message);
-    }
+    if (!localApi) return true;
     const confirmationResult = await settlePromise(() => localApi.dialogs.confirm(message));
     if (confirmationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(confirmationResult);

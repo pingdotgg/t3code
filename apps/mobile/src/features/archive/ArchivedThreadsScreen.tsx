@@ -676,7 +676,11 @@ function ArchivedThreadRow(props: {
         props.isBusy ? (
           rowContent
         ) : (
-          <ControlPillMenu actions={menuActions} onPressAction={handleMenuAction}>
+          <ControlPillMenu
+            actions={menuActions}
+            onPressAction={handleMenuAction}
+            shouldOpenOnLongPress
+          >
             {rowContent}
           </ControlPillMenu>
         )

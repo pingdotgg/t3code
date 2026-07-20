@@ -87,6 +87,12 @@ export function parseArchivedThreadSearchInput(query: string): ArchivedThreadSea
   };
 }
 
+export function hasArchivedThreads(snapshots: ReadonlyArray<ArchivedSnapshotEntry>): boolean {
+  return snapshots.some(({ snapshot }) =>
+    snapshot.threads.some((thread) => thread.archivedAt !== null),
+  );
+}
+
 // Lower search scores are more relevant, matching the shared search-ranking helpers.
 export function archivedThreadSearchScore(input: {
   readonly normalizedTitle: string;
