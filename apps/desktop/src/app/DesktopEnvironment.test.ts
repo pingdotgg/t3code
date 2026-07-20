@@ -78,7 +78,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("derives production state paths under userdata-v2", () =>
+  it.effect("reuses production state and identity paths from existing installations", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -88,12 +88,18 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/t3/userdata-v2");
-      assert.equal(environment.logDir, "/tmp/t3/userdata-v2/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata-v2/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata-v2/settings.json");
-      assert.equal(environment.userDataDirName, "t3code-v2");
-      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha v2)");
+      assert.equal(environment.stateDir, "/tmp/t3/userdata");
+      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
+      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
+      assert.equal(
+        environment.savedEnvironmentRegistryPath,
+        "/tmp/t3/userdata/saved-environments.json",
+      );
+      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.userDataDirName, "t3code");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha)");
     }),
   );
 

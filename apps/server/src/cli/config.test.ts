@@ -56,6 +56,19 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     return fd;
   });
 
+  it.effect("keeps production state in userdata while isolating development state", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-state-paths");
+
+      const productionPaths = yield* deriveServerPaths(baseDir, undefined);
+      const developmentPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:5173"));
+
+      assert.equal(productionPaths.stateDir, join(baseDir, "userdata"));
+      assert.equal(developmentPaths.stateDir, join(baseDir, "dev"));
+    }),
+  );
+
   it.effect("falls back to effect/config values when flags are omitted", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
@@ -328,7 +341,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(join(baseDir, "userdata-v2"), resolved.stateDir);
+      assert.equal(join(baseDir, "userdata"), resolved.stateDir);
     }),
   );
 
@@ -377,6 +390,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       ]) {
         expect(yield* fs.exists(directory)).toBe(true);
       }
+      expect(resolved.stateDir).toBe(path.join(baseDir, "dev"));
       expect(resolved.cwd).toBe(path.resolve(customCwd));
     }),
   );
