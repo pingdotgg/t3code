@@ -45,6 +45,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
+  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -61,11 +62,25 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+
+function isCodexStandaloneCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.includes("/.codex/packages/standalone/") &&
+    (normalized.endsWith("/bin/codex") || normalized.endsWith("/bin/codex.exe"))
+  );
+}
+
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@openai/codex",
   homebrewFormula: "codex",
-  nativeUpdate: null,
+  nativeUpdate: {
+    executable: "codex",
+    args: ["update"],
+    lockKey: "codex-native",
+    isCommandPath: isCodexStandaloneCommandPath,
+  },
 });
 
 /**
