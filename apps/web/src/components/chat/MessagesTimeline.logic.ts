@@ -55,16 +55,11 @@ export function timelineScrollableNodeCanNavigateTowardHistory(
 
 export function resolveTimelineScrollableNodeIsAtEnd(
   scrollNode: TimelineScrollableNodeState | null | undefined,
-  contentInsetEndAdjustment = 0,
 ): boolean | undefined {
   if (!scrollNode) {
     return undefined;
   }
-  const endThreshold = Math.max(
-    1,
-    Number.isFinite(contentInsetEndAdjustment) ? contentInsetEndAdjustment : 0,
-  );
-  return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight <= endThreshold;
+  return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight <= 1;
 }
 
 export function timelineManualNavigationMovedTowardHistory({
@@ -97,6 +92,13 @@ export interface TimelineEndState {
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
   return state?.isWithinMaintainScrollAtEndThreshold ?? state?.isNearEnd ?? state?.isAtEnd;
+}
+
+export function resolveTimelineManualNavigationIsAtEnd(
+  state: TimelineEndState | undefined,
+  scrollNode: TimelineScrollableNodeState | null | undefined,
+): boolean {
+  return state?.isAtEnd ?? resolveTimelineScrollableNodeIsAtEnd(scrollNode) ?? false;
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {

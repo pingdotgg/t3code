@@ -74,13 +74,13 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
+  resolveTimelineManualNavigationIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
-  resolveTimelineScrollableNodeIsAtEnd,
   timelineScrollableNodeCanNavigateTowardHistory,
   timelineManualNavigationMovedTowardHistory,
   timelineManualNavigationReachedEnd,
@@ -471,8 +471,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       pointerNavigation.scrollTop = scrollTop;
     }
     const manualNavigation = manualNavigationRef.current;
-    const scrollNodeIsAtEnd =
-      resolveTimelineScrollableNodeIsAtEnd(scrollNode, contentInsetEndAdjustment) ?? false;
+    const scrollNodeIsAtEnd = resolveTimelineManualNavigationIsAtEnd(state, scrollNode);
     const manualNavigationReachedEnd = Boolean(
       manualNavigation &&
       scrollTop !== null &&
@@ -519,7 +518,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, [
     listRef,
-    contentInsetEndAdjustment,
     finishTimelineNavigationProbe,
     markTimelineManualNavigation,
     minimapItems,
