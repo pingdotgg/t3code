@@ -36,6 +36,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -97,6 +98,7 @@ export interface CodexSessionRuntimeOptions {
   readonly providerInstanceId?: ProviderInstanceId;
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly launchArgs?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
@@ -717,11 +719,11 @@ export const makeCodexSessionRuntime = (
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const extendEnv = options.environment === undefined;
-    const spawnCommand = yield* resolveSpawnCommand(
-      options.binaryPath,
-      ["app-server", ...(options.appServerArgs ?? [])],
-      { env, extendEnv },
-    );
+    const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
+    const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
+      env,
+      extendEnv,
+    });
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
