@@ -25,9 +25,9 @@ Primary files:
 
 Sidebar archive visibility is centralized across persisted and optimistic archive states. Project rows, project status, sorting, keyboard navigation, and prewarming exclude an optimistically archived conversation immediately, so durable cold-storage work cannot leave a stale row or keyboard target visible while the server shell catches up.
 
-Persisted web/mobile sidebar data is a fast paint only. Every WebSocket session refreshes an authoritative shell snapshot over HTTP, or requests the socket-embedded snapshot if HTTP fails, before replaying live changes. Because cold archive storage compacts per-thread orchestration events, a cached client must never depend on that compacted history to discover new conversations or remove archived/deleted ones.
+The shared client runtime refreshes an authoritative shell snapshot on each WebSocket session and when the app returns to the foreground, with socket completion markers protecting the handoff to live events. Cold archive storage relies on this upstream synchronization contract because compacted per-thread history cannot prove that cached projects and threads still exist.
 
-Initial-snapshot event replay in `apps/server/src/ws.ts` and deferred active-thread cache writes in `packages/client-runtime/src/state/threads.ts` complement rather than replace the authoritative shell refresh. Replay remains lossless while every WebSocket session still reconciles archived and deleted thread shells.
+The branch retains a server regression for archive removals published while an HTTP-seeded shell subscription catches up. Initial-snapshot event replay in `apps/server/src/ws.ts` and deferred active-thread cache writes in `packages/client-runtime/src/state/threads.ts` remain complementary to authoritative shell refresh.
 
 Mobile Archive rows omit invalid lifecycle timestamps instead of presenting corrupt or legacy values as newly archived. General mobile time rendering is unchanged.
 

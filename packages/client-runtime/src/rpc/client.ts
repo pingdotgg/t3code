@@ -11,6 +11,7 @@ import { RpcClientError } from "effect/unstable/rpc";
 
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import type { RpcSession } from "../rpc/session.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
@@ -147,15 +148,18 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
   );
 }
 
-export function subscribeWithInputEffect<TTag extends EnvironmentSubscriptionRpcTag>(
+interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
+  readonly onExpectedFailure?: (
+    cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
+  ) => Effect.Effect<void, never, never>;
+  readonly retryExpectedFailureAfter?: Duration.Input;
+  readonly resubscribe?: Stream.Stream<unknown, never, never>;
+}
+
+export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
-  input: Effect.Effect<EnvironmentRpcInput<TTag>>,
-  options?: {
-    readonly onExpectedFailure?: (
-      cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
-    ) => Effect.Effect<void, never, never>;
-    readonly retryExpectedFailureAfter?: Duration.Input;
-  },
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
   EnvironmentRpcStreamFailure<TTag>,
@@ -163,8 +167,18 @@ export function subscribeWithInputEffect<TTag extends EnvironmentSubscriptionRpc
 > {
   return Stream.unwrap(
     EnvironmentSupervisor.pipe(
-      Effect.map((supervisor) =>
-        SubscriptionRef.changes(supervisor.session).pipe(
+      Effect.map((supervisor) => {
+        const sessionChanges = SubscriptionRef.changes(supervisor.session);
+        const sessions =
+          options?.resubscribe === undefined
+            ? sessionChanges
+            : Stream.merge(
+                sessionChanges,
+                options.resubscribe.pipe(
+                  Stream.mapEffect(() => SubscriptionRef.get(supervisor.session)),
+                ),
+              );
+        return sessions.pipe(
           Stream.switchMap(
             Option.match({
               onNone: () => Stream.empty,
@@ -179,55 +193,65 @@ export function subscribeWithInputEffect<TTag extends EnvironmentSubscriptionRpc
                   EnvironmentRpcStreamValue<TTag>,
                   EnvironmentRpcStreamFailure<TTag>
                 > =>
-                  Stream.unwrap(
-                    input.pipe(Effect.map((sessionInput) => method(sessionInput))),
-                  ).pipe(
-                    Stream.catchCause((cause) => {
-                      const hasOnlyExpectedFailures =
-                        cause.reasons.length > 0 &&
-                        cause.reasons.every((reason) => reason._tag === "Fail");
-                      const isTransportFailure =
-                        hasOnlyExpectedFailures &&
-                        cause.reasons.every(
-                          (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
-                        );
-                      if (isTransportFailure) {
-                        return Stream.fromEffect(
-                          Effect.logWarning(
-                            "Durable RPC subscription lost its transport; waiting for the next session.",
-                            {
-                              cause: Cause.pretty(cause),
-                              method: tag,
-                              environmentId: supervisor.target.environmentId,
-                            },
+                  Stream.suspend(() =>
+                    Stream.unwrap(
+                      makeInput(session).pipe(
+                        Effect.map((input) =>
+                          method(input).pipe(
+                            Stream.catchCause((cause) => {
+                              const hasOnlyExpectedFailures =
+                                cause.reasons.length > 0 &&
+                                cause.reasons.every((reason) => reason._tag === "Fail");
+                              const isTransportFailure =
+                                hasOnlyExpectedFailures &&
+                                cause.reasons.every(
+                                  (reason) =>
+                                    reason._tag === "Fail" && isRpcClientError(reason.error),
+                                );
+                              if (isTransportFailure) {
+                                return Stream.fromEffect(
+                                  Effect.logWarning(
+                                    "Durable RPC subscription lost its transport; waiting for the next session.",
+                                    {
+                                      cause: Cause.pretty(cause),
+                                      method: tag,
+                                      environmentId: supervisor.target.environmentId,
+                                    },
+                                  ),
+                                ).pipe(Stream.drain);
+                              }
+                              if (
+                                hasOnlyExpectedFailures &&
+                                options?.onExpectedFailure !== undefined
+                              ) {
+                                const handled = Stream.fromEffect(
+                                  options.onExpectedFailure(cause),
+                                ).pipe(Stream.drain);
+                                if (options.retryExpectedFailureAfter === undefined) {
+                                  return handled;
+                                }
+                                return handled.pipe(
+                                  Stream.concat(
+                                    Stream.fromEffect(
+                                      Effect.sleep(options.retryExpectedFailureAfter),
+                                    ).pipe(Stream.drain),
+                                  ),
+                                  Stream.concat(subscribeToSession()),
+                                );
+                              }
+                              return Stream.failCause(cause);
+                            }),
                           ),
-                        ).pipe(Stream.drain);
-                      }
-                      if (hasOnlyExpectedFailures && options?.onExpectedFailure !== undefined) {
-                        const handled = Stream.fromEffect(options.onExpectedFailure(cause)).pipe(
-                          Stream.drain,
-                        );
-                        if (options.retryExpectedFailureAfter === undefined) {
-                          return handled;
-                        }
-                        return handled.pipe(
-                          Stream.concat(
-                            Stream.fromEffect(Effect.sleep(options.retryExpectedFailureAfter)).pipe(
-                              Stream.drain,
-                            ),
-                          ),
-                          Stream.concat(subscribeToSession()),
-                        );
-                      }
-                      return Stream.failCause(cause);
-                    }),
+                        ),
+                      ),
+                    ),
                   );
                 return subscribeToSession();
               },
             }),
           ),
-        ),
-      ),
+        );
+      }),
     ),
   ).pipe(
     Stream.withSpan("EnvironmentRpc.subscribe", {
@@ -239,18 +263,13 @@ export function subscribeWithInputEffect<TTag extends EnvironmentSubscriptionRpc
 export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
-  options?: {
-    readonly onExpectedFailure?: (
-      cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
-    ) => Effect.Effect<void, never, never>;
-    readonly retryExpectedFailureAfter?: Duration.Input;
-  },
+  options?: SubscriptionOptions<TTag>,
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
   EnvironmentRpcStreamFailure<TTag>,
   EnvironmentSupervisor
 > {
-  return subscribeWithInputEffect(tag, Effect.succeed(input), options);
+  return subscribeDynamic(tag, () => Effect.succeed(input), options);
 }
 
 export const config = Effect.gen(function* () {

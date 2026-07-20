@@ -93,7 +93,7 @@ export function useThreadActions() {
   }, [router]);
 
   const archiveThread = useCallback(
-    async (target: ScopedThreadRef) => {
+    async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
@@ -113,26 +113,10 @@ export function useThreadActions() {
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId;
       optimisticallyHideArchivedThread(threadRef);
-      const archivePromise = archiveThreadMutation({
+      const archiveResult = await archiveThreadMutation({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId },
       });
-      if (shouldNavigateToDraft) {
-        const navigationResult = await settlePromise(() =>
-          handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
-        );
-        if (navigationResult._tag === "Failure") {
-          revealOptimisticallyArchivedThread(threadRef);
-          void archivePromise.then((archiveResult) => {
-            if (archiveResult._tag === "Success") {
-              refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-            }
-          });
-          return navigationResult;
-        }
-      }
-
-      const archiveResult = await archivePromise;
       if (archiveResult._tag === "Failure") {
         revealOptimisticallyArchivedThread(threadRef);
         return archiveResult;
@@ -143,6 +127,18 @@ export function useThreadActions() {
       // could hide a later unarchive performed by another client.
       revealOptimisticallyArchivedThread(threadRef);
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      opts.onArchived?.();
+
+      if (shouldNavigateToDraft) {
+        const navigationResult = await settlePromise(() =>
+          handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
+        );
+        if (navigationResult._tag === "Failure") {
+          return navigationResult;
+        }
+        return archiveResult;
+      }
+
       return archiveResult;
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, resolveThreadTarget],
