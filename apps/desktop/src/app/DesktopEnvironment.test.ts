@@ -53,16 +53,16 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.isDevelopment, true);
       assert.equal(environment.appDataDirectory, "/Users/alice/Library/Application Support");
       assert.equal(environment.baseDir, "/tmp/t3");
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
-      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
+      assert.equal(environment.stateDir, "/tmp/t3/userdata-v2");
+      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata-v2/desktop-settings.json");
+      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata-v2/client-settings.json");
       assert.equal(
         environment.savedEnvironmentRegistryPath,
-        "/tmp/t3/userdata/saved-environments.json",
+        "/tmp/t3/userdata-v2/saved-environments.json",
       );
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata-v2/settings.json");
+      assert.equal(environment.logDir, "/tmp/t3/userdata-v2/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata-v2/browser-artifacts");
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
@@ -81,7 +81,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("stores production state under userdata in an explicit home", () =>
+  it.effect("stores production state under userdata-v2 in an explicit home", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -91,10 +91,12 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.stateDir, "/tmp/t3/userdata-v2");
+      assert.equal(environment.logDir, "/tmp/t3/userdata-v2/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata-v2/browser-artifacts");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata-v2/settings.json");
+      assert.equal(environment.userDataDirName, "t3code-v2");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha v2)");
     }),
   );
 
@@ -107,7 +109,7 @@ describe("DesktopEnvironment", () => {
       const production = yield* makeEnvironment();
 
       assert.equal(development.stateDir, "/Users/alice/.t3/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      assert.equal(production.stateDir, "/Users/alice/.t3/userdata-v2");
     }),
   );
 

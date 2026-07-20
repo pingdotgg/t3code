@@ -22,7 +22,6 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -79,7 +78,6 @@ interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
   readonly connectionId: ClientConnection["connectionId"];
   readonly queue: ClientConnection["queue"];
-  readonly expiresAt: number;
   readonly tabId?: PreviewTabId;
   readonly tabSequence?: number;
 }
@@ -422,13 +420,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const now = yield* Clock.currentTimeMillis;
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
         Array.from(current.assignments).filter(([, assignment]) => {
           const connection = current.clients.get(assignment.clientId);
           return (
-            assignment.expiresAt > now &&
             connection?.connectionId === assignment.connectionId &&
             connection.queue === assignment.queue
           );
@@ -473,7 +469,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         clientId: connection.clientId,
         connectionId: connection.connectionId,
         queue: connection.queue,
-        expiresAt: input.scope.expiresAt,
         ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
         ...(canReuseAssignedTab && assigned.tabSequence !== undefined
           ? { tabSequence: assigned.tabSequence }

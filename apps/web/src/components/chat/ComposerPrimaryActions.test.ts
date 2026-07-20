@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions, formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+
+const activeTurnProps = {
+  compact: false,
+  pendingAction: null,
+  showPlanFollowUpPrompt: false,
+  promptHasText: false,
+  isSendBusy: false,
+  isConnecting: false,
+  isEnvironmentUnavailable: false,
+  isPreparingWorktree: false,
+  preserveComposerFocusOnPointerDown: false,
+  onPreviousPendingQuestion: () => {},
+  onInterrupt: () => {},
+  onImplementPlanInNewThread: () => {},
+} as const;
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +106,33 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("active-turn primary action", () => {
+  it("shows stop while the active composer is empty", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: true,
+        hasSendableContent: false,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain("steer active turn");
+  });
+
+  it("replaces stop with send while the active composer has content", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        ...activeTurnProps,
+        isRunning: true,
+        hasSendableContent: true,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Send message to steer active turn"');
+    expect(markup).not.toContain('aria-label="Stop generation"');
   });
 });

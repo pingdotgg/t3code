@@ -1,8 +1,8 @@
 import {
   EnvironmentId,
-  ORCHESTRATION_WS_METHODS,
-  type OrchestrationShellSnapshot,
-  type OrchestrationShellStreamItem,
+  ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -23,6 +23,7 @@ import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
+import { v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -40,11 +41,9 @@ const PREPARED: PreparedConnection = {
   target: TARGET,
 };
 
-const LIVE_SHELL_SNAPSHOT: OrchestrationShellSnapshot = {
+const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
+  ...v2ShellSnapshot,
   snapshotSequence: 1,
-  projects: [],
-  threads: [],
-  updatedAt: "2026-06-06T00:00:00.000Z",
 };
 
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
@@ -60,9 +59,9 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
 describe("environment shell synchronization", () => {
   it.effect("publishes live state before persistence and preserves it when ready", () =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
       const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
@@ -148,34 +147,30 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("replaces a warm shell cache with an authoritative HTTP snapshot", () =>
+  it.effect("refreshes a warm shell cache from HTTP before resuming", () =>
     Effect.gen(function* () {
-      const cachedSnapshot: OrchestrationShellSnapshot = {
+      const cachedSnapshot: OrchestrationV2ShellSnapshot = {
+        ...v2ShellSnapshot,
         snapshotSequence: 5,
-        projects: [],
-        threads: [{ id: "stale-thread" } as never],
-        updatedAt: "2026-06-06T00:00:00.000Z",
       };
-      const httpSnapshot: OrchestrationShellSnapshot = {
-        ...cachedSnapshot,
-        snapshotSequence: 9,
-        threads: [],
-        updatedAt: "2026-06-07T00:00:00.000Z",
-      };
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
-      const capturedCompletionMarker = yield* Ref.make<boolean | undefined>(undefined);
+      const capturedCompletionMarker = yield* Ref.make(false);
       const loaderCalls = yield* SubscriptionRef.make(0);
+      const httpSnapshot: OrchestrationV2ShellSnapshot = {
+        ...v2ShellSnapshot,
+        snapshotSequence: 9,
+      };
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: {
           readonly afterSequence?: number;
-          readonly requestCompletionMarker?: boolean;
+          readonly requestCompletionMarker?: true;
         }) =>
           Stream.unwrap(
-            Ref.set(capturedCompletionMarker, input.requestCompletionMarker).pipe(
-              Effect.andThen(SubscriptionRef.set(capturedAfterSequence, input.afterSequence)),
-              Effect.as(Stream.fromQueue(events)),
-            ),
+            Effect.all([
+              Ref.set(capturedCompletionMarker, input.requestCompletionMarker === true),
+              SubscriptionRef.set(capturedAfterSequence, input.afterSequence),
+            ]).pipe(Effect.as(Stream.fromQueue(events))),
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
@@ -238,12 +233,12 @@ describe("environment shell synchronization", () => {
 
   it.effect("refreshes the authoritative shell snapshot when the app becomes active", () =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
       const loaderCalls = yield* Ref.make(0);
       const subscriptionCount = yield* Ref.make(0);
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: () =>
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
           Stream.unwrap(
             Ref.update(subscriptionCount, (count) => count + 1).pipe(
               Effect.as(Stream.fromQueue(events)),

@@ -48,6 +48,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
+      # but ACP process-tree live tests compile a small pthread fixture with `cc`
+      # and soft-skip when it is missing. Install build-essential so that path
+      # always runs in CI instead of silently no-oping.
+      - name: Install C toolchain for process-tree fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+          command -v cc
+
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:

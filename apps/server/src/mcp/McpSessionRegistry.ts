@@ -18,10 +18,10 @@ export interface McpCredentialRequest {
 
 export interface McpIssuedCredential {
   readonly config: McpProviderSession.McpProviderSessionConfig;
-  readonly expiresAt: number;
 }
 
 export interface McpSessionRegistryShape {
+  /** Credentials have no time-based expiry and must be explicitly revoked by their owner. */
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
@@ -37,9 +37,7 @@ export class McpSessionRegistry extends Context.Service<
 >()("t3/mcp/McpSessionRegistry") {}
 
 interface CredentialRecord {
-  readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpInvocationScope;
-  readonly lastUsedAt: number;
 }
 
 interface RegistryState {
@@ -47,13 +45,8 @@ interface RegistryState {
 }
 
 export interface McpSessionRegistryOptions {
-  readonly idleTimeoutMs?: number;
-  readonly maximumLifetimeMs?: number;
   readonly now?: () => number;
 }
-
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
-const DEFAULT_MAXIMUM_LIFETIME_MS = 8 * 60 * 60 * 1_000;
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -80,8 +73,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
-  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-  const maximumLifetimeMs = options.maximumLifetimeMs ?? DEFAULT_MAXIMUM_LIFETIME_MS;
   const endpoint =
     httpServer.address._tag === "TcpAddress"
       ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
@@ -92,35 +83,23 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
-  const pruneExpired = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
-    const next = new Map(
-      Array.from(records).filter(
-        ([, record]) =>
-          timestamp <= record.scope.expiresAt && timestamp - record.lastUsedAt <= idleTimeoutMs,
-      ),
-    );
-    return next.size === records.size ? records : next;
-  };
-
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
-      const expiresAt = issuedAt + maximumLifetimeMs;
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        capabilities: new Set(["preview", "orchestration"]),
         issuedAt,
-        expiresAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(pruneExpired(records, issuedAt));
-        next.set(tokenHash, { tokenHash, scope, lastUsedAt: issuedAt });
+        const next = new Map(records);
+        next.set(tokenHash, { scope });
         return { records: next };
       });
       return {
@@ -132,7 +111,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
         },
-        expiresAt,
       };
     },
   );
@@ -141,15 +119,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (rawToken) {
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
-      const timestamp = yield* currentTimeMillis;
-      return yield* SynchronizedRef.modify(state, ({ records }) => {
-        const current = pruneExpired(records, timestamp);
-        const record = current.get(tokenHash);
-        if (!record) return [undefined, { records: current }] as const;
-        const next = new Map(current);
-        next.set(tokenHash, { ...record, lastUsedAt: timestamp });
-        return [record.scope, { records: next }] as const;
-      });
+      const record = (yield* SynchronizedRef.get(state)).records.get(tokenHash);
+      return record?.scope;
     },
   );
 

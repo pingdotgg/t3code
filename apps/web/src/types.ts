@@ -1,20 +1,23 @@
 import type {
   ChatImageAttachment as ContractChatImageAttachment,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
+  MessageId,
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2UserMessageInputIntent,
+  PlanId,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
+  RunId,
   RuntimeMode,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
-  EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadRunSummary,
+  ThreadRuntimeSummary,
 } from "@t3tools/client-runtime/state/shell";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -37,21 +40,38 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
 
 export type ChatAttachment = ChatImageAttachment;
 
-export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+export interface ChatMessage {
+  readonly id: MessageId;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly runId: RunId | null;
+  readonly streaming: boolean;
+  readonly createdBy?: OrchestrationV2Actor;
+  readonly creationSource?: OrchestrationV2CreationSource;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
 }
 
-export type ProposedPlan = OrchestrationProposedPlan;
-export type TurnDiffFileChange = OrchestrationCheckpointFile;
-export type TurnDiffSummary = OrchestrationCheckpointSummary;
+export interface ProposedPlan {
+  readonly id: PlanId;
+  readonly runId: RunId | null;
+  readonly planMarkdown: string;
+  readonly status: OrchestrationV2PlanArtifact["status"];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export type TurnDiffFileChange = ThreadCheckpointSummary["files"][number];
+export type TurnDiffSummary = ThreadCheckpointSummary;
 
 export type Project = EnvironmentProject;
-export type Thread = EnvironmentThread;
+export type Thread = EnvironmentThreadShell;
 export type ThreadShell = EnvironmentThreadShell;
 
 export interface ThreadTurnState {
-  latestTurn: OrchestrationLatestTurn | null;
+  latestRun: ThreadRunSummary | null;
 }
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
-export type ThreadSession = OrchestrationSession;
+export type ThreadSession = ThreadRuntimeSummary;

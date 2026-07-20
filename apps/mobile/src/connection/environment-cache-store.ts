@@ -4,8 +4,8 @@ import {
 } from "@t3tools/client-runtime/platform";
 import {
   type EnvironmentId,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadDetailSnapshot,
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadDetailSnapshot,
   ServerConfig,
   VcsListRefsResult,
 } from "@t3tools/contracts";
@@ -24,13 +24,13 @@ const VCS_REFS_CACHE_SCHEMA_VERSION = 1;
 const StoredShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
   environmentId: Schema.String,
-  snapshot: OrchestrationShellSnapshot,
+  snapshot: OrchestrationV2ShellSnapshot,
 });
 const StoredThreadSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION),
   environmentId: Schema.String,
   threadId: Schema.String,
-  snapshot: OrchestrationThreadDetailSnapshot,
+  snapshot: OrchestrationV2ThreadDetailSnapshot,
 });
 const StoredServerConfig = Schema.Struct({
   schemaVersion: Schema.Literal(SERVER_CONFIG_CACHE_SCHEMA_VERSION),
@@ -150,7 +150,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       }),
     ),
     saveThread: Effect.fn("MobileEnvironmentCache.saveThread")(function* (environmentId, snapshot) {
-      const threadId = snapshot.thread.id;
+      const threadId = snapshot.projection.thread.id;
       const payload = yield* encodeStoredThreadSnapshot({
         schemaVersion: THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION,
         environmentId,

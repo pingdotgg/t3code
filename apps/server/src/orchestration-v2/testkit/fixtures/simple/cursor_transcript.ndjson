@@ -1,0 +1,11 @@
+{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"simple","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-78cfad4d-9b71-4534-b49c-fbcfab939a0f"}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":false,"enableAgentRetries":true}}}}
+{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-78cfad4d-9b71-4534-b49c-fbcfab939a0f"}}
+{"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Respond with the following text: fixture simple ok","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-74d16078-96e5-44f9-ac08-9d854eeb3bab","agentId":"agent-78cfad4d-9b71-4534-b49c-fbcfab939a0f"}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-74d16078-96e5-44f9-ac08-9d854eeb3bab","update":{"type":"text-delta","text":"fixture simple ok"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-74d16078-96e5-44f9-ac08-9d854eeb3bab","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-74d16078-96e5-44f9-ac08-9d854eeb3bab","update":{"type":"step-completed","stepId":1,"stepDurationMs":1246}}}
+{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-74d16078-96e5-44f9-ac08-9d854eeb3bab","update":{"type":"turn-ended","usage":{"inputTokens":10393,"outputTokens":38,"cacheReadTokens":1856,"cacheWriteTokens":0}}}}
+{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-74d16078-96e5-44f9-ac08-9d854eeb3bab","requestId":"a35bc166-9742-4bd7-bcc4-22620560c2d2","status":"finished","result":"fixture simple ok","model":{"id":"composer-2.5"},"durationMs":3983}}}
+{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-78cfad4d-9b71-4534-b49c-fbcfab939a0f"}}

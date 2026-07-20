@@ -5,6 +5,7 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
@@ -307,7 +308,7 @@ function ThreadRouteContent(
       }),
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
   );
-  const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
+  const selectedThreadDetailWorktreePath = selectedThreadDetail?.thread.worktreePath ?? null;
   const handleReconnectEnvironment = useCallback(() => {
     if (!environmentId) {
       return;
@@ -461,20 +462,15 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (
-      !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
-    ) {
+    const runtime = selectedThread?.runtime;
+    if (!selectedThread || !runtime || !threadRuntimeIsActive(runtime)) {
       return;
     }
     return interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        ...(selectedThread.session.activeTurnId
-          ? { turnId: selectedThread.session.activeTurnId }
-          : {}),
+        ...(runtime.activeRunId ? { runId: runtime.activeRunId } : {}),
       },
     });
   }, [interruptThreadTurn, selectedThread]);

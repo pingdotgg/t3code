@@ -8,6 +8,7 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  sessionUpdateCountsAsLoadReplayActivity,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
 } from "./AcpRuntimeModel.ts";
@@ -81,6 +82,98 @@ describe("AcpRuntimeModel", () => {
         },
       } satisfies EffectAcpSchema.SessionNotification),
     ).toBe(false);
+  });
+
+  it("ignores Grok keepalive chunks when tracking session/load replay activity", () => {
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "" },
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(false);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        _meta: { isReplay: true },
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "replay-tool",
+          title: "Replay",
+          kind: "search",
+          status: "completed",
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(true);
+  });
+
+  it("ignores load-replay activity from other sessions while a load gate is active", () => {
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity(
+        {
+          sessionId: "session-other",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "unrelated" },
+          },
+        } satisfies EffectAcpSchema.SessionNotification,
+        "session-loading",
+      ),
+    ).toBe(false);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity(
+        {
+          sessionId: "session-loading",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "replay" },
+          },
+        } satisfies EffectAcpSchema.SessionNotification,
+        "session-loading",
+      ),
+    ).toBe(true);
+  });
+
+  it("counts mode/config/session/usage updates as load-replay activity", () => {
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "current_mode_update",
+          currentModeId: "code",
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(true);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: [],
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(true);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "session_info_update",
+          title: "Restored",
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(true);
+    expect(
+      sessionUpdateCountsAsLoadReplayActivity({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "usage_update",
+          used: 1,
+          size: 10,
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(true);
   });
 
   it("builds a synthetic load response from initialize model state", () => {

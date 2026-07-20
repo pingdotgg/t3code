@@ -26,6 +26,10 @@ export interface AcpClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
+  readonly onIncomingRequest?: AcpProtocol.AcpPatchedProtocolOptions["onIncomingRequest"];
+  readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
+  readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
+  readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
 }
 
 type AcpClientRaw = {
@@ -403,6 +407,12 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
+    ...(options.onTermination ? { onTermination: options.onTermination } : {}),
+    ...(options.onOutgoingResponseFailure
+      ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
+      : {}),
+    ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
     onNotification: dispatchNotification,
     onExtRequest: dispatchExtRequest,
   });

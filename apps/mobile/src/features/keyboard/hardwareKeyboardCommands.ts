@@ -55,7 +55,10 @@ export function subscribeToHardwareKeyboardCommandRegistrations(listener: () => 
 export function dispatchHardwareKeyboardCommand(command: HardwareKeyboardCommand): boolean {
   const commandHandlers = handlers.get(command);
   if (!commandHandlers) return false;
-  for (const handler of [...commandHandlers].toReversed()) {
+  const handlersInRegistrationOrder = Array.from(commandHandlers);
+  for (let index = handlersInRegistrationOrder.length - 1; index >= 0; index -= 1) {
+    const handler = handlersInRegistrationOrder[index];
+    if (!handler) continue;
     if (handler() !== false) return true;
   }
   return false;

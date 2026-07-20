@@ -1,11 +1,9 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
-import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import {
   buildCheckpointDiffTargets,
@@ -16,13 +14,6 @@ import {
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
 const VCS_REF_LIST_LIMIT = 100;
-
-export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
 
 export interface ComposerPathSearchTarget {
   readonly environmentId: EnvironmentId | null;
@@ -43,19 +34,6 @@ function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
-}
-
-export function useThreadDetail(
-  environmentId: EnvironmentId | null,
-  threadId: ThreadId | null,
-): ThreadDetailView {
-  const state = useEnvironmentThread(environmentId, threadId);
-  return {
-    data: Option.getOrNull(state.data),
-    error: Option.getOrNull(state.error),
-    isPending: state.status === "synchronizing",
-    isDeleted: state.status === "deleted",
-  };
 }
 
 export function useBranches(input: {

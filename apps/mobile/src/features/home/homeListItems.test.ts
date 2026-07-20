@@ -1,8 +1,10 @@
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
+import {
+  presentThreadShell,
+  type EnvironmentProject,
+  type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -32,27 +34,39 @@ function makeProject(id: string, title: string): EnvironmentProject {
   };
 }
 
+const threadTimestamp = DateTime.makeUnsafe("2026-06-01T00:00:00.000Z");
+
 function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
-  return {
-    environmentId,
-    id: ThreadId.make(id),
+  const threadId = ThreadId.make(id);
+  return presentThreadShell(environmentId, {
+    id: threadId,
     projectId,
     title: `Thread ${id}`,
+    providerInstanceId: ProviderInstanceId.make("codex"),
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-06-01T00:00:00.000Z",
-    updatedAt: "2026-06-01T00:00:00.000Z",
-    archivedAt: null,
-    session: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "mobile",
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
     latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-  };
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: threadTimestamp,
+    updatedAt: threadTimestamp,
+    archivedAt: null,
+    deletedAt: null,
+  });
 }
 
 function makeGroup(key: string, threadCount: number): HomeThreadGroup {

@@ -22,6 +22,17 @@ const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
 
 describe("AcpSessionRuntime", () => {
+  it("selects explicit or agent-managed authentication without choosing terminal auth", () => {
+    const methods = [
+      { id: "browser", name: "Browser", type: "terminal" as const },
+      { id: "api-key", name: "API key" },
+    ];
+
+    expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods)?.id).toBe("api-key");
+    expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods, "browser")?.id).toBe("browser");
+    expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods, "missing")).toBeUndefined();
+  });
+
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
@@ -54,6 +65,82 @@ describe("AcpSessionRuntime", () => {
           },
           clientInfo: { name: "t3-test", version: "0.0.0" },
           authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("does not authenticate when an advertised method is not required", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize", "session/new"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_AUTH_METHOD_ID: "test" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("authenticates and retries once after session creation returns auth_required", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start();
+
+      expect(started.sessionId).toBe("mock-session-1");
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize", "session/new", "authenticate", "session/new"]);
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "session/new" && event.status === "failed",
+        ),
+      ).toHaveLength(1);
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "session/new" && event.status === "succeeded",
+        ),
+      ).toHaveLength(1);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHOD_ID: "test",
+              T3_ACP_REQUIRE_AUTH: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
           requestLogger: (event) =>
             Effect.sync(() => {
               requestEvents.push(event);
@@ -228,8 +315,9 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
-  it.effect("releases a fully silent prompt when session/cancel is requested", () =>
-    Effect.gen(function* () {
+  it.effect("releases a fully silent prompt and forwards configured cancel metadata", () => {
+    const protocolEvents: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];
+    return Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
@@ -241,6 +329,19 @@ describe("AcpSessionRuntime", () => {
 
       yield* TestClock.adjust("500 millis");
       yield* runtime.cancel;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      expect(
+        protocolEvents.some(
+          (event) =>
+            event.direction === "outgoing" &&
+            event.stage === "raw" &&
+            typeof event.payload === "string" &&
+            event.payload.includes('"method":"session/cancel"') &&
+            event.payload.includes('"cancelTrigger":"ctrl_c"'),
+        ),
+      ).toBe(true);
 
       const firstPromptResult = yield* Fiber.join(promptFiber);
       expect(firstPromptResult).toMatchObject({ stopReason: "cancelled" });
@@ -262,12 +363,20 @@ describe("AcpSessionRuntime", () => {
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
           authMethodId: "test",
+          cancelMeta: { cancelTrigger: "ctrl_c" },
+          protocolLogging: {
+            logOutgoing: true,
+            logger: (event) =>
+              Effect.sync(() => {
+                protocolEvents.push(event);
+              }),
+          },
         }),
       ),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
-    ),
-  );
+    );
+  });
 
   it.effect("segments assistant text around ACP tool calls", () =>
     Effect.gen(function* () {
@@ -406,6 +515,63 @@ describe("AcpSessionRuntime", () => {
           spawn: {
             command: mockAgentCommand,
             args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("supports negotiated ACP session list, fork, resume, and close methods", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start();
+      expect(started.initializeResult.agentCapabilities?.sessionCapabilities).toMatchObject({
+        list: {},
+        fork: {},
+        resume: {},
+        close: {},
+      });
+
+      const listed = yield* runtime.listSessions();
+      expect(listed.sessions.map((session) => session.sessionId)).toEqual(["mock-session-1"]);
+
+      const forked = yield* runtime.forkSession(started.sessionId);
+      expect(forked.sessionId).toBe("mock-session-1-fork");
+      yield* runtime.prompt({ prompt: [{ type: "text", text: "on fork" }] });
+
+      const resumed = yield* runtime.resumeSession(started.sessionId);
+      expect(resumed.sessionId).toBe("mock-session-1");
+      yield* runtime.closeSession();
+
+      expect(
+        requestEvents.find(
+          (event) => event.method === "session/prompt" && event.status === "started",
+        )?.payload,
+      ).toMatchObject({ sessionId: "mock-session-1-fork" });
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(
+        expect.arrayContaining(["session/list", "session/fork", "session/resume", "session/close"]),
+      );
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_SESSION_LIFECYCLE: "1",
+            },
           },
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
@@ -594,6 +760,40 @@ describe("AcpSessionRuntime", () => {
           },
           cwd: process.cwd(),
           resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: "50 millis",
+          sessionLoadTimeout: "1 second",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      TestClock.withLive,
+    ),
+  );
+
+  it.effect("completes ad-hoc loadSession after replay becomes idle while RPC stays pending", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      const loaded = yield* runtime.loadSession("mock-session-1").pipe(Effect.timeout("2 seconds"));
+
+      expect(loaded.sessionId).toBe("mock-session-1");
+      expect(loaded.sessionSetupResult._meta).toMatchObject({
+        t3SessionLoadReady: "replay_idle",
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+              T3_ACP_LOAD_SESSION_DELAY_MS: "10000",
+            },
+          },
+          cwd: process.cwd(),
           sessionLoadReplayIdleGap: "50 millis",
           sessionLoadTimeout: "1 second",
           clientInfo: { name: "t3-test", version: "0.0.0" },

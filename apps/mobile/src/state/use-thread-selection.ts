@@ -2,13 +2,18 @@ import { useRoute, type RouteProp } from "@react-navigation/native";
 import { useMemo, useRef } from "react";
 import {
   EnvironmentId,
-  type OrchestrationThread,
   ThreadId,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import * as Option from "effect/Option";
+import { copySorted } from "@t3tools/shared/Array";
 
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
@@ -29,9 +34,11 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
-function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["updatedAt"] | null {
-  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-    const message = thread.messages[index];
+function latestUserMessageAt(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadShell["latestUserMessageAt"] {
+  for (let index = projection.messages.length - 1; index >= 0; index -= 1) {
+    const message = projection.messages[index];
     if (message?.role === "user") {
       return message.createdAt;
     }
@@ -40,30 +47,61 @@ function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["
   return null;
 }
 
+/**
+ * Builds an optimistic thread shell from the detail projection for the window
+ * where the shell list has not materialized the thread yet (e.g. a thread that
+ * was just created from this device).
+ */
 function threadDetailToShell(
   environmentId: EnvironmentId,
-  thread: OrchestrationThread,
+  projection: OrchestrationV2ThreadProjection,
 ): EnvironmentThreadShell {
-  return {
-    environmentId,
+  const thread = projection.thread;
+  const runsByOrdinal = copySorted(projection.runs, (left, right) => right.ordinal - left.ordinal);
+  const latestRun = runsByOrdinal[0] ?? null;
+  const activeRun =
+    runsByOrdinal.find(
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "queued" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
+    ) ?? null;
+  const pendingRequest =
+    projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
+  return presentThreadShell(environmentId, {
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,
+    providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
-    latestTurn: thread.latestTurn,
+    activeProviderThreadId: thread.activeProviderThreadId,
+    lineage: thread.lineage,
+    forkedFrom: thread.forkedFrom,
+    createdBy: thread.createdBy,
+    creationSource: thread.creationSource,
+    latestRunId: latestRun?.id ?? null,
+    activeRunId: activeRun?.id ?? null,
+    status: activeRun?.status ?? latestRun?.status ?? "idle",
+    pendingRuntimeRequest:
+      pendingRequest === null
+        ? null
+        : { id: pendingRequest.id, kind: pendingRequest.kind, createdAt: pendingRequest.createdAt },
+    latestVisibleMessage: null,
+    latestUserMessageAt: latestUserMessageAt(projection),
+    hasActionableProposedPlan: false,
+    itemCount: projection.turnItems.length,
+    visibleItemCount: projection.visibleTurnItems.length,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
-    session: thread.session,
-    latestUserMessageAt: latestUserMessageAt(thread),
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-  };
+    deletedAt: thread.deletedAt,
+  });
 }
 
 function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefined) {

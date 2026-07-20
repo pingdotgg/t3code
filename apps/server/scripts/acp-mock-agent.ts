@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
@@ -17,13 +18,36 @@ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
+const emitPostSettleMonitorFlow = process.env.T3_ACP_EMIT_POST_SETTLE_MONITOR_FLOW === "1";
+const emitInTurnTaskOutputThenLateDuplicate =
+  process.env.T3_ACP_EMIT_IN_TURN_TASKOUTPUT_THEN_LATE_DUPLICATE === "1";
+const injectedReportTriggerPath = process.env.T3_ACP_INJECTED_REPORT_TRIGGER_PATH;
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const emitUrlElicitation = process.env.T3_ACP_EMIT_URL_ELICITATION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+const hangAfterPermission = process.env.T3_ACP_HANG_AFTER_PERMISSION === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
+const emitTaskBackgroundedAfterCancel =
+  process.env.T3_ACP_EMIT_TASK_BACKGROUNDED_AFTER_CANCEL === "1";
+const residualCallbackResponseLogPath = process.env.T3_ACP_RESIDUAL_CALLBACK_RESPONSE_LOG_PATH;
+const residualCallbackTriggerPath = process.env.T3_ACP_RESIDUAL_CALLBACK_TRIGGER_PATH;
+const exitAfterResidualCallbacks = process.env.T3_ACP_EXIT_AFTER_RESIDUAL_CALLBACKS === "1";
+const emitRunningCommandThenHang = process.env.T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG === "1";
+const emitRunningCommandThenHangOnFirstPrompt =
+  process.env.T3_ACP_EMIT_RUNNING_COMMAND_THEN_HANG_FIRST_PROMPT === "1";
+const emitEmptySuccessfulBash = process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH === "1";
+const emitEmptySuccessfulBashThenHang =
+  process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG === "1";
+const exitOnCancel = process.env.T3_ACP_EXIT_ON_CANCEL === "1";
+const runningCommandIgnoresTerm = process.env.T3_ACP_RUNNING_COMMAND_IGNORE_TERM === "1";
+const runningCommandPidPath = process.env.T3_ACP_RUNNING_COMMAND_PID_PATH;
+const runningCommandSeparateSession = process.env.T3_ACP_RUNNING_COMMAND_SEPARATE_SESSION === "1";
+const exitAfterRunningCommandLaunch = process.env.T3_ACP_EXIT_AFTER_RUNNING_COMMAND_LAUNCH === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
@@ -40,6 +64,9 @@ const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
+const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
+const requiresAuthentication = process.env.T3_ACP_REQUIRE_AUTH === "1";
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -53,6 +80,7 @@ let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
+let authenticated = !requiresAuthentication;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
@@ -77,6 +105,11 @@ function logExit(reason: string): void {
 
 function writeJsonRpcNotification(method: string, params: unknown): void {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+}
+
+function logResidualCallbackResponse(kind: string): void {
+  if (!residualCallbackResponseLogPath) return;
+  NodeFS.appendFileSync(residualCallbackResponseLogPath, `${kind}\n`, "utf8");
 }
 
 process.once("SIGTERM", () => {
@@ -224,35 +257,6 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
   ];
 }
 
-function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
-  const previousModelId = currentModelId;
-  try {
-    currentModelId = modelId;
-    return configOptions().filter(
-      (option) => option.category !== "mode" && option.category !== "model",
-    );
-  } finally {
-    currentModelId = previousModelId;
-  }
-}
-
-function availableModels(): ReadonlyArray<{
-  readonly value: string;
-  readonly name: string;
-  readonly configOptions: ReadonlyArray<AcpSchema.SessionConfigOption>;
-}> {
-  return [
-    { value: "default", name: "Auto" },
-    { value: "composer-2", name: "Composer 2" },
-    { value: "gpt-5.4", name: "GPT-5.4" },
-    { value: "claude-opus-4-6", name: "Opus 4.6" },
-  ].map((model) => ({
-    value: model.value,
-    name: model.name,
-    configOptions: modelConfigOptionsFor(model.value),
-  }));
-}
-
 const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
   {
     id: "ask",
@@ -302,19 +306,56 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          ...(supportsSessionLifecycle
+            ? {
+                sessionCapabilities: {
+                  list: {},
+                  fork: {},
+                  resume: {},
+                  close: {},
+                },
+              }
+            : {}),
+        },
+        ...(advertisedAuthMethodId
+          ? {
+              authMethods: [
+                {
+                  id: advertisedAuthMethodId,
+                  name: "Mock agent authentication",
+                },
+              ],
+            }
+          : {}),
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  yield* agent.handleAuthenticate((request) =>
+    Effect.gen(function* () {
+      if (advertisedAuthMethodId && request.methodId !== advertisedAuthMethodId) {
+        return yield* AcpError.AcpRequestError.invalidParams(
+          `Unknown mock authentication method: ${request.methodId}`,
+        );
+      }
+      authenticated = true;
+      return {};
+    }),
+  );
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (!authenticated) {
+        return yield* AcpError.AcpRequestError.authRequired();
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
@@ -380,6 +421,38 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  yield* agent.handleListSessions((request) =>
+    Effect.succeed({
+      sessions: [
+        {
+          sessionId,
+          cwd: request.cwd ?? process.cwd(),
+          title: "Mock session",
+          updatedAt: "1970-01-01T00:00:00.000Z",
+        },
+      ],
+    }),
+  );
+
+  yield* agent.handleForkSession((request) =>
+    Effect.succeed({
+      sessionId: `${request.sessionId}-fork`,
+      modes: modeState(),
+      models: modelState(),
+      configOptions: configOptions(),
+    }),
+  );
+
+  yield* agent.handleResumeSession(() =>
+    Effect.succeed({
+      modes: modeState(),
+      models: modelState(),
+      configOptions: configOptions(),
+    }),
+  );
+
+  yield* agent.handleCloseSession(() => Effect.succeed({}));
+
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
       if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
@@ -437,6 +510,9 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (exitOnCancel) {
+        return yield* Effect.sync(() => process.exit(0));
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -449,6 +525,36 @@ const program = Effect.gen(function* () {
           });
         });
       }
+      if (emitTaskBackgroundedAfterCancel) {
+        // Grok cancel-as-detach: the foreground command is re-run as a
+        // background task that later completes on its own.
+        yield* Effect.sync(() => {
+          writeJsonRpcNotification("_x.ai/task_backgrounded", {
+            sessionId: cancelledSessionId,
+            update: {
+              sessionUpdate: "task_backgrounded",
+              tool_call_id: "task-bg-1",
+              task_id: "task-bg-1",
+              command: "sleep 30",
+            },
+          });
+        });
+        yield* Effect.sleep("1200 millis")
+          .pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                writeJsonRpcNotification("_x.ai/task_completed", {
+                  sessionId: cancelledSessionId,
+                  update: {
+                    sessionUpdate: "task_completed",
+                    task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
+                  },
+                });
+              }),
+            ),
+          )
+          .pipe(Effect.forkDetach);
+      }
     }),
   );
 
@@ -456,6 +562,80 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (residualCallbackTriggerPath !== undefined) {
+        yield* Effect.gen(function* () {
+          while (!(yield* Effect.sync(() => NodeFS.existsSync(residualCallbackTriggerPath)))) {
+            yield* Effect.sleep("20 millis");
+          }
+          yield* Effect.sync(() => {
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "residual assistant callback" },
+              },
+            });
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "residual-tool-call",
+                title: "Residual tool callback",
+                kind: "other",
+                status: "pending",
+                rawInput: {},
+              },
+            });
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "plan",
+                entries: [
+                  { content: "Residual plan callback", priority: "high", status: "pending" },
+                ],
+              },
+            });
+          });
+          yield* agent.client
+            .requestPermission({
+              sessionId: requestedSessionId,
+              toolCall: {
+                toolCallId: "residual-permission",
+                title: "Residual permission callback",
+              },
+              options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+            })
+            .pipe(
+              Effect.exit,
+              Effect.tap(() => Effect.sync(() => logResidualCallbackResponse("permission"))),
+              Effect.ignore,
+              Effect.forkDetach,
+            );
+          yield* agent.client
+            .elicit({
+              sessionId: requestedSessionId,
+              message: "Residual elicitation callback",
+              mode: "form",
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  approved: { type: "boolean", title: "Approved" },
+                },
+              },
+            })
+            .pipe(
+              Effect.exit,
+              Effect.tap(() => Effect.sync(() => logResidualCallbackResponse("elicitation"))),
+              Effect.ignore,
+              Effect.forkDetach,
+            );
+          if (exitAfterResidualCallbacks) {
+            yield* Effect.sleep("100 millis");
+            return yield* Effect.sync(() => process.exit(0));
+          }
+        }).pipe(Effect.forkDetach);
+      }
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
@@ -518,8 +698,124 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+      if (
+        hangPromptForever ||
+        (hangFirstPromptForever && promptCount === 1) ||
+        (emitEmptySuccessfulBashThenHang && promptCount === 2)
+      ) {
         return yield* Effect.never;
+      }
+
+      if (
+        emitRunningCommandThenHang ||
+        (emitRunningCommandThenHangOnFirstPrompt && promptCount === 1)
+      ) {
+        const toolCallId = "tool-call-running-1";
+        if (runningCommandPidPath !== undefined) {
+          const command = runningCommandIgnoresTerm
+            ? 'trap "" TERM; bash -c \'trap "" TERM; while :; do sleep 1; done\' & child=$!; printf "%s %s\\n" "$$" "$child" > "$1"; wait "$child"'
+            : 'sleep 120 & child=$!; printf "%s %s\\n" "$$" "$child" > "$1"; wait "$child"';
+          if (runningCommandSeparateSession) {
+            const launcher = [
+              'const { spawn } = require("node:child_process");',
+              "const child = spawn(process.argv[1], process.argv.slice(2), { stdio: 'ignore' });",
+              "child.once('exit', (code, signal) => process.exitCode = code ?? (signal ? 1 : 0));",
+            ].join(" ");
+            const detachedCommand = runningCommandIgnoresTerm
+              ? 'trap "" TERM; bash -c \'trap "" TERM; while :; do sleep 1; done\' & child=$!; printf "%s %s %s\\n" "$PPID" "$$" "$child" > "$1"; wait "$child"'
+              : 'sleep 120 & child=$!; printf "%s %s %s\\n" "$PPID" "$$" "$child" > "$1"; wait "$child"';
+            // Nested bash publishes "$PPID $$ $child" once it starts. Do not
+            // write the launcher PID alone here: that races with bash and can
+            // clobber the triple that interrupt tests wait for.
+            const detachedLauncher = NodeChildProcess.spawn(
+              process.execPath,
+              ["-e", launcher, "bash", "-c", detachedCommand, "bash", runningCommandPidPath],
+              { detached: true, stdio: "ignore" },
+            );
+            detachedLauncher.unref();
+          } else {
+            NodeChildProcess.spawn("bash", ["-c", command, "bash", runningCommandPidPath], {
+              stdio: "ignore",
+            });
+          }
+        }
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Terminal",
+            kind: "execute",
+            status: "pending",
+            rawInput: {
+              command: ["sleep", "120"],
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            title: "Terminal",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: {
+              command: ["sleep", "120"],
+            },
+            // Grok-like mid-stream Bash re-report: exit_code 0 while still running.
+            rawOutput: { type: "Bash", exit_code: 0 },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-output-1",
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "pending",
+            rawInput: { task_id: "task-running-1" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-output-1",
+            status: "in_progress",
+            rawOutput: { task_id: "task-running-1", status: "running" },
+          },
+        });
+        if (exitAfterRunningCommandLaunch) {
+          yield* Effect.sleep("100 millis");
+          return yield* Effect.sync(() => process.exit(0));
+        }
+        // Stay open until session/cancel so interrupt tests can observe a running tool.
+        while (!cancelledSessions.has(requestedSessionId)) {
+          yield* Effect.sleep("25 millis");
+        }
+        cancelledSessions.delete(requestedSessionId);
+        return { stopReason: "cancelled" };
+      }
+
+      if (emitEmptySuccessfulBash || (emitEmptySuccessfulBashThenHang && promptCount === 1)) {
+        const update = {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-empty-success-1",
+            title: "Terminal",
+            kind: "execute",
+            status: "completed",
+            rawInput: { command: "true" },
+            rawOutput: { type: "Bash", exit_code: 0 },
+          },
+        } as const;
+        yield* agent.client.sessionUpdate(update);
+        yield* Effect.sleep("25 millis");
+        yield* agent.client.sessionUpdate(update);
+        return { stopReason: "end_turn" };
       }
 
       if (emitXAiPromptCompleteThenHang) {
@@ -630,6 +926,32 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitElicitation) {
+        yield* agent.client.elicit({
+          sessionId: requestedSessionId,
+          message: "Approve this request?",
+          mode: "form",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              approved: { type: "boolean", title: "Approved" },
+            },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitUrlElicitation) {
+        yield* agent.client.elicit({
+          sessionId: requestedSessionId,
+          message: "Open authentication page",
+          mode: "url",
+          url: "https://example.com/auth",
+          elicitationId: "url-elicitation-1",
+        });
+        return { stopReason: "end_turn" };
+      }
+
       if (emitToolCalls) {
         const toolCallId = "tool-call-1";
 
@@ -687,6 +1009,10 @@ const program = Effect.gen(function* () {
         const cancelled =
           cancelledSessions.delete(requestedSessionId) ||
           permission.outcome.outcome === "cancelled";
+
+        if (hangAfterPermission) {
+          return yield* Effect.never;
+        }
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -750,6 +1076,159 @@ const program = Effect.gen(function* () {
             },
           },
         });
+
+        return { stopReason: "end_turn" };
+      }
+
+      // In-turn monitor + TaskOutput hydrate, then a late post-finalize
+      // duplicate terminal TaskOutput for the same task. Exercises the
+      // already-handled short-circuit: must not pin hasPendingBackgroundWork.
+      if (emitInTurnTaskOutputThenLateDuplicate) {
+        const monitorToolCallId = "tool-call-monitor-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: monitorToolCallId,
+            title: "Monitor: mock background task",
+            kind: "execute",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: monitorToolCallId,
+            status: "in_progress",
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-fetch-1",
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "pending",
+            rawInput: { task_id: "task-monitor-1" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-fetch-1",
+            status: "completed",
+            rawOutput: { output: "MONITOR_LISTING_TOKEN" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Monitor listing ready in-turn." },
+          },
+        });
+        // After deferred finalize (~2s) clears activeTurn, re-emit a terminal
+        // TaskOutput for the same task so bufferPostSettleWake sees
+        // alreadyHandledToolUpdate with a non-empty wake path.
+        yield* Effect.gen(function* () {
+          yield* Effect.sleep("2500 millis");
+          yield* Effect.sync(() => {
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "tool-call-fetch-1",
+                title: "get_command_or_subagent_output",
+                kind: "other",
+                status: "completed",
+                rawOutput: { output: "MONITOR_LISTING_TOKEN_LATE" },
+              },
+            });
+          });
+        }).pipe(Effect.forkDetach);
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitPostSettleMonitorFlow) {
+        const monitorToolCallId = "tool-call-monitor-1";
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: monitorToolCallId,
+            title: "Monitor: mock background task",
+            kind: "execute",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: monitorToolCallId,
+            status: "in_progress",
+          },
+        });
+
+        // After the prompt settles, replay the CLI-injected monitor-event
+        // turn: end notice, TaskOutput hydration, then (once the trigger
+        // file exists) the report chunk. Detached fiber on the real clock;
+        // it outlives the prompt handler.
+        yield* Effect.gen(function* () {
+          yield* Effect.sleep("150 millis");
+          yield* Effect.sync(() => {
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "user_message_chunk",
+                content: {
+                  type: "text",
+                  text: 'Monitor "task-monitor-1" ended: [monitor ended: exit 0]',
+                },
+              },
+            });
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "tool-call-fetch-1",
+                title: "get_command_or_subagent_output",
+                kind: "other",
+                status: "pending",
+                rawInput: { task_id: "task-monitor-1" },
+              },
+            });
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "tool-call-fetch-1",
+                status: "completed",
+                rawOutput: { output: "MONITOR_LISTING_TOKEN" },
+              },
+            });
+          });
+          if (injectedReportTriggerPath === undefined) return;
+          while (!(yield* Effect.sync(() => NodeFS.existsSync(injectedReportTriggerPath)))) {
+            yield* Effect.sleep("20 millis");
+          }
+          yield* Effect.sync(() => {
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Monitor finished. MONITOR_REPORT_TOKEN" },
+              },
+            });
+          });
+        }).pipe(Effect.forkDetach);
 
         return { stopReason: "end_turn" };
       }
@@ -878,12 +1357,6 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
-    if (method === "cursor/list_available_models") {
-      return Effect.succeed({
-        models: availableModels(),
-      });
-    }
-
     if (method !== "session/mode/set") {
       return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
     }

@@ -358,7 +358,7 @@ describe("DesktopBackendConfiguration", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-desktop-backend-config-test-",
       });
-      const settingsPath = path.join(baseDir, "userdata", "settings.json");
+      const settingsPath = path.join(baseDir, "userdata-v2", "settings.json");
       const cause = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",

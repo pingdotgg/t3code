@@ -1,9 +1,9 @@
 import {
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
-  type OrchestrationThread,
-  type OrchestrationThreadDetailSnapshot,
-  type OrchestrationThreadStreamItem,
+  type OrchestrationV2ThreadDetailSnapshot,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadStreamItem,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -23,7 +23,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
-import { applyThreadDetailEvent } from "./threadReducer.ts";
+import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
@@ -32,7 +32,9 @@ import {
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
 
-function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): EnvironmentThreadStatus {
+function statusWithoutLiveData(
+  data: Option.Option<OrchestrationV2ThreadProjection>,
+): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
 
@@ -43,9 +45,10 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : "Could not synchronize the thread.";
 }
 
-function shouldPersistThread(thread: OrchestrationThread): boolean {
-  const status = thread.session?.status;
-  return status !== "starting" && status !== "running";
+function shouldPersistThread(thread: OrchestrationV2ThreadProjection): boolean {
+  return !thread.runs.some(
+    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+  );
 }
 
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
@@ -64,11 +67,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           error: error.message,
         }),
-        Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+        Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>()),
       ),
     ),
   );
-  const cachedThread = Option.map(cached, (snapshot) => snapshot.thread);
+  const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
   const state = yield* SubscriptionRef.make<EnvironmentThreadState>({
     data: cachedThread,
     status: statusWithoutLiveData(cachedThread),
@@ -80,10 +83,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence }),
   );
   const awaitingCompletion = yield* Ref.make(false);
-  const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
+  const persistence = yield* Queue.sliding<OrchestrationV2ThreadDetailSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
-    snapshot: OrchestrationThreadDetailSnapshot,
+    snapshot: OrchestrationV2ThreadDetailSnapshot,
   ) {
     yield* cache.saveThread(environmentId, snapshot).pipe(
       Effect.catch((error) =>
@@ -142,7 +145,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
 
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
-    thread: OrchestrationThread,
+    thread: OrchestrationV2ThreadProjection,
   ) {
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
@@ -150,12 +153,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       status: waiting ? "synchronizing" : "live",
       error: Option.none(),
     });
-    // Active threads can update many times per second and retain large tool
-    // payloads. The server remains the source of truth while a turn is active;
-    // persist once it settles so cache encoding stays off the streaming path.
+    // Active projections can update many times per second and retain large tool
+    // payloads. Persist once the run settles so cache encoding stays off the
+    // streaming path.
     if (shouldPersistThread(thread)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
-      yield* Queue.offer(persistence, { snapshotSequence, thread });
+      yield* Queue.offer(persistence, { snapshotSequence, projection: thread });
     }
   });
 
@@ -180,7 +183,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
-    item: OrchestrationThreadStreamItem,
+    item: OrchestrationV2ThreadStreamItem,
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
@@ -193,16 +196,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
 
     if (item.kind === "snapshot") {
-      yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
-      yield* setThread(item.snapshot.thread);
+      yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      yield* setThread(item.projection);
       return;
     }
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
-    if (item.event.sequence <= sequence) {
+    if (item.sequence <= sequence) {
       return;
     }
-    yield* SubscriptionRef.set(lastSequence, item.event.sequence);
+    yield* SubscriptionRef.set(lastSequence, item.sequence);
 
     const current = yield* SubscriptionRef.get(state);
     if (Option.isNone(current.data)) {
@@ -211,11 +214,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }
       return;
     }
-    const result = applyThreadDetailEvent(current.data.value, item.event);
-    if (result.kind === "updated") {
-      yield* setThread(result.thread);
-    } else if (result.kind === "deleted") {
+    if (item.event.type === "thread.deleted") {
       yield* setDeleted();
+      return;
+    }
+    const next = applyOrchestrationV2ProjectionEvent(current.data.value, item.event);
+    if (next !== null) {
+      yield* setThread(next);
     }
   });
 
@@ -242,7 +247,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   yield* setSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
-      ORCHESTRATION_WS_METHODS.subscribeThread,
+      ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.threadResumeCompletionMarker === true),
@@ -269,7 +274,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           );
           const httpSnapshot = yield* snapshotLoader.load(prepared, threadId);
           if (Option.isSome(httpSnapshot)) {
-            yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+            yield* applyItem({
+              kind: "snapshot",
+              snapshotSequence: httpSnapshot.value.snapshotSequence,
+              projection: httpSnapshot.value.projection,
+            });
             current = yield* SubscriptionRef.get(state);
           }
         }
@@ -303,8 +312,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.flatMap(([current, snapshotSequence]) =>
         Option.match(current.data, {
           onNone: () => Effect.void,
-          onSome: (thread) =>
-            shouldPersistThread(thread) ? persist({ snapshotSequence, thread }) : Effect.void,
+          onSome: (projection) =>
+            shouldPersistThread(projection)
+              ? persist({ snapshotSequence, projection })
+              : Effect.void,
         }),
       ),
     ),
@@ -350,6 +361,5 @@ export * from "./threadSnapshotHttp.ts";
 export * from "./composerPathSearch.ts";
 export * from "./threadCommands.ts";
 export * from "./threadDetail.ts";
-export * from "./threadReducer.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";

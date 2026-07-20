@@ -503,7 +503,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   };
 
   // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
-  // config resolution lands in dev/ instead of userdata/. Inheriting through
+  // config resolution lands in dev/ instead of userdata-v2/. Inheriting through
   // WSLENV is unreliable in practice (URL-shaped values with colons /
   // slashes get translated unpredictably depending on flags), and the
   // packaged build leaves devServerUrl as None anyway.
