@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import { copySorted } from "@t3tools/shared/Array";
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = Projection["runs"][number];
@@ -54,19 +55,17 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
-  const queuedRuns = projection.runs
-    .filter((run) => run.status === "queued")
-    .toSorted(
-      (left, right) =>
-        (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
-        left.ordinal - right.ordinal,
-    )
-    .map((run) => ({
-      run,
-      text:
-        projection.messages.find((message) => message.id === run.userMessageId)?.text ??
-        "Queued message",
-    }));
+  const queuedRuns = copySorted(
+    projection.runs.filter((run) => run.status === "queued"),
+    (left, right) =>
+      (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
+      left.ordinal - right.ordinal,
+  ).map((run) => ({
+    run,
+    text:
+      projection.messages.find((message) => message.id === run.userMessageId)?.text ??
+      "Queued message",
+  }));
 
   return {
     activeRun,

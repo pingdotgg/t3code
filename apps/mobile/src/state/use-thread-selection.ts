@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as Option from "effect/Option";
+import { copySorted } from "@t3tools/shared/Array";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { useProject, useThreadShell } from "../state/entities";
@@ -53,8 +54,21 @@ function threadDetailToShell(
   environmentId: EnvironmentId,
   thread: OrchestrationThread,
 ): EnvironmentThreadShell {
-  return {
-    environmentId,
+  const thread = projection.thread;
+  const runsByOrdinal = copySorted(projection.runs, (left, right) => right.ordinal - left.ordinal);
+  const latestRun = runsByOrdinal[0] ?? null;
+  const activeRun =
+    runsByOrdinal.find(
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "queued" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
+    ) ?? null;
+  const pendingRequest =
+    projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
+  return presentThreadShell(environmentId, {
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,
