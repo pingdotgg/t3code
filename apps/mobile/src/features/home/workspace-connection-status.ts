@@ -5,6 +5,7 @@ export function shouldShowWorkspaceConnectionStatus(state: WorkspaceState): bool
     state.networkStatus === "offline" ||
     state.connectionError !== null ||
     state.hasConnectingEnvironment ||
+    state.hasPendingShellSnapshot ||
     (state.hasLoadedShellSnapshot && !state.hasReadyEnvironment)
   );
 }
@@ -18,5 +19,8 @@ export function workspaceConnectionStatusLabel(state: WorkspaceState): string {
     return `Reconnecting ${state.connectingEnvironments.length} environments`;
   }
   if (state.connectionError !== null) return state.connectionError;
+  if (state.hasPendingShellSnapshot) {
+    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
+  }
   return "Not connected";
 }

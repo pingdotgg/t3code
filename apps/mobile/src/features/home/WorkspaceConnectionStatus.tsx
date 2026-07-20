@@ -12,7 +12,10 @@ export function WorkspaceConnectionStatus(props: {
   readonly variant?: "floating" | "sidebar";
 }) {
   const iconColor = useThemeColor("--color-icon-muted");
-  const isReconnecting = props.state.connectingEnvironments.length > 0;
+  const isSynchronizing =
+    props.state.networkStatus !== "offline" &&
+    props.state.connectionError === null &&
+    (props.state.connectingEnvironments.length > 0 || props.state.hasPendingShellSnapshot);
   const variant = props.variant ?? "floating";
 
   return (
@@ -37,7 +40,7 @@ export function WorkspaceConnectionStatus(props: {
           : undefined
       }
     >
-      {isReconnecting ? (
+      {isSynchronizing ? (
         <ActivityIndicator color={iconColor} size="small" />
       ) : (
         <SymbolView name="wifi.slash" size={15} tintColor={iconColor} type="monochrome" />
