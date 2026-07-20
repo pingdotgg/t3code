@@ -49,7 +49,7 @@ export const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities
 
 export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Create a T3-owned child agent thread and run it with only the supplied task prompt, without copying parent conversation history. Provider, model, runtime mode, and interaction mode inherit from the parent unless overridden. Prefer mode='async' and poll task_status for long work; mode='wait' blocks until completion or timeout.",
+    "Create a T3-owned child agent thread and run it with only the supplied task prompt, without copying parent conversation history. Provider, model, model options (e.g. reasoning effort — see orchestrator_capabilities for valid ids), runtime mode, and interaction mode inherit from the parent unless overridden via target. Prefer mode='async' and poll task_status for long work; mode='wait' blocks until completion or timeout.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -138,7 +138,7 @@ export const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
-    "Create one or more ordinary top-level T3 V2 threads. Each entry may have its own prompt, title, provider instance or driver, model, runtime mode, and interaction mode. Omitted provider/model/settings inherit from the calling thread; entries without prompts create empty threads.",
+    "Create one or more ordinary top-level T3 V2 threads. Each entry may have its own prompt, title, provider instance or driver, model, model options (e.g. reasoning effort), runtime mode, and interaction mode. Omitted provider/model/settings inherit from the calling thread; entries without prompts create empty threads.",
   parameters: OrchestratorMcpCreateThreadsInput,
   success: OrchestratorMcpCreateThreadsResult,
   failure: OrchestratorMcpFailure,
