@@ -75,14 +75,21 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;
   folderMenuChildren?: readonly ContextMenuItem<string>[];
+  /**
+   * Threads eligible for the folder move. Folders are project-scoped, so this
+   * can be smaller than `count` when the selection spans projects. The move
+   * entry is hidden entirely when nothing in the selection belongs here.
+   */
+  folderMoveCount?: number;
 }): readonly ContextMenuItem<string>[] {
+  const folderMoveCount = input.folderMoveCount ?? input.count;
   return [
     { id: "mark-unread", label: `Mark unread (${input.count})` },
-    ...(input.folderMenuChildren
+    ...(input.folderMenuChildren && folderMoveCount > 0
       ? [
           {
             id: "move-submenu",
-            label: `Move ${input.count} to folder`,
+            label: `Move ${folderMoveCount} to folder`,
             children: input.folderMenuChildren,
           },
         ]

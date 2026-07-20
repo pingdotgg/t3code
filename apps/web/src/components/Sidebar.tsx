@@ -1554,6 +1554,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const {
     sections,
     ungroupedRenderedThreads,
+    ungroupedThreadKeys,
     orderedRenderedThreadKeys,
     hasOverflowingThreads,
     hiddenThreadStatus,
@@ -1619,6 +1620,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return {
       sections: layout.sections,
       ungroupedRenderedThreads,
+      // Full (uncapped) ungrouped order; persisting a capped list would
+      // truncate the stored manual order for overflow threads.
+      ungroupedThreadKeys: ungrouped.map(threadKeyOf),
       orderedRenderedThreadKeys,
       hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
@@ -2116,12 +2120,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const hasRunningThread = selectedThreadEntries.some(
         ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
       );
+      // Folders are scoped to this project; a cross-project selection must not
+      // move foreign threads into (or out of) this project's folders.
+      const memberProjectIds = new Set(project.memberProjects.map((member) => member.id));
+      const folderMovableThreadKeys = selectedThreadEntries
+        .filter(({ thread }) => memberProjectIds.has(thread.projectId))
+        .map(({ threadKey }) => threadKey);
 
       const clicked = await api.contextMenu.show(
         buildMultiSelectThreadContextMenuItems({
           count,
           hasRunningThread,
           folderMenuChildren: buildFolderMenuChildren(),
+          folderMoveCount: folderMovableThreadKeys.length,
         }),
         position,
       );
@@ -2135,7 +2146,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked && clicked.startsWith("move:")) {
-        applyFolderMove(clicked, threadKeys);
+        applyFolderMove(clicked, folderMovableThreadKeys);
         clearSelection();
         return;
       }
@@ -2223,6 +2234,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       clearSelection,
       deleteThread,
       markThreadUnread,
+      project.memberProjects,
       removeFromSelection,
     ],
   );
@@ -2698,6 +2710,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const handleThreadDragCancel = useCallback((_event: DragCancelEvent) => {
     threadDragInProgressRef.current = false;
+    // dnd-kit can cancel a pointer drag without emitting the trailing click these
+    // guards expect, so clear them here or the next click is swallowed.
+    suppressThreadClickAfterDragRef.current = false;
+    suppressGroupClickAfterDragRef.current = false;
     setActiveDragLabel(null);
   }, []);
 
@@ -2739,13 +2755,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (overGroupId === null) {
         // Reordering within the ungrouped (main) list. Ensure the dragged rows
         // are ungrouped, then persist their position relative to the drop target.
+        // Base the persisted order on the full ungrouped list, and append any
+        // dragged keys that were still in a folder when this render captured
+        // it — reorderThreads no-ops on keys missing from the list.
         moveThreadsToGroup(draggedKeys, null);
-        reorderThreadsAction(
-          project.projectKey,
-          ungroupedRenderedThreads.map(threadKeyOf),
-          draggedKeys,
-          overId,
-        );
+        const orderedKeys = [...ungroupedThreadKeys];
+        const orderedKeySet = new Set(orderedKeys);
+        for (const key of draggedKeys) {
+          if (!orderedKeySet.has(key)) {
+            orderedKeys.push(key);
+          }
+        }
+        reorderThreadsAction(project.projectKey, orderedKeys, draggedKeys, overId);
       } else {
         moveThreadsToGroup(draggedKeys, overGroupId, overId);
       }
@@ -2756,7 +2777,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       reorderThreadGroupsAction,
       reorderThreadsAction,
       resolveDraggedThreadKeys,
-      ungroupedRenderedThreads,
+      ungroupedThreadKeys,
     ],
   );
 
@@ -4005,6 +4026,14 @@ export default function Sidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  // Folder/manual-order state, so keyboard traversal below matches the
+  // per-project rendered order (folders first, then the ungrouped list).
+  const allThreadGroupsById = useUiStateStore((state) => state.threadGroupsById);
+  const allThreadGroupExpandedById = useUiStateStore((state) => state.threadGroupExpandedById);
+  const threadGroupOrderByProjectKey = useUiStateStore(
+    (state) => state.threadGroupOrderByProjectKey,
+  );
+  const threadOrderByProject = useUiStateStore((state) => state.threadOrderByProject);
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -4031,24 +4060,51 @@ export default function Sidebar() {
         if (!shouldShowThreadPanel) {
           return [];
         }
+        if (pinnedCollapsedThread) {
+          return [
+            scopedThreadKey(
+              scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
+            ),
+          ];
+        }
+        // Mirror the per-project rendered order: expanded folder sections first,
+        // then the manually-ordered ungrouped list, which alone is preview-capped.
+        const layout = buildGroupedThreadLayout({
+          visibleProjectThreads: projectThreads,
+          projectKey: project.projectKey,
+          groups: allThreadGroupsById,
+          groupOrder: threadGroupOrderByProjectKey[project.projectKey] ?? [],
+          groupExpandedById: allThreadGroupExpandedById,
+        });
+        const ungrouped = orderItemsByPreferredIds({
+          items: layout.ungroupedThreads,
+          preferredIds: threadOrderByProject[project.projectKey] ?? [],
+          getId: threadKeyOf,
+        });
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-        const previewThreads =
+        const hasOverflowingThreads = ungrouped.length > sidebarThreadPreviewCount;
+        const ungroupedRendered =
           isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-        return renderedThreads.map((thread) =>
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        );
+            ? ungrouped
+            : ungrouped.slice(0, sidebarThreadPreviewCount);
+        return [
+          ...layout.sections.flatMap((section) =>
+            section.expanded ? section.threads.map(threadKeyOf) : [],
+          ),
+          ...ungroupedRendered.map(threadKeyOf),
+        ];
       }),
     [
+      allThreadGroupExpandedById,
+      allThreadGroupsById,
       sidebarThreadSortOrder,
       sidebarThreadPreviewCount,
       expandedThreadListsByProject,
       projectExpandedById,
       routeThreadKey,
       sortedProjects,
+      threadGroupOrderByProjectKey,
+      threadOrderByProject,
       threadsByProjectKey,
     ],
   );

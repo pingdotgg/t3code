@@ -179,7 +179,12 @@ export function GitSyncControl({ environmentId, cwd, status, className }: GitSyn
                 data: {
                   secondaryActionProps: {
                     children: "Rebase & sync",
-                    onClick: () => onSync("rebase"),
+                    // Close the diverged toast first, otherwise it stays visible
+                    // with a live button and a second rebase can be started.
+                    onClick: () => {
+                      toastManager.close(toastId);
+                      onSync("rebase");
+                    },
                   },
                   secondaryActionVariant: "outline",
                 },
