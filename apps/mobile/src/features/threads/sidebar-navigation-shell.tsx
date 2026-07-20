@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react";
 import { Platform, useColorScheme } from "react-native";
 
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 
 const SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -33,12 +34,12 @@ const SIDEBAR_SCREEN_OPTIONS: SidebarScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle: { backgroundColor: "transparent" },
+  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
-  headerTransparent: true,
-  scrollEdgeEffects: SCROLL_EDGE_EFFECTS,
+  headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
+  scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? SCROLL_EDGE_EFFECTS : undefined,
   title: "Threads",
-  unstable_navigationItemStyle: "editor",
+  unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
 };
 
 const SidebarStack = createNativeStackNavigator();

@@ -24,6 +24,7 @@ import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
@@ -388,7 +389,7 @@ export function HomeScreen(props: HomeScreenProps) {
         className="flex-1 items-center justify-center bg-screen px-8"
         style={{
           paddingBottom: Math.max(insets.bottom, 24),
-          paddingTop: Platform.OS === "ios" ? insets.top + 72 : 0,
+          paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
         }}
       >
         <View className="w-full max-w-[430px]">
@@ -469,8 +470,8 @@ export function HomeScreen(props: HomeScreenProps) {
           ListHeaderComponent={listHeader}
           ListEmptyComponent={listEmpty}
           style={{ flex: 1 }}
-          automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-          contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+          automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
+          contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
