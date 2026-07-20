@@ -4,8 +4,10 @@ import { it as effectIt } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { expect } from "vite-plus/test";
@@ -197,3 +199,69 @@ effectIt("replays snapshots without rescanning unchanged terminal registrations"
     expect(replayCount).toBe(1);
   }).pipe(Effect.provide(layer));
 });
+
+effectIt("serializes snapshot replay with concurrent broadcasts", () =>
+  Effect.gen(function* () {
+    const replayStarted = yield* Deferred.make<void>();
+    const releaseReplay = yield* Deferred.make<void>();
+    const secondProbeCompleted = yield* Deferred.make<void>();
+    const secondDeliveryStarted = yield* Deferred.make<void>();
+    const deliveries: Array<ReadonlyArray<number>> = [];
+    let probeCount = 0;
+    let deliveryCount = 0;
+    const layer = makeProbeFailureLayer(() =>
+      Effect.gen(function* () {
+        probeCount += 1;
+        if (probeCount === 2) {
+          yield* Deferred.succeed(secondProbeCompleted, undefined).pipe(Effect.ignore);
+        }
+        return {
+          stdout: probeCount === 1 ? "p100\ncnode\nn*:3000\n" : "p101\ncnode\nn*:3001\n",
+          stderr: "",
+          code: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain;
+
+      const subscription = yield* scanner
+        .subscribe((servers) =>
+          Effect.gen(function* () {
+            deliveryCount += 1;
+            if (deliveryCount === 1) {
+              yield* Deferred.succeed(replayStarted, undefined).pipe(Effect.ignore);
+              yield* Deferred.await(releaseReplay);
+            } else {
+              yield* Deferred.succeed(secondDeliveryStarted, undefined).pipe(Effect.ignore);
+            }
+            deliveries.push(servers.map((server) => server.port));
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(replayStarted);
+
+      const registration = yield* scanner
+        .registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+          processIds: [101],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(secondProbeCompleted);
+      yield* Effect.yieldNow;
+      expect(yield* Deferred.isDone(secondDeliveryStarted)).toBe(false);
+
+      yield* Deferred.succeed(releaseReplay, undefined);
+      yield* Fiber.join(subscription);
+      yield* Fiber.join(registration);
+
+      expect(deliveries).toEqual([[3000], [3001]]);
+    }).pipe(Effect.provide(layer));
+  }),
+);

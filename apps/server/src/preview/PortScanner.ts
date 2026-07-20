@@ -21,6 +21,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -193,6 +194,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
+  const notificationLock = yield* Semaphore.make(1);
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
     listeners: new Set(),
@@ -295,16 +297,26 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     yield* Effect.forEach(listeners, (listener) => listener(servers), { discard: true });
   });
 
+  const publishSnapshot = Effect.fn("PortDiscovery.publishSnapshot")(function* (
+    next: ReadonlyArray<DiscoveredLocalServer>,
+  ) {
+    yield* notificationLock.withPermit(
+      Effect.gen(function* () {
+        const changed = yield* Ref.modify(stateRef, (state) =>
+          serversEqual(state.lastSnapshot, next)
+            ? [false, state]
+            : [true, { ...state, lastSnapshot: next }],
+        );
+        if (changed) yield* broadcast(next);
+      }),
+    );
+  });
+
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
       if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
       const next = yield* scanOnce();
-      const changed = yield* Ref.modify(stateRef, (state) =>
-        serversEqual(state.lastSnapshot, next)
-          ? [false, state]
-          : [true, { ...state, lastSnapshot: next }],
-      );
-      if (changed) yield* broadcast(next);
+      yield* publishSnapshot(next);
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
@@ -351,19 +363,23 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const subscribe: PortDiscovery["Service"]["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
     (listener) =>
       Effect.acquireRelease(
-        Ref.modify(stateRef, (state) => [
-          state.lastSnapshot,
-          {
-            ...state,
-            listeners: new Set([...state.listeners, listener]),
-          },
-        ]).pipe(Effect.tap(listener)),
+        notificationLock.withPermit(
+          Ref.modify(stateRef, (state) => [
+            state.lastSnapshot,
+            {
+              ...state,
+              listeners: new Set([...state.listeners, listener]),
+            },
+          ]).pipe(Effect.tap(listener)),
+        ),
         () =>
-          Ref.update(stateRef, (state) => {
-            const listeners = new Set(state.listeners);
-            listeners.delete(listener);
-            return { ...state, listeners };
-          }),
+          notificationLock.withPermit(
+            Ref.update(stateRef, (state) => {
+              const listeners = new Set(state.listeners);
+              listeners.delete(listener);
+              return { ...state, listeners };
+            }),
+          ),
       ),
   );
 
