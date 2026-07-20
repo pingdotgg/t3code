@@ -56,6 +56,13 @@ export interface OrchestrationEngineShape {
    * This is a hot runtime stream (new events only), not a historical replay.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
+
+  /**
+   * The sequence of the most recently persisted event (0 if none). Used to
+   * gauge how far behind a resuming client is before choosing between an
+   * incremental replay and a fresh snapshot.
+   */
+  readonly latestSequence: Effect.Effect<number, never, never>;
 }
 
 /**
