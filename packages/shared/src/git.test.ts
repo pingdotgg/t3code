@@ -13,6 +13,7 @@ import {
   parseOriginUrlFromGitConfig,
   resolveAutoFeatureBranchName,
   sanitizeFeatureBranchName,
+  resolveAutoBranchName,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -240,6 +241,35 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("resolveAutoBranchName", () => {
+  it("omits a default prefix when configured", () => {
+    expect(
+      resolveAutoBranchName(["main"], "jm/bugfix/externe-budgetgrenze", {
+        defaultPrefix: null,
+        preserveNamespaces: true,
+      }),
+    ).toBe("jm/bugfix/externe-budgetgrenze");
+  });
+
+  it("applies a configured prefix to unnamespaced branch names", () => {
+    expect(
+      resolveAutoBranchName(["main"], "fix-budget-limit", {
+        defaultPrefix: "jm",
+        preserveNamespaces: false,
+      }),
+    ).toBe("jm/fix-budget-limit");
+  });
+
+  it("preserves explicit namespaces and resolves collisions", () => {
+    expect(
+      resolveAutoBranchName(["JM/Bugfix/Budget", "jm/bugfix/budget-2"], "jm/bugfix/budget", {
+        defaultPrefix: "feature",
+        preserveNamespaces: true,
+      }),
+    ).toBe("jm/bugfix/budget-3");
   });
 });
 

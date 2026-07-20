@@ -61,14 +61,15 @@ export function sanitizeFeatureBranchName(raw: string): string {
 
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
-export function resolveAutoFeatureBranchName(
+export interface AutoBranchNamingOptions {
+  readonly defaultPrefix: string | null;
+  readonly preserveNamespaces: boolean;
+}
+
+function resolveUniqueBranchName(
   existingBranchNames: readonly string[],
-  preferredBranch?: string,
+  resolvedBase: string,
 ): string {
-  const preferred = preferredBranch?.trim();
-  const resolvedBase = sanitizeFeatureBranchName(
-    preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
-  );
   const existingNames = existingBranchNames.map((refName) => refName.toLowerCase());
   const existingRefs = new Set(existingNames);
   const parts = resolvedBase.split("/");
@@ -92,6 +93,47 @@ export function resolveAutoFeatureBranchName(
   return resolved;
 }
 
+/**
+ * Resolve a unique branch name using a configurable default namespace.
+ */
+export function resolveAutoBranchName(
+  existingBranchNames: readonly string[],
+  preferredBranch: string,
+  options: AutoBranchNamingOptions,
+): string {
+  const sanitized = sanitizeBranchFragment(preferredBranch);
+  const prefix =
+    options.defaultPrefix === null ? null : sanitizeBranchFragment(options.defaultPrefix);
+  const preservesNamespace = options.preserveNamespaces && sanitized.includes("/");
+  const resolvedBase =
+    prefix === null ||
+    preservesNamespace ||
+    sanitized === prefix ||
+    sanitized.startsWith(`${prefix}/`)
+      ? sanitized
+      : `${prefix}/${sanitized}`;
+
+  return resolveUniqueBranchName(existingBranchNames, resolvedBase);
+}
+
+/**
+ * Resolve a unique `feature/…` refName name that doesn't collide with
+ * any existing refName. Appends a numeric suffix when needed.
+ */
+export function resolveAutoFeatureBranchName(
+  existingBranchNames: readonly string[],
+  preferredBranch?: string,
+): string {
+  const preferred = preferredBranch?.trim();
+  const resolvedBase = sanitizeFeatureBranchName(
+    preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
+  );
+  return resolveUniqueBranchName(existingBranchNames, resolvedBase);
+}
+
+/**
+ * Strip the remote prefix from a remote ref such as `origin/feature/demo`.
+ */
 export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   const firstSeparatorIndex = branchName.indexOf("/");
   if (firstSeparatorIndex <= 0 || firstSeparatorIndex === branchName.length - 1) {

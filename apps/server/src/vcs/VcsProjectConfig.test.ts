@@ -81,6 +81,71 @@ describe("VcsProjectConfig", () => {
     });
   });
 
+  it.layer(layerTest)("falls back to auto when no config exists", (it) => {
+    it.effect("returns auto", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const kind = yield* config.resolveKind({ cwd: root });
+
+        assert.equal(kind, "auto");
+      }),
+    );
+
+    it.effect("returns the default branch naming policy", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const branchNaming = yield* config.resolveBranchNaming({ cwd: root });
+
+        assert.deepStrictEqual(branchNaming, {
+          defaultPrefix: "feature",
+          preserveNamespaces: false,
+        });
+      }),
+    );
+  });
+
+  it.layer(layerTest)("resolves project branch naming conventions", (it) => {
+    it.effect("supports unprefixed, namespaced branch names from nested workspaces", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const configDir = path.join(root, ".t3code");
+        const nested = path.join(root, "packages", "app");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(configDir, "vcs.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify({
+            branchNaming: {
+              defaultPrefix: null,
+              preserveNamespaces: true,
+            },
+          }),
+        );
+
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const branchNaming = yield* config.resolveBranchNaming({ cwd: nested });
+
+        assert.deepStrictEqual(branchNaming, {
+          defaultPrefix: null,
+          preserveNamespaces: true,
+        });
+      }),
+    );
+  });
+
   it.layer(layerTest)("falls back to auto when config JSON is malformed", (it) => {
     it.effect("returns auto and logs the failed operation and path", () => {
       const messages: unknown[] = [];

@@ -6,8 +6,17 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { VcsDriverKind, type VcsDriverKind as VcsDriverKindType } from "@t3tools/contracts";
+import {
+  TrimmedNonEmptyString,
+  VcsDriverKind,
+  type VcsDriverKind as VcsDriverKindType,
+} from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+
+const BranchNamingConfig = Schema.Struct({
+  defaultPrefix: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  preserveNamespaces: Schema.optional(Schema.Boolean),
+});
 
 const ProjectVcsConfig = Schema.Struct({
   vcs: Schema.optional(
@@ -16,6 +25,7 @@ const ProjectVcsConfig = Schema.Struct({
     }),
   ),
   vcsKind: Schema.optional(VcsDriverKind),
+  branchNaming: Schema.optional(BranchNamingConfig),
 });
 const ProjectVcsConfigJson = fromLenientJson(ProjectVcsConfig);
 const decodeProjectVcsConfigJson = Schema.decodeUnknownEffect(ProjectVcsConfigJson);
@@ -26,6 +36,16 @@ export interface VcsProjectConfigResolveInput {
   readonly cwd: string;
   readonly requestedKind?: VcsDriverKindType | "auto";
 }
+
+export interface VcsBranchNamingConfig {
+  readonly defaultPrefix: string | null;
+  readonly preserveNamespaces: boolean;
+}
+
+export const defaultBranchNamingConfig: VcsBranchNamingConfig = {
+  defaultPrefix: "feature",
+  preserveNamespaces: false,
+};
 
 export class VcsProjectConfigError extends Schema.TaggedError<VcsProjectConfigError>()(
   "VcsProjectConfigError",
@@ -47,11 +67,24 @@ export class VcsProjectConfig extends Context.Service<
     readonly resolveKind: (
       input: VcsProjectConfigResolveInput,
     ) => Effect.Effect<VcsDriverKindType | "auto">;
+    readonly resolveBranchNaming: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<VcsBranchNamingConfig>;
   }
 >()("t3/vcs/VcsProjectConfig") {}
 
 function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto" {
   return config.vcs?.kind ?? config.vcsKind ?? "auto";
+}
+
+function configuredBranchNaming(config: ProjectVcsConfigFile): VcsBranchNamingConfig {
+  const configuredPrefix = config.branchNaming?.defaultPrefix;
+  return {
+    defaultPrefix:
+      configuredPrefix === undefined ? defaultBranchNamingConfig.defaultPrefix : configuredPrefix,
+    preserveNamespaces:
+      config.branchNaming?.preserveNamespaces ?? defaultBranchNamingConfig.preserveNamespaces,
+  };
 }
 
 const logVcsProjectConfigError = (error: VcsProjectConfigError) =>
@@ -99,7 +132,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const readConfiguredKind = Effect.fn("VcsProjectConfig.readConfiguredKind")(function* (
+  const readConfig = Effect.fn("VcsProjectConfig.readConfig")(function* (
     cwd: string,
     configPath: string,
   ) {
@@ -125,7 +158,22 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    return configuredKind(parsed);
+    return parsed;
+  });
+
+  const resolveConfig = Effect.fn("VcsProjectConfig.resolveConfig")(function* (cwd: string) {
+    return yield* findConfigPath(cwd).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeed(Option.none<ProjectVcsConfigFile>()),
+          onSome: (configPath) => readConfig(cwd, configPath).pipe(Effect.map(Option.some)),
+        }),
+      ),
+      Effect.catchTags({
+        VcsProjectConfigError: (error) =>
+          logVcsProjectConfigError(error).pipe(Effect.as(Option.none<ProjectVcsConfigFile>())),
+      }),
+    );
   });
 
   const resolveKind: VcsProjectConfig["Service"]["resolveKind"] = Effect.fn(
@@ -135,22 +183,32 @@ export const make = Effect.gen(function* () {
       return input.requestedKind;
     }
 
-    return yield* findConfigPath(input.cwd).pipe(
-      Effect.flatMap(
+    return yield* resolveConfig(input.cwd).pipe(
+      Effect.map(
         Option.match({
-          onNone: () => Effect.succeed("auto" as const),
-          onSome: (configPath) => readConfiguredKind(input.cwd, configPath),
+          onNone: () => "auto" as const,
+          onSome: configuredKind,
         }),
       ),
-      Effect.catchTags({
-        VcsProjectConfigError: (error) =>
-          logVcsProjectConfigError(error).pipe(Effect.as("auto" as const)),
-      }),
+    );
+  });
+
+  const resolveBranchNaming: VcsProjectConfig["Service"]["resolveBranchNaming"] = Effect.fn(
+    "VcsProjectConfig.resolveBranchNaming",
+  )(function* (input) {
+    return yield* resolveConfig(input.cwd).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => defaultBranchNamingConfig,
+          onSome: configuredBranchNaming,
+        }),
+      ),
     );
   });
 
   return VcsProjectConfig.of({
     resolveKind,
+    resolveBranchNaming,
   });
 });
 
