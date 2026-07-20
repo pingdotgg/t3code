@@ -4,8 +4,80 @@
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
+/* On mobile, morph the expanded hero composer into the compact docked
+   composer while it moves; the rest of the app remains visually stationary. */
+html[data-mobile-composer-route-transition="true"]::view-transition-old(root),
+html[data-mobile-composer-route-transition="true"]::view-transition-new(root) {
+  animation: none;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-composer) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-image-pair(t3-mobile-composer) {
+  isolation: isolate;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-composer) {
+  animation: t3-mobile-composer-old 180ms linear both;
+  mix-blend-mode: normal;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobile-composer) {
+  animation: t3-mobile-composer-new 180ms linear both;
+  mix-blend-mode: normal;
+}
+
+/* The expanded and compact composers have different internal layouts. Use a
+   brief crossfade while their shared wrapper moves so the layout change does
+   not read as a single-frame cut. */
+@keyframes t3-mobile-composer-old {
+  0%,
+  35% {
+    opacity: 1;
+  }
+  65%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes t3-mobile-composer-new {
+  0%,
+  35% {
+    opacity: 0;
+  }
+  65%,
+  100% {
+    opacity: 1;
+  }
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
+  animation-duration: 130ms;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-draft-headline) {
+  animation: t3-mobile-draft-headline-exit 130ms cubic-bezier(0.4, 0, 1, 1) both;
+  mix-blend-mode: normal;
+}
+
+@keyframes t3-mobile-draft-headline-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
 :root {
   --app-scrollbar-width: 6px;
+  --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
   --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
@@ -157,6 +229,42 @@
         display: inline-flex;
       }
     }
+  }
+
+  /* Stage-channel sidebar art; ::after ramps to the sidebar bg color and the
+     mask lets the surface grain show through at the boundary. */
+  .sidebar-stage-backdrop {
+    mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+  }
+
+  .sidebar-stage-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      transparent 28%,
+      color-mix(in srgb, var(--app-chrome-background) 10%, transparent) 40%,
+      color-mix(in srgb, var(--app-chrome-background) 30%, transparent) 52%,
+      color-mix(in srgb, var(--app-chrome-background) 58%, transparent) 64%,
+      color-mix(in srgb, var(--app-chrome-background) 82%, transparent) 75%,
+      color-mix(in srgb, var(--app-chrome-background) 96%, transparent) 85%,
+      var(--app-chrome-background) 93%
+    );
+  }
+
+  .stage-blueprint {
+    --stage-bp-top: #67c2ff;
+    --stage-bp-mid: #347ff8;
+    --stage-bp-bottom: #1538d0;
+  }
+
+  .dark .stage-blueprint {
+    --stage-bp-top: #3a7ad1;
+    --stage-bp-mid: #2050ae;
+    --stage-bp-bottom: #101f6e;
   }
 
   .workspace-topbar {
@@ -375,6 +483,11 @@ body {
   overflow-y: hidden;
   overscroll-behavior-y: none;
   padding-top: max(env(safe-area-inset-top), 0px);
+  padding-right: var(--desktop-window-right-resize-inset);
+}
+
+.electron-windows {
+  --desktop-window-right-resize-inset: 6px;
 }
 
 /* App-chrome grain. Baked into each surface's own background (behind
