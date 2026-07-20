@@ -1,5 +1,17 @@
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
+export function resolveTimelineAutoFollowEnabledForRoute({
+  autoFollowRouteKey,
+  routeKey,
+  autoFollowEnabled,
+}: {
+  readonly autoFollowRouteKey: string;
+  readonly routeKey: string;
+  readonly autoFollowEnabled: boolean;
+}): boolean {
+  return autoFollowRouteKey === routeKey ? autoFollowEnabled : true;
+}
+
 export function shouldResumeTimelineAutoFollow({
   scrollMode,
   isAtEnd,

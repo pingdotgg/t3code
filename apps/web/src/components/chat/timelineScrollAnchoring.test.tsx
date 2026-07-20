@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getAnchoredTurnMetrics,
   getRowBottom,
+  resolveTimelineAutoFollowEnabledForRoute,
   shouldResumeTimelineAutoFollow,
 } from "./timelineScrollAnchoring";
 
@@ -26,6 +27,23 @@ function buildState({
 }
 
 describe("timeline scroll anchoring", () => {
+  it("starts a newly selected route with auto-follow enabled", () => {
+    expect(
+      resolveTimelineAutoFollowEnabledForRoute({
+        autoFollowRouteKey: "thread-1",
+        routeKey: "thread-1",
+        autoFollowEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveTimelineAutoFollowEnabledForRoute({
+        autoFollowRouteKey: "thread-1",
+        routeKey: "thread-2",
+        autoFollowEnabled: false,
+      }),
+    ).toBe(true);
+  });
+
   it("only resumes detached follow after confirmed manual navigation reaches the end", () => {
     expect(
       shouldResumeTimelineAutoFollow({

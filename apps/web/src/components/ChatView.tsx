@@ -88,6 +88,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   getAnchoredTurnMetrics,
+  resolveTimelineAutoFollowEnabledForRoute,
   shouldResumeTimelineAutoFollow,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
@@ -3308,6 +3309,12 @@ function ChatViewContent(props: ChatViewProps) {
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
   const [timelineAutoFollowEnabled, setTimelineAutoFollowEnabled] = useState(true);
+  const timelineAutoFollowRouteKeyRef = useRef(routeThreadKey);
+  const timelineAutoFollowEnabledForRoute = resolveTimelineAutoFollowEnabledForRoute({
+    autoFollowRouteKey: timelineAutoFollowRouteKeyRef.current,
+    routeKey: routeThreadKey,
+    autoFollowEnabled: timelineAutoFollowEnabled,
+  });
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -3611,6 +3618,7 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
+    timelineAutoFollowRouteKeyRef.current = routeThreadKey;
     setTimelineAutoFollowEnabled(true);
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
@@ -3628,7 +3636,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [activeThread?.id, routeThreadKey]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -5280,7 +5288,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
-                autoFollowEnabled={timelineAutoFollowEnabled}
+                autoFollowEnabled={timelineAutoFollowEnabledForRoute}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState}

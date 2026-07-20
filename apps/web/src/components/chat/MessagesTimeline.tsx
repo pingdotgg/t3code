@@ -610,6 +610,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     },
     [listRef, routeThreadKey],
   );
+  const handleTimelineMinimapSelect = useCallback(
+    (item: TimelineMinimapItem) => {
+      flushSync(() => setNavigationProbeTimelineKey(routeThreadKey));
+      markTimelineManualNavigation();
+      void listRef.current?.scrollToIndex({
+        index: item.rowIndex,
+        animated: true,
+        viewOffset: 24,
+      });
+    },
+    [listRef, markTimelineManualNavigation, routeThreadKey],
+  );
   useEffect(() => {
     if (autoFollowEnabled) {
       manualNavigationRef.current = null;
@@ -790,14 +802,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             hasPersistentGutter={minimapHasPersistentGutter}
             hitStripWidth={minimapHitStripWidth}
             stripMap={minimapStripMap}
-            onSelect={(item) => {
-              markTimelineManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
+            onSelect={handleTimelineMinimapSelect}
           />
         </div>
       </TimelineRowActivityCtx>
