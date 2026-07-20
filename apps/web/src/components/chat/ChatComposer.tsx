@@ -22,6 +22,7 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -73,6 +74,7 @@ import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommand
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerVoiceInput } from "./ComposerVoiceInput";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -1554,6 +1556,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [composerCursor, composerTerminalContexts, promptRef]);
 
+  const insertVoiceTranscription = useCallback(
+    (transcription: string) => {
+      const snapshot = readComposerSnapshot();
+      const insertionPoint = snapshot.expandedCursor;
+      const needsLeadingSpace =
+        insertionPoint > 0 && !/\s/u.test(snapshot.value[insertionPoint - 1] ?? "");
+      const needsTrailingSpace =
+        insertionPoint < snapshot.value.length && !/\s/u.test(snapshot.value[insertionPoint] ?? "");
+      applyPromptReplacement(
+        insertionPoint,
+        insertionPoint,
+        `${needsLeadingSpace ? " " : ""}${transcription}${needsTrailingSpace ? " " : ""}`,
+      );
+    },
+    [applyPromptReplacement, readComposerSnapshot],
+  );
+
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -2575,6 +2594,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                <ComposerVoiceInput
+                  key={
+                    typeof composerDraftTarget === "string"
+                      ? composerDraftTarget
+                      : scopedThreadKey(composerDraftTarget)
+                  }
+                  providerInstanceId={selectedInstanceId}
+                  hasCodexOauth={
+                    selectedProviderEntry?.driverKind === "codex" &&
+                    selectedProviderStatus?.auth.type === "chatgpt" &&
+                    selectedProviderStatus.auth.status === "authenticated"
+                  }
+                  disabled={
+                    isConnecting ||
+                    isComposerApprovalState ||
+                    pendingUserInputs.length > 0 ||
+                    projectSelectionRequired ||
+                    environmentUnavailable !== null
+                  }
+                  onTranscribed={insertVoiceTranscription}
+                />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}
