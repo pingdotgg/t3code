@@ -581,7 +581,12 @@ export default function DiffPanel({
               filteredItems={filteredBaseRefItems}
               value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
               onOpenChange={(open) => {
-                if (!open) setBaseRefQuery("");
+                if (!open) {
+                  setBaseRefQuery("");
+                  return;
+                }
+                localBranchRefs.refresh();
+                remoteBranchRefs.refresh();
               }}
               onValueChange={(value) => {
                 if (!value) return;

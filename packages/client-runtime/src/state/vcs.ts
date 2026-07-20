@@ -23,7 +23,8 @@ import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
-const VCS_REFS_REVALIDATE_INTERVAL = "5 seconds";
+const VCS_REFS_REVALIDATE_INTERVAL = "20 seconds";
+const VCS_REFS_IDLE_TTL_MS = 30_000;
 
 function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
   return (
@@ -107,7 +108,10 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
     Stream.switchMap((generation) =>
       generation === null
         ? Stream.empty
-        : Stream.tick(VCS_REFS_REVALIDATE_INTERVAL).pipe(
+        : (input.cursor === undefined
+            ? Stream.tick(VCS_REFS_REVALIDATE_INTERVAL)
+            : Stream.succeed(undefined)
+          ).pipe(
             Stream.mapEffect(
               () =>
                 refresh().pipe(
@@ -151,7 +155,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       return runtime
         .atom(cachedVcsRefsChanges(environmentId, input))
         .pipe(
-          Atom.setIdleTTL(5 * 60_000),
+          Atom.setIdleTTL(VCS_REFS_IDLE_TTL_MS),
           Atom.withLabel(`environment-data:vcs:list-refs:${environmentId}:${inputKey}`),
         );
     }),
