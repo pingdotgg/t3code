@@ -1,4 +1,8 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type FilesystemBrowseEntry,
+  type KeybindingCommand,
+  type SourceControlRepositoryInfo,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -53,6 +57,12 @@ export interface CommandPaletteView {
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
+
+export function getDefaultCloneRemoteUrl(
+  repository: Pick<SourceControlRepositoryInfo, "url">,
+): string {
+  return repository.url;
+}
 
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;

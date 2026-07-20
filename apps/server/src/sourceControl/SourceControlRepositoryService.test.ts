@@ -150,7 +150,7 @@ it.effect("preserves provider failures without deriving the repository message f
   }).pipe(Effect.provide(makeLayer({ provider })));
 });
 
-it.effect("clones a looked-up repository into the requested destination", () =>
+it.effect("clones a looked-up repository over HTTPS by default", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const parent = yield* fs.makeTempDirectoryScoped({
@@ -165,7 +165,6 @@ it.effect("clones a looked-up repository into the requested destination", () =>
         provider: "github",
         repository: "octocat/t3code",
         destinationPath,
-        protocol: "https",
       });
 
       assert.deepStrictEqual(result, {

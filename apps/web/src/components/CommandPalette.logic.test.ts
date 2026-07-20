@@ -4,6 +4,7 @@ import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
+  getDefaultCloneRemoteUrl,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -34,6 +35,14 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+it("uses HTTPS for automatic repository clones", () => {
+  expect(
+    getDefaultCloneRemoteUrl({
+      url: "https://github.com/octocat/t3code",
+    }),
+  ).toBe("https://github.com/octocat/t3code");
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
