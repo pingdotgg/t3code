@@ -436,6 +436,38 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     });
   });
 
+  it("invalidates live-query reuse when MCP credentials rotate", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
+    withMcpSession(threadId, () => {
+      const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: "/workspace",
+        }),
+      );
+      const initialKey = claudeEffectiveQueryPolicyKey(
+        queryPolicy,
+        claudeMcpQueryOverrides({ threadId, readOnlySandbox: false }),
+      );
+
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make(`environment-${threadId}`),
+        threadId,
+        providerSessionId: `mcp-session-${threadId}`,
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer rotated-claude-token",
+      });
+
+      const rotatedKey = claudeEffectiveQueryPolicyKey(
+        queryPolicy,
+        claudeMcpQueryOverrides({ threadId, readOnlySandbox: false }),
+      );
+      assert.notEqual(rotatedKey, initialKey);
+    });
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = Object.values(OrchestratorToolkit.tools)
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
