@@ -26,6 +26,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
+import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -98,10 +99,17 @@ const ACTIVE_THREAD: OrchestrationThread = {
 
 type TestThreadInput = OrchestrationThreadStreamItem | Error;
 
-function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function testSession(
+  client: WsRpcProtocolClient,
+  options?: { readonly completionMarker?: boolean },
+): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.never,
+    initialConfig: Effect.succeed(
+      options?.completionMarker === true
+        ? ({ threadResumeCompletionMarker: true } as never)
+        : ({} as never),
+    ),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -122,6 +130,7 @@ function awaitThreadState(
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationThread;
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
+  readonly completionMarker?: boolean;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -130,8 +139,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const subscriptionCount = yield* Ref.make(0);
   const loaderCalls = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
+  const lastRequestCompletionMarker = yield* Ref.make<boolean | undefined>(undefined);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+  const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
     AVAILABLE_CONNECTION_STATE,
   );
@@ -142,16 +153,25 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ),
     );
   const client = {
-    [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: { readonly afterSequence?: number }) =>
+    [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: {
+      readonly afterSequence?: number;
+      readonly requestCompletionMarker?: boolean;
+    }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
           Effect.andThen(Ref.set(lastSubscribeAfterSequence, input.afterSequence)),
+          Effect.andThen(Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
   } as unknown as WsRpcProtocolClient;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client)),
+    Option.some(
+      testSession(
+        client,
+        options?.completionMarker === true ? { completionMarker: true } : undefined,
+      ),
+    ),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -201,6 +221,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
+    Effect.provideService(
+      ConnectionWakeups.ConnectionWakeups,
+      ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
+    ),
   );
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>
@@ -217,11 +241,21 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     subscriptionCount,
     loaderCalls,
     lastSubscribeAfterSequence,
+    lastRequestCompletionMarker,
     supervisorState,
     supervisorSession,
     savedThreads,
     removedThreads,
-    replaceSession: SubscriptionRef.set(supervisorSession, Option.some(testSession(client))),
+    wakeups,
+    replaceSession: SubscriptionRef.set(
+      supervisorSession,
+      Option.some(
+        testSession(
+          client,
+          options?.completionMarker === true ? { completionMarker: true } : undefined,
+        ),
+      ),
+    ),
   };
 });
 
@@ -232,6 +266,8 @@ const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem =>
     thread,
   },
 });
+
+const synchronized = (): OrchestrationThreadStreamItem => ({ kind: "synchronized" });
 
 const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamItem => ({
   kind: "event",
@@ -415,6 +451,35 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("does not resurrect a deleted thread when the app returns to the foreground", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: BASE_THREAD,
+        completionMarker: true,
+        httpSnapshot: Option.some({
+          snapshotSequence: 4,
+          thread: { ...BASE_THREAD, title: "Stale HTTP thread" },
+        }),
+      });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, deleted());
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      yield* Queue.offer(harness.wakeups, "application-active");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      const latest = yield* Ref.get(harness.latest);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      expect(latest.status).toBe("deleted");
+      expect(Option.isNone(latest.data)).toBe(true);
+    }),
+  );
+
   it.effect("preserves data after a domain failure and resumes on a replacement session", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
@@ -527,6 +592,106 @@ describe("EnvironmentThreads", () => {
       }
 
       expect((yield* Ref.get(harness.latest)).status).toBe("live");
+    }),
+  );
+
+  it.effect("keeps replayed updates synchronizing until the completion marker arrives", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+      expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
+
+      yield* Queue.offer(
+        harness.inputs,
+        titleUpdated("Caught-up title", CACHED_SNAPSHOT_SEQUENCE + 1),
+      );
+      const catchingUp = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "synchronizing" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Caught-up title",
+      );
+      expect(catchingUp.status).toBe("synchronizing");
+
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(live.data).title).toBe("Caught-up title");
+    }),
+  );
+
+  it.effect("resumes replacement sessions from the latest applied sequence", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      yield* Queue.offer(
+        harness.inputs,
+        titleUpdated("Latest title", CACHED_SNAPSHOT_SEQUENCE + 1),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Latest title",
+      );
+
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+    }),
+  );
+
+  it.effect("resubscribes on app foreground from the latest applied sequence", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      yield* Queue.offer(
+        harness.inputs,
+        titleUpdated("Latest title", CACHED_SNAPSHOT_SEQUENCE + 1),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Latest title",
+      );
+
+      yield* Queue.offer(harness.wakeups, "application-active");
+      const synchronizing = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(synchronizing.status).toBe("synchronizing");
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(live.data).title).toBe("Latest title");
     }),
   );
 });
