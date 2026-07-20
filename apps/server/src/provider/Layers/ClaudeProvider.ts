@@ -21,6 +21,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
+  type ModelInfo as ClaudeModelInfo,
   type SlashCommand as ClaudeSlashCommand,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -43,7 +44,7 @@ const EMPTY_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabiliti
   optionDescriptors: [],
 });
 
-const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+const CUSTOM_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
     buildSelectOptionDescriptor({
       id: "effort",
@@ -51,7 +52,7 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
       options: [
         { value: "low", label: "Low" },
         { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
+        { value: "high", label: "High" },
         { value: "xhigh", label: "Extra High" },
         { value: "max", label: "Max" },
       ],
@@ -311,6 +312,63 @@ function getBuiltInClaudeModelsForVersion(
   });
 }
 
+function claudeEffortLabel(effort: string): string {
+  switch (effort) {
+    case "low":
+      return "Low";
+    case "medium":
+      return "Medium";
+    case "high":
+      return "High";
+    case "xhigh":
+      return "Extra High";
+    case "max":
+      return "Max";
+    default:
+      return effort;
+  }
+}
+
+function customClaudeModelCapabilities(model: ClaudeModelInfo | undefined): ModelCapabilities {
+  const effortLevels = model?.supportedEffortLevels ?? [];
+  if (effortLevels.length === 0) {
+    return EMPTY_CLAUDE_MODEL_CAPABILITIES;
+  }
+
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: "effort",
+        label: "Reasoning",
+        options: effortLevels.map((effort) => ({
+          value: effort,
+          label: claudeEffortLabel(effort),
+        })),
+      }),
+    ],
+  });
+}
+
+function claudeModelsFromSettings(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  customModels: ReadonlyArray<string>,
+  availableModels: ReadonlyArray<ClaudeModelInfo> = [],
+): ReadonlyArray<ServerProviderModel> {
+  const availableModelsBySlug = new Map(availableModels.map((model) => [model.value, model]));
+  return providerModelsFromSettings(
+    builtInModels,
+    customModels,
+    EMPTY_CLAUDE_MODEL_CAPABILITIES,
+  ).map((model) =>
+    model.isCustom
+      ? {
+          ...model,
+          capabilities: customClaudeModelCapabilities(availableModelsBySlug.get(model.slug)),
+        }
+      : model,
+  );
+}
+
 function formatClaudeFable5UpgradeMessage(version: string | null): string {
   const versionLabel = version ? `v${version}` : "the installed version";
   return `Claude Code ${versionLabel} is too old for Claude Fable 5. Upgrade to v${MINIMUM_CLAUDE_FABLE_5_VERSION} or newer to access it.`;
@@ -333,7 +391,7 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   }
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES
+    CUSTOM_CLAUDE_MODEL_CAPABILITIES
   );
 }
 
@@ -528,6 +586,7 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<ClaudeModelInfo>;
 };
 
 function parseClaudeInitializationCommands(
@@ -609,8 +668,10 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * We pass a never-yielding AsyncIterable as the prompt so that no user
  * message is ever written to the subprocess stdin. This means the Claude
  * Code subprocess completes its local initialization IPC (returning
- * account info and slash commands) but never starts an API request to
- * Anthropic. We read the init data and then abort the subprocess.
+ * account info, slash commands, and model metadata) but never starts an API
+ * request to Anthropic. Custom models are initialized individually because
+ * Claude only advertises their supported effort levels when selected. We read
+ * the init data and then abort every subprocess.
  *
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
@@ -620,7 +681,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ) => {
-  const abort = new AbortController();
+  const abortControllers: AbortController[] = [];
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
@@ -628,25 +689,49 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     return yield* Effect.tryPromise(async () => {
-      const q = claudeQuery({
-        // Never yield — we only need initialization data, not a conversation.
-        // This prevents any prompt from reaching the Anthropic API.
-        // oxlint-disable-next-line require-yield
-        prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-          await waitForAbortSignal(abort.signal);
-        })(),
-        options: {
-          persistSession: false,
-          pathToClaudeCodeExecutable: executablePath,
-          abortController: abort,
-          settingSources: ["user", "project", "local"],
-          allowedTools: [],
-          env: claudeEnvironment,
-          ...(cwd ? { cwd } : {}),
-          stderr: () => {},
-        },
-      });
-      const init = await q.initializationResult();
+      const initialize = (model?: string) => {
+        const abort = new AbortController();
+        abortControllers.push(abort);
+        const q = claudeQuery({
+          // Never yield — we only need initialization data, not a conversation.
+          // This prevents any prompt from reaching the Anthropic API.
+          // oxlint-disable-next-line require-yield
+          prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+            await waitForAbortSignal(abort.signal);
+          })(),
+          options: {
+            persistSession: false,
+            pathToClaudeCodeExecutable: executablePath,
+            abortController: abort,
+            settingSources: ["user", "project", "local"],
+            allowedTools: [],
+            env: claudeEnvironment,
+            ...(model ? { model } : {}),
+            ...(cwd ? { cwd } : {}),
+            stderr: () => {},
+          },
+        });
+        return q.initializationResult();
+      };
+      const customModels = [
+        ...new Set(claudeSettings.customModels.map((model) => model.trim())),
+      ].filter((model) => model.length > 0);
+      const results = await Promise.allSettled(
+        (customModels.length > 0 ? customModels : [undefined]).map((model) => initialize(model)),
+      );
+      const initializations = results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      if (initializations.length === 0 && customModels.length > 0) {
+        initializations.push(await initialize());
+      }
+      const init = initializations[0]!;
+      const modelsByValue = new Map<string, ClaudeModelInfo>();
+      for (const initialization of initializations) {
+        for (const model of initialization.models) {
+          modelsByValue.set(model.value, model);
+        }
+      }
       const account = init.account as
         | {
             readonly email?: string;
@@ -661,12 +746,15 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        models: [...modelsByValue.values()],
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
-        if (!abort.signal.aborted) abort.abort();
+        for (const abort of abortControllers) {
+          if (!abort.signal.aborted) abort.abort();
+        }
       }),
     ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
@@ -707,11 +795,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
+  const allModels = claudeModelsFromSettings(BUILT_IN_MODELS, claudeSettings.customModels);
 
   if (!claudeSettings.enabled) {
     return buildServerProvider({
@@ -797,11 +881,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
   const versionUpgradeMessage = supportsClaudeFable5(parsedVersion)
     ? undefined
     : supportsClaudeOpus48(parsedVersion)
@@ -813,6 +892,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
+  const models = claudeModelsFromSettings(
+    getBuiltInClaudeModelsForVersion(parsedVersion),
+    claudeSettings.customModels,
+    capabilities?.models,
+  );
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
@@ -865,11 +949,7 @@ export const makePendingClaudeProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
-    const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
-      claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-    );
+    const models = claudeModelsFromSettings(BUILT_IN_MODELS, claudeSettings.customModels);
 
     if (!claudeSettings.enabled) {
       return buildServerProvider({

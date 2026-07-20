@@ -12,6 +12,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import {
   ClaudeSettings,
   CodexSettings,
@@ -103,6 +104,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<ClaudeModelInfo>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -113,6 +115,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      models: [],
       ...overrides,
     });
 }
@@ -1510,14 +1513,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
-      it.effect("adds reasoning effort options to custom Claude models", () =>
+      it.effect("uses advertised reasoning effort options for custom Claude models", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             {
               ...defaultClaudeSettings,
               customModels: ["gpt-5.6-sol"],
             },
-            claudeCapabilities(),
+            claudeCapabilities({
+              models: [
+                {
+                  value: "gpt-5.6-sol",
+                  displayName: "GPT 5.6 Sol",
+                  description: "Custom model",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "high", "xhigh"],
+                },
+              ],
+            }),
           );
           const customModel = status.models.find((model) => model.slug === "gpt-5.6-sol");
           const effortDescriptor = customModel?.capabilities?.optionDescriptors?.find(
@@ -1531,13 +1544,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             type: "select",
             options: [
               { id: "low", label: "Low" },
-              { id: "medium", label: "Medium" },
-              { id: "high", label: "High", isDefault: true },
+              { id: "high", label: "High" },
               { id: "xhigh", label: "Extra High" },
-              { id: "max", label: "Max" },
             ],
-            currentValue: "high",
           });
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.215\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("does not guess reasoning effort options for custom Claude models", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            {
+              ...defaultClaudeSettings,
+              customModels: ["custom-without-effort"],
+            },
+            claudeCapabilities({
+              models: [
+                {
+                  value: "custom-without-effort",
+                  displayName: "Custom Without Effort",
+                  description: "Custom model",
+                  supportsEffort: false,
+                },
+              ],
+            }),
+          );
+          const customModel = status.models.find((model) => model.slug === "custom-without-effort");
+
+          assert.strictEqual(customModel?.isCustom, true);
+          assert.deepStrictEqual(customModel?.capabilities?.optionDescriptors, []);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
