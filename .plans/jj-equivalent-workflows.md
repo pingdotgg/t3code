@@ -6,6 +6,9 @@ Scope: server, shared contracts, web, mobile, provider integrations, tests, and 
 
 Target: Git-backed, colocated Jujutsu repositories first
 
+Execution note: this plan is suitable for a one-shot, one-pass run from planning through completion.
+Within each phase, make it work, validate it, then make it good before moving to the next phase.
+
 ## Goal
 
 Give a repository selected as `jj` the same product outcomes currently available for Git:
