@@ -85,6 +85,7 @@ function layerExecutorFor(input: {
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
   readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
+  readonly terminateCommand?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["terminateCommand"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -92,7 +93,7 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
-        terminateCommand: () => record("terminate-command"),
+        terminateCommand: input.terminateCommand ?? (() => record("terminate-command")),
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
@@ -352,6 +353,47 @@ it.effect("stops one command before settling its item without interrupting the t
       });
     }).pipe(Effect.provide(layer));
     assert.deepEqual(yield* Ref.get(events), ["terminate-command", "thread.tool.stop.complete"]);
+  }),
+);
+
+it.effect("clears a command's pending Stop if termination fails without settling the item", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = layerExecutorFor({
+      events,
+      terminateCommand: () =>
+        Effect.fail(
+          new ProviderTurnControlService.ProviderTurnControlError({
+            threadId,
+            providerTurnId,
+            operation: "terminate-command",
+          }),
+        ),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(events, (current) => [...current, command.type]).pipe(
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          ),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor
+        .execute({
+          ...restartEffect(now, { type: "detach" }),
+          request: {
+            type: "provider-command.stop",
+            providerSessionId: oldSessionId,
+            providerThreadId,
+            providerTurnId,
+            itemId: TurnItemId.make("command-item"),
+            processId: "18604",
+          },
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(events), ["thread.tool.stop.failed"]);
   }),
 );
 

@@ -749,6 +749,7 @@ function makeManager(input?: {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
     ),
+    VcsProjectConfig.layer,
     layerServerSettings,
   ).pipe(
     Layer.provideMerge(layerSourceControlRegistry),
@@ -781,6 +782,54 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("featureBranch honors project branch naming config", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const configDir = NodePath.join(repoDir, ".t3code");
+      NodeFS.mkdirSync(configDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(configDir, "vcs.json"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          branchNaming: {
+            defaultPrefix: null,
+            preserveNamespaces: true,
+          },
+        }),
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nconfigured-branch\n");
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.succeed({
+              subject: "Respect project branch naming",
+              body: "",
+              ...(input.includeBranch
+                ? { branch: "feature/jm/bugfix/externe-budgetgrenze-abrechnungsart" }
+                : {}),
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+      });
+
+      expect(result.branch).toEqual({
+        status: "created",
+        name: "jm/bugfix/externe-budgetgrenze-abrechnungsart",
+      });
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe("jm/bugfix/externe-budgetgrenze-abrechnungsart");
+    }),
+  );
+
   it.effect("local status refines an unknown remote through the provider registry", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
