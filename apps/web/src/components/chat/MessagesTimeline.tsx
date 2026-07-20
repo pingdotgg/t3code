@@ -619,6 +619,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         animated: true,
         viewOffset: 24,
       });
+      setNavigationProbeTimelineKey((timelineKey) =>
+        timelineKey === routeThreadKey ? null : timelineKey,
+      );
     },
     [listRef, markTimelineManualNavigation, routeThreadKey],
   );
