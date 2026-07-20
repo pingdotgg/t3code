@@ -2929,31 +2929,39 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, diffOpen, dismissPlanSidebarForCurrentTurn, onDiffPanelOpen, planSidebarOpen],
   );
-  // Returns false when the right panel is closed so terminal.toggle falls back to the drawer.
-  const toggleTerminalInRightPanel = useCallback(() => {
-    if (!activeThreadRef) return false;
+  const focusTerminal = useCallback(() => {
+    if (!activeThreadRef) return;
+    const terminalFocusOwner = getTerminalFocusOwner();
+    if (terminalFocusOwner !== null) return;
+
     const store = useRightPanelStore.getState();
     const panelState = selectThreadRightPanelState(store.byThreadKey, activeThreadRef);
-    if (!panelState.isOpen) return false;
-    const activeSurface = panelState.surfaces.find(
-      (surface) => surface.id === panelState.activeSurfaceId,
-    );
-    if (activeSurface?.kind === "terminal") {
-      setMaximizedRightPanelThreadKey(null);
-      store.close(activeThreadRef);
-      return true;
+    if (panelState.isOpen) {
+      const activeSurface = panelState.surfaces.find(
+        (surface) => surface.id === panelState.activeSurfaceId,
+      );
+      if (activeSurface?.kind === "terminal") {
+        setTerminalFocusRequestId((value) => value + 1);
+        return;
+      }
+      const terminalSurface = panelState.surfaces.find((surface) => surface.kind === "terminal");
+      if (terminalSurface) {
+        activateRightPanelSurface(terminalSurface);
+        return;
+      }
+      if (!activeThreadId || !activeProject) return;
+      if (activeSurface?.kind === "plan") {
+        dismissPlanSidebarForCurrentTurn();
+      }
+      addTerminalSurface();
+      return;
     }
-    const terminalSurface = panelState.surfaces.find((surface) => surface.kind === "terminal");
-    if (terminalSurface) {
-      activateRightPanelSurface(terminalSurface);
-      return true;
+
+    if (terminalUiState.terminalOpen) {
+      setTerminalFocusRequestId((value) => value + 1);
+      return;
     }
-    if (!activeThreadId || !activeProject) return false;
-    if (activeSurface?.kind === "plan") {
-      dismissPlanSidebarForCurrentTurn();
-    }
-    addTerminalSurface();
-    return true;
+    toggleTerminalVisibility();
   }, [
     activeProject,
     activeThreadId,
@@ -2961,6 +2969,8 @@ function ChatViewContent(props: ChatViewProps) {
     activateRightPanelSurface,
     addTerminalSurface,
     dismissPlanSidebarForCurrentTurn,
+    terminalUiState.terminalOpen,
+    toggleTerminalVisibility,
   ]);
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
@@ -3755,12 +3765,17 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "terminal.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusTerminal();
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        if (terminalFocusOwner === "drawer" || !toggleTerminalInRightPanel()) {
-          toggleTerminalVisibility();
-        }
+        toggleTerminalVisibility();
         return;
       }
 
@@ -3870,10 +3885,10 @@ function ChatViewContent(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     splitPanelTerminal,
+    focusTerminal,
     keybindings,
     onToggleDiff,
     toggleRightPanel,
-    toggleTerminalInRightPanel,
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,

@@ -46,6 +46,7 @@ import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
+  isTerminalFocusShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
@@ -500,6 +501,7 @@ export function TerminalViewport({
       const currentKeybindings = keybindingsRef.current;
       const options = { context: { terminalFocus: true, terminalOpen: true } };
       if (
+        isTerminalFocusShortcut(event, currentKeybindings, options) ||
         isTerminalToggleShortcut(event, currentKeybindings, options) ||
         isTerminalSplitShortcut(event, currentKeybindings, options) ||
         isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
