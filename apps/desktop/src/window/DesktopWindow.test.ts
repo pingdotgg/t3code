@@ -530,10 +530,11 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("does not persist fullscreen bounds", () =>
+  it.effect("flushes normal bounds when fullscreen before the debounce completes", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.isFullScreen.mockReturnValue(true);
+      fakeWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 1920, height: 1080 });
+      fakeWindow.getNormalBounds.mockReturnValue({ x: 200, y: 130, width: 1400, height: 940 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
@@ -548,16 +549,19 @@ describe("DesktopWindow", () => {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
-        const close = fakeWindow.windowListeners.get("close");
-        if (!close) {
-          return yield* Effect.die("window close listener was not registered");
+        const resize = fakeWindow.windowListeners.get("resize");
+        if (!resize) {
+          return yield* Effect.die("window resize listener was not registered");
         }
-        close();
-        yield* Effect.promise(() => Promise.resolve());
+        resize();
+        yield* TestClock.adjust(250);
+        fakeWindow.isFullScreen.mockReturnValue(true);
 
-        assert.deepEqual(mainWindowBoundsUpdates, []);
+        yield* desktopWindow.flushMainWindowBounds;
+
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 200, y: 130, width: 1400, height: 940 }]);
         assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
-        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 0);
+        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );

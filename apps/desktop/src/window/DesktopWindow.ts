@@ -331,11 +331,11 @@ export const make = Effect.gen(function* () {
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
-      if (window.isDestroyed() || window.isFullScreen()) {
+      if (window.isDestroyed()) {
         return null;
       }
       const bounds =
-        window.isMaximized() || window.isMinimized()
+        window.isFullScreen() || window.isMaximized() || window.isMinimized()
           ? window.getNormalBounds()
           : window.getBounds();
       const x = Math.round(bounds.x);
