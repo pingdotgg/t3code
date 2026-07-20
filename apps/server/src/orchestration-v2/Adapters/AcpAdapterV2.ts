@@ -2379,6 +2379,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.timeoutOption("10 seconds"),
               );
               if (Option.isNone(stopped)) {
+                yield* Ref.update(activeTurn, (current) => (current === context ? null : current));
                 return yield* new ProviderAdapterProtocolError({
                   driver,
                   detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
