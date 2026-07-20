@@ -459,6 +459,57 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 
+  it("renders web search queries compactly and includes details in the expanded body", async () => {
+    const [{ MessagesTimeline }, { buildToolCallExpandedBody }] = await Promise.all([
+      import("./MessagesTimeline"),
+      import("./workEntryDetails"),
+    ]);
+    const workEntry = {
+      id: "web-search-work-1",
+      createdAt: "2026-03-17T19:12:28.000Z",
+      label: "Web search",
+      tone: "tool" as const,
+      toolTitle: "Web search",
+      itemType: "web_search" as const,
+      toolLifecycleStatus: "completed" as const,
+      toolData: {
+        type: "webSearch",
+        id: "web-search-1",
+        query: "OpenAI Codex web search payload preview",
+        action: {
+          type: "search",
+          queries: ["OpenAI Codex web search payload", "OpenAI Codex web search result payload"],
+        },
+        results: [{ title: "Codex docs", url: "https://example.com/codex" }],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: workEntry,
+          },
+        ]}
+      />,
+    );
+    const expandedBody = buildToolCallExpandedBody(workEntry, undefined);
+
+    expect(markup).toContain("Web search");
+    expect(markup).toContain("OpenAI Codex web search payload +1 more");
+    expect(markup).toContain("lucide-globe");
+    expect(expandedBody).toContain('"query": "OpenAI Codex web search payload preview"');
+    expect(expandedBody).toContain('"queries": [');
+    expect(expandedBody).toContain('"OpenAI Codex web search result payload"');
+    expect(expandedBody).not.toContain("Web search\n");
+    expect(expandedBody).not.toContain("Action: search");
+    expect(expandedBody).not.toContain("Raw item");
+    expect(expandedBody).toContain("https://example.com/codex");
+  });
+
   it("renders review comment contexts as structured cards instead of raw tags", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
