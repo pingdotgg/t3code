@@ -76,7 +76,9 @@ import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
+  resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   resolveTimelineScrollableNodeIsAtEnd,
   timelineScrollableNodeCanNavigateTowardHistory,
@@ -350,6 +352,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     scrollTop: number;
   } | null>(null);
   const keyboardNavigationFrameRef = useRef<number | null>(null);
+  const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
@@ -593,6 +596,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
+      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth));
     };
 
     const frame = requestAnimationFrame(measure);
@@ -721,6 +725,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             items={minimapItems}
             bottomInset={contentInsetEndAdjustment}
             hasPersistentGutter={minimapHasPersistentGutter}
+            hitStripWidth={minimapHitStripWidth}
             stripMap={minimapStripMap}
             onSelect={(item) => {
               markTimelineManualNavigation();
@@ -815,15 +820,21 @@ function resolveTimelineRowHeight(state: TimelinePositionState, rowIndex: number
   return typeof height === "number" && Number.isFinite(height) ? height : null;
 }
 
+function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
+  return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
+}
+
 function TimelineMinimap({
   bottomInset,
   hasPersistentGutter,
+  hitStripWidth,
   items,
   stripMap,
   onSelect,
 }: {
   bottomInset: number;
   hasPersistentGutter: boolean;
+  hitStripWidth: number;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onSelect: (item: TimelineMinimapItem) => void;
@@ -886,7 +897,7 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-auto absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
@@ -898,9 +909,17 @@ function TimelineMinimap({
       <div className="relative h-full w-full select-none">
         <button
           aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
-          className="pointer-events-auto absolute top-1/2 left-3 w-10 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          className={cn(
+            "absolute top-1/2 left-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+            // The strip is width-capped to the side gutter so it never overlays
+            // the centered content column; with no usable gutter it goes inert.
+            hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
+          )}
           onBlur={() => setActiveIndex(null)}
           onClick={(event) => {
+            if (timelineMinimapEventTargetsPreview(event.target)) {
+              return;
+            }
             const nextIndex = resolveActiveIndexFromPointer(event);
             const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
             if (nextItem) {
@@ -932,9 +951,15 @@ function TimelineMinimap({
           onMouseLeave={() => setActiveIndex(null)}
           onMouseMove={updateActiveIndexFromPointer}
           onMouseDown={(event) => {
+            if (timelineMinimapEventTargetsPreview(event.target)) {
+              return;
+            }
             event.preventDefault();
           }}
-          style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
+          style={{
+            height: resolveTimelineMinimapHeightStyle(items.length),
+            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+          }}
           type="button"
         >
           <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
@@ -971,27 +996,31 @@ function TimelineMinimap({
           })}
           {activeItem ? (
             <span
-              className="pointer-events-none absolute left-8 w-80 rounded-xl border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/25 backdrop-blur"
+              className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
+              data-minimap-preview
+              onMouseMove={(event) => event.stopPropagation()}
               style={{
                 top: `${activeTopPercent}%`,
                 transform: `translateY(${activeTooltipTranslate})`,
               }}
             >
-              <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                {activeItem.userText ?? "User message"}
-              </span>
-              {activeItem.assistantText ? (
-                <span
-                  className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
-                  style={{
-                    display: "-webkit-box",
-                    WebkitBoxOrient: "vertical",
-                    WebkitLineClamp: 3,
-                  }}
-                >
-                  {activeItem.assistantText}
+              <span className="block rounded-xl border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/25 backdrop-blur">
+                <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                  {activeItem.userText ?? "User message"}
                 </span>
-              ) : null}
+                {activeItem.assistantText ? (
+                  <span
+                    className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 3,
+                    }}
+                  >
+                    {activeItem.assistantText}
+                  </span>
+                ) : null}
+              </span>
             </span>
           ) : null}
         </button>
