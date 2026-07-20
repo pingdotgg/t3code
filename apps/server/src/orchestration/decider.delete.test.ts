@@ -4,6 +4,7 @@ import {
   EventId,
   ProjectId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ProviderInstanceId,
@@ -19,6 +20,7 @@ const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 const seedReadModel = Effect.gen(function* () {
   const now = "2026-01-01T00:00:00.000Z";
@@ -232,8 +234,9 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         return events;
       };
 
-      // Soft-delete the thread (this is what the server does when a bootstrap
-      // turn start fails partway and cleans up the just-created thread).
+      // Soft-delete the freshly-created (content-free) thread — this is what the
+      // server does when a bootstrap turn start fails partway and cleans up the
+      // just-created thread, before any turn, message, or activity exists.
       yield* projectDecided({
         type: "thread.delete",
         commandId: asCommandId("cmd-thread-delete-recreate"),
@@ -264,6 +267,73 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       const resurrected = readModel.threads.find((thread) => thread.id === threadId);
       expect(resurrected?.deletedAt).toBeNull();
       expect(resurrected?.title).toBe("Recreated Thread");
+    }),
+  );
+
+  it.effect("does not resurrect a soft-deleted thread that still owns content", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = asThreadId("thread-delete-2");
+      let readModel = yield* seedReadModel;
+      let nextSequence = readModel.snapshotSequence;
+
+      const deleted = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-content"),
+          threadId,
+        },
+        readModel,
+      });
+      for (const event of Array.isArray(deleted) ? deleted : [deleted]) {
+        nextSequence += 1;
+        readModel = yield* projectEvent(readModel, { ...event, sequence: nextSequence });
+      }
+
+      // Simulate a tombstone that owned content before deletion (here: a turn).
+      // Its child projection rows persist keyed by threadId, so the id must NOT
+      // be reused — otherwise the re-created thread would inherit stale records.
+      readModel = {
+        ...readModel,
+        threads: readModel.threads.map((thread) =>
+          thread.id === threadId
+            ? {
+                ...thread,
+                latestTurn: {
+                  turnId: asTurnId("turn-content"),
+                  state: "completed" as const,
+                  requestedAt: now,
+                  startedAt: now,
+                  completedAt: now,
+                  assistantMessageId: null,
+                },
+              }
+            : thread,
+        ),
+      };
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.create",
+            commandId: asCommandId("cmd-thread-recreate-content"),
+            threadId,
+            projectId: asProjectId("project-delete"),
+            title: "Recreated With Content",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          },
+          readModel,
+        }),
+      );
+      expect(error.message).toContain("already exists");
     }),
   );
 });
