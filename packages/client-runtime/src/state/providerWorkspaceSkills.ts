@@ -104,6 +104,9 @@ export function resolveProviderWorkspaceSkills(
     return input.nextSkills.length > 0 ? input.nextSkills : input.fallbackSkills;
   }
   if (!input.isPending) return EMPTY_PROVIDER_WORKSPACE_SKILLS;
+  // Do not use the provider-wide fallback while the workspace lookup is pending:
+  // it can contain repo-local skills discovered for a different cwd. This also
+  // keeps disconnected clients from presenting unverified workspace metadata.
   return resolvePendingProviderWorkspaceSkills(input);
 }
 
