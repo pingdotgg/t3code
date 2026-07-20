@@ -969,6 +969,19 @@ describe("OrchestrationEngine", () => {
         commandId: CommandId.make("cmd-cold-thread-archive"),
         threadId: ThreadId.make("thread-cold-rollback"),
       });
+
+      const missingArchiveFailure = yield* Effect.flip(
+        engine.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-cold-unarchive-missing"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        }),
+      );
+      expect(missingArchiveFailure.message).toContain(
+        "Failed to restore the archived conversation",
+      );
+      expect(events.at(-1)?.type).toBe("thread.archived");
+
       restoreOnUnarchive = true;
 
       const unarchiveFailure = yield* Effect.flip(

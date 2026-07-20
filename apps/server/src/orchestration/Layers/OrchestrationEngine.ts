@@ -170,6 +170,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           if (restored) {
             restoredUnarchiveThreadId = unarchiveThreadId;
             commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
+          } else {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: "Failed to restore the archived conversation.",
+            });
           }
         }
 
