@@ -383,11 +383,31 @@ const mobileEndorsementRows = [
 
   type Platform = { os: "mac" | "win" | "linux"; label: string; arch?: string };
 
+  // navigator.userAgent reports "Intel Mac OS X" on both Intel and Apple Silicon
+  // Macs, so probe the GPU renderer instead: Apple Silicon exposes an "Apple" GPU.
+  function detectMacArch(): "arm64" | "x64" {
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = (canvas.getContext("webgl") ||
+        canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+      const debugInfo = gl?.getExtension("WEBGL_debug_renderer_info");
+      if (gl && debugInfo) {
+        const renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) ?? "");
+        if (/apple/i.test(renderer)) return "arm64";
+        if (/intel|amd|radeon|nvidia|geforce/i.test(renderer)) return "x64";
+      }
+    } catch {
+      // fall through to the default below
+    }
+    // Most current Macs are Apple Silicon; default there when detection is inconclusive.
+    return "arm64";
+  }
+
   function detectPlatform(): Platform | null {
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) {
-      return { os: "mac", label: "Download for macOS", arch: "arm64" };
+      return { os: "mac", label: "Download for macOS", arch: detectMacArch() };
     }
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
     return null;
