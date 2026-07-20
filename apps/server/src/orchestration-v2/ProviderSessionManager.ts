@@ -605,31 +605,47 @@ export const layerWithOptions = (
           ) {
             return;
           }
+          // Capture runtime identity before yielding: a replacement session
+          // can reuse the same providerSessionId while this fiber is parked.
+          const probedRuntime = entry.runtime;
           const hasPendingWork =
-            entry.runtime.hasPendingBackgroundWork === undefined
+            probedRuntime.hasPendingBackgroundWork === undefined
               ? false
-              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+              : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
             if (now - pinnedSinceMs < maxIdlePinMs) {
+              const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
+                const latestEntry = latest.get(key);
+                if (
+                  latestEntry === undefined ||
+                  latestEntry.busyCount > 0 ||
+                  latestEntry.idleGeneration !== input.generation ||
+                  latestEntry.runtime !== probedRuntime
+                ) {
+                  return [false, latest] as const;
+                }
+                const updated = new Map(latest);
+                updated.set(key, { ...latestEntry, pinnedSinceMs });
+                return [true, updated] as const;
+              });
+              if (!shouldContinuePin) {
+                // Generation or runtime advanced while we probed pending work;
+                // the current owner of the entry owns idle release.
+                return;
+              }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
                 providerSessionId: input.providerSessionId,
                 pinnedForMs: now - pinnedSinceMs,
               });
-              yield* Ref.update(sessions, (latest) => {
-                const latestEntry = latest.get(key);
-                if (latestEntry === undefined || latestEntry.busyCount > 0) {
-                  return latest;
-                }
-                const updated = new Map(latest);
-                updated.set(key, { ...latestEntry, pinnedSinceMs });
-                return updated;
-              });
-              yield* scheduleIdleReleaseInternal(input.providerSessionId);
-              return;
+              // Re-check on this fiber after another idle window. Do not call
+              // scheduleIdleReleaseInternal: that cancels entry.idleFiber, which
+              // is this fiber, and can self-deadlock on Fiber.interrupt.
+              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+              return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
               providerSessionId: input.providerSessionId,
