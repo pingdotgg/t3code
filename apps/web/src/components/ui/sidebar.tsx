@@ -562,7 +562,13 @@ function SidebarRail({
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
     if (!wrapper) return;
 
-    const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
+    let storedWidth: number | null;
+    try {
+      storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
+    } catch (error) {
+      console.error("Could not restore persisted sidebar width.", error);
+      return;
+    }
     if (storedWidth === null) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
     // Hydrate the CSS variable before the browser paints so a restored sidebar
