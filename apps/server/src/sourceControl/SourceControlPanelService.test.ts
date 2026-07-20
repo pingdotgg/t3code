@@ -684,7 +684,7 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.commitStaged.tempIndexAddSelected",
-            args: ["add", "-A", "--", "src/mixed.ts"],
+            args: ["--literal-pathspecs", "add", "-A", "--", "src/mixed.ts"],
           },
           {
             operation: "vcs.panel.commitStaged",
@@ -692,7 +692,7 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.stageFiles",
-            args: ["add", "-A", "--", "src/mixed.ts"],
+            args: ["--literal-pathspecs", "add", "-A", "--", "src/mixed.ts"],
           },
         ],
       );
@@ -741,6 +741,52 @@ describe("SourceControlPanelService", () => {
             calls.push(input);
             return input.operation === "vcs.panel.commitStaged"
               ? failure("commit failed")
+              : success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports success when real-index sync fails after a selected-file commit", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.commitStaged({
+        cwd: "/repo",
+        paths: ["src/[literal].ts"],
+        message: "Commit selected file",
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => ({ operation: call.operation, args: call.args })),
+        [
+          {
+            operation: "vcs.panel.commitStaged.tempIndexReadTree",
+            args: ["read-tree", "HEAD"],
+          },
+          {
+            operation: "vcs.panel.commitStaged.tempIndexAddSelected",
+            args: ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
+          },
+          {
+            operation: "vcs.panel.commitStaged",
+            args: ["commit", "-m", "Commit selected file"],
+          },
+          {
+            operation: "vcs.panel.stageFiles",
+            args: ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.stageFiles"
+              ? failure("index sync failed")
               : success();
           }),
         ),

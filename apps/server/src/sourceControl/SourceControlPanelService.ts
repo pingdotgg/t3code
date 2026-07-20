@@ -1067,7 +1067,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         yield* run(
           "vcs.panel.commitStaged.tempIndexAddSelected",
           cwd,
-          ["add", "-A", "--", ...paths],
+          ["--literal-pathspecs", "add", "-A", "--", ...paths],
           { env },
         ).pipe(Effect.asVoid);
         return yield* body(env);
@@ -1662,6 +1662,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     Effect.gen(function* () {
       const fallback = "T3 Code changes";
       const pathArgs = paths && paths.length > 0 ? (["--", ...paths] as const) : [];
+      const literalPathspecArgs = pathArgs.length > 0 ? (["--literal-pathspecs"] as const) : [];
       const commandOptions = env ? { env } : undefined;
       const [settings, summary, patch] = yield* Effect.all(
         [
@@ -1669,13 +1670,21 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           run(
             "vcs.panel.commitMessageSummary",
             cwd,
-            ["diff", "--cached", "--stat", ...pathArgs],
+            [...literalPathspecArgs, "diff", "--cached", "--stat", ...pathArgs],
             commandOptions,
           ),
           run(
             "vcs.panel.commitMessagePatch",
             cwd,
-            ["diff", "--cached", "--no-ext-diff", "--patch", "--minimal", ...pathArgs],
+            [
+              ...literalPathspecArgs,
+              "diff",
+              "--cached",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              ...pathArgs,
+            ],
             commandOptions,
           ),
         ],
@@ -2210,7 +2219,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   );
 
   const stageFiles: SourceControlPanelService["Service"]["stageFiles"] = (input) =>
-    run("vcs.panel.stageFiles", input.cwd, ["add", "-A", "--", ...input.paths]).pipe(Effect.asVoid);
+    run("vcs.panel.stageFiles", input.cwd, [
+      "--literal-pathspecs",
+      "add",
+      "-A",
+      "--",
+      ...input.paths,
+    ]).pipe(Effect.asVoid);
 
   const unstageFiles: SourceControlPanelService["Service"]["unstageFiles"] = (input) =>
     run("vcs.panel.unstageFiles", input.cwd, ["reset", "--", ...input.paths]).pipe(Effect.asVoid);
@@ -2426,7 +2441,15 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           }).pipe(Effect.asVoid);
         }),
       );
-      yield* stageFiles({ cwd: input.cwd, paths });
+      yield* stageFiles({ cwd: input.cwd, paths }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Selected-file commit index synchronization failed after commit", {
+            cwd: input.cwd,
+            pathCount: paths.length,
+            error,
+          }),
+        ),
+      );
     } else {
       const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd));
       yield* run("vcs.panel.commitStaged", input.cwd, ["commit", "-m", message]).pipe(
