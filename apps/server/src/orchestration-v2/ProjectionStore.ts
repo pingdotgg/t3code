@@ -573,6 +573,7 @@ function activeLocalTurnItems(
         item,
         runs: projection.runs,
         attempts: projection.attempts,
+        items: projection.turnItems,
       }),
     )
     .map((item, position) => ({
@@ -668,6 +669,7 @@ function visibleTurnItemsThroughRun(input: {
         isOrchestrationV2SupersededInterrupt({
           item,
           attempts: input.sourceProjection.attempts,
+          items: input.sourceProjection.turnItems,
         })
       ) {
         return false;
