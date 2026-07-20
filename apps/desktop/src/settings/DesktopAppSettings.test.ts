@@ -11,6 +11,17 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 const DesktopSettingsPatch = Schema.Struct({
+  mainWindowBounds: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        x: Schema.Number,
+        y: Schema.Number,
+        width: Schema.Number,
+        height: Schema.Number,
+      }),
+    ),
+  ),
+  mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -91,6 +102,8 @@ describe("DesktopSettings", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
+        mainWindowBounds: null,
+        mainWindowMaximized: false,
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
@@ -116,6 +129,8 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -215,10 +230,13 @@ describe("DesktopSettings", () => {
             "serverExposureMode": "network-accessible",
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
+            "mainWindowBounds": { "x": 120, "y": 80, "width": 1280, "height": 900 },
           }\n`,
         );
 
         assert.deepEqual(yield* settings.load, {
+          mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
+          mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -232,6 +250,24 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("rejects window bounds that do not satisfy the domain schema", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowMaximized: true,
+          serverExposureMode: "network-accessible",
+        });
+
+        const loaded = yield* settings.load;
+        assert.isNull(loaded.mainWindowBounds);
+        assert.isFalse(loaded.mainWindowMaximized);
+        assert.equal(loaded.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
   it.effect("persists sparse desktop settings documents", () =>
     withSettings(
       Effect.gen(function* () {
@@ -239,12 +275,15 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
+          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
       }),
@@ -261,6 +300,8 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -286,6 +327,8 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -310,6 +353,8 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,

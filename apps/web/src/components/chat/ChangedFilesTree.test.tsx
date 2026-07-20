@@ -2,7 +2,32 @@ import { TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ChangedFilesTree } from "./ChangedFilesTree";
+import { ChangedFilesCard, ChangedFilesTree } from "./ChangedFilesTree";
+
+describe("ChangedFilesCard", () => {
+  it("keeps its compact header sticky while preserving singular labels", () => {
+    const markup = renderToStaticMarkup(
+      <ChangedFilesCard
+        turnId={TurnId.make("turn-1")}
+        files={[{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }]}
+        allDirectoriesExpanded
+        resolvedTheme="light"
+        onToggleAllDirectories={() => {}}
+        onOpenTurnDiff={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('class="sticky top-0 z-10');
+    expect(markup).not.toContain("self-start");
+    expect(markup).toContain("whitespace-nowrap");
+    expect(markup).toContain("!size-[22px]");
+    expect(markup).toContain("size-3");
+    expect(markup).toContain('aria-label="Collapse all"');
+    expect(markup).toContain('aria-label="View diff"');
+    expect(markup).toContain("1 changed file");
+    expect(markup).not.toContain("1 changed files");
+  });
+});
 
 describe("ChangedFilesTree", () => {
   it.each([
