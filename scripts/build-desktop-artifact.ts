@@ -1388,6 +1388,24 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function renderLinuxHeadlessLauncher(version: string): string {
+  const installDir = `/opt/${resolveDesktopProductName(version)}`;
+  const desktopExecutable = `${installDir}/t3code`;
+  const serverEntry = `${installDir}/resources/app.asar.unpacked/apps/server/dist/bin.mjs`;
+
+  return [
+    "#!/bin/sh",
+    "set -eu",
+    "export ELECTRON_RUN_AS_NODE=1",
+    `exec ${quotePosixShellArgument(desktopExecutable)} ${quotePosixShellArgument(serverEntry)} "$@"`,
+    "",
+  ].join("\n");
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -1401,6 +1419,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  linuxHeadlessLauncherPath?: string,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -1477,6 +1496,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (target === "deb") {
       buildConfig.deb = {
         depends: [...DEB_DEPENDENCIES],
+        ...(linuxHeadlessLauncherPath ? { fpm: [`${linuxHeadlessLauncherPath}=/usr/bin/t3`] } : {}),
+      };
+    }
+
+    if (target === "rpm" && linuxHeadlessLauncherPath) {
+      buildConfig.rpm = {
+        fpm: [`${linuxHeadlessLauncherPath}=/usr/bin/t3`],
       };
     }
   }
@@ -1755,6 +1781,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
   }
 
+  const linuxHeadlessLauncherPath =
+    options.platform === "linux" && (options.target === "deb" || options.target === "rpm")
+      ? path.join(stageRoot, "t3")
+      : undefined;
+  if (linuxHeadlessLauncherPath) {
+    yield* fs.writeFileString(linuxHeadlessLauncherPath, renderLinuxHeadlessLauncher(appVersion));
+    yield* fs.chmod(linuxHeadlessLauncherPath, 0o755);
+  }
+
   const stageDependencies = {
     ...resolvedServerDependencies,
     ...resolvedDesktopRuntimeDependencies,
@@ -1805,6 +1840,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      linuxHeadlessLauncherPath,
     ),
     dependencies: stageDependencies,
     devDependencies: {
