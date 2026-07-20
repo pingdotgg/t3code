@@ -598,6 +598,7 @@ it.effect("ProviderServiceLive serializes competing starts through persistence a
       const second = yield* Effect.forkChild(start());
       yield* Effect.yieldNow;
       assert.equal(codex.startSession.mock.calls.length, 1);
+      assert.deepEqual(yield* provider.listSessions(), []);
 
       yield* Deferred.succeed(releaseFirstUpsert, undefined);
       const firstExit = yield* Fiber.await(first);
@@ -614,6 +615,52 @@ it.effect("ProviderServiceLive serializes competing starts through persistence a
 
     assert.equal(codex.startSession.mock.calls.length, 2);
     assert.deepEqual(codex.stopSession.mock.calls, [[threadId]]);
+  }),
+);
+
+it.effect("ProviderServiceLive does not expose a same-instance replacement before commit", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-list-same-instance-replacement");
+    const upsertStarted = yield* Deferred.make<void>();
+    const releaseUpsert = yield* Deferred.make<void>();
+    const harness = makeBindingFailureHarness([
+      {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { opaque: "old-session" },
+      },
+    ]);
+    yield* harness.codex.adapter.startSession(makeStartInput(threadId));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      harness.upsert.mockImplementation(() =>
+        Deferred.succeed(upsertStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseUpsert)),
+          Effect.andThen(Effect.fail(harness.persistenceFailure)),
+        ),
+      );
+      const replacement = yield* Effect.forkChild(
+        provider.startSession(threadId, makeStartInput(threadId), { activeSession: "replace" }),
+      );
+      yield* Deferred.await(upsertStarted);
+      const listingCompleted = yield* Deferred.make<void>();
+      const listing = yield* Effect.forkChild(
+        provider
+          .listSessions()
+          .pipe(Effect.tap(() => Deferred.succeed(listingCompleted, undefined))),
+      );
+      yield* Effect.yieldNow;
+      const listingCompletedBeforeCommit = yield* Deferred.isDone(listingCompleted);
+
+      yield* Deferred.succeed(releaseUpsert, undefined);
+      const replacementExit = yield* Fiber.await(replacement);
+      assert.equal(Exit.isFailure(replacementExit), true);
+      assert.equal(listingCompletedBeforeCommit, false);
+      assert.deepEqual(yield* Fiber.join(listing), []);
+    }).pipe(Effect.provide(harness.layer));
   }),
 );
 
@@ -1266,6 +1313,26 @@ it.effect("ProviderServiceLive commits the new MCP credential after successful r
       McpProviderSession.clearMcpProviderSession(threadId);
     }).pipe(Effect.provide(providerLayer));
   }).pipe(Effect.provide(mcpTestRegistryLayer)),
+);
+
+it.effect("ProviderServiceLive fails listSessions when committed bindings cannot be read", () =>
+  Effect.gen(function* () {
+    const readFailure = new ProviderSessionDirectoryPersistenceError({
+      operation: "listBindings",
+      detail: "injected binding read failure",
+    });
+    const harness = makeBindingFailureHarness([], readFailure);
+
+    const exit = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      return yield* Effect.exit(provider.listSessions());
+    }).pipe(Effect.provide(harness.layer));
+
+    assert.equal(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      assert.equal(Cause.squash(exit.cause), readFailure);
+    }
+  }),
 );
 
 it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
@@ -2002,7 +2069,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("dies when an active session conflicts with its persisted binding", () =>
+  it.effect("lists only active sessions owned by their persisted binding", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
@@ -2016,6 +2083,13 @@ routing.layer("ProviderServiceLive routing", (it) => {
         runtimeMode: "full-access",
       });
 
+      assert.deepEqual(
+        (yield* provider.listSessions())
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.providerInstanceId),
+        [codexInstanceId],
+      );
+
       yield* directory.upsert({
         threadId,
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -2023,8 +2097,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
         runtimeMode: "full-access",
       });
 
-      const exit = yield* Effect.exit(provider.listSessions());
-      assert.equal(Exit.hasDies(exit), true);
+      assert.deepEqual(
+        (yield* provider.listSessions()).filter((session) => session.threadId === threadId),
+        [],
+      );
       yield* directory.upsert({
         threadId,
         provider: ProviderDriverKind.make("codex"),

@@ -1101,74 +1101,58 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ),
       );
       const activeSessions = sessionsByProvider.flatMap((sessions) => sessions);
-      const persistedBindings = yield* directory.listThreadIds().pipe(
-        Effect.flatMap((threadIds) =>
-          Effect.forEach(
-            threadIds,
-            (threadId) =>
-              directory
-                .getBinding(threadId)
-                .pipe(
-                  Effect.orElseSucceed(() =>
-                    Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>(),
-                  ),
-                ),
-            { concurrency: "unbounded" },
-          ),
-        ),
-        Effect.orElseSucceed(
-          () => [] as Array<Option.Option<ProviderSessionDirectory.ProviderRuntimeBinding>>,
-        ),
-      );
+      const persistedBindings = yield* directory.listBindings().pipe(Effect.orDie);
       const bindingsByThreadId = new Map<
         ThreadId,
         ProviderSessionDirectory.ProviderRuntimeBinding
       >();
-      for (const bindingOption of persistedBindings) {
-        const binding = Option.getOrUndefined(bindingOption);
-        if (binding) {
-          bindingsByThreadId.set(binding.threadId, binding);
-        }
+      for (const binding of persistedBindings) {
+        bindingsByThreadId.set(binding.threadId, binding);
       }
 
       const sessions: ProviderSession[] = [];
-      for (const session of activeSessions) {
-        const binding = bindingsByThreadId.get(session.threadId);
+      const activeSessionsByThread = Map.groupBy(activeSessions, (session) => session.threadId);
+      for (const [threadId] of activeSessionsByThread) {
+        const binding = bindingsByThreadId.get(threadId);
         if (!binding) {
-          sessions.push(session);
           continue;
         }
 
-        const overrides: {
-          resumeCursor?: ProviderSession["resumeCursor"];
-          runtimeMode?: ProviderSession["runtimeMode"];
-          providerInstanceId?: ProviderSession["providerInstanceId"];
-        } = {};
-        overrides.providerInstanceId = dieOnMissingBindingInstanceId(
-          "ProviderService.listSessions",
-          binding,
+        const refreshed = yield* withThreadLock(
+          threadId,
+          Effect.gen(function* () {
+            const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+            if (!currentBinding) return undefined;
+            const bindingInstanceId = dieOnMissingBindingInstanceId(
+              "ProviderService.listSessions",
+              currentBinding,
+            );
+            const currentAdapter = yield* registry.getByInstance(bindingInstanceId);
+            const committedSessions = (yield* currentAdapter.listSessions())
+              .filter(
+                (session) =>
+                  session.threadId === threadId && session.provider === currentBinding.provider,
+              )
+              .map((session) => ({ ...session, providerInstanceId: bindingInstanceId }));
+            return { binding: currentBinding, instanceId: bindingInstanceId, committedSessions };
+          }).pipe(Effect.orDie),
         );
-        if (binding.provider !== session.provider) {
-          return yield* Effect.die(
-            new Error(
-              `ProviderService.listSessions: thread '${session.threadId}' is active on provider '${session.provider}' but persisted binding names provider '${binding.provider}'.`,
-            ),
-          );
+        if (!refreshed) continue;
+
+        for (const session of refreshed.committedSessions) {
+          const overrides: {
+            resumeCursor?: ProviderSession["resumeCursor"];
+            runtimeMode?: ProviderSession["runtimeMode"];
+            providerInstanceId?: ProviderSession["providerInstanceId"];
+          } = { providerInstanceId: refreshed.instanceId };
+          if (session.resumeCursor === undefined && refreshed.binding.resumeCursor !== undefined) {
+            overrides.resumeCursor = refreshed.binding.resumeCursor;
+          }
+          if (refreshed.binding.runtimeMode !== undefined) {
+            overrides.runtimeMode = refreshed.binding.runtimeMode;
+          }
+          sessions.push(Object.assign({}, session, overrides));
         }
-        if (overrides.providerInstanceId !== session.providerInstanceId) {
-          return yield* Effect.die(
-            new Error(
-              `ProviderService.listSessions: thread '${session.threadId}' is active on provider instance '${session.providerInstanceId}' but persisted binding names '${overrides.providerInstanceId}'.`,
-            ),
-          );
-        }
-        if (session.resumeCursor === undefined && binding.resumeCursor !== undefined) {
-          overrides.resumeCursor = binding.resumeCursor;
-        }
-        if (binding.runtimeMode !== undefined) {
-          overrides.runtimeMode = binding.runtimeMode;
-        }
-        sessions.push(Object.assign({}, session, overrides));
       }
       return sessions;
     },
