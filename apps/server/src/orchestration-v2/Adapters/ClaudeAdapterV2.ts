@@ -1128,6 +1128,22 @@ function permissionModeForClaudeRuntimePolicy(
   if (runtimePolicy.interactionMode === "plan") {
     return "plan";
   }
+  if (runtimePolicy.approvalPolicy === "never") {
+    switch (sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy)) {
+      case "readOnly":
+        return "dontAsk";
+      case "dangerFullAccess":
+      case "externalSandbox":
+        return "bypassPermissions";
+      case "workspaceWrite":
+      case undefined:
+        return runtimePolicy.runtimeMode === "approval-required"
+          ? "dontAsk"
+          : runtimePolicy.runtimeMode === "auto-accept-edits"
+            ? "acceptEdits"
+            : "bypassPermissions";
+    }
+  }
   if (runtimePolicy.approvalPolicy !== undefined && runtimePolicy.approvalPolicy !== "never") {
     return "default";
   }
