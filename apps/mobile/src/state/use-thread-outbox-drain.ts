@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
@@ -221,7 +222,7 @@ export function useThreadOutboxDrain(): void {
             messageId: queuedMessage.messageId,
             role: "user",
             text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
+            attachments: toUploadChatImageAttachments(queuedMessage.attachments),
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,

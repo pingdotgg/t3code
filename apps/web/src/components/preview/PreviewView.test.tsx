@@ -130,7 +130,13 @@ describe("PreviewView navigation", () => {
     mocks.showEmptyState = false;
   });
 
-  it("preserves a direct localhost URL in a WSL environment", async () => {
+  it.each([
+    [
+      "https://localhost:8000/dashboard?mode=test#top",
+      "https://localhost:8000/dashboard?mode=test#top",
+    ],
+    ["localhost:5173/app", "http://localhost:5173/app"],
+  ])("preserves a direct localhost URL in a WSL environment", async (submitted, expected) => {
     renderToStaticMarkup(
       <PreviewView
         threadRef={{
@@ -143,20 +149,15 @@ describe("PreviewView navigation", () => {
     );
 
     expect(mocks.submittedUrl).not.toBeNull();
-    mocks.submittedUrl?.("https://localhost:8000/dashboard?mode=test#top");
+    mocks.submittedUrl?.(submitted);
 
-    await vi.waitFor(() =>
-      expect(mocks.navigate).toHaveBeenCalledWith(
-        "tab-1",
-        "https://localhost:8000/dashboard?mode=test#top",
-      ),
-    );
+    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("tab-1", expected));
     expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
       {
         environmentId: "environment-1",
         threadId: "thread-1",
       },
-      "https://localhost:8000/dashboard?mode=test#top",
+      expected,
     );
   });
 

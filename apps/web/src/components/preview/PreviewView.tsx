@@ -7,6 +7,7 @@ import {
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -17,10 +18,7 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import {
-  resolveBrowserNavigationTarget,
-  resolveDiscoveredServerUrl,
-} from "~/browser/browserTargetResolver";
+import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -115,35 +113,44 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     tabId ? (state.byTabId[tabId]?.rect ?? null) : null,
   );
 
-  const handleSubmitUrl = useCallback(
-    async (next: string) => {
-      try {
-        const resolvedUrl = resolveBrowserNavigationTarget(threadRef.environmentId, {
-          kind: "url",
-          url: next,
-        }).resolvedUrl;
-        if (tabId && previewBridge) {
-          // Drive the webview imperatively; `usePreviewBridge` mirrors the
-          // resolved URL back to the server so other clients stay in sync.
-          await previewBridge.navigate(tabId, resolvedUrl);
-          rememberPreviewUrl(threadRef, resolvedUrl);
-        } else {
-          await openPreviewSession({
-            openPreview: open,
-            threadRef,
-            url: resolvedUrl,
-          });
-        }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+  const navigateToResolvedUrl = useCallback(
+    async (resolvedUrl: string) => {
+      if (tabId && previewBridge) {
+        // Drive the webview imperatively; `usePreviewBridge` mirrors the
+        // resolved URL back to the server so other clients stay in sync.
+        await previewBridge.navigate(tabId, resolvedUrl);
+        rememberPreviewUrl(threadRef, resolvedUrl);
+      } else {
+        await openPreviewSession({
+          openPreview: open,
+          threadRef,
+          url: resolvedUrl,
+        });
       }
     },
     [open, tabId, threadRef],
   );
 
+  const handleSubmitUrl = useCallback(
+    async (next: string) => {
+      try {
+        await navigateToResolvedUrl(normalizePreviewUrl(next));
+      } catch {
+        // Server-side `failed` event renders the unreachable view.
+      }
+    },
+    [navigateToResolvedUrl],
+  );
+
   const handleOpenServerUrl = useCallback(
-    (next: string) => handleSubmitUrl(resolveDiscoveredServerUrl(threadRef.environmentId, next)),
-    [handleSubmitUrl, threadRef.environmentId],
+    async (next: string) => {
+      try {
+        await navigateToResolvedUrl(resolveDiscoveredServerUrl(threadRef.environmentId, next));
+      } catch {
+        // Server-side `failed` event renders the unreachable view.
+      }
+    },
+    [navigateToResolvedUrl, threadRef.environmentId],
   );
 
   const handleRefresh = useCallback(() => {

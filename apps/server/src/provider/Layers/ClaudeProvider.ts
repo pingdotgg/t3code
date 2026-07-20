@@ -37,6 +37,7 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -479,9 +480,19 @@ function claudeAuthMetadata(input: {
   return undefined;
 }
 
+function apiProviderAuthMetadata(
+  apiProvider: string | undefined,
+): { readonly type: string; readonly label: string } | undefined {
+  return apiProvider === "bedrock" ? { type: "bedrock", label: "Amazon Bedrock" } : undefined;
+}
+
 // ── SDK capability probe ────────────────────────────────────────────
 
-const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
+// Amazon Bedrock initializes far slower than first-party auth: the SDK boots the
+// Bedrock backend and runs the `awsAuthRefresh` credential hook before returning
+// account info. The previous 8s budget expired mid-init, so the probe returned
+// `undefined` and left the provider unverified and unselectable in the picker.
+const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
 function nonEmptyProbeString(value: string): string | undefined {
   const candidate = value.trim();
@@ -492,6 +503,12 @@ type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  /**
+   * Active API backend reported by the SDK's `AccountInfo`. Anthropic OAuth
+   * login only applies when `"firstParty"`; for Amazon Bedrock (`"bedrock"`)
+   * the subscription/token fields are absent and auth is external AWS creds.
+   */
+  readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
@@ -583,10 +600,15 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const executablePath = yield* resolveClaudeSdkExecutablePath(
+      claudeSettings.binaryPath,
+      claudeEnvironment,
+    );
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -597,11 +619,12 @@ const probeClaudeCapabilities = (
         })(),
         options: {
           persistSession: false,
-          pathToClaudeCodeExecutable: claudeSettings.binaryPath,
+          pathToClaudeCodeExecutable: executablePath,
           abortController: abort,
           settingSources: ["user", "project", "local"],
           allowedTools: [],
           env: claudeEnvironment,
+          ...(cwd ? { cwd } : {}),
           stderr: () => {},
         },
       });
@@ -611,12 +634,14 @@ const probeClaudeCapabilities = (
             readonly email?: string;
             readonly subscriptionType?: string;
             readonly tokenSource?: string;
+            readonly apiProvider?: string;
           }
         | undefined;
       return {
         email: account?.email,
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
+        apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
     });
@@ -792,10 +817,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const authMetadata = claudeAuthMetadata({
-    subscriptionType: capabilities.subscriptionType,
-    authMethod: capabilities.tokenSource,
-  });
+  const authMetadata =
+    claudeAuthMetadata({
+      subscriptionType: capabilities.subscriptionType,
+      authMethod: capabilities.tokenSource,
+    }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
