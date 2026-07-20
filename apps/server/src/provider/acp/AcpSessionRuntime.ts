@@ -73,6 +73,8 @@ export interface AcpSessionRuntimeOptions {
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
   readonly interruptPromptOnCancel?: boolean;
+  /** Optional provider metadata forwarded on `session/cancel`. */
+  readonly cancelMeta?: EffectAcpSchema.CancelNotification["_meta"];
   readonly ownDetachedProcessGroup?: boolean;
   readonly ownDescendantProcessGroups?: boolean;
   readonly processGroupPlatform?: NodeJS.Platform;
@@ -2155,15 +2157,23 @@ export const make = (
         ),
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
-          Effect.gen(function* () {
-            const activePromptFiber = yield* Ref.get(activePromptFiberRef);
-            if (Option.isSome(activePromptFiber)) {
-              yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
-            }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
-          }),
+          options.interruptPromptOnCancel === false
+            ? acp.agent.cancel({
+                sessionId: started.sessionId,
+                ...(options.cancelMeta === undefined ? {} : { _meta: options.cancelMeta }),
+              })
+            : Effect.gen(function* () {
+                const activePromptFiber = yield* Ref.get(activePromptFiberRef);
+                if (Option.isSome(activePromptFiber)) {
+                  yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
+                }
+                yield* acp.agent
+                  .cancel({
+                    sessionId: started.sessionId,
+                    ...(options.cancelMeta === undefined ? {} : { _meta: options.cancelMeta }),
+                  })
+                  .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+              }),
         ),
       ),
       ...(options.ownDetachedProcessGroup === true ? { terminateProcessGroup } : {}),
