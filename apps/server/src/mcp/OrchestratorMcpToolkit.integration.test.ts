@@ -22,6 +22,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
   type ScheduledTask,
@@ -106,6 +107,7 @@ function makeProviderSnapshot(input: {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly model: string;
+  readonly optionDescriptors?: ReadonlyArray<ProviderOptionDescriptor>;
 }): ServerProvider {
   return {
     instanceId: input.instanceId,
@@ -121,7 +123,10 @@ function makeProviderSnapshot(input: {
         slug: input.model,
         name: input.model,
         isCustom: false,
-        capabilities: null,
+        capabilities:
+          input.optionDescriptors === undefined
+            ? null
+            : { optionDescriptors: input.optionDescriptors },
       },
     ],
     slashCommands: [],
@@ -430,6 +435,18 @@ describe("orchestrator MCP toolkit", () => {
               instanceId: codexInstanceId,
               driver: ProviderDriverKind.make("codex"),
               model: codexModel,
+              optionDescriptors: [
+                {
+                  id: "reasoning",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Medium" },
+                    { id: "high", label: "High" },
+                  ],
+                },
+              ],
             }),
             makeProviderSnapshot({
               instanceId: claudeInstanceId,
@@ -579,6 +596,17 @@ describe("orchestrator MCP toolkit", () => {
                 expect.objectContaining({
                   providerInstanceId: "opencode",
                   canRunChildTask: true,
+                }),
+                // Models advertise their option descriptors so agents can
+                // discover valid target.options ids and values.
+                expect.objectContaining({
+                  providerInstanceId: codexInstanceId,
+                  models: [
+                    expect.objectContaining({
+                      id: codexModel,
+                      options: [expect.objectContaining({ id: "reasoning", type: "select" })],
+                    }),
+                  ],
                 }),
               ]),
             });
@@ -751,11 +779,52 @@ describe("orchestrator MCP toolkit", () => {
               ),
             ).toHaveLength(1);
 
+            // Options outside the model's advertised descriptors are rejected
+            // before any child thread is created.
+            const rejectedOptionsCall = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: {
+                providerInstanceId: codexInstanceId,
+                model: codexModel,
+                options: { reasoning: "extreme" },
+              },
+              mode: "async",
+              clientRequestId: "delegate-rejected-options-1",
+            });
+            expect(rejectedOptionsCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+              message: expect.stringContaining("rejected options"),
+            });
+
+            // Duplicate option ids fail fast: downstream consumers disagree on
+            // whether the first or last value of a duplicated id wins.
+            const duplicateOptionsCall = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: {
+                providerInstanceId: codexInstanceId,
+                model: codexModel,
+                options: [
+                  { id: "reasoning", value: "low" },
+                  { id: "reasoning", value: "high" },
+                ],
+              },
+              mode: "async",
+              clientRequestId: "delegate-duplicate-options-1",
+            });
+            expect(duplicateOptionsCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+              message: expect.stringContaining("more than once"),
+            });
+
             const cancellableCall = yield* invoke("delegate_task", {
               task: cancellationPrompt,
               target: {
                 providerInstanceId: codexInstanceId,
                 model: codexModel,
+                // Shorthand record form; decodes to the canonical array.
+                options: { reasoning: "low" },
               },
               mode: "async",
               clientRequestId: "delegate-cancel-1",
@@ -767,6 +836,15 @@ describe("orchestrator MCP toolkit", () => {
             yield* waitForProjection(orchestrator, cancellable.childThreadId, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
             );
+            // The requested model options reach the child thread's selection.
+            const optionedChild = yield* orchestrator.getThreadProjection(
+              cancellable.childThreadId,
+            );
+            expect(optionedChild.thread.modelSelection).toEqual({
+              instanceId: codexInstanceId,
+              model: codexModel,
+              options: [{ id: "reasoning", value: "low" }],
+            });
             const cancelCall = yield* invoke("task_cancel", {
               taskId: cancellable.taskId,
               reason: "Parent no longer needs this work.",
