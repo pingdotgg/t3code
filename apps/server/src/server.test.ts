@@ -5742,6 +5742,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         layers: {
           orchestrationEngine: {
             streamDomainEvents: Stream.fromPubSub(liveEvents),
+            latestSequence: Effect.succeed(2),
             readEvents: () =>
               Stream.unwrap(
                 Effect.gen(function* () {

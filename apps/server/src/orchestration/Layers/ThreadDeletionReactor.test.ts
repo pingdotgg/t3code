@@ -83,6 +83,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
       readEvents: () => Stream.empty,
       dispatch: () => Effect.succeed({ sequence: 0 }),
       streamDomainEvents: Stream.fromSubscription(eventSubscription),
+      latestSequence: Effect.succeed(0),
     });
     const providerLayer = Layer.mock(ProviderService)({
       stopSession: () => Deferred.succeed(deleteStarted, undefined).pipe(Effect.asVoid),
