@@ -343,6 +343,7 @@ describe("MessagesTimeline", () => {
     const {
       resolveTimelineScrollableNodeIsAtEnd,
       resolveTimelineManualNavigationIsAtEnd,
+      resolveTimelineManualNavigationScrollTop,
       timelineManualNavigationMovedTowardHistory,
       timelineManualNavigationReachedEnd,
       timelineNavigationInputMovesTowardHistory,
@@ -423,6 +424,9 @@ describe("MessagesTimeline", () => {
         scrollTop: 400,
       }),
     ).toBe(true);
+    expect(resolveTimelineManualNavigationScrollTop({ scrollTop: 240 }, { scroll: 180 })).toBe(240);
+    expect(resolveTimelineManualNavigationScrollTop(undefined, { scroll: 180 })).toBe(180);
+    expect(resolveTimelineManualNavigationScrollTop(undefined, undefined)).toBeNull();
     expect(
       timelineManualNavigationMovedTowardHistory({
         initialScrollTop: 400,

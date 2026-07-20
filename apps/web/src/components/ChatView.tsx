@@ -3329,9 +3329,12 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     anchorUserScrollGenerationRef.current += 1;
+    isAtEndRef.current = false;
     setTimelineAutoFollowEnabled(false);
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
+    showScrollDebouncer.current.cancel();
+    setShowScrollToBottom(true);
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;

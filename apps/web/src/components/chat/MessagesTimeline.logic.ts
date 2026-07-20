@@ -45,6 +45,18 @@ export interface TimelineScrollableNodeState {
   readonly scrollTop: number;
 }
 
+export interface TimelineScrollOffsetState {
+  readonly scroll?: number;
+}
+
+export function resolveTimelineManualNavigationScrollTop(
+  scrollNode: Pick<TimelineScrollableNodeState, "scrollTop"> | null | undefined,
+  state: TimelineScrollOffsetState | null | undefined,
+): number | null {
+  const scrollTop = scrollNode?.scrollTop ?? state?.scroll;
+  return typeof scrollTop === "number" && Number.isFinite(scrollTop) ? scrollTop : null;
+}
+
 export function timelineScrollableNodeCanNavigateTowardHistory(
   scrollNode: TimelineScrollableNodeState | null | undefined,
 ): boolean {

@@ -78,6 +78,7 @@ import {
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineManualNavigationIsAtEnd,
+  resolveTimelineManualNavigationScrollTop,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
@@ -346,7 +347,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const timelineTouchYRef = useRef<number | null>(null);
   const manualNavigationRef = useRef<{
     readonly timelineKey: string;
-    scrollTop: number;
+    scrollTop: number | null;
   } | null>(null);
   const pointerNavigationRef = useRef<{
     readonly pointerId: number;
@@ -386,10 +387,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const markTimelineManualNavigation = useCallback(() => {
     if (manualNavigationRef.current?.timelineKey !== routeThreadKey) {
-      const scrollTop = listRef.current?.getScrollableNode()?.scrollTop;
-      if (typeof scrollTop !== "number") {
-        return;
-      }
+      const list = listRef.current;
+      const scrollTop = resolveTimelineManualNavigationScrollTop(
+        list?.getScrollableNode(),
+        list?.getState?.(),
+      );
       manualNavigationRef.current = { timelineKey: routeThreadKey, scrollTop };
     }
     onManualNavigation();
@@ -441,7 +443,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     const scrollNode = listRef.current?.getScrollableNode();
-    const scrollTop = scrollNode?.scrollTop ?? state?.scroll ?? null;
+    const scrollTop = resolveTimelineManualNavigationScrollTop(scrollNode, state);
     if (manualNavigationRef.current?.timelineKey !== routeThreadKey) {
       manualNavigationRef.current = null;
     }
@@ -477,6 +479,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const scrollNodeIsAtEnd = resolveTimelineManualNavigationIsAtEnd(state, scrollNode);
     const manualNavigationReachedEnd = Boolean(
       manualNavigation &&
+      manualNavigation.scrollTop !== null &&
       scrollTop !== null &&
       timelineManualNavigationReachedEnd({
         previousScrollTop: manualNavigation.scrollTop,
