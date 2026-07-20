@@ -21,6 +21,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly mainWindowBounds: DesktopWindowBounds | null;
+  readonly mainWindowMaximized: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -67,6 +68,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   mainWindowBounds: null,
+  mainWindowMaximized: false,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -86,6 +88,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 
 const DesktopSettingsDocument = Schema.Struct({
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
+  mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -143,6 +146,7 @@ export class DesktopAppSettings extends Context.Service<
     readonly get: Effect.Effect<DesktopSettings>;
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
+      isMaximized: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -188,7 +192,7 @@ function normalizeWslDistro(value: unknown): string | null {
   return typeof value === "string" && isValidDistroName(value) ? value : null;
 }
 
-function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
+export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
   return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
 
@@ -197,6 +201,7 @@ function normalizeDesktopSettingsDocument(
   appVersion: string,
 ): DesktopSettings {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
+  const mainWindowBounds = normalizeMainWindowBounds(parsed.mainWindowBounds);
   const parsedUpdateChannel = Option.fromNullishOr(parsed.updateChannel);
   const isLegacySettings = parsed.updateChannelConfiguredByUser === undefined;
   const updateChannelConfiguredByUser =
@@ -211,7 +216,8 @@ function normalizeDesktopSettingsDocument(
     (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
 
   return {
-    mainWindowBounds: normalizeMainWindowBounds(parsed.mainWindowBounds),
+    mainWindowBounds,
+    mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
@@ -234,6 +240,9 @@ function toDesktopSettingsDocument(
 
   if (settings.mainWindowBounds !== null) {
     document.mainWindowBounds = settings.mainWindowBounds;
+  }
+  if (settings.mainWindowMaximized) {
+    document.mainWindowMaximized = true;
   }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
@@ -278,13 +287,16 @@ function setServerExposureMode(
 function setMainWindowBounds(
   settings: DesktopSettings,
   bounds: DesktopWindowBounds,
+  isMaximized: boolean,
 ): DesktopSettings {
   return settings.mainWindowBounds !== null &&
-    desktopWindowBoundsEquivalence(settings.mainWindowBounds, bounds)
+    desktopWindowBoundsEquivalence(settings.mainWindowBounds, bounds) &&
+    settings.mainWindowMaximized === isMaximized
     ? settings
     : {
         ...settings,
         mainWindowBounds: bounds,
+        mainWindowMaximized: isMaximized,
       };
 }
 
@@ -482,14 +494,15 @@ export const make = Effect.gen(function* () {
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
-    setMainWindowBounds: (bounds) =>
-      persist((settings) => setMainWindowBounds(settings, bounds)).pipe(
+    setMainWindowBounds: (bounds, isMaximized) =>
+      persist((settings) => setMainWindowBounds(settings, bounds, isMaximized)).pipe(
         Effect.withSpan("desktop.settings.setMainWindowBounds", {
           attributes: {
             x: bounds.x,
             y: bounds.y,
             width: bounds.width,
             height: bounds.height,
+            isMaximized,
           },
         }),
       ),
@@ -550,8 +563,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
         load: SynchronizedRef.get(settingsRef),
-        setMainWindowBounds: (bounds) =>
-          update((settings) => setMainWindowBounds(settings, bounds)),
+        setMainWindowBounds: (bounds, isMaximized) =>
+          update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

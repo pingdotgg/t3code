@@ -87,6 +87,7 @@ function makeFakeBrowserWindow() {
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
     loadURL: vi.fn(() => Promise.resolve()),
+    maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
     }),
@@ -109,6 +110,7 @@ function makeFakeBrowserWindow() {
     isMaximized: window.isMaximized,
     isMinimized: window.isMinimized,
     loadURL: window.loadURL,
+    maximize: window.maximize,
     openDevTools: webContents.openDevTools,
     reload: webContents.reload,
     send: webContents.send,
@@ -177,6 +179,7 @@ function makeTestLayer(input: {
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
+  readonly mainWindowMaximizedUpdates?: boolean[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
@@ -186,20 +189,23 @@ function makeTestLayer(input: {
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
-    setMainWindowBounds: (bounds) =>
+    setMainWindowBounds: (bounds, isMaximized) =>
       Effect.gen(function* () {
         if (input.beforeMainWindowBoundsUpdate) {
           yield* input.beforeMainWindowBoundsUpdate(bounds);
         }
         const changed =
           desktopSettings.mainWindowBounds === null ||
-          !desktopWindowBoundsEquivalence(desktopSettings.mainWindowBounds, bounds);
+          !desktopWindowBoundsEquivalence(desktopSettings.mainWindowBounds, bounds) ||
+          desktopSettings.mainWindowMaximized !== isMaximized;
         if (changed) {
           desktopSettings = {
             ...desktopSettings,
             mainWindowBounds: bounds,
+            mainWindowMaximized: isMaximized,
           };
           input.mainWindowBoundsUpdates?.push(bounds);
+          input.mainWindowMaximizedUpdates?.push(isMaximized);
         }
         return { settings: desktopSettings, changed };
       }),
@@ -457,6 +463,31 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("restores the persisted maximized state", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          mainWindowBounds: { x: 120, y: 80, width: 1320, height: 880 },
+          mainWindowMaximized: true,
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(fakeWindow.maximize.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("debounces move and resize bounds updates", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -496,7 +527,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("persists current bounds for a maximized window", () =>
+  it.effect("persists normal bounds and state for a maximized window", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       fakeWindow.isMaximized.mockReturnValue(true);
@@ -505,11 +536,13 @@ describe("DesktopWindow", () => {
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+      const mainWindowMaximizedUpdates: boolean[] = [];
       const layer = makeTestLayer({
         window: fakeWindow.window,
         createCount,
         mainWindow,
         mainWindowBoundsUpdates,
+        mainWindowMaximizedUpdates,
       });
 
       yield* Effect.gen(function* () {
@@ -523,16 +556,55 @@ describe("DesktopWindow", () => {
         close();
         yield* Effect.promise(() => Promise.resolve());
 
-        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 0, y: 0, width: 1920, height: 1080 }]);
-        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 0);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 1);
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
+        assert.deepEqual(mainWindowMaximizedUpdates, [true]);
+        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
+        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
 
-  it.effect("persists maximized bounds from the native maximize event", () =>
+  it.effect("persists normal bounds and state from the native maximize event", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+      const mainWindowMaximizedUpdates: boolean[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        mainWindowBoundsUpdates,
+        mainWindowMaximizedUpdates,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const maximize = fakeWindow.windowListeners.get("maximize");
+        if (!maximize) {
+          return yield* Effect.die("window maximize listener was not registered");
+        }
+
+        fakeWindow.isMaximized.mockReturnValue(true);
+        fakeWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 1920, height: 1080 });
+        fakeWindow.getNormalBounds.mockReturnValue({ x: 220, y: 140, width: 1380, height: 920 });
+        maximize();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
+
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
+        assert.deepEqual(mainWindowMaximizedUpdates, [true]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not persist bounds that fail the domain schema", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 839.4, height: 619.4 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
@@ -547,18 +619,55 @@ describe("DesktopWindow", () => {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
-        const maximize = fakeWindow.windowListeners.get("maximize");
-        if (!maximize) {
-          return yield* Effect.die("window maximize listener was not registered");
+        const resize = fakeWindow.windowListeners.get("resize");
+        if (!resize) {
+          return yield* Effect.die("window resize listener was not registered");
         }
-
-        fakeWindow.isMaximized.mockReturnValue(true);
-        fakeWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 1920, height: 1080 });
-        maximize();
+        resize();
         yield* TestClock.adjust(500);
         yield* Effect.promise(() => Promise.resolve());
 
-        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 0, y: 0, width: 1920, height: 1080 }]);
+        assert.deepEqual(mainWindowBoundsUpdates, []);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("preserves unrestorable bounds until the user changes the window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        mainWindowBoundsUpdates,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          mainWindowBounds: { x: 2040, y: 80, width: 1320, height: 880 },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const close = fakeWindow.windowListeners.get("close");
+        const move = fakeWindow.windowListeners.get("move");
+        if (!close || !move) {
+          return yield* Effect.die("window lifecycle listeners were not registered");
+        }
+
+        close();
+        yield* Effect.promise(() => Promise.resolve());
+        assert.deepEqual(mainWindowBoundsUpdates, []);
+
+        fakeWindow.getBounds.mockReturnValue({ x: 80, y: 60, width: 1280, height: 840 });
+        move();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 80, y: 60, width: 1280, height: 840 }]);
       }).pipe(Effect.provide(layer));
     }),
   );

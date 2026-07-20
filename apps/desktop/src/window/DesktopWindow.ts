@@ -117,6 +117,18 @@ function windowFitsWithinDisplay(
   );
 }
 
+function windowBoundsEqual(
+  left: DesktopAppSettings.DesktopWindowBounds,
+  right: DesktopAppSettings.DesktopWindowBounds,
+): boolean {
+  return (
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height
+  );
+}
+
 export function resolveInitialMainWindowBounds(
   persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
   displays: readonly DisplayBounds[],
@@ -283,7 +295,8 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const persistedBounds = (yield* desktopSettings.get).mainWindowBounds;
+    const persistedSettings = yield* desktopSettings.get;
+    const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
         return {
@@ -301,6 +314,7 @@ export const make = Effect.gen(function* () {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
@@ -327,30 +341,40 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
+    if (persistedSettings.mainWindowMaximized) {
+      window.maximize();
+    }
 
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
+    let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
     const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
       if (window.isDestroyed()) {
         return null;
       }
       const bounds =
-        window.isFullScreen() || window.isMinimized()
+        window.isFullScreen() || window.isMaximized() || window.isMinimized()
           ? window.getNormalBounds()
           : window.getBounds();
-      const x = Math.round(bounds.x);
-      const y = Math.round(bounds.y);
-      const width = Math.round(bounds.width);
-      const height = Math.round(bounds.height);
-      return { x, y, width, height };
+      return DesktopAppSettings.normalizeMainWindowBounds({
+        x: Math.round(bounds.x),
+        y: Math.round(bounds.y),
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      });
     };
+    const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
+    const fallbackWindowMaximized = window.isMaximized();
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
+      if (!boundsPersistenceEnabled) {
+        return pendingBoundsPersistFiber;
+      }
       const bounds = readPersistableBounds();
       if (bounds === null) {
         return pendingBoundsPersistFiber;
       }
       pendingBoundsPersistFiber = runFork(
-        desktopSettings.setMainWindowBounds(bounds).pipe(
+        desktopSettings.setMainWindowBounds(bounds, window.isMaximized()).pipe(
           Effect.asVoid,
           Effect.catch((error) =>
             logWindowWarning("failed to persist main window bounds", {
@@ -362,6 +386,18 @@ export const make = Effect.gen(function* () {
       return pendingBoundsPersistFiber;
     };
     const scheduleBoundsPersist = () => {
+      if (!boundsPersistenceEnabled) {
+        const currentBounds = readPersistableBounds();
+        if (
+          currentBounds === null ||
+          (fallbackWindowBounds !== null &&
+            windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
+            window.isMaximized() === fallbackWindowMaximized)
+        ) {
+          return;
+        }
+      }
+      boundsPersistenceEnabled = true;
       if (boundsPersistFiber !== undefined) {
         const fiber = boundsPersistFiber;
         boundsPersistFiber = undefined;
