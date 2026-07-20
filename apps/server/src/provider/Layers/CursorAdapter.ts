@@ -919,13 +919,6 @@ export function makeCursorAdapter(
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
         ctx.promptsInFlight += 1;
-        // Reserve the turn id in the same synchronous step as the counter
-        // that gates steering. A concurrent sendTurn arriving while this one
-        // awaits session configuration or attachment I/O must observe this
-        // turn id and steer into it; otherwise it mints a second turn id and
-        // emits a second turn.started, leaving one of the two turns unsettled
-        // (only the last prompt to resolve emits turn.completed).
-        ctx.activeTurnId = turnId;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -995,6 +988,7 @@ export function makeCursorAdapter(
             });
           }
 
+          ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
           }
