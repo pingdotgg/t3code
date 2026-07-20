@@ -20,6 +20,8 @@ describe("ChangedFilesCard", () => {
     expect(markup).toContain('class="sticky top-0 z-10');
     expect(markup).not.toContain("self-start");
     expect(markup).toContain("whitespace-nowrap");
+    expect(markup).toContain("!size-[22px]");
+    expect(markup).toContain("size-3");
     expect(markup).toContain('aria-label="Collapse all"');
     expect(markup).toContain('aria-label="View diff"');
     expect(markup).toContain("1 changed file");

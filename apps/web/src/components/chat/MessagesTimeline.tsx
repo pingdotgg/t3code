@@ -1302,6 +1302,7 @@ function AssistantChangedFilesSectionInner({
                   type="button"
                   size="icon-xs"
                   variant="outline"
+                  className="!size-[22px]"
                   aria-label={allDirectoriesExpanded ? "Collapse all" : "Expand all"}
                   data-scroll-anchor-ignore
                   onClick={() =>
@@ -1310,7 +1311,11 @@ function AssistantChangedFilesSectionInner({
                 />
               }
             >
-              {allDirectoriesExpanded ? <ChevronsDownUpIcon /> : <ChevronsUpDownIcon />}
+              {allDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3" />
+              )}
             </TooltipTrigger>
             <TooltipPopup side="top">
               {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
@@ -1323,12 +1328,13 @@ function AssistantChangedFilesSectionInner({
                   type="button"
                   size="icon-xs"
                   variant="outline"
+                  className="!size-[22px]"
                   aria-label="View diff"
                   onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
                 />
               }
             >
-              <FileDiffIcon />
+              <FileDiffIcon className="size-3" />
             </TooltipTrigger>
             <TooltipPopup side="top">View diff</TooltipPopup>
           </Tooltip>
