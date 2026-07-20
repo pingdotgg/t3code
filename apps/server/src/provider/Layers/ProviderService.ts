@@ -252,6 +252,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
     const current = credential?.config;
     if (current) McpProviderSession.setMcpProviderSession(current);
+    else McpProviderSession.clearMcpProviderSession(threadId);
     return { previous, current };
   });
   const commitMcpSession = Effect.fn("ProviderService.commitMcpSession")(function* (

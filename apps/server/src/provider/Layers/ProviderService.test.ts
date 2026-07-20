@@ -962,6 +962,51 @@ it.effect("ProviderServiceLive compensates a resumed session when binding fails"
   }),
 );
 
+it.effect(
+  "ProviderServiceLive clears stale MCP state when credential issuance is unavailable",
+  () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-mcp-registry-unavailable");
+      const codex = makeFakeCodexAdapter();
+      let observedMcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
+      const startSession = codex.startSession.getMockImplementation()!;
+      codex.startSession.mockImplementation((input) =>
+        Effect.sync(() => {
+          observedMcpSession = McpProviderSession.readMcpProviderSession(threadId);
+        }).pipe(Effect.andThen(startSession(input))),
+      );
+      const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+        upsert: () => Effect.void,
+        getProvider: () => Effect.die("unused test directory method"),
+        getBinding: () => Effect.succeed(Option.none()),
+        listThreadIds: () => Effect.succeed([]),
+        listBindings: () => Effect.succeed([]),
+      });
+      const registry = makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter });
+      const layer = makeServiceLayer(registry, directory);
+      const previousMcpSession = {
+        environmentId: EnvironmentId.make("environment-test"),
+        threadId,
+        providerSessionId: "provider-session-stale",
+        providerInstanceId: codexInstanceId,
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer stale",
+      };
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        McpProviderSession.setMcpProviderSession(previousMcpSession);
+        yield* provider.startSession(threadId, makeStartInput(threadId));
+
+        assert.equal(observedMcpSession, undefined);
+        assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      );
+    }),
+);
+
 it.effect("ProviderServiceLive compensates a started session with a mismatched provider", () =>
   Effect.gen(function* () {
     const registry = yield* McpSessionRegistry.McpSessionRegistry;
