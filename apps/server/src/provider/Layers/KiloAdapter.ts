@@ -15,6 +15,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Result from "effect/Result";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
@@ -535,7 +536,12 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
         return;
       }
       const turnId = yield* Ref.get(context.activeTurnId);
-      sessions.delete(context.session.threadId);
+      // Compare-and-delete: only evict our entry if we still own it.
+      // A concurrent `startSession` may have already replaced the entry;
+      // deleting by `threadId` would orphan that newly-started Kilo server.
+      if (sessions.get(context.session.threadId) === context) {
+        sessions.delete(context.session.threadId);
+      }
       // Emit lifecycle events BEFORE tearing down the scope. Both call sites
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
       // closing that scope triggers the fiber-interrupt finalizer, so any
@@ -872,10 +878,18 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
 
         case "session.status": {
           if (event.properties.status.type === "busy") {
-            yield* updateProviderSession(context, {
-              status: "running",
-              ...(turnId ? { activeTurnId: turnId } : {}),
-            });
+            // Read the CURRENT active turn id, not the snapshot taken at the
+            // top of this handler. `interruptTurn` may have already cleared
+            // the claim by the time this late `busy` event arrives; reusing
+            // the stale snapshot would resurrect an aborted turn and rewrite
+            // `activeTurnId` for an already-interrupted session.
+            const busyTurnId = yield* Ref.get(context.activeTurnId);
+            if (busyTurnId) {
+              yield* updateProviderSession(context, {
+                status: "running",
+                activeTurnId: busyTurnId,
+              });
+            }
           }
 
           if (event.properties.status.type === "retry") {
@@ -1349,36 +1363,90 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
     const interruptTurn: KiloAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        // Clear the active claim before remote abort so concurrent sendTurn
-        // cannot steer into a turn that is about to be aborted. We only
-        // observed the turn *and* owned the claim when `current === target` —
-        // a stale `turnId` (e.g. interrupted twice, or a newer turn already
-        // claimed) must NOT trigger `session.abort`, which cancels every turn
-        // for the SDK session, including the unrelated newer one.
+        // Decide which turn id this call intends to abort. We only clear
+        // the active claim while owning it AND we observe current === target
+        // — a stale `turnId` (interrupted twice, or a newer turn already
+        // claimed) must NOT trigger `session.abort`, which cancels every
+        // turn for the SDK session including any unrelated newer one.
         type InterruptClaim = {
           readonly interruptedTurnId: TurnId | undefined;
           readonly ownedClaim: boolean;
         };
-        const claim: InterruptClaim = yield* Ref.modify(
-          context.activeTurnId,
-          (current): [InterruptClaim, TurnId | undefined] => {
+        const claim: InterruptClaim = yield* Ref.get(context.activeTurnId).pipe(
+          Effect.map((current): InterruptClaim => {
             const target = turnId ?? current;
             if (target === undefined) {
-              return [{ interruptedTurnId: undefined, ownedClaim: false }, current];
+              return { interruptedTurnId: undefined, ownedClaim: false };
             }
             if (current === target) {
-              return [{ interruptedTurnId: target, ownedClaim: true }, undefined];
+              return { interruptedTurnId: target, ownedClaim: true };
             }
-            // Stale turnId (already interrupted, or a newer claim exists):
-            // report the abort for the requested turn id locally, but keep
-            // the live `current` claim untouched and skip the remote abort.
-            return [{ interruptedTurnId: target, ownedClaim: false }, current];
-          },
+            // Stale turnId: emit nothing for the wire but keep the live
+            // claim untouched.
+            return { interruptedTurnId: target, ownedClaim: false };
+          }),
         );
-        if (claim.ownedClaim) {
-          yield* runKiloSdk("session.abort", () =>
-            context.client.session.abort({ sessionID: context.kiloSessionId }),
-          ).pipe(Effect.mapError(toRequestError));
+        const ownsClaimAndAborted = yield* claim.ownedClaim
+          ? Effect.gen(function* () {
+              // Clear the claim BEFORE the remote abort so concurrent
+              // sendTurn cannot steer into a turn that is about to be
+              // aborted.
+              yield* Ref.set(context.activeTurnId, undefined);
+              const abortResult = yield* runKiloSdk("session.abort", () =>
+                context.client.session.abort({ sessionID: context.kiloSessionId }),
+              ).pipe(Effect.mapError(toRequestError), Effect.result);
+              if (Result.isSuccess(abortResult)) {
+                return { aborted: true as const };
+              }
+              return {
+                aborted: false as const,
+                abortError: abortResult.failure,
+              };
+            })
+          : Effect.succeed({ aborted: true as const });
+        if (!ownsClaimAndAborted.aborted) {
+          // Abort failed: restore the claim so the orchestration sees a
+          // still-running turn (and so subsequent idle/busy events stay
+          // consistent with `activeTurnId`). If a concurrent caller has
+          // already taken over the slot, leave its claim in place — we
+          // still emit turn.completed(failed) so upstream can clean up
+          // the half-aborted turn we *intended* to interrupt.
+          const abortError: ProviderAdapterRequestError = ownsClaimAndAborted.abortError;
+          const restoredClaim: TurnId | undefined = yield* Ref.modify(
+            context.activeTurnId,
+            (current): [TurnId | undefined, TurnId | undefined] => {
+              if (current === undefined) {
+                return [claim.interruptedTurnId, claim.interruptedTurnId];
+              }
+              return [undefined, current];
+            },
+          );
+          if (claim.interruptedTurnId) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId,
+                turnId: claim.interruptedTurnId,
+              })),
+              type: "turn.completed",
+              payload: {
+                state: "failed",
+                errorMessage: abortError.detail,
+              },
+            });
+          }
+          if (restoredClaim !== undefined) {
+            context.activeAgent = undefined;
+            context.activeVariant = undefined;
+            yield* updateProviderSession(
+              context,
+              {
+                status: "ready",
+                lastError: abortError.detail,
+              },
+              { clearActiveTurnId: true },
+            );
+          }
+          return yield* abortError;
         }
         // Only flip session ready if nothing new claimed the turn during abort.
         const stillIdle = (yield* Ref.get(context.activeTurnId)) === undefined;
@@ -1469,7 +1537,12 @@ export function makeKiloAdapter(kiloSettings: KiloSettings, options?: KiloAdapte
           });
         }
         const stopped = yield* stopKiloContext(context);
-        sessions.delete(threadId);
+        // Compare-and-delete: only evict our entry if we still own it.
+        // A concurrent `startSession` may have already replaced the entry;
+        // deleting by `threadId` would orphan that newly-started Kilo server.
+        if (sessions.get(threadId) === context) {
+          sessions.delete(threadId);
+        }
         if (!stopped) {
           return;
         }

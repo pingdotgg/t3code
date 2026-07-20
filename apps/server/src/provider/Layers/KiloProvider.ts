@@ -1,5 +1,4 @@
 import {
-  ProviderDriverKind,
   type ModelCapabilities,
   type KiloSettings,
   type ServerProviderModel,
@@ -20,7 +19,6 @@ import {
 import { KiloRuntime, kiloRuntimeErrorDetail, type KiloInventory } from "../kiloRuntime.ts";
 import type { ProviderListResponse } from "@kilocode/sdk/v2";
 
-const PROVIDER = ProviderDriverKind.make("kilo");
 const KILO_PRESENTATION = {
   displayName: "Kilo",
   showInteractionModeToggle: true,
@@ -205,7 +203,6 @@ export const makePendingKiloProvider = (
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = providerModelsFromSettings(
       [],
-      PROVIDER,
       kiloSettings.customModels,
       DEFAULT_KILO_MODEL_CAPABILITIES,
     );
@@ -257,12 +254,7 @@ export const checkKiloProviderStatus = Effect.fn("checkKiloProviderStatus")(func
       presentation: KILO_PRESENTATION,
       enabled: kiloSettings.enabled,
       checkedAt,
-      models: providerModelsFromSettings(
-        [],
-        PROVIDER,
-        customModels,
-        DEFAULT_KILO_MODEL_CAPABILITIES,
-      ),
+      models: providerModelsFromSettings([], customModels, DEFAULT_KILO_MODEL_CAPABILITIES),
       probe: {
         installed: failure.installed,
         version,
@@ -278,12 +270,7 @@ export const checkKiloProviderStatus = Effect.fn("checkKiloProviderStatus")(func
       presentation: KILO_PRESENTATION,
       enabled: false,
       checkedAt,
-      models: providerModelsFromSettings(
-        [],
-        PROVIDER,
-        customModels,
-        DEFAULT_KILO_MODEL_CAPABILITIES,
-      ),
+      models: providerModelsFromSettings([], customModels, DEFAULT_KILO_MODEL_CAPABILITIES),
       probe: {
         installed: false,
         version: null,
@@ -339,7 +326,6 @@ export const checkKiloProviderStatus = Effect.fn("checkKiloProviderStatus")(func
 
   const models = providerModelsFromSettings(
     flattenKiloModels(inventoryExit.value),
-    PROVIDER,
     customModels,
     DEFAULT_KILO_MODEL_CAPABILITIES,
   );
