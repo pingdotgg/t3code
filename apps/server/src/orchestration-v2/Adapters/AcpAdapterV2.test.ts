@@ -458,7 +458,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  it.effect("does not release an ACP turn when cancellation is not acknowledged", () =>
+  it.effect("releases an ACP turn when cancellation times out", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -538,19 +538,23 @@ describe("AcpAdapterV2", () => {
       const interruptError = yield* Fiber.join(interruptFiber);
       assert.equal(interruptError._tag, "ProviderAdapterInterruptError");
 
-      const secondTurnError = yield* runtime
-        .startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now,
-            ordinal: 2,
-          }),
-        )
-        .pipe(Effect.flip);
-      assert.equal(secondTurnError._tag, "ProviderAdapterTurnStartError");
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 2,
+        }),
+      );
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });
