@@ -1,8 +1,10 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -36,6 +38,15 @@ const TraceRecordLine = Schema.Struct({
 });
 
 const decodeTraceRecordLine = Schema.decodeUnknownSync(Schema.fromJsonString(TraceRecordLine));
+
+const consoleWithLog = (log: Console.Console["log"]): Console.Console =>
+  new Proxy(globalThis.console, {
+    get(target, property, receiver) {
+      if (property === "log") return log;
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Console.Console;
 
 const environmentInput = (
   baseDir: string,
@@ -72,7 +83,7 @@ const makeEnvironmentLayer = (
   );
 
 describe("DesktopObservability", () => {
-  it.effect("avoids console writes while persisting packaged Windows logs", () =>
+  it.effect("keeps the packaged Windows console logger and tolerates a broken pipe", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -83,18 +94,10 @@ describe("DesktopObservability", () => {
         platform: "win32",
       });
       let consoleLogCalls = 0;
-      const throwingConsole = new Proxy(globalThis.console, {
-        get(target, property, receiver) {
-          if (property === "log") {
-            return () => {
-              consoleLogCalls += 1;
-              throw Object.assign(new Error("EPIPE: broken pipe, write"), { code: "EPIPE" });
-            };
-          }
-          const value = Reflect.get(target, property, receiver) as unknown;
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      }) as Console.Console;
+      const throwingConsole = consoleWithLog(() => {
+        consoleLogCalls += 1;
+        throw Object.assign(new Error("EPIPE: broken pipe, write"), { code: "EPIPE" });
+      });
       const tracePath = yield* Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         return environment.path.join(environment.logDir, "desktop.trace.ndjson");
@@ -115,7 +118,7 @@ describe("DesktopObservability", () => {
         ),
       );
 
-      assert.equal(consoleLogCalls, 0);
+      assert.equal(consoleLogCalls, 1);
 
       const records = (yield* fileSystem.readFileString(tracePath))
         .trim()
@@ -134,6 +137,40 @@ describe("DesktopObservability", () => {
         true,
       );
       assert.isFalse(yield* fileSystem.exists(logPath));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
+    ),
+  );
+
+  it.effect("does not hide unrelated packaged Windows console failures", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-observability-console-error-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, {
+        development: false,
+        platform: "win32",
+      });
+      const unexpectedError = Object.assign(new Error("unexpected console failure"), {
+        code: "EINVAL",
+      });
+      const throwingConsole = consoleWithLog(() => {
+        throw unexpectedError;
+      });
+
+      const exit = yield* Effect.exit(
+        Effect.scoped(
+          Effect.logInfo("desktop console failure").pipe(
+            Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+            Effect.provideService(Console.Console, throwingConsole),
+          ),
+        ),
+      );
+
+      assert(Exit.isFailure(exit));
+      assert.equal(Cause.squash(exit.cause), unexpectedError);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
