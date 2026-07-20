@@ -185,7 +185,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         packageName: "@openai/codex",
         update: {
           command: "codex update",
-          executable: "codex",
+          executable: "/home/julius/.codex/packages/standalone/current/bin/codex",
           args: ["update"],
           lockKey: "codex-native",
         },

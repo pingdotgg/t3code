@@ -80,6 +80,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
     args: ["update"],
     lockKey: "codex-native",
     isCommandPath: isCodexStandaloneCommandPath,
+    useResolvedExecutable: true,
   },
 });
 
