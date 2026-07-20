@@ -759,7 +759,271 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Open Package audit"');
     expect(markup).toContain("Reading src/index.ts");
     expect(markup).not.toContain("Inspect the package");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
     expect(markup).not.toContain("Work Log");
+  });
+
+  it("discloses the full Codex subagent result without projecting child events", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "codex-subagent-result",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "codex-subagent-result",
+              item: {
+                id: "codex-subagent-result",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Isolation report",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "codex",
+                providerInstanceId: "codex",
+                childThreadId: "thread-subagent-1",
+                prompt: "Explain test isolation",
+                result: "Tests should be isolated.\n\nResult: no shared state.",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('data-v2-subagent-result-disclosure="true"');
+    expect(markup).toContain('data-v2-subagent-result="true"');
+    expect(markup).toContain('aria-label="Show full result for Isolation report"');
+    expect(markup).toContain('aria-label="Open Isolation report"');
+    expect(markup).toContain("Tests should be isolated.");
+    expect(markup).toContain("Result: no shared state.");
+    expect(markup).not.toContain("Explain test isolation");
+  });
+
+  it("keeps live progress when a running subagent streams a partial result", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "subagent-partial-result",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "subagent-partial-result",
+              item: {
+                id: "subagent-partial-result",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: "Package audit",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "codex",
+                providerInstanceId: "codex",
+                childThreadId: "thread-subagent-1",
+                prompt: "Inspect the package",
+                progress: "Reading src/index.ts",
+                result: "Partial streamed answer so far",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('aria-label="Open Package audit"');
+    expect(markup).toContain("Reading src/index.ts");
+    expect(markup).not.toContain("Partial streamed answer so far");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
+  });
+
+  it("shows the streamed result while a subagent runs without progress", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "subagent-streamed-result",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "subagent-streamed-result",
+              item: {
+                id: "subagent-streamed-result",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: "Package audit",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "codex",
+                providerInstanceId: "codex",
+                childThreadId: "thread-subagent-1",
+                prompt: "Inspect the package",
+                progress: null,
+                result: "Streaming answer so far",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain("Streaming answer so far");
+    expect(markup).not.toContain("Inspect the package");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
+  });
+
+  it("treats a cancelled subagent result as partial output", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "subagent-cancelled-result",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "subagent-cancelled-result",
+              item: {
+                id: "subagent-cancelled-result",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "cancelled",
+                title: "Package audit",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "codex",
+                providerInstanceId: "codex",
+                childThreadId: "thread-subagent-1",
+                prompt: "Inspect the package",
+                progress: "Reading src/index.ts",
+                result: "Partial output before cancel",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain("Partial output before cancel");
+    expect(markup).not.toContain("Reading src/index.ts");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
+  });
+
+  it("falls back to progress when a completed subagent result is whitespace-only", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "subagent-blank-result",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "subagent-blank-result",
+              item: {
+                id: "subagent-blank-result",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Package audit",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "codex",
+                providerInstanceId: "codex",
+                childThreadId: "thread-subagent-1",
+                prompt: "Inspect the package",
+                progress: "Audited 12 packages",
+                result: "  \n\t  ",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain("Audited 12 packages");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
   });
 
   it("renders V2 provider failures as standalone error rows", async () => {
