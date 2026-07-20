@@ -13,8 +13,6 @@ export interface ProviderContinuationRequest {
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
-  /** Clears a pending offer that the continuation worker intentionally drops. */
-  readonly clearIfCurrent?: () => Effect.Effect<void>;
 }
 
 /**

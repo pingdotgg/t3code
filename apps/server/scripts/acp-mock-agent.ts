@@ -95,6 +95,11 @@ function logResidualCallbackResponse(kind: string): void {
   NodeFS.appendFileSync(residualCallbackResponseLogPath, `${kind}\n`, "utf8");
 }
 
+function logResidualCallbackResponse(kind: string): void {
+  if (!residualCallbackResponseLogPath) return;
+  NodeFS.appendFileSync(residualCallbackResponseLogPath, `${kind}\n`, "utf8");
+}
+
 process.once("SIGTERM", () => {
   logExit("SIGTERM");
   process.exit(0);
