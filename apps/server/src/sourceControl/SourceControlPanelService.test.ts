@@ -690,18 +690,58 @@ describe("SourceControlPanelService", () => {
             operation: "vcs.panel.commitStaged",
             args: ["commit", "-m", "Commit selected file"],
           },
+          {
+            operation: "vcs.panel.stageFiles",
+            args: ["add", "-A", "--", "src/mixed.ts"],
+          },
         ],
       );
       const selectedIndexCalls = calls.filter((call) =>
         call.operation.startsWith("vcs.panel.commitStaged"),
       );
       assert.isTrue(selectedIndexCalls.every((call) => Boolean(call.env?.GIT_INDEX_FILE?.length)));
+      assert.isUndefined(calls.at(-1)?.env?.GIT_INDEX_FILE);
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>
           Effect.sync(() => {
             calls.push(input);
             return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("leaves the real index untouched when a selected-file commit fails", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service
+        .commitStaged({
+          cwd: "/repo",
+          paths: ["src/mixed.ts"],
+          message: "Commit selected file",
+        })
+        .pipe(Effect.flip);
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.operation),
+        [
+          "vcs.panel.commitStaged.tempIndexReadTree",
+          "vcs.panel.commitStaged.tempIndexAddSelected",
+          "vcs.panel.commitStaged",
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.commitStaged"
+              ? failure("commit failed")
+              : success();
           }),
         ),
       ),
@@ -721,6 +761,32 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [["merge", "--no-edit", "--", "feature/source-control"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("passes rebase refs after a positional separator", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.rebaseCurrentOnto({
+        cwd: "/repo",
+        refName: "feature/source-control",
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [["rebase", "--", "feature/source-control"]],
       );
     }).pipe(
       Effect.provide(

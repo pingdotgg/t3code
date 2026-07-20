@@ -662,7 +662,6 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       const paths = operationPaths(files);
       if (paths.length === 0) return;
       void runAction("commit", async () => {
-        await api.stageFiles({ cwd: changeSet.cwd, paths });
         await api.commitStaged({ cwd: changeSet.cwd, paths });
       });
     },

@@ -59,7 +59,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { readLocalApi } from "~/localApi";
 import { getRenderablePatch, resolveDiffThemeName } from "~/lib/diffRendering";
 import { useGitStackedAction } from "~/state/sourceControlActions";
-import { cn, newCommandId } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -2373,18 +2373,15 @@ export function SourceControlPanel({
       return runAction("changes-commit", async () => {
         setCommitDialogOpen(false);
         setDialogCommitMessage("");
-        const result = await gitAction.run({
-          actionId: newCommandId(),
-          action: "commit",
-          ...(commitMessage ? { commitMessage } : {}),
-          filePaths: [...selectedChangePathList],
+        if (!api) return;
+        await api.vcs.commitStaged({
+          cwd,
+          paths: [...selectedChangePathList],
+          ...(commitMessage ? { message: commitMessage } : {}),
         });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          throw squashAtomCommandFailure(result);
-        }
       });
     },
-    [gitAction, runAction, selectedChangePathList],
+    [api, cwd, runAction, selectedChangePathList],
   );
 
   const runGeneratedPanelCommit = useCallback(() => {
@@ -2446,7 +2443,6 @@ export function SourceControlPanel({
         if (!api) return;
         const paths = uniquePaths(input.files.flatMap((file) => operationPathsForFile(file)));
         if (paths.length === 0) return;
-        await api.vcs.stageFiles({ cwd: input.targetCwd, paths });
         await api.vcs.commitStaged({ cwd: input.targetCwd, paths });
       }),
     [api, runAction],

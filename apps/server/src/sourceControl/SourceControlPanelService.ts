@@ -1657,22 +1657,27 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const generatedCommitMessage = (
     cwd: string,
     paths?: readonly string[],
+    env?: NodeJS.ProcessEnv,
   ): Effect.Effect<string, never> =>
     Effect.gen(function* () {
       const fallback = "T3 Code changes";
       const pathArgs = paths && paths.length > 0 ? (["--", ...paths] as const) : [];
+      const commandOptions = env ? { env } : undefined;
       const [settings, summary, patch] = yield* Effect.all(
         [
           serverSettings.getSettings,
-          run("vcs.panel.commitMessageSummary", cwd, ["diff", "--cached", "--stat", ...pathArgs]),
-          run("vcs.panel.commitMessagePatch", cwd, [
-            "diff",
-            "--cached",
-            "--no-ext-diff",
-            "--patch",
-            "--minimal",
-            ...pathArgs,
-          ]),
+          run(
+            "vcs.panel.commitMessageSummary",
+            cwd,
+            ["diff", "--cached", "--stat", ...pathArgs],
+            commandOptions,
+          ),
+          run(
+            "vcs.panel.commitMessagePatch",
+            cwd,
+            ["diff", "--cached", "--no-ext-diff", "--patch", "--minimal", ...pathArgs],
+            commandOptions,
+          ),
         ],
         { concurrency: "unbounded" },
       );
@@ -2411,14 +2416,22 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     "commitStaged",
   )(function* (input) {
     const paths = uniquePaths(input.paths ?? []);
-    const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths));
-    const args = ["commit", "-m", message];
     if (paths.length > 0) {
       yield* withTemporarySelectedIndex(input.cwd, paths, (env) =>
-        run("vcs.panel.commitStaged", input.cwd, args, { env }).pipe(Effect.asVoid),
+        Effect.gen(function* () {
+          const message =
+            input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths, env));
+          yield* run("vcs.panel.commitStaged", input.cwd, ["commit", "-m", message], {
+            env,
+          }).pipe(Effect.asVoid);
+        }),
       );
+      yield* stageFiles({ cwd: input.cwd, paths });
     } else {
-      yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
+      const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd));
+      yield* run("vcs.panel.commitStaged", input.cwd, ["commit", "-m", message]).pipe(
+        Effect.asVoid,
+      );
     }
     if (input.push) {
       const status = yield* workflow
@@ -2696,7 +2709,9 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     ]).pipe(Effect.asVoid);
 
   const rebaseCurrentOnto: SourceControlPanelService["Service"]["rebaseCurrentOnto"] = (input) =>
-    run("vcs.panel.rebaseCurrentOnto", input.cwd, ["rebase", input.refName]).pipe(Effect.asVoid);
+    run("vcs.panel.rebaseCurrentOnto", input.cwd, ["rebase", "--", input.refName]).pipe(
+      Effect.asVoid,
+    );
 
   return SourceControlPanelService.of({
     snapshot,

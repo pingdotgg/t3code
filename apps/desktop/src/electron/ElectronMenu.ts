@@ -173,9 +173,11 @@ export const make = Effect.gen(function* () {
       }
 
       if (item.destructive && !hasInsertedDestructiveSeparator) {
-        if (template.length > 0 && !lastWasSeparator) {
-          template.push({ type: "separator" });
-          lastWasSeparator = true;
+        if (template.length > 0) {
+          if (!lastWasSeparator) {
+            template.push({ type: "separator" });
+            lastWasSeparator = true;
+          }
           hasInsertedDestructiveSeparator = true;
         }
       }
