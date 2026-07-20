@@ -228,6 +228,24 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       installPermissionCallback: false,
     });
   });
+
+  it("keeps approval-required mode interactive with danger-full-access sandboxing", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+        sandboxPolicy: {
+          type: "dangerFullAccess",
+        },
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "default",
+      installPermissionCallback: true,
+    });
+  });
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
