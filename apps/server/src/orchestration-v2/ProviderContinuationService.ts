@@ -32,12 +32,8 @@ export const workerLive = Layer.effectDiscard(
             threadId: request.threadId,
             providerThreadId: request.providerThreadId,
           });
-          // No continuation turn will start to clear the adapter's sticky offer.
-          if (request.clearIfCurrent !== undefined) {
-            yield* request.clearIfCurrent();
-          } else if (request.dispatchIfCurrent !== undefined) {
-            // Backward compatibility for request producers without an explicit
-            // drop callback.
+          // Still run the guard so adapters can clear sticky continuationRequested.
+          if (request.dispatchIfCurrent !== undefined) {
             yield* request.dispatchIfCurrent(Effect.void);
           }
           return;
