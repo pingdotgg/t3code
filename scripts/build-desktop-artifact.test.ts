@@ -538,7 +538,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it.effect("maps the headless launcher into RPM packages", () =>
+  it.effect("includes runtime dependencies and the headless launcher in RPM packages", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
         "linux",
@@ -552,6 +552,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       const rpm = config.rpm as Record<string, unknown>;
+      assert.deepStrictEqual(rpm.depends, [
+        "gtk3",
+        "libnotify",
+        "nss",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "alsa-lib",
+        "libsecret",
+        "mesa-libgbm",
+      ]);
       assert.deepStrictEqual(rpm.fpm, ["/tmp/t3=/usr/bin/t3"]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );

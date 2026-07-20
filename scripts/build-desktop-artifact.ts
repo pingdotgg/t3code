@@ -125,6 +125,20 @@ const DEB_DEPENDENCIES = [
   "libasound2t64 | libasound2",
 ] as const;
 
+const RPM_DEPENDENCIES = [
+  "gtk3",
+  "libnotify",
+  "nss",
+  "libXScrnSaver",
+  "(libXtst or libXtst6)",
+  "xdg-utils",
+  "at-spi2-core",
+  "(libuuid or libuuid1)",
+  "alsa-lib",
+  "libsecret",
+  "mesa-libgbm",
+] as const;
+
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
@@ -1500,9 +1514,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       };
     }
 
-    if (target === "rpm" && linuxHeadlessLauncherPath) {
+    if (target === "rpm") {
       buildConfig.rpm = {
-        fpm: [`${linuxHeadlessLauncherPath}=/usr/bin/t3`],
+        depends: [...RPM_DEPENDENCIES],
+        ...(linuxHeadlessLauncherPath ? { fpm: [`${linuxHeadlessLauncherPath}=/usr/bin/t3`] } : {}),
       };
     }
   }
