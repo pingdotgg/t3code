@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -184,6 +185,40 @@ describe("ProviderContinuationService", () => {
                   )
                 : Effect.succeed(projection);
             },
+          }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
+  it.effect("clears a sticky continuation offer when its thread is archived", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const cleared = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          clearIfCurrent: () => Ref.set(cleared, true),
+        });
+        for (let attempt = 0; attempt < 20 && !(yield* Ref.get(cleared)); attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+        assert.isTrue(yield* Ref.get(cleared));
+        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
+      }).pipe(
+        Effect.provide(
+          testLayer({
+            dispatched,
+            getThreadProjection: () =>
+              Effect.succeed({
+                ...projection,
+                thread: {
+                  ...projection.thread,
+                  archivedAt: DateTime.makeUnsafe("2026-07-20T00:00:00.000Z"),
+                },
+              }),
           }),
         ),
         Effect.scoped,
