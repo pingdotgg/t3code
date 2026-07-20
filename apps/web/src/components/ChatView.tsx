@@ -145,6 +145,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
+  buildProjectScript,
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
@@ -2752,13 +2753,7 @@ function ChatViewContent(props: ChatViewProps) {
         input.name,
         activeProject.scripts.map((script) => script.id),
       );
-      const nextScript: ProjectScript = {
-        id: nextId,
-        name: input.name,
-        command: input.command,
-        icon: input.icon,
-        runOnWorktreeCreate: input.runOnWorktreeCreate,
-      };
+      const nextScript = buildProjectScript(nextId, input);
       const nextScripts = input.runOnWorktreeCreate
         ? [
             ...activeProject.scripts.map((script) =>
@@ -2792,13 +2787,7 @@ function ChatViewContent(props: ChatViewProps) {
         return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
       }
 
-      const updatedScript: ProjectScript = {
-        ...existingScript,
-        name: input.name,
-        command: input.command,
-        icon: input.icon,
-        runOnWorktreeCreate: input.runOnWorktreeCreate,
-      };
+      const updatedScript = buildProjectScript(existingScript.id, input);
       const nextScripts = activeProject.scripts.map((script) =>
         script.id === scriptId
           ? updatedScript
