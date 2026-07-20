@@ -95,6 +95,7 @@ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceContext from "./workspace/WorkspaceContext.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -331,6 +332,7 @@ const buildAppUnderTest = (options?: {
     projectSetupScriptRunner?: Partial<
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
     >;
+    workspaceContext?: Partial<WorkspaceContext.WorkspaceContext["Service"]>;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
@@ -496,6 +498,14 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
+      options?.layers?.workspaceContext
+        ? Layer.mock(WorkspaceContext.WorkspaceContext)({
+            initialize: () => Effect.succeed({ relativePath: ".context" as const }),
+            readMarkdownFile: () => Effect.die("WorkspaceContext.readMarkdownFile not stubbed"),
+            writeMarkdownFile: () => Effect.die("WorkspaceContext.writeMarkdownFile not stubbed"),
+            ...options.layers.workspaceContext,
+          })
+        : WorkspaceContext.layer.pipe(Layer.provide(WorkspacePaths.layer)),
       ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
@@ -4648,9 +4658,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       const stat = yield* fs.stat(missingWorkspaceRoot);
+      const contextStat = yield* fs.stat(path.join(missingWorkspaceRoot, ".context"));
+      const gitignore = yield* fs.readFileString(path.join(missingWorkspaceRoot, ".gitignore"));
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+      assert.equal(contextStat.type, "Directory");
+      assert.include(gitignore, ".context/");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -6047,6 +6061,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
         const bootstrapGitOperations: string[] = [];
+        const bootstrapSideEffects: string[] = [];
         const refreshStatus = vi.fn((_: string) =>
           Effect.succeed({
             isRepo: true,
@@ -6100,12 +6115,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
             >[0],
           ) =>
-            Effect.succeed({
-              status: "started" as const,
-              scriptId: "setup",
-              scriptName: "Setup",
-              terminalId: "setup-setup",
-              cwd: "/tmp/bootstrap-worktree",
+            Effect.sync(() => {
+              bootstrapSideEffects.push("setup-script");
+              return {
+                status: "started" as const,
+                scriptId: "setup",
+                scriptName: "Setup",
+                terminalId: "setup-setup",
+                cwd: "/tmp/bootstrap-worktree",
+              };
+            }),
+        );
+        const initializeContext = vi.fn(
+          (_: Parameters<WorkspaceContext.WorkspaceContext["Service"]["initialize"]>[0]) =>
+            Effect.sync(() => {
+              bootstrapSideEffects.push("context-init");
+              return { relativePath: ".context" as const };
             }),
         );
 
@@ -6129,6 +6154,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             },
             projectSetupScriptRunner: {
               runForThread,
+            },
+            workspaceContext: {
+              initialize: initializeContext,
             },
           },
         });
@@ -6206,6 +6234,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           "resolve-remote-commit",
           "create-worktree",
         ]);
+        assert.deepEqual(initializeContext.mock.calls[0]?.[0], {
+          workspaceRoot: "/tmp/bootstrap-worktree",
+        });
+        assert.deepEqual(bootstrapSideEffects, ["context-init", "setup-script"]);
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
           threadId: ThreadId.make("thread-bootstrap"),
           projectId: defaultProjectId,

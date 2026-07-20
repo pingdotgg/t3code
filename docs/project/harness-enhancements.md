@@ -44,7 +44,7 @@ Relevant upstream changes to build on:
 | P0       | Workspace migration and compatibility layer      | Compat complete | Lets existing projects, threads, routes, and APIs keep working while workspace ownership rolls out.                             |
 | P0       | Durable workspace persistence model              | Complete        | Gives workspaces stable IDs and stored ownership so branch/worktree state no longer depends on thread metadata.                 |
 | P0       | Dev/prod data isolation and feature flag rollout | Complete        | Lets the new workspace layout run in dev without risking the user's deployed/current T3 Code data.                              |
-| P0       | Workspace context folder                         | Not started     | Gives each workspace durable memory across turns, restarts, and provider handoffs.                                              |
+| P0       | Workspace context folder                         | Partial         | Gives each workspace durable memory across turns, restarts, and provider handoffs.                                              |
 | P0       | Durable task list                                | Not started     | Gives every workspace a trustworthy task state instead of relying on the agent to update a checklist.                           |
 | P1       | Workspace setup scripts                          | Partial         | Existing setup scripts can run on worktree creation with project/worktree env; repo-shared setup profiles still need polish.    |
 | P1       | Local file copy rules                            | Not started     | Copies `.env*` and user-selected local files into new worktrees safely before agents start work.                                |
@@ -342,6 +342,20 @@ Initial implementation notes:
 - Keep writes atomic and scoped to the active workspace path.
 - Keep `.context/` out of the normal changed-files/diff review flow by default.
 - Add a later context inspector/reset surface for debugging bad or stale memory.
+
+Completed first slice:
+
+- Added server-side `.context` helpers under `apps/server/src/workspace/`.
+- Project creation initializes `.context/`, standard markdown files, and a `.gitignore` entry in the project root.
+- First-send worktree bootstrap initializes `.context/` in the created worktree before setup scripts run.
+- Context markdown reads/writes are scoped to `.context/`, reject traversal and non-markdown files, and write via atomic temp-file rename.
+- No app-data mirror is persisted; filesystem files remain the durable source.
+
+Still pending:
+
+- Add UI/RPC access for direct context inspection or reset.
+- Add prompt assembly so agents read the relevant context files automatically.
+- Add the context/task update reactor that keeps context current after meaningful turns.
 
 ## P0: Durable Task List
 

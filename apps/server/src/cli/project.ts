@@ -36,6 +36,7 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 type ProjectMutationTarget = {
@@ -200,6 +201,7 @@ const projectCommandUuid = Crypto.Crypto.pipe(
 
 const ProjectCliRuntimeLive = Layer.mergeAll(
   WorkspacePaths.layer,
+  WorkspaceContext.layer.pipe(Layer.provide(WorkspacePaths.layer)),
   OrchestrationLayerLive.pipe(
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceLayerLive),

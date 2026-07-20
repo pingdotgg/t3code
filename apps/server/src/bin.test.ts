@@ -31,6 +31,7 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as WorkspaceContext from "./workspace/WorkspaceContext.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
@@ -94,6 +95,7 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
       Layer.provideMerge(SqlitePersistenceLayerLive),
     ),
     WorkspacePaths.layer,
+    WorkspaceContext.layer.pipe(Layer.provide(WorkspacePaths.layer)),
   ).pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(ServerConfig.layer(config)));
 
 const readPersistedSnapshot = (baseDir: string) =>

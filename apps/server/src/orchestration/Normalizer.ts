@@ -12,6 +12,7 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceContext from "../workspace/WorkspaceContext.ts";
 
 export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
   Effect.gen(function* () {
@@ -19,6 +20,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+    const workspaceContext = yield* WorkspaceContext.WorkspaceContext;
 
     const normalizeProjectWorkspaceRoot = (workspaceRoot: string) =>
       workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(
@@ -48,12 +50,21 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (command.type === "project.create") {
+      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
+        command.workspaceRoot,
+        command.createWorkspaceRootIfMissing,
+      );
+      yield* workspaceContext.initialize({ workspaceRoot }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationDispatchCommandError({
+              message: cause.message,
+            }),
+        ),
+      );
       return {
         ...command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          command.workspaceRoot,
-          command.createWorkspaceRootIfMissing,
-        ),
+        workspaceRoot,
         createWorkspaceRootIfMissing: command.createWorkspaceRootIfMissing === true,
       } satisfies OrchestrationCommand;
     }
