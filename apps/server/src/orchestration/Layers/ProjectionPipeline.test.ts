@@ -2643,3 +2643,161 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-recreate-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("purges stale child rows when a soft-deleted thread id is recreated", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const threadId = ThreadId.make("thread-recreate");
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.make("evt-recreate-1"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-recreate"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-recreate-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-recreate-1"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-recreate"),
+            title: "Project Recreate",
+            workspaceRoot: "/tmp/project-recreate",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        const createThreadEvent = (eventId: string, commandId: string) =>
+          ({
+            type: "thread.created",
+            eventId: EventId.make(eventId),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make(commandId),
+            causationEventId: null,
+            correlationId: CorrelationId.make(commandId),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId: ProjectId.make("project-recreate"),
+              title: "Thread Recreate",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          }) satisfies Parameters<typeof eventStore.append>[0];
+
+        // First lifecycle: create the thread and accumulate child rows.
+        yield* appendAndProject(createThreadEvent("evt-recreate-2", "cmd-recreate-2"));
+
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-recreate-3"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-recreate-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-recreate-3"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-recreate"),
+            role: "user",
+            text: "first lifecycle message",
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-recreate-4"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-recreate-4"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-recreate-4"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-recreate"),
+              tone: "info",
+              kind: "setup-script.requested",
+              summary: "Starting setup script",
+              payload: {},
+              turnId: null,
+              createdAt: now,
+            },
+          },
+        });
+
+        const countRows = (table: string) =>
+          sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS "count" FROM ${sql(table)} WHERE thread_id = ${threadId}
+          `.pipe(Effect.map((rows) => rows[0]?.count ?? 0));
+
+        assert.equal(yield* countRows("projection_thread_messages"), 1);
+        assert.equal(yield* countRows("projection_thread_activities"), 1);
+
+        // Soft-delete (bootstrap cleanup), then recreate with the same id.
+        yield* appendAndProject({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-recreate-5"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-recreate-5"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-recreate-5"),
+          metadata: {},
+          payload: {
+            threadId,
+            deletedAt: now,
+          },
+        });
+
+        yield* appendAndProject(createThreadEvent("evt-recreate-6", "cmd-recreate-6"));
+
+        // The re-created thread must not inherit stale child rows.
+        assert.equal(yield* countRows("projection_thread_messages"), 0);
+        assert.equal(yield* countRows("projection_thread_activities"), 0);
+
+        const threadRows = yield* sql<{
+          readonly threadId: string;
+          readonly deletedAt: string | null;
+        }>`
+          SELECT thread_id AS "threadId", deleted_at AS "deletedAt"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(threadRows, [{ threadId: "thread-recreate", deletedAt: null }]);
+      }),
+    );
+  },
+);

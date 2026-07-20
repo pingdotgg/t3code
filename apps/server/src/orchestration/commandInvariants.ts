@@ -151,46 +151,25 @@ export function requireThreadNotArchived(input: {
   );
 }
 
-/**
- * A soft-deleted thread that never accumulated any content: no messages,
- * activities, proposed plans, checkpoints, session, or turn.
- *
- * This is exactly the state a draft thread is left in when its bootstrap turn
- * start fails before the turn ever runs — e.g. worktree preparation fails, so
- * the server cleans up by deleting the just-created thread (see
- * `dispatchBootstrapTurnStart` in `ws.ts`). The client then retries with the
- * same draft thread id.
- *
- * Only such a content-free tombstone is safe to reuse: thread deletion is a
- * soft delete, and the persistent projection keeps child rows keyed by
- * `threadId` (messages, activities, proposed plans, checkpoints, sessions) even
- * after deletion. Reusing the id of a tombstone that DID have content would
- * surface those stale child records on the re-created thread, so those are left
- * blocked. A content-free tombstone owns no child rows, so reuse is clean.
- */
-function isReusableThreadTombstone(thread: OrchestrationThread): boolean {
-  return (
-    thread.deletedAt !== null &&
-    thread.latestTurn === null &&
-    thread.session === null &&
-    thread.messages.length === 0 &&
-    thread.activities.length === 0 &&
-    thread.proposedPlans.length === 0 &&
-    thread.checkpoints.length === 0
-  );
-}
-
 export function requireThreadAbsent(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
   const existing = findThreadById(input.readModel, input.threadId);
-  // Re-creating a thread id is allowed only when the existing thread is a
-  // content-free tombstone left behind by a failed bootstrap turn start (see
-  // isReusableThreadTombstone). A live thread — or a tombstone that still owns
-  // child projection rows — blocks creation.
-  if (!existing || isReusableThreadTombstone(existing)) {
+  // A soft-deleted thread (deletedAt set) must not block re-creating a thread
+  // with the same id. This happens when a draft thread's bootstrap turn start
+  // fails partway (e.g. worktree preparation fails): the server cleans up by
+  // deleting the just-created thread, and the client then retries with the same
+  // draft thread id. Treating the tombstone as absent lets the retry succeed
+  // instead of failing with "already exists".
+  //
+  // Re-creation is clean: the in-memory projector replaces the thread with a
+  // fresh, empty record on `thread.created`, and the persistent projectors each
+  // purge their own child rows for the id on `thread.created` (see
+  // ProjectionPipeline), so no stale messages/activities/turns/etc. from the
+  // prior lifecycle survive onto the re-created thread.
+  if (!existing || existing.deletedAt !== null) {
     return Effect.void;
   }
   return Effect.fail(
