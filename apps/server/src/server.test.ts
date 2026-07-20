@@ -46,6 +46,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
@@ -5689,7 +5690,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectionSnapshotQuery: {
             getShellSnapshot: () =>
               Effect.gen(function* () {
-                yield* Effect.sleep("25 millis");
                 yield* PubSub.publish(liveEvents, deletedEvent);
                 return {
                   snapshotSequence: 1,
@@ -5837,12 +5837,53 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeShell replaces a cursor ahead of the authoritative head", () =>
+    Effect.gen(function* () {
+      let readEventsCalls = 0;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(5),
+            readEvents: () =>
+              Stream.sync(() => {
+                readEventsCalls += 1;
+                return {} as OrchestrationEvent;
+              }),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 5,
+                projects: [],
+                threads: [],
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const first = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({ afterSequence: 10 }).pipe(
+            Stream.runHead,
+          ),
+        ),
+      );
+
+      assert.equal(Option.getOrThrow(first).kind, "snapshot");
+      assert.equal(readEventsCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeShell coalesces a per-thread burst without stalling other threads", () =>
     Effect.gen(function* () {
       const busyThreadId = ThreadId.make("thread-busy");
       const newThreadId = ThreadId.make("thread-new");
       const now = "2026-01-01T00:00:00.000Z";
       const shellFetches: Array<string> = [];
+      let replayLimit: number | undefined;
 
       const messageEvent = (sequence: number): OrchestrationEvent =>
         ({
@@ -5879,11 +5920,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             latestSequence: Effect.succeed(50),
             // A burst of message-sent deltas for the busy thread, plus one
             // thread.created for a different thread, all within one batch.
-            readEvents: () =>
-              Stream.fromIterable([
+            readEvents: (_afterSequence, limit) => {
+              replayLimit = limit;
+              return Stream.fromIterable([
                 ...Array.from({ length: 20 }, (_unused, index) => messageEvent(index + 1)),
                 createdEvent,
-              ]),
+              ]);
+            },
           },
           projectionSnapshotQuery: {
             getThreadShellById: (threadId) =>
@@ -5915,7 +5958,101 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.include(upsertedIds, newThreadId);
       assert.equal(collected[2]?.kind, "synchronized");
       assert.equal(shellFetches.filter((id) => id === busyThreadId).length, 1);
+      assert.equal(replayLimit, 50);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeShell coalesces live bursts after the synchronization marker", () =>
+    Effect.gen(function* () {
+      const busyThreadId = ThreadId.make("thread-live-busy");
+      const newThreadId = ThreadId.make("thread-live-new");
+      const now = "2026-01-01T00:00:00.000Z";
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const synchronized = yield* Deferred.make<void>();
+      const shellFetches: Array<string> = [];
+
+      const messageEvent = (sequence: number): OrchestrationEvent =>
+        ({
+          sequence,
+          eventId: EventId.make(`event-live-${sequence}`),
+          aggregateKind: "thread",
+          aggregateId: busyThreadId,
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.message-sent",
+          payload: {} as never,
+        }) satisfies OrchestrationEvent;
+
+      const createdEvent: OrchestrationEvent = {
+        sequence: 50,
+        eventId: EventId.make("event-live-created"),
+        aggregateKind: "thread",
+        aggregateId: newThreadId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.created",
+        payload: {} as never,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: (threadId) =>
+              Effect.sync(() => {
+                shellFetches.push(threadId);
+                return Option.some(makeDefaultOrchestrationThreadShell({ id: threadId }));
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const itemsFiber = yield* withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+              requestCompletionMarker: true,
+            }).pipe(
+              Stream.tap((item) =>
+                item.kind === "synchronized"
+                  ? Deferred.succeed(synchronized, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+              Stream.take(4),
+              Stream.runCollect,
+            ),
+          ).pipe(Effect.forkScoped);
+
+          yield* Deferred.await(synchronized);
+          for (const event of [
+            ...Array.from({ length: 20 }, (_unused, index) => messageEvent(index + 1)),
+            createdEvent,
+          ]) {
+            yield* PubSub.publish(liveEvents, event);
+          }
+
+          return yield* Fiber.join(itemsFiber);
+        }),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "synchronized");
+      const liveUpsertedIds = Array.from(items)
+        .slice(2)
+        .flatMap((item) => (item.kind === "thread-upserted" ? [item.thread.id] : []));
+      assert.include(liveUpsertedIds, busyThreadId);
+      assert.include(liveUpsertedIds, newThreadId);
+      assert.equal(shellFetches.filter((id) => id === busyThreadId).length, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("subscribeShell coalescing still emits a removal for a deleted thread", () =>

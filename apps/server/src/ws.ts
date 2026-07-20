@@ -1193,6 +1193,7 @@ const makeWsRpcLayer = (
                     Queue.offer(liveBuffer, { kind: "event" as const, event }),
                   ),
                 ),
+                { startImmediately: true },
               );
               const bufferedLiveStream = coalesceShellLiveStream(Stream.fromQueue(liveBuffer));
 
@@ -1234,11 +1235,14 @@ const makeWsRpcLayer = (
               if (input.afterSequence !== undefined) {
                 const afterSequence = input.afterSequence;
                 const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
                 // Gap too large: replaying every intervening event (each a shell
                 // refetch) is far more expensive than a single O(active-threads)
-                // snapshot. Send a fresh snapshot, then the buffered live tail,
-                // exactly as the no-afterSequence path does.
-                if (headSequence - afterSequence > SHELL_RESUME_MAX_GAP) {
+                // snapshot. A cursor ahead of this engine's authoritative state
+                // is also invalid, so reset it with a snapshot. Send the snapshot
+                // followed by the buffered live tail, exactly as the
+                // no-afterSequence path does.
+                if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
                   const snapshot = yield* loadSnapshot;
                   return Stream.concat(
                     Stream.make({ kind: "snapshot" as const, snapshot }),
@@ -1246,7 +1250,11 @@ const makeWsRpcLayer = (
                   );
                 }
                 const catchUpStream = coalesceShellStream(
-                  orchestrationEngine.readEvents(afterSequence, Number.MAX_SAFE_INTEGER),
+                  // Replay only through the head captured above. Newer events
+                  // are already covered by the live subscription, so this bound
+                  // cannot chase a moving event-store head or grow the live
+                  // buffer indefinitely while waiting for an empty page.
+                  orchestrationEngine.readEvents(afterSequence, replayGap),
                 ).pipe(
                   Stream.mapError(
                     (cause) =>
