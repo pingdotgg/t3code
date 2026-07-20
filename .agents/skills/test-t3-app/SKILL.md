@@ -5,6 +5,8 @@ description: Launch and test the T3 Code web app in isolated development environ
 
 # Test T3 App
 
+Use this skill for the web client. For iOS Simulator, Android Emulator, or physical-device testing against an isolated T3 backend, use the sibling [`test-t3-mobile`](../test-t3-mobile/SKILL.md) skill.
+
 ## Start an isolated web environment
 
 1. Run commands from the repository root.

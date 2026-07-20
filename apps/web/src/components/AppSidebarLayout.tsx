@@ -33,6 +33,12 @@ function SidebarControl() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
       if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
 
       event.preventDefault();
@@ -40,8 +46,9 @@ function SidebarControl() {
       toggleSidebar();
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, toggleSidebar]);
 
   return (
@@ -131,7 +138,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         className="border-r border-border bg-card text-foreground"
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-          shouldAcceptWidth: ({ nextWidth, wrapper }) =>
+          shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+            nextWidth <= currentWidth ||
             wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
