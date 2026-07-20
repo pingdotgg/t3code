@@ -290,6 +290,7 @@ describe("MessagesTimeline", () => {
   it("recognizes directional user input without inferring intent from layout offsets", async () => {
     const {
       resolveTimelineScrollableNodeIsAtEnd,
+      timelineManualNavigationMovedTowardHistory,
       timelineManualNavigationReachedEnd,
       timelineNavigationInputMovesTowardHistory,
       timelineScrollableNodeCanNavigateTowardHistory,
@@ -339,6 +340,44 @@ describe("MessagesTimeline", () => {
       resolveTimelineScrollableNodeIsAtEnd({
         clientHeight: 400,
         scrollHeight: 800,
+        scrollTop: 399.9,
+      }),
+    ).toBe(true);
+    expect(
+      resolveTimelineScrollableNodeIsAtEnd(
+        {
+          clientHeight: 400,
+          scrollHeight: 800,
+          scrollTop: 256,
+        },
+        144,
+      ),
+    ).toBe(true);
+    expect(
+      resolveTimelineScrollableNodeIsAtEnd(
+        {
+          clientHeight: 400,
+          scrollHeight: 800,
+          scrollTop: 255.9,
+        },
+        144,
+      ),
+    ).toBe(false);
+    expect(
+      timelineManualNavigationMovedTowardHistory({
+        initialScrollTop: 400,
+        scrollTop: 400,
+      }),
+    ).toBe(false);
+    expect(
+      timelineManualNavigationMovedTowardHistory({
+        initialScrollTop: 400,
+        scrollTop: 401,
+      }),
+    ).toBe(false);
+    expect(
+      timelineManualNavigationMovedTowardHistory({
+        initialScrollTop: 400,
         scrollTop: 399.9,
       }),
     ).toBe(true);
