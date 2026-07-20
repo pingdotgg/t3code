@@ -211,6 +211,7 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { InsightsPanel } from "./InsightsPanel";
 import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
 import { FindInChatBar } from "./chat/FindInChatBar";
 import { useChatFind } from "./chat/useChatFind";
@@ -759,9 +760,16 @@ function ChatViewBody(
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
-  const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
-  const [browserPreviewOpen, setBrowserPreviewOpen] = useState(false);
-  const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const [activeRightPanel, setActiveRightPanel] = useState<
+    "plan" | "browser-preview" | "insights" | null
+  >(null);
+  const planSidebarOpen = activeRightPanel === "plan";
+  const browserPreviewOpen = activeRightPanel === "browser-preview";
+  const insightsOpen = activeRightPanel === "insights";
+  const setPlanSidebarOpen = useCallback((open: boolean) => {
+    setActiveRightPanel((current) => (open ? "plan" : current === "plan" ? null : current));
+  }, []);
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -1777,10 +1785,26 @@ function ChatViewBody(
     setTerminalOpen(!terminalState.terminalOpen);
   }, [activeThreadRef, setTerminalOpen, terminalState.terminalOpen]);
   const toggleBrowserPreview = useCallback(() => {
-    setBrowserPreviewOpen((open) => !open);
-  }, []);
+    setActiveRightPanel((current) => {
+      if (current === "browser-preview") return null;
+      planSidebarDismissedForTurnRef.current =
+        activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+      return "browser-preview";
+    });
+  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
   const closeBrowserPreview = useCallback(() => {
-    setBrowserPreviewOpen(false);
+    setActiveRightPanel((current) => (current === "browser-preview" ? null : current));
+  }, []);
+  const toggleInsights = useCallback(() => {
+    setActiveRightPanel((current) => {
+      if (current === "insights") return null;
+      planSidebarDismissedForTurnRef.current =
+        activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+      return "insights";
+    });
+  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  const closeInsights = useCallback(() => {
+    setActiveRightPanel((current) => (current === "insights" ? null : current));
   }, []);
   const splitTerminal = useCallback(() => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
@@ -2306,6 +2330,7 @@ function ChatViewBody(
     if (!autoOpenPlanSidebar) return;
     if (!activePlan) return;
     if (planSidebarOpen) return;
+    if (activeRightPanel !== null) return;
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -2314,6 +2339,7 @@ function ChatViewBody(
   }, [
     activePlan,
     activeLatestTurn?.turnId,
+    activeRightPanel,
     autoOpenPlanSidebar,
     planSidebarOpen,
     sidebarProposedPlan?.turnId,
@@ -4048,6 +4074,7 @@ function ChatViewBody(
           terminalAvailable={activeProject !== undefined}
           terminalOpen={terminalState.terminalOpen}
           browserPreviewOpen={browserPreviewOpen}
+          insightsOpen={insightsOpen}
           exportingThread={isExportingThread}
           exportThreadDisabledReason={exportThreadDisabledReason}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
@@ -4066,6 +4093,7 @@ function ChatViewBody(
           onExportThread={onExportThread}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleBrowserPreview={toggleBrowserPreview}
+          onToggleInsights={toggleInsights}
           onToggleDiff={onToggleDiff}
           paneActions={paneActions}
         />
@@ -4279,7 +4307,7 @@ function ChatViewBody(
         {/* end chat column */}
 
         {/* Plan sidebar */}
-        {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
+        {planSidebarOpen && !shouldUseRightPanelSheet ? (
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}
@@ -4297,6 +4325,12 @@ function ChatViewBody(
             environmentId={activeThread.environmentId}
             threadId={activeThread.id}
             onClose={closeBrowserPreview}
+          />
+        ) : null}
+        {insightsOpen && !shouldUseRightPanelSheet ? (
+          <InsightsPanel
+            activities={activeThread.insightActivities ?? activeThread.activities}
+            onClose={closeInsights}
           />
         ) : null}
       </div>
@@ -4319,19 +4353,27 @@ function ChatViewBody(
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}
-      {shouldUsePlanSidebarSheet ? (
-        <RightPanelSheet open={planSidebarOpen} onClose={closePlanSidebar}>
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            label={planSidebarLabel}
-            environmentId={environmentId}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeWorkspaceRoot}
-            timestampFormat={timestampFormat}
-            mode="sheet"
-            onClose={closePlanSidebar}
-          />
+      {shouldUseRightPanelSheet && (planSidebarOpen || insightsOpen) ? (
+        <RightPanelSheet open onClose={planSidebarOpen ? closePlanSidebar : closeInsights}>
+          {planSidebarOpen ? (
+            <PlanSidebar
+              activePlan={activePlan}
+              activeProposedPlan={sidebarProposedPlan}
+              label={planSidebarLabel}
+              environmentId={environmentId}
+              markdownCwd={gitCwd ?? undefined}
+              workspaceRoot={activeWorkspaceRoot}
+              timestampFormat={timestampFormat}
+              mode="sheet"
+              onClose={closePlanSidebar}
+            />
+          ) : (
+            <InsightsPanel
+              activities={activeThread.insightActivities ?? activeThread.activities}
+              mode="sheet"
+              onClose={closeInsights}
+            />
+          )}
         </RightPanelSheet>
       ) : null}
 

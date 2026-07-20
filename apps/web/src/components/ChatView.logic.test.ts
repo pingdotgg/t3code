@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
+import { isInsightActivity } from "../insights";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -403,6 +404,9 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         thread.id,
         Object.fromEntries(thread.activities.map((activity) => [activity.id, activity])),
       ]),
+    ),
+    insightActivitiesByThreadId: Object.fromEntries(
+      threads.map((thread) => [thread.id, thread.activities.filter(isInsightActivity)]),
     ),
     proposedPlanIdsByThreadId: Object.fromEntries(
       threads.map((thread) => [thread.id, thread.proposedPlans.map((plan) => plan.id)]),

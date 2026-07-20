@@ -1806,6 +1806,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getSnapshotSequence,
     getCounts,
     getActiveProjectByWorkspaceRoot,
+    getSnapshotSequence,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
