@@ -7,22 +7,52 @@ const runId = RunId.make("run:timeline-visibility");
 const nodeId = NodeId.make("node:timeline-visibility");
 
 describe("isOrchestrationV2TurnItemVisible", () => {
-  it("hides interruption results from superseded attempts", () => {
+  it("hides unpaired interruption results from superseded attempts", () => {
     expect(
       isOrchestrationV2TurnItemVisible({
         item: { type: "run_interrupt_result", runId, nodeId },
         runs: [{ id: runId, status: "running" }],
         attempts: [{ runId, rootNodeId: nodeId, status: "superseded" }],
+        items: [{ type: "run_interrupt_result", runId, nodeId }],
       }),
     ).toBe(false);
   });
 
-  it("keeps interruption results from terminal attempts", () => {
+  it("keeps paired interruption results from superseded attempts", () => {
+    expect(
+      isOrchestrationV2TurnItemVisible({
+        item: { type: "run_interrupt_result", runId, nodeId },
+        runs: [{ id: runId, status: "running" }],
+        attempts: [{ runId, rootNodeId: nodeId, status: "superseded" }],
+        items: [
+          { type: "run_interrupt_request", runId, nodeId },
+          { type: "run_interrupt_result", runId, nodeId },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps interruption results from terminal attempts without a request", () => {
     expect(
       isOrchestrationV2TurnItemVisible({
         item: { type: "run_interrupt_result", runId, nodeId },
         runs: [{ id: runId, status: "interrupted" }],
         attempts: [{ runId, rootNodeId: nodeId, status: "interrupted" }],
+        items: [{ type: "run_interrupt_result", runId, nodeId }],
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps interruption results from terminal attempts with a request", () => {
+    expect(
+      isOrchestrationV2TurnItemVisible({
+        item: { type: "run_interrupt_result", runId, nodeId },
+        runs: [{ id: runId, status: "interrupted" }],
+        attempts: [{ runId, rootNodeId: nodeId, status: "interrupted" }],
+        items: [
+          { type: "run_interrupt_request", runId, nodeId },
+          { type: "run_interrupt_result", runId, nodeId },
+        ],
       }),
     ).toBe(true);
   });
@@ -40,6 +70,7 @@ describe("isOrchestrationV2TurnItemVisible", () => {
           },
           { runId, rootNodeId: nodeId, status: "interrupted" },
         ],
+        items: [{ type: "run_interrupt_result", runId, nodeId }],
       }),
     ).toBe(true);
   });

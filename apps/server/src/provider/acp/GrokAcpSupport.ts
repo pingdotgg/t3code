@@ -1,4 +1,5 @@
-import { type GrokSettings, ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,6 +7,7 @@ import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -24,33 +26,16 @@ interface GrokAcpRuntimeInput extends Omit<AcpSessionRuntimeOptions, "authMethod
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly grokSettings: GrokAcpRuntimeGrokSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
-  readonly runtimeMode?: RuntimeMode;
-}
-
-export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
-  switch (runtimeMode) {
-    case "approval-required":
-      return ["--permission-mode", "default", "agent", "stdio"];
-    case "auto-accept-edits":
-      return ["--permission-mode", "acceptEdits", "agent", "stdio"];
-    case "auto":
-      return ["--permission-mode", "auto", "agent", "stdio"];
-    case "full-access":
-      return ["agent", "--always-approve", "stdio"];
-    default:
-      return ["agent", "stdio"];
-  }
 }
 
 export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
-  runtimeMode?: RuntimeMode,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: grokSettings?.binaryPath || "grok",
-    args: [...grokAcpSpawnArgs(runtimeMode)],
+    args: ["agent", "stdio"],
     cwd,
     env: {
       ...environment,
@@ -65,6 +50,21 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
     : GROK_AUTH_METHOD_CACHED_TOKEN;
 }
 
+export function grokAcpRuntimeProcessOwnership(
+  processGroupPlatform: NodeJS.Platform,
+): Pick<
+  AcpSessionRuntime.AcpSessionRuntimeOptions,
+  "ownDescendantProcessGroups" | "ownDetachedProcessGroup" | "processGroupPlatform"
+> {
+  return {
+    // macOS keeps the prior provider-group teardown until a stable libproc
+    // identity provider can cover Grok's nested detached tool groups.
+    ownDescendantProcessGroups: processGroupPlatform === "linux",
+    ownDetachedProcessGroup: true,
+    processGroupPlatform,
+  };
+}
+
 export const makeGrokAcpRuntime = (
   input: GrokAcpRuntimeInput,
 ): Effect.Effect<
@@ -73,16 +73,15 @@ export const makeGrokAcpRuntime = (
   Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const processGroupPlatform = yield* HostProcessPlatform.pipe(
+      Effect.provide(NodeServices.layer),
+    );
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildGrokAcpSpawnInput(
-          input.grokSettings,
-          input.cwd,
-          input.environment,
-          input.runtimeMode,
-        ),
+        spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
         authMethodId: resolveGrokAuthMethodId(input.environment),
+        ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
@@ -107,17 +106,6 @@ export function resolveGrokAcpBaseModelId(model: string | null | undefined): str
   return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? GROK_DEFAULT_MODEL_SLUG;
 }
 
-const GROK_REASONING_EFFORT_TOKEN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
-
-export function isValidGrokReasoningEffortToken(value: string): boolean {
-  return GROK_REASONING_EFFORT_TOKEN.test(value);
-}
-
-export function normalizeGrokReasoningEffort(value: string | undefined): string | undefined {
-  const effort = value?.trim();
-  return effort && isValidGrokReasoningEffortToken(effort) ? effort : undefined;
-}
-
 export function currentGrokModelIdFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
@@ -127,59 +115,18 @@ export function currentGrokModelIdFromSessionSetup(
   return sessionSetupResult.models?.currentModelId?.trim() || undefined;
 }
 
-export function currentGrokReasoningEffortFromSessionSetup(
-  sessionSetupResult:
-    | EffectAcpSchema.LoadSessionResponse
-    | EffectAcpSchema.NewSessionResponse
-    | EffectAcpSchema.ResumeSessionResponse,
-): string | undefined {
-  const modelState = sessionSetupResult.models;
-  if (!modelState) {
-    return undefined;
-  }
-  const currentModelId = modelState.currentModelId.trim();
-  if (currentModelId.length === 0) {
-    return undefined;
-  }
-  const currentModel = modelState.availableModels.find(
-    (model) => model.modelId.trim() === currentModelId,
-  );
-  const reasoningEffort = currentModel?._meta?.reasoningEffort;
-  return typeof reasoningEffort === "string"
-    ? normalizeGrokReasoningEffort(reasoningEffort)
-    : undefined;
-}
-
 export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
-  readonly currentReasoningEffort?: string | undefined;
   readonly requestedModelId: string | undefined;
-  readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
-  // The product slug is never sent over the wire; it keeps the session's current model.
-  const requestedModelId =
-    input.requestedModelId === GROK_DEFAULT_MODEL_SLUG ? undefined : input.requestedModelId;
-  const modelChanged = requestedModelId !== undefined && requestedModelId !== input.currentModelId;
-  const reasoningProvided = input.requestedReasoningEffort !== undefined;
-  const reasoningEffort = reasoningProvided
-    ? normalizeGrokReasoningEffort(input.requestedReasoningEffort)
-    : undefined;
-  const reasoningEffortChanged =
-    reasoningProvided && reasoningEffort !== input.currentReasoningEffort;
-  const targetModelId = requestedModelId ?? input.currentModelId;
-  if ((!modelChanged && !reasoningEffortChanged) || targetModelId === undefined) {
+  const shouldSwitchModel =
+    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
+  if (!shouldSwitchModel) {
     return Effect.succeed(input.currentModelId);
   }
-  const reasoningMeta =
-    reasoningProvided && reasoningEffort !== undefined ? { reasoningEffort } : undefined;
-  // When reasoning was explicitly provided but invalid (normalize => undefined), we deliberately
-  // send no meta so the invalid value is dropped rather than forwarded. When reasoning was not
-  // provided at all, we also send no meta, but we only reach this call when the model itself
-  // changed - an omitted reasoning preference must not be treated as an explicit clear of the
-  // CLI-advertised default (e.g. Extra High) on same-model reselections.
   return input.runtime
-    .setSessionModel(targetModelId, reasoningMeta)
-    .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));
+    .setSessionModel(input.requestedModelId)
+    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
 }

@@ -260,6 +260,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, never>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
+  readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
@@ -323,6 +324,7 @@ export const layer: Layer.Layer<
       readonly providerThread: OrchestrationV2ProviderThread;
       readonly attempt: OrchestrationV2RunAttempt;
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
+      readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
     }) =>
@@ -336,30 +338,37 @@ export const layer: Layer.Layer<
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
         if (!shouldFinalizeRun) {
-          // A newer attempt already owns the run and the command that created
-          // it terminalized this attempt as superseded. Preserve that domain
-          // status while retaining the provider's interruption artifact.
+          // Superseded attempt (steer / selection restart). Emit
+          // run_interrupt_result only when hard Stop left an unpaired request
+          // for this run; plain steers and already-paired stops emit nothing.
           if (input.terminal.status === "interrupted") {
-            yield* eventSink.write({
-              events: [
-                {
-                  id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
-                  type: "turn-item.updated" as const,
-                  threadId: input.run.threadId,
-                  runId: input.run.id,
-                  nodeId: input.rootNode.id,
-                  providerInstanceId: input.run.providerInstanceId,
-                  occurredAt: completedAt,
-                  payload: makeInterruptResultTurnItem({
-                    idAllocator,
-                    run: input.run,
-                    rootNode: input.rootNode,
-                    providerThread: input.providerThread,
-                    completedAt,
-                  }),
-                },
-              ],
-            });
+            const hasUnpairedRequest =
+              input.hasUnpairedRunInterruptRequest === undefined
+                ? false
+                : yield* input.hasUnpairedRunInterruptRequest();
+            if (hasUnpairedRequest) {
+              yield* eventSink.writeWithEffects({
+                effects: [],
+                events: [
+                  {
+                    id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                    type: "turn-item.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: makeInterruptResultTurnItem({
+                      idAllocator,
+                      run: input.run,
+                      rootNode: input.rootNode,
+                      providerThread: input.providerThread,
+                      completedAt,
+                    }),
+                  },
+                ],
+              });
+            }
           }
           return;
         }
@@ -594,6 +603,11 @@ export const layer: Layer.Layer<
                 ...(input.shouldFinalizeRun === undefined
                   ? {}
                   : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                ...(input.hasUnpairedRunInterruptRequest === undefined
+                  ? {}
+                  : {
+                      hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
+                    }),
                 terminal,
                 failureItemPersisted: terminal.status === "failed",
               }).pipe(
@@ -776,6 +790,12 @@ export const layer: Layer.Layer<
                                     ...(input.shouldFinalizeRun === undefined
                                       ? {}
                                       : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                                    ...(input.hasUnpairedRunInterruptRequest === undefined
+                                      ? {}
+                                      : {
+                                          hasUnpairedRunInterruptRequest:
+                                            input.hasUnpairedRunInterruptRequest,
+                                        }),
                                     terminal: makeFailedTerminalEvent(
                                       makeProviderFailure({
                                         cause: Cause.squash(cause),
@@ -847,6 +867,12 @@ export const layer: Layer.Layer<
                           ...(input.shouldFinalizeRun === undefined
                             ? {}
                             : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                          ...(input.hasUnpairedRunInterruptRequest === undefined
+                            ? {}
+                            : {
+                                hasUnpairedRunInterruptRequest:
+                                  input.hasUnpairedRunInterruptRequest,
+                              }),
                           terminal: makeFailedTerminalEvent(
                             makeProviderFailure({
                               cause: Cause.squash(cause),
