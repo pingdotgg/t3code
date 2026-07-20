@@ -1,5 +1,4 @@
 import {
-  AuthSessionState as AuthSessionStateSchema,
   EnvironmentAuthInvalidError,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
@@ -8,10 +7,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
+import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "./lib/runtime";
 
 type TestWindow = {
   location: URL;
@@ -36,8 +36,6 @@ const DESKTOP_AUTH = {
 } as const;
 
 const SESSION_EXPIRES_AT = DateTime.makeUnsafe("2026-04-05T00:00:00.000Z");
-const encodeAuthSessionState = Schema.encodeSync(AuthSessionStateSchema);
-
 const unauthenticatedSession = (auth: AuthSessionState["auth"]): AuthSessionState => ({
   authenticated: false,
   auth,
@@ -71,6 +69,21 @@ function installTestBrowser(url: string) {
   vi.stubGlobal("document", { title: "T3 Code" });
 
   return testWindow;
+}
+
+function installDesktopBootstrap() {
+  const testWindow = installTestBrowser("http://localhost/");
+  testWindow.desktopBridge = {
+    getLocalEnvironmentBootstraps: () => [
+      {
+        id: "primary",
+        label: "Local environment",
+        httpBaseUrl: "http://localhost:3773",
+        wsBaseUrl: "ws://localhost:3773",
+        bootstrapToken: "desktop-bootstrap-token",
+      },
+    ],
+  } as unknown as DesktopBridge;
 }
 
 function sequence<A>(...values: ReadonlyArray<A>) {
@@ -117,6 +130,7 @@ describe("resolveInitialServerAuthGateState", () => {
     disposeHttpTest = undefined;
     const { __resetServerAuthBootstrapForTests } = await import("./environments/primary");
     __resetServerAuthBootstrapForTests();
+    __setPrimaryHttpRunnerForTests();
     vi.unstubAllEnvs();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -134,13 +148,16 @@ describe("resolveInitialServerAuthGateState", () => {
 
     const testWindow = installTestBrowser("http://localhost/");
     testWindow.desktopBridge = {
-      getLocalEnvironmentBootstrap: () => ({
-        label: "Local environment",
-        httpBaseUrl: "http://localhost:3773",
-        wsBaseUrl: "ws://localhost:3773",
-        bootstrapToken: "desktop-bootstrap-token",
-      }),
-    } as DesktopBridge;
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
 
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
@@ -189,12 +206,15 @@ describe("resolveInitialServerAuthGateState", () => {
 
     const testWindow = installTestBrowser("http://127.0.0.1:5733/");
     testWindow.desktopBridge = {
-      getLocalEnvironmentBootstrap: () => ({
-        label: "Local environment",
-        httpBaseUrl: "http://127.0.0.1:3773",
-        wsBaseUrl: "ws://127.0.0.1:3773",
-      }),
-    } as DesktopBridge;
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
+        },
+      ],
+    } as unknown as DesktopBridge;
 
     const { resolveInitialServerAuthGateState, resolvePrimaryEnvironmentHttpUrl } =
       await import("./environments/primary");
@@ -220,18 +240,22 @@ describe("resolveInitialServerAuthGateState", () => {
 
   it("retries transient auth session bootstrap failures after restart", async () => {
     vi.useFakeTimers();
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
-      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
-      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify(encodeAuthSessionState(unauthenticatedSession(LOOPBACK_AUTH))),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
-    vi.stubGlobal("fetch", fetchMock);
+    let attempts = 0;
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const response = HttpClientResponse.fromWeb(
+      request,
+      new Response("Bad Gateway", { status: 502 }),
+    );
+    const runner: PrimaryHttpEffectRunner = async <A>() => {
+      attempts += 1;
+      if (attempts < 4) {
+        throw new HttpClientError.HttpClientError({
+          reason: new HttpClientError.StatusCodeError({ request, response }),
+        });
+      }
+      return unauthenticatedSession(LOOPBACK_AUTH) as A;
+    };
+    __setPrimaryHttpRunnerForTests(runner);
 
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
@@ -242,7 +266,7 @@ describe("resolveInitialServerAuthGateState", () => {
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(attempts).toBe(4);
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {
@@ -286,24 +310,72 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.session).toBe(2);
   });
 
+  it("rejects a blank pairing token with a structured validation error", async () => {
+    const { PrimaryEnvironmentPairingCredentialRequiredError, submitServerAuthCredential } =
+      await import("./environments/primary/auth");
+
+    const error = await submitServerAuthCredential("   ").then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+
+    expect(error).toBeInstanceOf(PrimaryEnvironmentPairingCredentialRequiredError);
+    expect(error).toMatchObject({
+      _tag: "PrimaryEnvironmentPairingCredentialRequiredError",
+      providedLength: 3,
+      message: "Enter a pairing token to continue.",
+    });
+  });
+
   it("surfaces a friendly error message when an invalid pairing token is submitted", async () => {
+    const cause = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-invalid-credential",
+    });
     const testApi = await installAuthApi({
-      browserSession: () =>
-        Effect.fail(
-          new EnvironmentAuthInvalidError({
-            code: "auth_invalid",
-            reason: "invalid_credential",
-            traceId: "trace-invalid-credential",
-          }),
-        ),
+      browserSession: () => Effect.fail(cause),
     });
 
-    const { submitServerAuthCredential } = await import("./environments/primary");
+    const { isPrimaryEnvironmentPairingCredentialRejectedError, submitServerAuthCredential } =
+      await import("./environments/primary");
 
-    await expect(submitServerAuthCredential("bad-token")).rejects.toThrow(
-      "Invalid pairing token. Check the token and try again.",
+    const error = await submitServerAuthCredential("bad-token").then(
+      () => null,
+      (failure: unknown) => failure,
     );
+    expect(error).toMatchObject({
+      _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
+      providedLength: 9,
+      message: "Invalid pairing token. Check the token and try again.",
+    });
+    expect(isPrimaryEnvironmentPairingCredentialRejectedError(error)).toBe(true);
+    if (!isPrimaryEnvironmentPairingCredentialRejectedError(error)) {
+      throw new Error("Expected a structured rejected pairing credential error.");
+    }
+    expect(error.cause).toMatchObject({
+      _tag: "EnvironmentAuthInvalidError",
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-invalid-credential",
+    });
     expect(testApi.calls.browserSession).toEqual([{ credential: "bad-token" }]);
+  });
+
+  it("derives primary request messages from structural request context", async () => {
+    const cause = new Error("private transport detail");
+    const { PrimaryEnvironmentRequestError } = await import("./environments/primary");
+    const error = PrimaryEnvironmentRequestError.fromCause({
+      operation: "list-pairing-links",
+      cause,
+    });
+
+    expect(error.status).toBe(500);
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe(
+      "Primary environment request failed during list-pairing-links (HTTP 500).",
+    );
+    expect(error.message).not.toContain(cause.message);
   });
 
   it("waits for the authenticated session to become observable after silent desktop bootstrap", async () => {
@@ -320,13 +392,16 @@ describe("resolveInitialServerAuthGateState", () => {
 
     const testWindow = installTestBrowser("http://localhost/");
     testWindow.desktopBridge = {
-      getLocalEnvironmentBootstrap: () => ({
-        label: "Local environment",
-        httpBaseUrl: "http://localhost:3773",
-        wsBaseUrl: "ws://localhost:3773",
-        bootstrapToken: "desktop-bootstrap-token",
-      }),
-    } as DesktopBridge;
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
 
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
@@ -335,6 +410,28 @@ describe("resolveInitialServerAuthGateState", () => {
 
     await expect(gateStatePromise).resolves.toEqual({ status: "authenticated" });
     expect(testApi.calls.session).toBe(3);
+  });
+
+  it("preserves the timeout message when a bootstrapped session never becomes observable", async () => {
+    vi.useFakeTimers();
+    const testApi = await installAuthApi({
+      session: () => unauthenticatedSession(DESKTOP_AUTH),
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
+    });
+
+    installDesktopBootstrap();
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    const gateStatePromise = resolveInitialServerAuthGateState();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(gateStatePromise).resolves.toEqual({
+      status: "requires-auth",
+      auth: DESKTOP_AUTH,
+      errorMessage: "Timed out waiting for authenticated session after bootstrap.",
+    });
+    expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
   });
 
   it("memoizes the authenticated gate state after the first successful read", async () => {

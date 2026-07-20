@@ -10,7 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 import * as DpopProofs from "./DpopProofs.ts";
 
@@ -78,8 +78,8 @@ function layer(
         }),
       };
     },
-  } as unknown as RelayDatabase;
-  return DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)));
+  } as unknown as RelayDb.RelayDb["Service"];
+  return DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)));
 }
 
 function consumeEachProofOnce() {
@@ -163,7 +163,7 @@ describe("DpopProofReplay.verifyAndConsume", () => {
       iat: Math.floor(now.epochMilliseconds / 1_000),
       jti: "proof-persistence-failure",
     });
-    const cause = "database unavailable";
+    const cause = { _tag: "DatabaseUnavailable" } as const;
 
     return Effect.gen(function* () {
       const replay = yield* DpopProofs.DpopProofReplay;
@@ -177,8 +177,16 @@ describe("DpopProofReplay.verifyAndConsume", () => {
         }),
       );
 
-      expect(error).toEqual(new DpopProofs.DpopProofReplayPersistenceError({ cause }));
-    }).pipe(Effect.provide(layer(() => Effect.fail({ _tag: cause }))));
+      expect(error).toMatchObject({
+        _tag: "DpopProofReplayPersistenceError",
+        operation: "consume",
+        thumbprint: proof.thumbprint,
+        jti: "proof-persistence-failure",
+        iat: Math.floor(now.epochMilliseconds / 1_000),
+      });
+      expect(error.cause).toBe(cause);
+      expect(error).not.toHaveProperty("proof");
+    }).pipe(Effect.provide(layer(() => Effect.fail(cause))));
   });
 
   it.effect("accepts proofs bound to the access token hash", () => {

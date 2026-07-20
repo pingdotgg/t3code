@@ -27,8 +27,12 @@ export type MarkdownLinkPresentation =
     }
   | {
       readonly kind: "file";
+      readonly href: string;
       readonly icon: MarkdownFileIcon;
       readonly label: string;
+      readonly path: string;
+      readonly line?: number;
+      readonly column?: number;
     }
   | {
       readonly kind: "link";
@@ -247,7 +251,7 @@ function normalizeDestination(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
-function fileUrlPath(href: string): string | null {
+function fileUrlTarget(href: string): { readonly path: string; readonly hash: string } | null {
   try {
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") {
@@ -256,13 +260,42 @@ function fileUrlPath(href: string): string | null {
     const path = /^\/[A-Za-z]:[\\/]/.test(parsed.pathname)
       ? parsed.pathname.slice(1)
       : parsed.pathname;
-    const lineMatch = parsed.hash.match(/^#L(\d+)(?:C(\d+))?$/i);
-    return `${safeDecode(path)}${
-      lineMatch?.[1] ? `:${lineMatch[1]}${lineMatch[2] ? `:${lineMatch[2]}` : ""}` : ""
-    }`;
+    return { path, hash: parsed.hash };
   } catch {
     return null;
   }
+}
+
+function stripSearchAndHash(value: string): { readonly path: string; readonly hash: string } {
+  const hashIndex = value.indexOf("#");
+  const pathWithSearch = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
+  const hash = hashIndex >= 0 ? value.slice(hashIndex) : "";
+  const queryIndex = pathWithSearch.indexOf("?");
+  return {
+    path: queryIndex >= 0 ? pathWithSearch.slice(0, queryIndex) : pathWithSearch,
+    hash,
+  };
+}
+
+function splitFilePosition(
+  path: string,
+  hash: string,
+): { readonly path: string; readonly line?: number; readonly column?: number } {
+  const suffixMatch = path.match(/:(\d+)(?::(\d+))?$/);
+  const hashMatch = suffixMatch ? null : hash.match(/^#L(\d+)(?:C(\d+))?$/i);
+  const match = suffixMatch ?? hashMatch;
+  if (!match?.[1]) {
+    return { path };
+  }
+
+  const line = Number.parseInt(match[1], 10);
+  const column = match[2] ? Number.parseInt(match[2], 10) : undefined;
+  const pathWithoutPosition = suffixMatch ? path.slice(0, -suffixMatch[0].length) : path;
+  return {
+    path: pathWithoutPosition,
+    ...(line > 0 ? { line } : {}),
+    ...(column !== undefined && column > 0 ? { column } : {}),
+  };
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {
@@ -331,14 +364,31 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
     // Relative paths and non-URL link destinations are handled below.
   }
 
-  const fileTarget = normalized.toLowerCase().startsWith("file:")
-    ? fileUrlPath(normalized)
-    : safeDecode(normalized.split(/[?#]/, 1)[0] ?? normalized);
-  if (fileTarget && looksLikeFilePath(fileTarget)) {
+  const source = normalized.toLowerCase().startsWith("file:")
+    ? fileUrlTarget(normalized)
+    : stripSearchAndHash(normalized);
+  const decodedSource = source
+    ? { path: safeDecode(source.path.trim()), hash: safeDecode(source.hash.trim()) }
+    : null;
+  const fileTarget = decodedSource
+    ? splitFilePosition(decodedSource.path, decodedSource.hash)
+    : null;
+  const targetWithPosition = fileTarget
+    ? `${fileTarget.path}${
+        fileTarget.line
+          ? `:${fileTarget.line}${fileTarget.column ? `:${fileTarget.column}` : ""}`
+          : ""
+      }`
+    : null;
+  if (fileTarget && targetWithPosition && looksLikeFilePath(targetWithPosition)) {
     return {
       kind: "file",
-      icon: resolveMarkdownFileIcon(fileTarget),
-      label: fileLabel(fileTarget),
+      href: normalized,
+      icon: resolveMarkdownFileIcon(fileTarget.path),
+      label: fileLabel(targetWithPosition),
+      path: fileTarget.path,
+      ...(fileTarget.line ? { line: fileTarget.line } : {}),
+      ...(fileTarget.column ? { column: fileTarget.column } : {}),
     };
   }
 

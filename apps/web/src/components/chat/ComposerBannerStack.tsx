@@ -40,14 +40,12 @@ interface ComposerBannerStackProps {
 }
 
 export function ComposerBannerStack({ className, items }: ComposerBannerStackProps) {
-  const [exitingItemId, setExitingItemId] = useState<string | null>(null);
+  const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (exitingItemId && !items.some((item) => item.id === exitingItemId)) {
-      setExitingItemId(null);
-    }
-  }, [exitingItemId, items]);
+  const exitingItemId =
+    requestedExitingItemId !== null && items.some((item) => item.id === requestedExitingItemId)
+      ? requestedExitingItemId
+      : null;
 
   useEffect(() => {
     return () => {
@@ -84,10 +82,10 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   };
 
   return (
-    <div className={cn("group/banner-stack mx-auto mb-2 max-w-208", className)}>
+    <div className={cn("group/banner-stack mx-auto mb-2 max-w-3xl", className)}>
       <div
         className={cn(
-          "relative",
+          "relative flex flex-col-reverse",
           hasStack ? "group-hover/banner-stack:z-50 group-focus-within/banner-stack:z-50" : null,
         )}
       >
@@ -121,30 +119,39 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         </div>
         {hasStack ? (
           <div
+            data-composer-banner-stack-expanded-items="true"
             className={cn(
-              "pointer-events-none absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-20 space-y-2 opacity-0",
-              "transition-[opacity,transform] duration-150 ease-out",
-              "translate-y-1 transform-gpu will-change-[opacity,transform]",
-              "group-hover/banner-stack:pointer-events-auto group-hover/banner-stack:translate-y-0 group-hover/banner-stack:opacity-100",
-              "group-focus-within/banner-stack:pointer-events-auto group-focus-within/banner-stack:translate-y-0 group-focus-within/banner-stack:opacity-100",
+              "relative z-20 grid grid-rows-[0fr] transition-[grid-template-rows] duration-150 ease-out",
+              "group-hover/banner-stack:grid-rows-[1fr] group-focus-within/banner-stack:grid-rows-[1fr]",
             )}
           >
-            {stackedItems.map((item) => (
+            <div className="min-h-0 overflow-hidden">
               <div
-                key={item.id}
-                className={cn(exitingItemId === item.id ? "pointer-events-none" : null)}
-                style={{
-                  ...exitTransitionStyle,
-                  ...(exitingItemId === item.id ? stackedExitStyle : restingStyle),
-                }}
+                className={cn(
+                  "invisible pointer-events-none space-y-2 pb-2 opacity-0",
+                  "translate-y-1 transform-gpu transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform]",
+                  "group-hover/banner-stack:visible group-hover/banner-stack:pointer-events-auto group-hover/banner-stack:translate-y-0 group-hover/banner-stack:opacity-100",
+                  "group-focus-within/banner-stack:visible group-focus-within/banner-stack:pointer-events-auto group-focus-within/banner-stack:translate-y-0 group-focus-within/banner-stack:opacity-100",
+                )}
               >
-                <ComposerBannerStackAlert
-                  item={item}
-                  exiting={exitingItemId === item.id}
-                  onDismissRequest={() => requestDismiss(item)}
-                />
+                {stackedItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(exitingItemId === item.id ? "pointer-events-none" : null)}
+                    style={{
+                      ...exitTransitionStyle,
+                      ...(exitingItemId === item.id ? stackedExitStyle : restingStyle),
+                    }}
+                  >
+                    <ComposerBannerStackAlert
+                      item={item}
+                      exiting={exitingItemId === item.id}
+                      onDismissRequest={() => requestDismiss(item)}
+                    />
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
         ) : null}
       </div>

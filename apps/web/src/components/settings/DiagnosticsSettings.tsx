@@ -7,6 +7,11 @@ import {
   InfoIcon,
   RefreshCwIcon,
 } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
@@ -16,21 +21,24 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
-import { formatRelativeTime } from "../../timestampFormat";
-import { useServerAvailableEditors, useServerObservability } from "../../rpc/serverState";
+import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
+import { useEnvironmentQuery } from "../../state/query";
 import {
-  useProcessDiagnostics,
-  useProcessResourceHistory,
-} from "../../lib/processDiagnosticsState";
-import { useTraceDiagnostics } from "../../lib/traceDiagnosticsState";
+  primaryServerAvailableEditorsAtom,
+  primaryServerObservabilityAtom,
+  serverEnvironment,
+} from "../../state/server";
+import { shellEnvironment } from "../../state/shell";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -57,8 +65,7 @@ function formatBytes(value: number): string {
 
 function formatRelative(value: DateTime.Utc | null): string {
   if (!value) return "No trace records";
-  const relative = formatRelativeTime(DateTime.formatIso(value));
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+  return formatRelativeTimeLabel(DateTime.formatIso(value));
 }
 
 function formatRelativeNoWrap(value: DateTime.Utc | null): string {
@@ -239,16 +246,10 @@ function DiagnosticsTable({
 }
 
 function TraceIdCell({ traceId }: { traceId: string }) {
-  const [copied, setCopied] = useState(false);
-  const copyTraceId = useCallback(() => {
-    void navigator.clipboard
-      ?.writeText(traceId)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1_200);
-      })
-      .catch(() => undefined);
-  }, [traceId]);
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
+    target: "trace ID",
+    timeout: 1_200,
+  });
 
   return (
     <div className="flex w-full min-w-0 max-w-full items-center gap-2">
@@ -274,7 +275,7 @@ function TraceIdCell({ traceId }: { traceId: string }) {
               type="button"
               className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
-              onClick={copyTraceId}
+              onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
             </button>
@@ -753,10 +754,14 @@ function ProcessResourceHistoryTable({
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
   useRelativeTimeTick();
-  const relative = checkedAt ? formatRelativeTime(DateTime.formatIso(checkedAt)) : null;
+  const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
-  if (!relative) {
+  if (relative.status === "missing") {
     return <span className="text-[11px] text-muted-foreground/50">Checking</span>;
+  }
+
+  if (relative.status === "invalid") {
+    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
   }
 
   return (
@@ -803,28 +808,51 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
-  const observability = useServerObservability();
-  const availableEditors = useServerAvailableEditors();
+  const observability = useAtomValue(primaryServerObservabilityAtom);
+  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
+  const primaryEnvironment = usePrimaryEnvironment();
+  const environmentId = primaryEnvironment?.environmentId ?? null;
+  const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
+    reportFailure: false,
+  });
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
     RESOURCE_HISTORY_WINDOWS[1];
-  const { data, error, isPending, refresh } = useTraceDiagnostics();
+  const { data, error, isPending, refresh } = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
+  );
   const {
     data: processData,
     error: processError,
     isPending: isProcessPending,
     refresh: refreshProcesses,
-  } = useProcessDiagnostics();
+  } = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
+  );
   const {
     data: resourceData,
     error: resourceError,
     isPending: isResourcePending,
     refresh: refreshResources,
-  } = useProcessResourceHistory({
-    windowMs: selectedResourceWindow.windowMs,
-    bucketMs: selectedResourceWindow.bucketMs,
-  });
+  } = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.processResourceHistory({
+          environmentId,
+          input: {
+            windowMs: selectedResourceWindow.windowMs,
+            bucketMs: selectedResourceWindow.bucketMs,
+          },
+        }),
+  );
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [signalingPid, setSignalingPid] = useState<number | null>(null);
@@ -838,20 +866,30 @@ export function DiagnosticsSettingsPanel() {
       setOpenLogsDirectoryError("No available editors found.");
       return;
     }
+    if (environmentId === null) {
+      setOpenLogsDirectoryError("No environment is selected.");
+      return;
+    }
 
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
-    void ensureLocalApi()
-      .shell.openInEditor(logsDirectoryPath, editor)
-      .catch((error: unknown) => {
+    void (async () => {
+      const result = await openInEditor({
+        environmentId,
+        input: {
+          cwd: logsDirectoryPath,
+          editor,
+        },
+      });
+      setIsOpeningLogsDirectory(false);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
           error instanceof Error ? error.message : "Unable to open logs folder.",
         );
-      })
-      .finally(() => {
-        setIsOpeningLogsDirectory(false);
-      });
-  }, [availableEditors, observability?.logsDirectoryPath]);
+      }
+    })();
+  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -863,45 +901,52 @@ export function DiagnosticsSettingsPanel() {
       ) {
         return;
       }
+      if (environmentId === null) {
+        return;
+      }
 
       setSignalingPid(pid);
-      void ensureLocalApi()
-        .server.signalProcess({ pid, signal })
-        .then((result) => {
-          if (!result.signaled) {
-            const message = Option.getOrUndefined(result.message);
-            refreshProcesses();
-            if (isStaleProcessSignalMessage(message)) {
-              toastManager.add({
-                type: "info",
-                title: "Process already exited",
-                description:
-                  "The process is not a child of the T3 Server. It might already have exited.",
-              });
-              return;
-            }
-
+      void (async () => {
+        const result = await signalServerProcess({
+          environmentId,
+          input: { pid, signal },
+        });
+        setSignalingPid(null);
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
             toastManager.add({
               type: "error",
               title: `Could not send ${signal}`,
-              description: message ?? `Failed to send ${signal}.`,
+              description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+            });
+          }
+          return;
+        }
+        if (!result.value.signaled) {
+          const message = Option.getOrUndefined(result.value.message);
+          refreshProcesses();
+          if (isStaleProcessSignalMessage(message)) {
+            toastManager.add({
+              type: "info",
+              title: "Process already exited",
+              description:
+                "The process is not a child of the T3 Server. It might already have exited.",
             });
             return;
           }
-          refreshProcesses();
-        })
-        .catch((error: unknown) => {
+
           toastManager.add({
             type: "error",
             title: `Could not send ${signal}`,
-            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+            description: message ?? `Failed to send ${signal}.`,
           });
-        })
-        .finally(() => {
-          setSignalingPid(null);
-        });
+          return;
+        }
+        refreshProcesses();
+      })();
     },
-    [refreshProcesses],
+    [environmentId, refreshProcesses, signalServerProcess],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;

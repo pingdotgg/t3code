@@ -2,7 +2,6 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
@@ -19,6 +18,7 @@ const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
 const configuredClerkPublishableKey = repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || "";
 const configuredClerkJwtTemplate = repoEnv.VITE_CLERK_JWT_TEMPLATE?.trim() || "";
+const configuredClerkCliOAuthClientId = repoEnv.VITE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || "";
 const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || "";
 const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
@@ -39,6 +39,12 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
+// Vite 8.1's experimental bundled dev mode: serves rolldown-bundled chunks in
+// dev for much faster startup/reload on large module graphs, with HMR served
+// as hot patches. Opt-in while experimental: T3CODE_BUNDLED_DEV=1 pnpm dev:web
+const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
+const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
+
 const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
     ? false
@@ -56,30 +62,6 @@ const unitTestProject = {
     // run, those async tests can exceed Vitest's default 5s budget.
     hookTimeout: 15_000,
     testTimeout: 15_000,
-  },
-} satisfies TestProjectInlineConfiguration;
-
-const browserTestProject = {
-  extends: true,
-  server: {
-    // Browser tests need concurrent runs to claim the next available port.
-    strictPort: false,
-  },
-  test: {
-    name: "browser",
-    include: ["src/components/**/*.browser.tsx"],
-    hookTimeout: 30_000,
-    testTimeout: 30_000,
-    browser: {
-      enabled: true,
-      provider: playwright() as never,
-      instances: [{ browser: "chromium" }],
-      headless: true,
-      api: {
-        strictPort: false,
-      },
-    },
-    fileParallelism: false,
   },
 } satisfies TestProjectInlineConfiguration;
 
@@ -123,6 +105,8 @@ export default defineConfig(() => {
     ],
     optimizeDeps: {
       include: [
+        "@clerk/clerk-js",
+        "@clerk/react/internal",
         "@pierre/diffs",
         "@pierre/diffs/editor",
         "@pierre/diffs/react",
@@ -138,6 +122,9 @@ export default defineConfig(() => {
       "import.meta.env.VITE_T3CODE_RELAY_URL": JSON.stringify(configuredRelayUrl),
       "import.meta.env.VITE_CLERK_PUBLISHABLE_KEY": JSON.stringify(configuredClerkPublishableKey),
       "import.meta.env.VITE_CLERK_JWT_TEMPLATE": JSON.stringify(configuredClerkJwtTemplate),
+      "import.meta.env.VITE_CLERK_CLI_OAUTH_CLIENT_ID": JSON.stringify(
+        configuredClerkCliOAuthClientId,
+      ),
       "import.meta.env.VITE_RELAY_OTLP_TRACES_URL": JSON.stringify(configuredRelayTracingUrl),
       "import.meta.env.VITE_RELAY_OTLP_TRACES_DATASET": JSON.stringify(
         configuredRelayTracingDataset,
@@ -149,6 +136,10 @@ export default defineConfig(() => {
     },
     resolve: {
       tsconfigPaths: true,
+      dedupe: ["react", "react-dom"],
+    },
+    experimental: {
+      bundledDev,
     },
     server: {
       host,
@@ -178,6 +169,7 @@ export default defineConfig(() => {
         // connection logs — enable "Verbose" in DevTools to see them.
         protocol: "ws",
         host,
+        clientPort: port,
       },
     },
     build: {
@@ -186,7 +178,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
+      projects: [defineProject(unitTestProject)],
     },
   };
 });

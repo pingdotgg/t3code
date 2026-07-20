@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import {
+  hostedAppUrlConfig,
   makeCloudCliOAuthConfig,
   makeRelayUrlConfig,
   resolveRelayClientTracingConfig,
@@ -46,6 +48,40 @@ it.effect("rejects an injected relay URL with a non-origin path", () =>
   makeRelayUrlConfig("https://embedded.example.test/path").pipe(provideEnv({}), Effect.flip),
 );
 
+it.effect("normalizes the hosted app URL to an absolute origin", () =>
+  Effect.gen(function* () {
+    assert.equal(
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: "https://nightly.app.t3.codes" }),
+      ),
+      "https://nightly.app.t3.codes",
+    );
+    assert.equal(
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: "http://localhost:5733" }),
+      ),
+      "http://localhost:5733",
+    );
+  }),
+);
+
+it.effect("rejects malformed or insecure hosted app URLs", () =>
+  Effect.gen(function* () {
+    for (const value of [
+      "app.t3.codes",
+      "http://app.t3.codes",
+      "https://app.t3.codes/nested",
+      "https://app.t3.codes?alias=true",
+    ]) {
+      const result = yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: value }),
+        Effect.result,
+      );
+      assert.isTrue(Result.isFailure(result), value);
+    }
+  }),
+);
+
 it.effect("derives direct Clerk OAuth endpoints from statically injected public config", () =>
   Effect.gen(function* () {
     const config = yield* makeCloudCliOAuthConfig({
@@ -86,6 +122,27 @@ it.effect("requires Clerk OAuth config when the server bundle has no injected va
     clerkPublishableKeyFallback: "",
     clerkCliOAuthClientIdFallback: "",
   }).pipe(provideEnv({}), Effect.flip),
+);
+
+it.effect("reports malformed Clerk publishable keys as typed configuration failures", () =>
+  Effect.gen(function* () {
+    const result = yield* makeCloudCliOAuthConfig({
+      clerkPublishableKeyFallback: "pk_test_not-base64!!",
+      clerkCliOAuthClientIdFallback: "oauth_client_embedded",
+    }).pipe(provideEnv({}), Effect.result);
+
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.equal(result.failure.cause._tag, "SourceError");
+      if (result.failure.cause._tag === "SourceError") {
+        assert.equal(
+          result.failure.cause.message,
+          "Failed to derive Clerk Frontend API URL from the publishable key.",
+        );
+        assert.instanceOf(result.failure.cause.cause, Error);
+      }
+    }
+  }),
 );
 
 it("resolves relay client tracing from runtime config with build-time fallback", () => {

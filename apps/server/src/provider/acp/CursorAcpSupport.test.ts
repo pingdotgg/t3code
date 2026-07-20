@@ -53,7 +53,7 @@ const parameterizedGpt54ConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConf
 describe("buildCursorAcpSpawnInput", () => {
   it("builds the default Cursor ACP command", () => {
     expect(buildCursorAcpSpawnInput(undefined, "/tmp/project")).toEqual({
-      command: "agent",
+      command: "cursor-agent",
       args: ["acp"],
       cwd: "/tmp/project",
     });
