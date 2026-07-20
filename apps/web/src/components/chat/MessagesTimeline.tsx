@@ -44,8 +44,11 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   CircleAlertIcon,
   EyeIcon,
+  FileDiffIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -1274,38 +1277,67 @@ function AssistantChangedFilesSectionInner({
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-  const changedFileCountLabel = String(checkpointFiles.length);
 
   return (
-    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-      <div className="sticky top-2 z-10 mb-1.5 flex items-center justify-between gap-2 bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:content-['']">
-        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-          <span>Changed files ({changedFileCountLabel})</span>
+    <div className="mt-4 rounded-2xl border border-input bg-background p-2 pt-4 shadow-xs/5 not-dark:bg-clip-padding dark:bg-input/32">
+      <div className="sticky top-2 z-10 mb-3 flex items-center justify-between gap-2 bg-background px-2 before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-background before:content-[''] dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))] dark:before:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]">
+        <p className="flex items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
+          <span>
+            {checkpointFiles.length} changed file{checkpointFiles.length === 1 ? "" : "s"}
+          </span>
           {hasNonZeroStat(summaryStat) && (
-            <>
-              <span className="mx-1">•</span>
-              <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
-            </>
+            <DiffStatLabel
+              additions={summaryStat.additions}
+              className="text-xs leading-4"
+              deletions={summaryStat.deletions}
+              layout="inline"
+            />
           )}
         </p>
         <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            data-scroll-anchor-ignore
-            onClick={() => setExpanded(routeThreadKey, turnSummary.turnId, !allDirectoriesExpanded)}
-          >
-            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
-          >
-            View diff
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="!size-[22px]"
+                  aria-label={allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+                  data-scroll-anchor-ignore
+                  onClick={() =>
+                    setExpanded(routeThreadKey, turnSummary.turnId, !allDirectoriesExpanded)
+                  }
+                />
+              }
+            >
+              {allDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="!size-[22px]"
+                  aria-label="View diff"
+                  onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
+                />
+              }
+            >
+              <FileDiffIcon className="size-3" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">View diff</TooltipPopup>
+          </Tooltip>
         </div>
       </div>
       <ChangedFilesTree

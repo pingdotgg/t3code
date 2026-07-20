@@ -73,8 +73,14 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
 }
 
 const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdownAndWait")(
-  function* (): Effect.fn.Return<void, never, DesktopShutdown.DesktopShutdown> {
+  function* (): Effect.fn.Return<
+    void,
+    never,
+    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow
+  > {
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.flushMainWindowBounds;
     yield* shutdown.request;
     yield* shutdown.awaitComplete;
   },
