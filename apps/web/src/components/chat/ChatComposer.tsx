@@ -63,6 +63,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { useProviderSkills } from "../../state/queries";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -131,6 +132,11 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import {
+  type CachedComposerProviderSkills,
+  getComposerProviderSkillsCacheEntry,
+  resolveComposerProviderSkills,
+} from "../../composerProviderSkills";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -955,6 +961,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const providerSkills = useProviderSkills({
+    environmentId,
+    instanceId: selectedProviderStatus?.instanceId ?? null,
+    cwd: gitCwd,
+    enabled: composerTriggerKind === "skill",
+  });
+  const providerSkillsTargetKey = `${environmentId ?? ""}\0${selectedProviderStatus?.instanceId ?? ""}\0${gitCwd ?? ""}`;
+  const [cachedProviderSkills, setCachedProviderSkills] =
+    useState<CachedComposerProviderSkills | null>(null);
+  useEffect(() => {
+    const cacheEntry = getComposerProviderSkillsCacheEntry({
+      targetKey: providerSkillsTargetKey,
+      discoveredSkills: providerSkills.data?.skills ?? null,
+      snapshotSkills: selectedProviderStatus?.skills,
+      discoveryUnsupported: providerSkills.isUnsupported,
+    });
+    if (cacheEntry !== null) {
+      setCachedProviderSkills(cacheEntry);
+    }
+  }, [
+    providerSkills.data,
+    providerSkills.isUnsupported,
+    providerSkillsTargetKey,
+    selectedProviderStatus?.skills,
+  ]);
+  const composerProviderSkills = resolveComposerProviderSkills({
+    targetKey: providerSkillsTargetKey,
+    discoveredSkills: providerSkills.data?.skills ?? null,
+    cachedSkills: cachedProviderSkills,
+    snapshotSkills: selectedProviderStatus?.skills,
+    discoveryUnsupported: providerSkills.isUnsupported,
+  });
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
@@ -1010,22 +1048,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(composerProviderSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    composerTrigger,
+    composerProviderSkills,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1090,7 +1132,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending;
+    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "skill" && providerSkills.isPending && composerMenuItems.length === 0);
   const composerMenuEmptyState = useMemo(() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
@@ -2479,7 +2522,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={composerProviderSkills}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}

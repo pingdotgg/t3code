@@ -44,6 +44,8 @@ import {
   ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ServerProviderSkillsError,
+  ServerProviderSkillsUnsupportedError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
@@ -295,6 +297,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverProbe, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverListProviderSkills, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
@@ -1467,6 +1470,31 @@ const makeWsRpcLayer = (
               : providerRegistry.refresh()
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverListProviderSkills]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListProviderSkills,
+            Effect.gen(function* () {
+              const skills = yield* providerRegistry.listSkills(input);
+              if (!skills) {
+                return yield* new ServerProviderSkillsUnsupportedError({
+                  instanceId: input.instanceId,
+                  cwd: input.cwd,
+                });
+              }
+              return { skills };
+            }).pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "ServerProviderSkillsUnsupportedError"
+                  ? cause
+                  : new ServerProviderSkillsError({
+                      instanceId: input.instanceId,
+                      cwd: input.cwd,
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(

@@ -486,6 +486,19 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
+    const listSkills = Effect.fn("ProviderRegistry.listSkills")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+    }) {
+      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (!instance?.listSkills) {
+        return undefined;
+      }
+      return yield* instance.listSkills(input.cwd);
+    });
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -688,6 +701,7 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      listSkills,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

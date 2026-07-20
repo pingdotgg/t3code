@@ -36,11 +36,15 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  makePendingCodexProvider,
+  probeCodexAppServerProvider,
+} from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { AUTH_PROBE_TIMEOUT_MS, type ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -161,6 +165,42 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
+      const listSkills = Effect.fn("CodexDriver.listSkills")(function* (cwd: string) {
+        if (!effectiveConfig.enabled) {
+          return [];
+        }
+
+        return yield* probeCodexAppServerProvider({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          cwd,
+          customModels: [],
+          environment: processEnv,
+          includeModels: false,
+        }).pipe(
+          Effect.scoped,
+          Effect.map((result) => result.skills),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: `Failed to list Codex skills: ${cause.message}`,
+                cause,
+              }),
+          ),
+          Effect.timeoutOrElse({
+            duration: Duration.millis(AUTH_PROBE_TIMEOUT_MS),
+            orElse: () =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: `Timed out listing Codex skills after ${AUTH_PROBE_TIMEOUT_MS}ms`,
+              }),
+          }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+      });
 
       // Build a managed snapshot whose settings never change — mutations come
       // in as instance rebuilds from the registry rather than in-place
@@ -209,6 +249,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        listSkills,
       } satisfies ProviderInstance;
     }),
 };

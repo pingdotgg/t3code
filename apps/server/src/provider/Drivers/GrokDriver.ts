@@ -18,6 +18,7 @@ import {
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "../Layers/GrokProvider.ts";
+import { listGrokSkills } from "../Layers/GrokSkillDiscovery.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -106,10 +107,34 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         env: processEnv,
       });
 
+      const listSkills = Effect.fn("GrokDriver.listSkills")(function* (cwd: string) {
+        if (!effectiveConfig.enabled) {
+          return [];
+        }
+
+        return yield* listGrokSkills({
+          settings: effectiveConfig,
+          cwd,
+          environment: processEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
+      });
+
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        listSkills,
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
@@ -159,6 +184,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        listSkills,
       } satisfies ProviderInstance;
     }),
 };

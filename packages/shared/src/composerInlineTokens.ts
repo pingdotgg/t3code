@@ -16,9 +16,14 @@ export type ComposerInlineToken =
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+  /** Include a skill token at end-of-input. Composer editing leaves this off
+   * so partially typed names stay plain text; provider prompt preparation can
+   * enable it once the user has submitted the prompt. */
+  readonly includeTrailingSkillToken?: boolean;
 }
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
+const SUBMITTED_SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 const FILE_LINK_TOKEN_REGEX = /(^|\s)\[((?:\\.|[^\]\\])*)\]\(([^)\s]+)\)(?=\s)/g;
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -83,7 +88,10 @@ export function collectComposerInlineTokens(
 ): ReadonlyArray<ComposerInlineToken> {
   const matches = collectMentionTokens(text);
 
-  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
+  const skillTokenRegex = options.includeTrailingSkillToken
+    ? SUBMITTED_SKILL_TOKEN_REGEX
+    : SKILL_TOKEN_REGEX;
+  for (const match of text.matchAll(skillTokenRegex)) {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
     const value = match[2] ?? "";

@@ -55,6 +55,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.projectId]),
   };
   return {
+    listProviderSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:providers:list-skills",
+      tag: WS_METHODS.serverListProviderSkills,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
