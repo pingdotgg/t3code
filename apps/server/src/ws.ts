@@ -36,6 +36,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  type ProjectId,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -628,16 +629,7 @@ const makeWsRpcLayer = (
         switch (event.type) {
           case "project.created":
           case "project.meta-updated":
-            return projectionSnapshotQuery.getProjectShellById(event.payload.projectId).pipe(
-              Effect.map((project) =>
-                Option.map(project, (nextProject) => ({
-                  kind: "project-upserted" as const,
-                  sequence: event.sequence,
-                  project: nextProject,
-                })),
-              ),
-              Effect.orElseSucceed(() => Option.none()),
-            );
+            return projectUpsertOrRemove(event.payload.projectId, event.sequence);
           case "project.deleted":
             return Effect.succeed(
               Option.some({
@@ -665,6 +657,58 @@ const makeWsRpcLayer = (
         }
       };
 
+      // Coalescing makes each projection read represent every event for that
+      // aggregate in the current window. Retry a typed persistence failure once
+      // so a brief read failure cannot strand the shell at its previous state.
+      // If both attempts fail, log and drop the stream item; treating an error as
+      // a missing row would incorrectly remove a still-active aggregate.
+      const retryShellProjectionRead = <A, E>(
+        aggregateKind: "project" | "thread",
+        aggregateId: string,
+        read: Effect.Effect<A, E>,
+      ): Effect.Effect<Option.Option<A>, never, never> =>
+        read.pipe(
+          Effect.retry({ times: 1 }),
+          Effect.map(Option.some),
+          Effect.tapError((error) =>
+            Effect.logWarning("orchestration shell projection refetch failed", {
+              aggregateKind,
+              aggregateId,
+              error,
+            }),
+          ),
+          Effect.orElseSucceed(() => Option.none()),
+        );
+
+      const projectUpsertOrRemove = (
+        projectId: ProjectId,
+        sequence: number,
+      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+        retryShellProjectionRead(
+          "project",
+          projectId,
+          projectionSnapshotQuery.getProjectShellById(projectId),
+        ).pipe(
+          Effect.map(
+            Option.flatMap((project) =>
+              Option.match(project, {
+                onNone: () =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "project-removed" as const,
+                    sequence,
+                    projectId,
+                  }),
+                onSome: (nextProject) =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "project-upserted" as const,
+                    sequence,
+                    project: nextProject,
+                  }),
+              }),
+            ),
+          ),
+        );
+
       // Refetch a thread's shell and emit an upsert if it is still active, or a
       // `thread-removed` if the projection has no active row for it. Emitting a
       // removal on a `none` (rather than dropping the event) is what keeps
@@ -679,24 +723,29 @@ const makeWsRpcLayer = (
         threadId: ThreadId,
         sequence: number,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
-        projectionSnapshotQuery.getThreadShellById(threadId).pipe(
-          Effect.map((thread) =>
-            Option.match(thread, {
-              onNone: () =>
-                Option.some({
-                  kind: "thread-removed" as const,
-                  sequence,
-                  threadId,
-                }),
-              onSome: (nextThread) =>
-                Option.some({
-                  kind: "thread-upserted" as const,
-                  sequence,
-                  thread: nextThread,
-                }),
-            }),
+        retryShellProjectionRead(
+          "thread",
+          threadId,
+          projectionSnapshotQuery.getThreadShellById(threadId),
+        ).pipe(
+          Effect.map(
+            Option.flatMap((thread) =>
+              Option.match(thread, {
+                onNone: () =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "thread-removed" as const,
+                    sequence,
+                    threadId,
+                  }),
+                onSome: (nextThread) =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "thread-upserted" as const,
+                    sequence,
+                    thread: nextThread,
+                  }),
+              }),
+            ),
           ),
-          Effect.orElseSucceed(() => Option.none()),
         );
 
       // Turn a batch of domain events into shell stream items, coalescing by
