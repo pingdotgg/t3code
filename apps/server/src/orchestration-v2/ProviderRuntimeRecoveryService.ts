@@ -2,6 +2,7 @@ import {
   CommandId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -15,6 +16,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedErrorClass<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
@@ -120,6 +122,10 @@ export const make = Effect.gen(function* () {
           ),
         );
       const events: Array<OrchestrationV2DomainEvent> = [];
+      // Thread-wide ordinals are UNIQUE-constrained in the positions table;
+      // synthesized cancellation notices append after everything projected.
+      let nextSynthesizedItemOrdinal =
+        (projection.turnItems ?? []).reduce((max, item) => Math.max(max, item.ordinal), 0) + 1;
       for (const request of requests) {
         events.push({
           id: yield* allocateEventId(),
@@ -252,6 +258,38 @@ export const make = Effect.gen(function* () {
             payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
           });
         }
+        // Without a visible notice, a reconcile-cancelled run is
+        // indistinguishable from a user cancel: the user's message simply
+        // never gets an answer (audit plan #5, threads 721fc23c/48663fb7).
+        const cancellationNotice: OrchestrationV2TurnItem = {
+          id: ids.derive.runSignalTurnItem({ runId: run.id, signal: "runtime-reconcile" }),
+          threadId: projection.thread.id,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: nextSynthesizedItemOrdinal,
+          status: "cancelled",
+          title: "Run interrupted",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error",
+          failure: makeProviderFailure({ message: detail, class: "transport_error" }),
+        };
+        nextSynthesizedItemOrdinal += 1;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: cancellationNotice,
+        });
       }
       for (const providerThread of projection.providerThreads.filter(
         (candidate) => candidate.status === "active",

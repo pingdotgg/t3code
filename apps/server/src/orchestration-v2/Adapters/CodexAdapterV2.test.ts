@@ -48,6 +48,7 @@ import {
   CODEX_DEFAULT_INSTANCE_ID,
   CODEX_DRIVER_KIND,
   codexBackgroundCommandDetail,
+  codexNativeThreadIdFromProtocolEvent,
   codexThreadRuntimeParams,
   type CodexAgentMessageDeltaUpdate,
   type CodexAppServerClientFactoryShape,
@@ -458,6 +459,74 @@ describe("CodexAdapterV2 native protocol logging", () => {
 
     assert.equal(protocolLogger, undefined);
   });
+
+  it("extracts the native thread id from decoded and raw frames", () => {
+    assert.equal(
+      codexNativeThreadIdFromProtocolEvent({
+        payload: { method: "thread/event", params: { threadId: "019f-abc" } },
+      }),
+      "019f-abc",
+    );
+    assert.equal(
+      codexNativeThreadIdFromProtocolEvent({
+        payload: { result: { thread: { id: "019f-def" } } },
+      }),
+      "019f-def",
+    );
+    assert.equal(
+      codexNativeThreadIdFromProtocolEvent({ payload: '{"id":1,"params":{"threadId":"019f-raw"}}' }),
+      "019f-raw",
+    );
+    assert.equal(
+      codexNativeThreadIdFromProtocolEvent({ payload: { method: "initialize" } }),
+      undefined,
+    );
+  });
+
+  it.effect("routes shared-session frames to the owning app thread's log", () =>
+    Effect.gen(function* () {
+      const writes: Array<{ readonly threadId: ThreadId | null }> = [];
+      const logger: EventNdjsonLogger = {
+        filePath: "/tmp/events.log",
+        write: (_event, threadId) =>
+          Effect.sync(() => {
+            writes.push({ threadId });
+          }),
+        close: () => Effect.void,
+      };
+      const openerThreadId = ThreadId.make("thread-opener");
+      // Two app threads multiplexed on one app-server process: the opener and
+      // a second thread whose native id maps elsewhere (audit plan #9).
+      const routes = new Map<string, ThreadId>([["019f-owned", ThreadId.make("thread-owned")]]);
+      const protocolLogger = makeCodexAppServerProtocolLogger({
+        nativeEventLogger: logger,
+        threadId: openerThreadId,
+        providerSessionId: ProviderSessionId.make("provider-session-shared"),
+        resolveThreadId: (nativeThreadId) =>
+          (nativeThreadId === undefined ? undefined : routes.get(nativeThreadId)) ?? openerThreadId,
+      });
+      if (protocolLogger === undefined) {
+        assert.fail("expected a protocol logger");
+        return;
+      }
+
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: { method: "thread/event", params: { threadId: "019f-owned" } },
+      });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: { method: "thread/event", params: { threadId: "019f-unknown" } },
+      });
+
+      assert.deepEqual(
+        writes.map((write) => write.threadId),
+        [ThreadId.make("thread-owned"), openerThreadId],
+      );
+    }),
+  );
 });
 
 describe("CodexAdapterV2 rollback mapping", () => {

@@ -827,6 +827,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("file_search"),
     pattern: Schema.optional(Schema.String),
     results: Schema.optional(Schema.Array(OrchestrationV2FileSearchResult)),
+    output: Schema.optional(Schema.String),
+    error: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1421,6 +1423,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("file_search"),
     pattern: Schema.optional(Schema.String),
     results: Schema.optional(Schema.Array(OrchestrationV2FileSearchResult)),
+    output: Schema.optional(Schema.String),
+    error: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

@@ -1380,6 +1380,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               ...(recordString(input, "pattern", "query", "path", "filePath") === undefined
                 ? {}
                 : { pattern: recordString(input, "pattern", "query", "path", "filePath")! }),
+              // Keep the tool's outcome: a failed read/grep/glob previously
+              // projected only the pattern, leaving the provider's error
+              // message unrecoverable (audit plan #12).
+              ...(output === undefined
+                ? {}
+                : part.state.status === "error"
+                  ? { error: output }
+                  : { output }),
             };
           } else if (projectionKind === "web_search") {
             const pattern = recordString(input, "query", "url", "pattern");

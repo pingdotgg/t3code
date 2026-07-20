@@ -82,6 +82,21 @@ export function assertGrokSubagentLineageOutput(
     const assistant = child.messages.find((message) => message.role === "assistant");
     assert.isDefined(assistant);
     assert.isBelow(assistant.text.indexOf(expected.first), assistant.text.indexOf(expected.second));
+
+    // Coalescing (audit plan #10): the subagent streamed a progress chunk and
+    // a result chunk into this one result message. Without coalescing each
+    // chunk persisted its own full-row message.updated event; the throttle
+    // collapses intermediate emits so the final text lands in a single flush.
+    const resultMessageEvents = result.storedEvents.filter((stored) => {
+      if (stored.event.type !== "message.updated") return false;
+      const payload = stored.event.payload as { readonly id?: unknown; readonly threadId?: unknown };
+      return payload.threadId === subagent.childThreadId && payload.id === assistant.id;
+    });
+    assert.lengthOf(
+      resultMessageEvents,
+      1,
+      `expected coalesced subagent result for ${expected.title}, got ${resultMessageEvents.length} message.updated events`,
+    );
     for (const other of EXPECTED_CHILDREN) {
       if (other.sessionId !== expected.sessionId) {
         assert.notInclude(

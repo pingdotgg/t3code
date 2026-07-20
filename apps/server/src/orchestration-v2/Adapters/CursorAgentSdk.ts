@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../../config.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   type EventNdjsonLogger,
   makeEventNdjsonLogger,
@@ -197,6 +198,18 @@ export type CursorAgentSdkProtocolLogEvent =
         readonly type: "agent.close";
         readonly agentId: string;
       };
+    }
+  | {
+      // Failure frame: SDK rejections previously left the native log ending
+      // mid-conversation with no trace of why (audit plan #4 — thread
+      // 721fc23c's failed turns were unexplainable from the log).
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "runner.error";
+        readonly method: string;
+        readonly message: string;
+      };
     };
 
 export type CursorAgentSdkProtocolLogger = (
@@ -316,6 +329,22 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
           });
           const log = (event: CursorAgentSdkProtocolLogEvent) =>
             protocolLogger === undefined ? Effect.void : protocolLogger(event);
+          const logRunnerFailure =
+            (method: string) =>
+            <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+              effect.pipe(
+                Effect.tapError((error) =>
+                  log({
+                    direction: "incoming",
+                    stage: "decoded",
+                    payload: {
+                      type: "runner.error",
+                      method,
+                      message: makeProviderFailure({ cause: error }).message,
+                    },
+                  }),
+                ),
+              );
 
           yield* log({
             direction: "outgoing",
@@ -334,7 +363,7 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
                 ? Agent.create(input.options)
                 : Agent.resume(input.agentId!, input.options),
             catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-          });
+          }).pipe(logRunnerFailure(`agent.${input.operation}`));
 
           yield* log({
             direction: "incoming",
@@ -406,7 +435,7 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
                     },
                   }),
                 catch: (cause) => runnerError(cause, "run.start"),
-              });
+              }).pipe(logRunnerFailure("run.start"));
               runId = run.id;
               yield* log({
                 direction: "incoming",
@@ -449,6 +478,7 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
                       },
                     }),
                   ),
+                  logRunnerFailure("run.wait"),
                 ),
                 cancel: log({
                   direction: "outgoing",

@@ -87,6 +87,43 @@ function boundedText(value: string, maxLength: number): string {
   return `${redacted.slice(0, end)}…`;
 }
 
+const MAX_FAILURE_CAUSE_DEPTH = 6;
+
+/**
+ * Adapter errors are tagged wrappers whose `message` getter is a fixed
+ * human-readable string while the actual defect lives in `.cause` (often
+ * nested several levels deep). Walking the chain is what keeps the real
+ * failure reason debuggable after the fact — persisting only the wrapper
+ * message produced errors like "Claude Agent SDK query failed." with the
+ * underlying exception recorded nowhere.
+ */
+function causeChain(value: unknown): {
+  readonly messages: ReadonlyArray<string>;
+  readonly code: string | undefined;
+} {
+  const messages: Array<string> = [];
+  let code: string | undefined;
+  const seen = new Set<unknown>();
+  let current: unknown = value;
+  for (let depth = 0; depth < MAX_FAILURE_CAUSE_DEPTH; depth += 1) {
+    if (current === null || current === undefined || seen.has(current)) break;
+    seen.add(current);
+    if (typeof current === "string") {
+      if (current.length > 0 && messages.at(-1) !== current) messages.push(current);
+      break;
+    }
+    if (typeof current !== "object" && !(current instanceof Error)) break;
+    const message =
+      current instanceof Error ? current.message : stringField(current, "message");
+    if (typeof message === "string" && message.length > 0 && messages.at(-1) !== message) {
+      messages.push(message);
+    }
+    code ??= stringField(current, "code");
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return { messages, code };
+}
+
 export function makeProviderFailure(input: {
   readonly cause?: unknown;
   readonly message?: string | undefined;
@@ -94,12 +131,16 @@ export function makeProviderFailure(input: {
   readonly class?: OrchestrationV2ProviderFailureClass;
   readonly retryable?: boolean | null;
 }): OrchestrationV2ProviderFailure {
+  const chain = causeChain(input.cause);
+  const chainMessage = chain.messages.length === 0 ? undefined : chain.messages.join(" ← ");
   const rawMessage =
-    input.message ??
-    (input.cause instanceof Error ? input.cause.message : stringField(input.cause, "message")) ??
-    DEFAULT_PROVIDER_FAILURE_MESSAGE;
+    input.message === undefined
+      ? (chainMessage ?? DEFAULT_PROVIDER_FAILURE_MESSAGE)
+      : chainMessage === undefined || chainMessage === input.message
+        ? input.message
+        : `${input.message} ← ${chainMessage}`;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode = input.code ?? chain.code ?? null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 

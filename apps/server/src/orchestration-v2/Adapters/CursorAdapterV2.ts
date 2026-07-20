@@ -2162,7 +2162,22 @@ export function makeCursorAdapterV2(
                       status,
                       ...(status === "failed"
                         ? {
+                            // RunResult carries no error text in @cursor/sdk
+                            // 1.0.22 (errorCode lives only in the SDK's
+                            // internal run store); persist the correlation
+                            // data we do get so the failure can be matched to
+                            // Cursor-side logs. `error` is read speculatively
+                            // for future SDK versions.
                             failure: makeProviderFailure({
+                              message: [
+                                `Cursor run ${result.id} ended with status "error".`,
+                                ...(result.requestId === undefined
+                                  ? []
+                                  : [`requestId ${result.requestId}`]),
+                                ...(result.durationMs === undefined
+                                  ? []
+                                  : [`after ${Math.round(result.durationMs / 1000)}s`]),
+                              ].join(" "),
                               cause: (result as { readonly error?: unknown }).error,
                               class: "provider_error",
                             }),

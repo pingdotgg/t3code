@@ -831,7 +831,10 @@ export const layer: Layer.Layer<
               Effect.catchCause((cause) =>
                 Effect.logError("orchestration V2 provider turn start failed", {
                   runId: input.run.id,
-                  cause,
+                  // Pretty-printed: the structured object gets depth-elided to
+                  // "[ [Object] ]" by the log sink, destroying the only copy
+                  // of the real failure reason.
+                  cause: Cause.pretty(cause),
                 }).pipe(
                   Effect.andThen(Fiber.interrupt(providerEventFiber)),
                   Effect.andThen(Ref.get(latestProviderThread)),

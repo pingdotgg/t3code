@@ -66,6 +66,28 @@ it("does not split a surrogate pair at the truncation boundary", () => {
   assert.notMatch(failure.message.slice(0, -1), /[\uD800-\uDBFF]$/u);
 });
 
+it("preserves the nested cause chain of wrapper errors", () => {
+  const sdkError = new Error("spawn claude ENOENT");
+  (sdkError as Error & { code?: string }).code = "ENOENT";
+  const wrapper = new Error("Claude Agent SDK query failed.", { cause: sdkError });
+
+  const failure = makeProviderFailure({ cause: wrapper, class: "transport_error" });
+
+  assert.equal(failure.message, "Claude Agent SDK query failed. ← spawn claude ENOENT");
+  assert.equal(failure.code, "ENOENT");
+});
+
+it("uses the deepest available message without duplicating repeated ones", () => {
+  const failure = makeProviderFailure({
+    cause: {
+      message: "Failed to start run",
+      cause: { message: "Failed to start run", cause: "socket hang up" },
+    },
+  });
+
+  assert.equal(failure.message, "Failed to start run ← socket hang up");
+});
+
 it("does not serialize arbitrary provider causes", () => {
   const failure = makeProviderFailure({
     cause: {

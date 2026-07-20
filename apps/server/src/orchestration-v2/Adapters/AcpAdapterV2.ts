@@ -26,6 +26,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -83,6 +84,13 @@ import {
 } from "../ProviderAdapter.ts";
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
+
+/**
+ * Window for coalescing streamed subagent assistant deltas into one persisted
+ * snapshot. Matches the codex agent-message coalescer cadence; the final text
+ * is always flushed on task completion regardless of this interval.
+ */
+const SUBAGENT_STREAM_FLUSH_INTERVAL_MS = 100;
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -576,6 +584,12 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   nextChildOrdinal: number;
+  // Streaming-emit throttle: ACP streams the subagent result per token, so a
+  // full-row event pair per chunk amplified one 6KB result into ~2700 stored
+  // events (audit plan #10). We coalesce intermediate emits and always flush
+  // the final text.
+  streamFlushScheduled: boolean;
+  streamPendingText: boolean;
 }
 
 type PendingRuntimeRequest = {
@@ -842,12 +856,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           yield* emitTextSegment(context, kind, false);
         });
 
-        const emitSubagentAssistant = Effect.fnUntraced(function* (
+        const emitSubagentAssistantSnapshot = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
-          text: string,
         ) {
-          if (text.length === 0) return;
-          subagent.assistantText += text;
+          if (subagent.assistantText.length === 0) return;
           const now = yield* DateTime.now;
           const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:result`;
           const artifacts = makeSubagentConversationArtifacts({
@@ -871,13 +883,48 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
         });
 
+        // Streaming append: accumulate and emit at most once per flush window.
+        const streamSubagentAssistant = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          text: string,
+        ) {
+          if (text.length === 0) return;
+          subagent.assistantText += text;
+          subagent.streamPendingText = true;
+          if (subagent.streamFlushScheduled) return;
+          subagent.streamFlushScheduled = true;
+          yield* Effect.sleep(Duration.millis(SUBAGENT_STREAM_FLUSH_INTERVAL_MS)).pipe(
+            Effect.andThen(
+              Effect.suspend(() => {
+                subagent.streamFlushScheduled = false;
+                if (!subagent.streamPendingText) return Effect.void;
+                subagent.streamPendingText = false;
+                return emitSubagentAssistantSnapshot(subagent);
+              }),
+            ),
+            Effect.forkIn(sessionScope),
+          );
+        });
+
+        // Terminal/one-shot emit: always persists the final text immediately.
+        const flushSubagentAssistant = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          finalText?: string,
+        ) {
+          if (finalText !== undefined && finalText.length > 0) {
+            subagent.assistantText += finalText;
+          }
+          subagent.streamPendingText = false;
+          yield* emitSubagentAssistantSnapshot(subagent);
+        });
+
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           notification: EffectAcpSchema.SessionNotification,
         ) {
           const update = notification.update;
           if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
-            yield* emitSubagentAssistant(subagent, update.content.text);
+            yield* streamSubagentAssistant(subagent, update.content.text);
           }
         });
 
@@ -952,6 +999,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             childSessionId: null,
             assistantText: "",
             nextChildOrdinal: 101,
+            streamFlushScheduled: false,
+            streamPendingText: false,
           };
           subagent.task = task;
           context.subagents.set(update.nativeTaskId, subagent);
@@ -1044,12 +1093,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             );
           }
 
-          if (
-            taskStatus !== "running" &&
-            subagent.assistantText.length === 0 &&
-            update.result !== null
-          ) {
-            yield* emitSubagentAssistant(subagent, update.result);
+          if (taskStatus !== "running") {
+            // Terminal: flush the final text immediately (adopting the
+            // one-shot result when nothing streamed) instead of leaving the
+            // last throttled snapshot possibly unemitted.
+            if (subagent.assistantText.length === 0 && update.result !== null) {
+              yield* flushSubagentAssistant(subagent, update.result);
+            } else if (subagent.streamPendingText) {
+              yield* flushSubagentAssistant(subagent);
+            }
           }
           const result = subagent.assistantText || update.result;
           subagent.task = {
@@ -2002,6 +2054,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           if (context.finalized) return;
           context.finalized = true;
           yield* closeTextStreams(context);
+          // Persist any throttled subagent text now: after the turn ends the
+          // run fiber that routes child-thread events may be gone, so waiting
+          // for the coalescer's timer flush could drop the tail of a stream.
+          for (const subagent of context.subagents.values()) {
+            if (subagent.streamPendingText) {
+              yield* flushSubagentAssistant(subagent);
+            }
+          }
           const now = yield* DateTime.now;
           const turn = providerTurnPayload(context, status, now);
           yield* Ref.update(providerTurns, (current) => {

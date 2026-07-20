@@ -411,6 +411,18 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly direction: "incoming";
       readonly stage: "decoded";
       readonly payload: SDKMessage;
+    }
+  | {
+      // Failure frame: without it the native log ends mid-conversation with
+      // no trace of WHY (audit plan #4 — failed opens/streams left the
+      // "ground truth" log unable to explain any failed turn).
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "runner.error";
+        readonly method: string;
+        readonly message: string;
+      };
     };
 
 export type ClaudeAgentSdkProtocolLogger = (
@@ -498,6 +510,22 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
         });
         const logProtocolEvent = (event: ClaudeAgentSdkProtocolLogEvent) =>
           protocolLogger === undefined ? Effect.void : protocolLogger(event);
+        const logRunnerFailure =
+          (method: string) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+            effect.pipe(
+              Effect.tapError((error) =>
+                logProtocolEvent({
+                  direction: "incoming",
+                  stage: "decoded",
+                  payload: {
+                    type: "runner.error",
+                    method,
+                    message: makeProviderFailure({ cause: error }).message,
+                  },
+                }),
+              ),
+            );
         const promptQueue = yield* Queue.unbounded<SDKUserMessage>();
         const prompt = Stream.fromQueue(promptQueue).pipe(
           Stream.catchCause((cause) =>
@@ -512,7 +540,7 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
               options: input.options,
             }),
           catch: (cause) => queryRunnerError(cause, "query"),
-        });
+        }).pipe(logRunnerFailure("query.open"));
         yield* logProtocolEvent({
           direction: "outgoing",
           stage: "decoded",
@@ -533,6 +561,17 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
                 payload: message,
               }),
             ),
+            Stream.tapError((error) =>
+              logProtocolEvent({
+                direction: "incoming",
+                stage: "decoded",
+                payload: {
+                  type: "runner.error",
+                  method: "messages.stream",
+                  message: makeProviderFailure({ cause: error }).message,
+                },
+              }),
+            ),
           ),
           offer: (message) =>
             Queue.offer(promptQueue, message).pipe(
@@ -547,12 +586,14 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
                   },
                 }),
               ),
+              logRunnerFailure("prompt.offer"),
             ),
           setModel: (model) =>
             Effect.tryPromise({
               try: () => queryRuntime.setModel(model),
               catch: (cause) => queryRunnerError(cause, "setModel"),
             }).pipe(
+              logRunnerFailure("query.set_model"),
               Effect.tap(() =>
                 logProtocolEvent({
                   direction: "outgoing",

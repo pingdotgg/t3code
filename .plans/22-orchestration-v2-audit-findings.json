@@ -1,0 +1,958 @@
+{
+    "sessionSummaries": [
+        {
+            "sessionKey": "GLOBAL",
+            "summary": "Global cross-thread audit of the v2 orchestrator DB (43,378 events across 63 streams, 6,286 turn items, 60 threads, 206 runs). Core invariants are healthy: event streams have zero version gaps/duplicates and no occurred_at regressions >5s; turn-item ordinals have zero collisions and are 100% consistent with orchestration_v2_turn_item_positions; no nativeItemRef duplicates; outbox (463 rows) and command receipts (580) are fully succeeded/accepted; all 12 failed runs surfaced exactly one user-visible error item; no items/runs stuck beyond the one currently-live run (started 17:03Z, audit ran 17:07Z). Findings are edge-case lineage danglers, generic error strings that discard the underlying cause, sessions left 'ready' after detach, and 13 old local_bash tasks projected as empty-prompt subagents.",
+            "stats": "43,378 events / 63 streams (0 version gaps, 0 dupes, 0 time regressions >5s); 6,286 turn items (6,042 completed, 243 failed, 2 interrupted, 1 running=live); 206 runs (188 completed, 12 failed, 4 cancelled, 1 interrupted, 1 running=live); 212 provider_turns; 19 provider_sessions (3 ready, 16 stopped); 40 subagents (38 completed, 2 failed); outbox 463 rows all 'succeeded'; receipts 580 all 'accepted'; 12 error items total. Loss sample: 258 native tool_use ids in latest 71e29ba5 log \u2192 all accounted for (254 direct items, 3 Agent spawns as subagent items, 1 in-flight run)."
+        },
+        {
+            "sessionKey": "a5a643b2-codex-heya",
+            "summary": "Small 4-run codex smoke session (\"heya\") on 2026-06-28 04:52-05:22 UTC, plus one delegated Claude task child thread. Core pipeline is healthy: all 19 main-thread items + 3 child items are projected with verbatim text, ordinals match turn_item_positions exactly, lineage (run/node/provider_turn refs, subagent -> child thread -> context-transfer -> handoff) fully resolves, and all runs/turns/nodes/items are terminal. Two real problems: the codex-native collab subagent spawned in run 3 left zero trace in ingested events (its wait tool call, web search, and final \"Hello.\" message are lost), and the run-4 delegated Claude task that failed with a 401 auth error is recorded as status \"completed\" everywhere because the adapter ignores is_error on subtype \"success\" results.",
+            "stats": "Main thread: 138 events, 19 projected items (19 distinct item ids in turn-item.updated events), 4 runs / 4 attempts / 4 provider turns, all completed. Child delegated-task thread: 27 events, 3 items, 1 run completed. Native log: 798 lines, 4 turn/start requests but 5 native turns (extra = codex-native subagent thread 019f0c93-d260), 22 item/completed across 2 native threads, 5 reasoning items (all empty summaries), 1 native error (401 auth, is_error:true result)."
+        },
+        {
+            "sessionKey": "a61e9269-codex",
+            "summary": "Short two-turn Codex session (\"hey\" then \"spawn a subagent and say hello\") that spawned one provider-native subagent thread. Pipeline health is very good: every user-visible native item (2 user messages, 2 assistant messages, webSearch, subAgentActivity, child assistant message) is ingested and projected with exact untruncated text; lineage is fully consistent (subagent item childThreadId -> child thread, forkedFrom points back to parent provider-thread/turn, provider_turns map to run_attempts); all runs/turns/nodes/items terminal completed matching the native turn/completed events; ordinals match orchestration_v2_turn_item_positions with no collisions or duplicates and projection order matches native emission order. Only gaps: an (empty) reasoning item and token-usage/rate-limit notifications are dropped by the adapter, which has no handlers for them.",
+            "stats": "Native (decoded, deduped): main thread 2 userMessage, 2 agentMessage, 1 subAgentActivity, 1 webSearch, 1 empty reasoning; child thread 1 agentMessage; 3 native turns all turn/completed; 0 native errors, 2 dev-feature warnings. Ingested: 74 events on main stream (versions 0-73, monotonic), 12 on child stream. Projected: 9 turn_items main (incl 2 synthetic checkpoints + workspace-preparation) + 1 child; 2 runs completed, 2 attempts completed, 3 provider_turns completed, 8 nodes completed; positions table matches item ordinals exactly, no duplicates."
+        },
+        {
+            "sessionKey": "20296b49-grok-tasks",
+            "summary": "Short grok session (2026-06-29 21:46-21:48): user said \"yoo\", then \"spawn some subagents\"; grok ran 3 parallel Task subagents (git state, architecture docs, mobile connection changes) as child threads and summarized. Pipeline health is good: all runs/attempts/provider-turns completed, provider session stopped, lineage intact, no ordinal collisions, no duplicates, no truncation (subagent item result lengths 3721/6274/2647 exactly match child assistant_message lengths). The children's 1319-2711 events vs 2 projected items is EXPECTED: each child has exactly 2 distinct item ids (prompt + result) and the event volume is per-token streaming re-upserts of the result item, not lost items.",
+            "stats": "Main thread: 300 events, 14 turn_items, 2 runs (both completed), 2 run_attempts, 2 provider_turns (completed), 9 subagent.updated events -> 3 subagent rows (completed). Children: 3 threads, 5717 events (1319/2711/1687), 2 items each (6 total, all completed), 6 position rows. Native log: 3702 lines (3694 protocol \u2014 payloads redacted to byteLength/itemCount, 8 request), 2 session/prompt \"failed\" (errorTag Interrupt), no other errors. Integrity: 0 bad run/node/turn/parent refs, 0 ordinal collisions, 0 nativeItemRef dupes, 0 timestamp regressions."
+        },
+        {
+            "sessionKey": "721fc23c-cursor",
+            "summary": "Short cursor (glm-5.2) session \"Hello therw!\" with 2 user turns and zero assistant output. The 7-line native log is genuine: the backend child process fatally crashed (Node error originating in @cursor/sdk/dist/esm/index.js) ~0.3s after run 1's run.started, killing the provider mid-turn; a startup reconcile then cancelled run 1. Run 2 (\"what did you just say\") resumed the agent but agent.send rejected 4ms after run.start and was projected as a failed run with only a generic error string; the process crashed again with the same @cursor/sdk fatal error 29s later. Projection internals (ordinals, positions, statuses, lineage forward-links) are consistent and all state is terminal \u2014 the problems are crash handling and error fidelity, not ingestion mechanics.",
+            "stats": "47 events on stream 721fc23c-... (seq 6271-6340, versions 0-46); 7 native log lines (all protocol/decoded, 0 assistant/tool output); 4 turn items (2 user_message, 1 command_execution \"Workspace ready\", 1 error); 2 runs (ordinal 1 cancelled, ordinal 2 failed); 2 messages (both user); 1 provider_turn (cancelled); 0 subagents/handoffs/transfers; 2 backend-child process crashes; 2 startup reconciles."
+        },
+        {
+            "sessionKey": "48663fb7-cursor",
+            "summary": "Thread 48663fb7 is a single \"hello\" message sent to the cursor provider (glm-5.2) at 2026-06-29T21:49:07Z. The provider session opened and acked run.started at 21:49:09.097Z, then the server restarted; a startup runtime-reconcile at 21:49:10.775Z cancelled the run/attempt/provider-turn, idled the provider thread, and stopped the session. Pipeline health is good: no native output was lost (the provider emitted nothing after run.started), lineage and ordinals are consistent, and nothing is stuck in a non-terminal state. The only gap is that the user got no assistant response and no explanation of why the run was cancelled.",
+            "stats": "Native log: 4 decoded protocol lines (agent.open/agent.opened/run.start/run.started), 0 provider output items, 0 errors. Events: 28 (stream_version 0-27, seq 6318-6346 excl. 6340). Projections: 1 run (cancelled), 1 attempt (cancelled), 1 provider_turn (cancelled), 1 node (cancelled), 2 turn_items (both completed), 1 message, 0 subagents, 0 child threads. Provider session: stopped; provider thread: idle."
+        },
+        {
+            "sessionKey": "3029dc85-opencode",
+            "summary": "Opencode chat session \"Hey!\" (2026-06-29 22:02-22:16, idle-reaped 22:46): 7 user turns spawning 5 native opencode subagent sessions, 2 cross-provider delegated claudeAgent tasks (results handed back via context-transfer/handoff), and 3 top-level threads (codex/grok/claude). Pipeline health is very good: all 9 runs/7 attempts/12 provider turns completed, every distinct item id in events has exactly one projection, ordinals match event arrival order with zero collisions or duplicates, lineage (run/node/provider-turn/subagent->child-thread) fully resolves, and the provider session was cleanly stopped after the 30-min idle window. Main issues found are debuggability gaps rather than data loss: the one failed tool call projected no error message (file_search items structurally cannot carry one), file_search outputs are never projected, a placeholder \"pending\" provider_thread row lingers, and the native log itself is payload-redacted so content-level verification is impossible.",
+            "stats": "Native log: 17,198 lines (15,542 part deltas, 723 part updates, 204 message updates, 7 promptAsync, 5 session.created, 12 session.idle; 0 error lines). Events: main 3,335 (1,047 turn-item.updated over 50 distinct items), opencode children 1051/1107/559/241/209, delegated-task children 94/34. Projected items: main 50, opencode children 185, delegated children 23 \u2014 every distinct event item id has exactly one projection (50/90/41/39/8/7 match 1:1). Runs: 7 main + 2 delegated, all completed; 7 attempts completed; 12 provider_turns completed; sessions stopped. 1 failed item (file_search), 0 stuck items, 0 ordinal collisions, 0 dangling run/node/turn/thread refs, 0 nativeItemRef dupes, positions table fully consistent."
+        },
+        {
+            "sessionKey": "9f8d616d-opencode",
+            "summary": "Single-turn opencode session ('hey' -> greeting reply) on 2026-06-29: 1 run, 1 provider turn, ~5s of activity, then 30min of heartbeats until the idle reaper stopped the session. The 100-events/5-items ratio is benign: 25 of the 33 turn-item.updated events are streaming updates of one reasoning part. No data loss, no duplicates, no ordering violations, no errors in the native log, and all runs/turns/items are terminal. Only minor findings: the pending-vs-resolved provider-thread dual-row pattern leaves run/attempt/turn pointing at a different provider_thread_id than the items, and the resolved provider-thread row lingered 'active' for ~20h after session stop before being marked idle.",
+            "stats": "Native log: 273 lines (180 heartbeats, 32 file.watcher, 31 part deltas, 7 part updates, 6 message updates, 1 session.idle, 0 errors). Ingested: 100 events (stream_version 0-99 contiguous, 100 distinct event_ids), incl. 33 turn-item.updated over exactly 5 distinct items. Projected: 5 turn_items (ordinals 1000001-1000005, positions table matches 1:1), 2 messages, 1 run + 1 attempt + 1 provider_turn (all completed), 3 nodes completed, 2 checkpoints, 0 subagents/children, provider_session stopped."
+        },
+        {
+            "sessionKey": "1156181e-delegated-task",
+            "summary": "MCP delegated task \"hello-opus-48\" sent one user prompt (\"Say hello briefly and stop.\") to claudeAgent (claude-opus-4-8). The API call never succeeded: the SDK logged two api_retry events with error_status 401 (authentication_failed) and then emitted a synthetic assistant message \"Failed to authenticate. API Error: 401 Invalid authentication credentials\" plus a result with subtype \"success\" but is_error:true / api_error_status:401. Ingestion and projection are structurally clean (all 3 items projected, ordinals consistent, lineage valid, nothing stuck), but the run/attempt/provider-turn were all recorded as \"completed\" with no failure info, so the delegated task looks successful despite executing zero tokens.",
+            "stats": "Native log: 10 decoded lines (1 query.open, 1 prompt.offer, 5 system incl. 2x api_retry 401, 1 synthetic assistant msg, 1 result is_error:true). Events: 30 (stream_version 0-29, sequences 116-168). Projections: 1 run, 1 attempt, 1 provider_turn, 2 messages, 3 turn_items (user_message, assistant_message, checkpoint), 0 child threads/subagents. Errors seen: 401 authentication_failed x3."
+        },
+        {
+            "sessionKey": "6d618dc4-mcp-group",
+            "summary": "MCP-driven fan-out session: 2 claudeAgent delegated-task threads plus 3 parallel MCP threads (codex :0, grok :1, claudeAgent :2), all single-run. Pipeline health is good overall: all 122 items verified against native logs with exact tool-call counts (19/19 on :2, 1/1 and 16/16 on the delegated tasks), ordinals fully consistent with turn_item_positions, zero lineage orphans, no duplicates, and the codex 400 model error was ingested verbatim and surfaced as a user-visible failed error item. Main defects found: the claudeAgent adapter (as of the code that ran, fc23be8184) concatenates intra-turn assistant text segments without separators into one end-of-turn item, destroying segment boundaries and native interleaving; and the three claudeAgent provider sessions were never idle-reaped, staying 'ready' for ~21 hours until a simultaneous shutdown sweep.",
+            "stats": "5 threads, 1842 ingested events (34/94/22/1587/105), 122 projected items (4/19/2/75/22), 5 runs (4 completed, 1 failed), 5 provider turns, 5 provider sessions (all stopped). Native: mcp log 3763 lines (grok 3158 / claude 499 / codex 106), delegated log 495 lines. 1 provider error (codex 400), 0 orphan run/node/provider_turn/parent references, 0 ordinal collisions, 0 nativeItemRef dupes, positions match 122/122."
+        },
+        {
+            "sessionKey": "5dcea72d-grok-subagent",
+            "summary": "Two-run grok session (\"spawn a subagent\"): run 1 asked the user clarifying questions (xai-question), spawned a background explore subagent; run 2 fetched its output via a blocking TaskOutput tool call and summarized it. Main-thread projections are complete and consistent (16 items, all completed, positions/ordinals match, no dupes, all terminal states correct, no backwards timestamps). The main problem is the subagent child thread: it froze at spawn time with a placeholder result, and the subagent's entire live transcript (116 tool calls over 74.9s) was never ingested \u2014 the real output survives only inside a parent-thread tool item.",
+            "stats": "Native log: 7028 lines, 3501 decoded incoming + 8 decoded outgoing protocol msgs, 10 request events (2 session/prompt terminations logged failed/Interrupt); payload contents are redacted (shape-only). Ingested: 257 events on main thread + 8 on child thread. Projected: 16 turn_items main + 2 child; 2 runs / 2 attempts / 2 provider_turns all completed; provider session stopped; provider thread idle; 1 subagent row (completed). 0 tool failures / rate limits observed."
+        },
+        {
+            "sessionKey": "7f1dfff1-claude-scheduled-tasks",
+            "summary": "Dev session on scheduled tasks: run 1 on codex, then a provider handoff to claudeAgent for runs 2-10 (8 completed, run 9 user-cancelled, run 10 failed 2s after query.open with no SDK response). Pipeline health is very good: zero lost native content in the claudeAgent portion, lineage fully intact, ordering matches native emission exactly, no duplicates, and nothing stuck non-terminal (session stopped, provider threads idle, 0 running items). The only real defect found is that run 10's failure was persisted with a hardcoded generic message, making it undebuggable from the DB.",
+            "stats": "Main thread: 1707 events, 363 items (169 codex run-1 + 194 claude), 69 messages, 10 runs, 10 provider turns (8 completed/1 cancelled/1 failed). 15 child threads: 2 Explore subagents (95+245 events, 20+50 items) + 13 bash-task threads (7-9 events, 2 items each); all child items completed. Native log 5336 lines (2 files, runs 2-10 only). Cross-checks: 156/156 main tool_use ids accounted for (154 toolu items + 2 Agent calls projected as task subagent items), 64/64 subagent tool_use ids, assistant text preserved exactly (27311 chars log = 27311 chars items), 94 thinking blocks all natively empty (SDK sends thinking_delta with empty text), 5/5 is_error tool_results projected as failed, 1 api_retry (recovered), 14 task_notifications + 1 task_updated-only completion (bqu8waxt3) all reconciled; 0 ordinal collisions, 0 position mismatches, 0 orphan lineage refs. All backgrounded-bash tasks completed within their runs, so cross-run/wakeup paths were not exercised in this session."
+        },
+        {
+            "sessionKey": "47763f5e-claude-fable",
+            "summary": "Long claudeAgent coding session (PR #3638 scheduled-tasks work, 20:56-23:43 UTC on 2026-07-01) with 16 runs, 2 Task subagents, and heavy post-turn wakeup activity via task notifications. The persisted portion of the pipeline is healthy \u2014 lineage, ordinals/positions, ordering vs native emission, terminal states, and text fidelity all check out \u2014 but roughly 40% of the provider's actual output (10 full post-turn wakeup turns: 16 assistant messages and ~84 tool calls, including real git pushes) was never ingested at all, this being one of the threads on which that gap was originally diagnosed. Two error-handling gaps stand out: a 401 auth failure projected as a completed run, and run 10's failure persisted only as 'Claude Agent SDK query failed.' with no root cause recorded anywhere.",
+            "stats": "Native log: 8088 lines (all protocol/decoded): 25 results, 594 assistant msgs (68 distinct main-thread text msgs, 122 with thinking), 371 unique tool_use (307 main / 64 child), 49 task_notification, 4 rate_limit (all 'allowed'), 3 query.open, 1 query.close. Ingested: 1546 events on main stream. Projected: 16 runs (15 completed, 1 failed), 16 provider_turns, 308 main items + 70 child items = 378 (positions table matches 378, no collisions/dupes), 68 messages, 2 subagents (both completed, child threads linked). Coverage gap: 84 tool calls + 16 assistant texts in log with no projection (all in wakeup windows); 0 items stuck running/streaming."
+        },
+        {
+            "sessionKey": "ea84f015-cursor-handoff",
+            "summary": "Long mixed-provider session (13 claudeAgent runs, then a clean claudeAgent\u2192cursor provider handoff at run 14, then 3 failed cursor runs) with two claudeAgent subagent child threads. Core pipeline health is good: ordering/positions are perfectly consistent, no duplicates, no stuck non-terminal items/nodes/messages, sampled long assistant text survives un-truncated, and handoff lineage (context-transfer consumed \u2192 handoff ready \u2192 run 14, thread.provider-switched) is fully intact. The big defect is the known 'invisible post-turn turns' problem: three post-run wakeup turns (10 and 17 native turns' worth of tool calls, including a GitHub comment being posted) produced zero events and zero projections. Secondary issues: 529-Overloaded turns (runs 11-13) projected as completed despite native is_error:true, and cursor run failures persisted with only a generic 'Provider turn failed.' string.",
+            "stats": "Events: 6482 (main) + 165 + 255 (two subagent child threads). Items: 695 main + 34 + 52 child; positions table matches 695/695 with zero ordinal collisions, zero duplicate nativeItemRefs. Runs: 17 total \u2014 13 claudeAgent completed, 1 cursor completed (14), 3 cursor failed (15/16/17; 15 had a superseded steering_restart attempt). 2 subagents, both completed and linked to child threads. Tool-call coverage: cursor run 15 window 51/51 projected; claudeAgent era 529 native tool_use ids, all projected except 42 post-turn-wakeup calls (lost) and 2 Agent spawns (correctly represented as subagent items). Nodes: 751, all terminal. Errors seen natively: 3 is_error results (529 Overloaded), 1 error_during_execution, 1 model_refusal_fallback, 29 api_retry, 3 cursor run status:error."
+        },
+        {
+            "sessionKey": "c9e72a05-cursor-failing-turns",
+            "summary": "Two-run cursor session (composer-2.5, fastMode) where the user asked why cursor turns fail; run 1 completed a full debugging pass, run 2 hung silently for 440s and failed \u2014 reproducing the very bug being investigated. The ingestion/projection pipeline itself is in excellent health: all 123 native tool calls plus reasoning/assistant text project 1:1 with exact character counts (3664/3664 assistant, 3382/3382 thinking), ordering matches native emission exactly, positions table is consistent (150/150, 0 ordinal mismatches or dupes), lineage refs all resolve, no stuck states (run/attempt/turn/node all 'failed' for run 2, session 'stopped' after agent.close), and timestamps are monotonic. The one substantive problem is error-handling fidelity: the run 2 failure is projected only as failure {message:\"Provider turn failed.\", code:null}, because CursorAdapterV2 reads a non-existent result.error and never surfaces the Cursor SDK's real error_code (an authentication error), dropping even the requestId/durationMs present in the decoded payload.",
+            "stats": "Native log: 1920 decoded protocol lines, 2 native runs (run-1cbebefe finished; run-f4d64e64 status error), 123 distinct tool calls (87 shell / 18 read / 14 grep / 4 glob; 118 natively completed), 17 thinking blocks, 3664 assistant chars, 3382 thinking chars. Ingested: 906 orchestration_events for the stream. Projected: 150 turn items (2 user_message, 5 assistant_message, 17 reasoning, 88 command_execution, 36 file_search, 1 checkpoint, 1 error), 2 runs (1 completed / 1 failed), 2 run attempts, 2 provider turns, 7 messages, 0 subagents/child threads. 1 provider failure seen (generic)."
+        },
+        {
+            "sessionKey": "8ee00dcc-cursor-spacing",
+            "summary": "Single-run Cursor (composer-2.5, fastMode) session: user asked to remove extra spacing on the mobile Threads/Home screen; the agent searched, read files, made 3 edits to HomeScreen.tsx, and summarized. The pipeline is essentially clean: every native item (33 tool calls, 10 thinking segments, 3 assistant messages, 1 user message) maps 1:1 to projected turn_items with exact content fidelity, ordinals are contiguous and match native emission order, all statuses reached terminal states, and no errors occurred in the native log. Only minor gaps found: token usage from the native turn-ended/run.completed is not ingested anywhere, and run_attempt.provider_turn_id is never backfilled.",
+            "stats": "Native log: 665 lines (all stage=decoded), 659 interaction.update (33 tool-call-started + 33 tool-call-completed, 10 thinking-completed, 94 text-delta, 107 thinking-delta, 377 token-delta, 3 partial-tool-call, 1 turn-ended, 1 step-completed) + run.start/started/completed + agent.open/opened/close. Events: 415 (stream versions 0-414 contiguous; 194 turn-item.updated, 194 node.updated). Projections: 49 turn_items (1 user_message, 1 workspace-prep command_execution, 3 assistant_message, 10 reasoning, 29 file_search, 3 file_change, 1 tool command_execution, 1 checkpoint), 49 positions, 1 run (completed), 1 attempt (completed), 1 provider_turn (completed), 4 messages. Zero errors in native log."
+        },
+        {
+            "sessionKey": "codex-no-native-logs",
+            "summary": "Four sibling codex threads multiplexed onto the shared codex app-server session ('provider-session:provider-instance:codex:shared'). The missing native logs are explained: the codex protocol logger is bound to the threadId that opened the shared session (71e29ba5, whose own codex native thread is 019f1b50), so all four threads' traffic went to 71e29ba5's log file and was mostly rotated away by that thread's heavy claude traffic. Events-to-projections consistency is excellent: all 11 runs and provider turns terminal (10 completed, 1 user-interrupted with proper interrupt request/result items), zero lineage violations, zero ordinal collisions or duplicates, projection order matches native start order (verified against the surviving log window for c878541b runs 4-6), and message text verified byte-exact (1733/1733 chars). Only gaps: codex reasoning items (empty-content in this session) and one contextCompaction item are not projected at all.",
+            "stats": "4 sibling codex threads (not parent/child; 0 subagent rows), 1797 events total (1077/468/222/30), 11 runs (10 completed, 1 interrupted), 440 turn_items (117 assistant_message, 264 command_execution incl. 20 failed, 18 file_change, 8 dynamic_tool, 12 user_message, 11 checkpoint, 2 interrupt items), 129 messages sampled on c878541b (61 assistant/7 user = item counts). 0 lineage violations, 0 ordinal collisions, 0 native-ref dupes, 0 non-terminal items/runs/turns/nodes. Native log survives only for c878541b runs 4-6 (16:00-16:44Z window)."
+        },
+        {
+            "sessionKey": "71e29ba5-claude-mega",
+            "summary": "Largest session in the store: the wakeup/blur dev thread, started on codex (runs 1-55), provider-switched to claudeAgent via a ready context handoff (runs 56-122), spawning 7 claude subagent child threads; still live during the audit (run 122 completed mid-audit at 17:13:36Z). In-run ingestion is very healthy: ordinals/positions are perfectly consistent across main + child threads with zero collisions or dangling lineage refs, projection order exactly matches native emission (run 121 verified item-by-item), no duplicates, no stuck items/turns/streaming messages, and all failed runs and user-interrupted subagents are surfaced with error/failed items. The two significant problems are both loss-of-data outside run windows: 76 completed claudeAgent tool calls plus assistant text from post-turn task_notification wakeup turns were never ingested (the known invisible-post-turn-turns bug this thread was used to develop the fix for \u2014 no provider_wakeup runs exist here), and a 30-minute codex-era ingestion gap (16:10-16:40 Jul 1) lost 119 command/fileChange items with only assistant text later backfilled at a single flattened timestamp.",
+            "stats": "Main thread: 14259 events (seq 13799-43607, still live during audit), 3390 projected turn_items (922 assistant_message, 1658 command_execution, 345 file_change, 144 dynamic_tool, 26 web_search, 7 subagent, 4 error, 169 user_message, 117 checkpoint, 1 handoff), 1091 messages, 122 runs = 122 provider_turns (117 completed / 4 failed / 1 cancelled, statuses exactly aligned). 7 subagent child threads (not 9): 79-260 events and 17-53 items each, 214 child items total. Native logs cover only 2026-07-01T16:00:59Z onward (~50k lines, 11 files; earlier rotations deleted). Claude era: 1130 native toolu ids vs 1045 projected (76 lost in wakeup gaps, 7 Agent-remapped, 2 in-flight). Codex era (in-log): 450 native call ids, 119 unprojected. 4 native error_during_execution, 2 orchestrator transport failures, 1 user cancel, 2 user-interrupted subagents."
+        }
+    ],
+    "confirmed": [
+        {
+            "title": "Codex-native collab subagent (run 3) entirely missing from events and projections",
+            "category": "lost-data",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "User prompt run 3 was 'spawn a subagent'. Native log a5a643b2-...log shows: item/completed subAgentActivity call_9wPxyaS7ueh1MXl7XJt6zysq (kind 'started', agentThreadId 019f0c93-d260-7740-a477-0c0d19e8b299, agentPath /root/hello_agent) at 2026-06-28T04:54:02.530Z; collabAgentToolCall call_DO2fwaX8dQlHoNipTbnPWxIX (tool 'wait', inProgress 04:54:04.013Z -> completed 04:54:14.015Z); and on child native thread 019f0c93-d260: webSearch ws_08e14d73aa33777f016a40a8f75cd0819ba433374351c23d4f (query 'Codex OpenAI latest docs'), reasoning rs_08e14..., agentMessage msg_08e14d73aa33777f016a40a8fd816c819bbd856f295f6ce730 (text 'Hello.', completed 04:54:23, child turn 019f0c93-d421 completed 04:54:23.777Z -- AFTER parent run 3 finalized 04:54:15.874Z). SQL: 0 rows in orchestration_events for LIKE '%call_DO2fwaX8dQlHoNipTbnPWxIX%', '%call_9wPxyaS7ueh1MXl7XJt6zysq%', '%ws_08e14d73%', '%msg_08e14d73%', '%019f0c93-d260%'; orchestration_v2_projection_subagents has only the run-4 delegate-task row. Run 3 projected only user_message + 2 assistant messages + checkpoint; the parent assistant text ('Subagent spawned as /root/hello_agent. It hasn't returned within the short wait window yet.') is the only user-visible trace. Note: current CodexAdapterV2.ts (registerSubagentActivity/registerSubagentThreads, lines ~2815/2986; commits 3b864044c6 2026-06-28 'Adopt userdata-v2 and subagent activity mapping' and 57aa76ac14 2026-06-29) now maps these item types, so the session likely ran a pre-fix build -- but the historical data is unrecoverable and the child agent's post-run-completion output (arrived 8s after parent turn completed) remains a late-arrival hazard.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT COUNT(*) FROM orchestration_events WHERE payload_json LIKE '%call_DO2fwaX8dQlHoNipTbnPWxIX%' OR payload_json LIKE '%019f0c93-d260%'\"  # returns 0; vs grep -c 'subAgentActivity\\|collabAgentToolCall' ~/.t3/userdata-v2/logs/provider/a5a643b2-6ca8-4250-9c54-ddefe7d55565.log",
+            "sessionKey": "a5a643b2-codex-heya",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Every evidence point reproduces: the native log contains subAgentActivity call_9wPxyaS7ueh1MXl7XJt6zysq, collabAgentToolCall call_DO2fwaX8dQlHoNipTbnPWxIX, and 29 child-thread (019f0c93-d260) lines including agentMessage msg_08e14d73 (\"Hello.\") at 04:54:23.755Z, while orchestration_events and all projections return 0 rows for every identifier; run 3 projected only user_message + 2 assistant messages + checkpoint, and the subagents table has only the run-4 delegate-task row. The child output also arrived 8s after run 3's projected completed_at (04:54:15.874Z), matching the late-arrival claim. So the data loss is real and unrecoverable. Severity adjusted to medium because the session predates fix commit 3b864044c6 (2026-06-28 17:58 PDT, ~20h after the session) and current CodexAdapterV2.ts (lines 2815/2986-2998) now maps both item types, so recurrence for these types is addressed; only the historical loss and an unverified late-arrival hazard remain."
+            }
+        },
+        {
+            "title": "Backend child process fatally crashed twice on @cursor/sdk, killing run 1 mid-turn with no user-visible error",
+            "category": "error-handling",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "server-child.log (~/.t3/userdata-v2/logs/server-child.log): stderr fatal-error dump referencing 'file:///Applications/T3 Code (Alpha).app/.../node_modules/@cursor/sdk/dist/esm/index.js:1' at 2026-06-29T21:48:20.166Z (0.33s after native run.started run-9d9ff525-e89c-41e3-90e6-1f7e841cc188 at 21:48:19.834Z) and again at 21:49:09.455Z (followed by 'Node.js v24.15.0' crash footer). Server restart at 21:48:21.35 logged 'V2 orchestration recovery completed { terminalizedRuns: 1, stoppedSessions: 2 }'. Reconcile events seq 6294-6299 (command:runtime-reconcile:startup...21:48:21.501Z) set run:thread:721fc23c...:ordinal:1, its attempt, and provider-turn run-9d9ff525 to 'cancelled'. Run 1 has no error/cancelled turn item \u2014 user asked 'Hello therw!' and got only the 'Workspace ready' item; the cancellation is silent (run status is the only signal). No assistant content was lost in the log sense (crash preceded any deltas), but the turn was killed by a server bug, not a user cancel, and is projected indistinguishably from a user cancellation.",
+            "repro": "grep -n 'cursor/sdk\\|terminalizedRuns' ~/.t3/userdata-v2/logs/server-child.log ; sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT event_type,occurred_at FROM orchestration_events WHERE stream_id='721fc23c-2cf3-42bf-9d84-edd94359dca9' AND event_id LIKE '%runtime-reconcile%'\"",
+            "sessionKey": "721fc23c-cursor",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Every cited artifact reproduces: the @cursor/sdk fatal stderr dump at 21:48:20.166Z (0.33s after native run.started run-9d9ff525), a second fatal crash at 21:49:09.455Z with Node.js footer and child exit code=1, the recovery log 'terminalizedRuns: 1, stoppedSessions: 2', reconcile events seq 6294-6299 setting run 1/attempt/node/provider-turn to 'cancelled', and no error or cancelled turn item on run 1 (only user_message + workspace item). ProviderRuntimeRecoveryService.ts intentionally marks interrupted runs 'cancelled' and never persists its 'server restarted' detail string user-visibly, so the crash-induced kill is projected identically to a user cancel with zero debuggable trace \u2014 a real gap, though the terminalization itself is designed behavior. Downgraded to medium because recovery worked cleanly (nothing stuck, no assistant content lost since the crash preceded any deltas), and the finding slightly overstates impact: run 2's failure WAS surfaced with a visible provider_error item; only run 1 died silently."
+            }
+        },
+        {
+            "title": "401 authentication failure recorded as fully successful run \u2014 is_error on SDK result ignored",
+            "category": "error-handling",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log 2026-06-28T05:22:33.360Z: result payload has subtype:\"success\" but is_error:true, api_error_status:401, result:\"Failed to authenticate. API Error: 401 Invalid authentication credentials\", usage all zeros; preceded by two api_retry events (05:22:31.612Z, 05:22:32.312Z, error_status 401 authentication_failed). Projections: run run:...ordinal:1 status=completed (event seq 146, run.updated stream_version 27), run_attempt ...attempt:1 status=completed (seq 139), provider_turn ...attempt%3A1 status=completed (seq 138), assistant turn-item turn-item:provider:claudeAgent:native-item:03e7bb1c-2ee8-46a9-8bf2-f2b66c7501dc status=completed. No failure/error field anywhere in any payload_json; the only trace of the error is the synthetic assistant message text (which did survive verbatim, so it is user-visible as ordinary assistant text, not as an error state). Root cause: terminalStatusFromResult in /Users/julius/.t3/worktrees/codething-mvp/t3code-c1e5e1d1/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:1652 returns \"completed\" whenever message.subtype === \"success\" and the failure branch at ~line 3254 only fires for non-success subtypes; is_error/api_error_status are never checked (only tool-result is_error at lines 1498-1500). An MCP delegate_task caller polling run status sees success for a task that never executed.",
+            "repro": "grep 'api_error_status' ~/.t3/userdata-v2/logs/provider/thread-delegated-task-command-3amcp-3a1156181e-e188-4fe4-8cc5-a294003ebfed-3adel.log ; sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT status FROM orchestration_v2_projection_runs WHERE thread_id LIKE '%1156181e%';\"",
+            "sessionKey": "1156181e-delegated-task",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "high",
+                "reasoning": "Every evidence point reproduces: the native log at 2026-06-28T05:22:33.360Z shows a result with subtype \"success\" but is_error:true, api_error_status:401, zero usage, preceded by two api_retry 401 authentication_failed events (05:22:31.612Z, 05:22:32.312Z); projections show run (seq 146), run_attempt (seq 139), provider_turn (seq 138) and assistant turn-item 03e7bb1c-2ee8-46a9-8bf2-f2b66c7501dc all status=completed with no failure field in any payload_json. The code claim is accurate: terminalStatusFromResult (ClaudeAdapterV2.ts:1658) returns \"completed\" for any subtype===\"success\" and the failure branch at ~3254 only fires for non-success subtypes, while the SDK's SDKResultSuccess type explicitly exposes is_error and api_error_status (sdk.d.ts:2739-2740) \u2014 so this is an ignored error signal, not an SDK ambiguity or intentional design. Severity high stands because this thread is a delegated MCP task whose caller consumes run status programmatically; an auth failure that executed zero turns is reported as a fully successful run, with the only trace being ordinary assistant text."
+            }
+        },
+        {
+            "title": "Subagent live transcript and final output never projected to its child thread",
+            "category": "lost-data",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Child thread 'thread:provider:grok:native-thread:019f1b5f-efdb-7da0-acd7-1a31b3fe00bc%3Atask%3Acall-cdbbacb3-0c58-4992-86ce-7b549ffb16ce-1' has only 8 events (sequences 14437-14451, last stream_version 7 at 2026-07-01T01:52:10.705Z) and 2 turn_items, both timestamped at spawn (01:52:10). Its assistant_message item 'turn-item:provider:grok:native-item:call-cdbbacb3-...-1%3Aresult' contains only the bootstrap text 'Subagent started in background... Use get_command_or_subagent_output ... to wait for results.' Yet the task actually ran 01:52:10Z-01:53:25Z with tool_calls=116 (per TaskOutput result in parent item turn-item:provider:grok:native-item:019f1b5f...%3Atool%3Acall-5ca8a4be-6fc8-4924-909c-b198de7dcbc8-2). Native log shows 811 decoded incoming ACP messages between 01:52:14 and 01:52:59 (gap between run 1 Interrupt at 01:52:13.249 and run 2 start at 01:52:59.9) with ZERO orchestration_events ingested for any session stream in that window \u2014 the subagent's streamed activity was dropped, likely because AcpAdapterV2's subagent context (context.subagents / subagentsBySessionId / pendingSubagentNotifications in /Users/julius/.t3/worktrees/codething-mvp/t3code-c1e5e1d1/apps/server/src/orchestration-v2/Adapters/AcpAdapterV2.ts ~line 559) is per-active-turn and turn 1 had already finalized. The 15,053-char final output is preserved un-truncated ONLY inside the parent's turn-2 dynamic_tool item; a user opening the child thread 'Explore codebase structure and architecture' sees none of the subagent's work.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT COUNT(*) FROM orchestration_events WHERE occurred_at>'2026-07-01T01:52:13.4' AND occurred_at<'2026-07-01T01:52:59' AND (stream_id LIKE '%5dcea72d%' OR stream_id LIKE 'thread:provider:grok:native-thread:019f1b5f%');\" -- returns 0, vs grep of the log showing 811 decoded incoming messages in the same window",
+            "sessionKey": "5dcea72d-grok-subagent",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "All evidence reproduces: child thread has only 8 spawn-time events (seq 14437-14451, all 01:52:10Z) and its result item contains only bootstrap text; 0 orchestration_events exist in the 01:52:13.4-01:52:59 gap despite continuous decoded incoming traffic in the log; run 1 prompt failed with errorTag Interrupt at 01:52:13.249Z and the subagent ran to 01:53:25Z (116 tool_calls per parent TaskOutput item). Code intent confirms this is a bug, not design: AcpAdapterV2's emitSubagentAssistant/projectSubagentNotification/pendingSubagentNotifications (lines 845-882, 1447-1461) are built to stream subagent text into the child thread, but the per-turn context's finalized guard plus run 2's empty subagentsBySessionId map dropped everything; the subagent projection row is also frozen at spawn (completed_at 01:52:10.702Z, result=bootstrap text). Downgraded to medium because the full 15,053-char final output is preserved un-truncated and user-visible in the parent's turn-2 dynamic_tool item, and even happy-path design only projects assistant text chunks (not tool calls) to the child thread \u2014 the loss is the child-thread transcript and an accurate subagent row, not the final answer."
+            }
+        },
+        {
+            "title": "10 post-turn wakeup turns entirely unpersisted (16 assistant messages + 84 tool calls lost)",
+            "category": "lost-data",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": true,
+            "evidence": "Native log has 25 result messages but only 16 runs exist. 10 results have no corresponding run/message/item: 21:19:42 ('CodeRabbit's final pass came back clean'), 22:14:37, 22:19:27, 22:25:18, 22:32:25, 22:38:55 (review-fix 'Rounds 3-7' incl. real git pushes 'a3c87931a2', 'cb28a0842f', 'c435bec111', '57ca73e655', 'd851eb7b9c'), 23:12:04, 23:17:19, 23:32:05 ('Round 11 pushed c19ceca8a5'), 23:41:55 ('Converged. PR #3638 is fully green'). Diff of tool_use ids in log vs nativeItemRef in projections: 86 missing (84 after excluding 2 Agent ids that are represented as task-id subagent items) \u2014 all timestamped inside wakeup windows (21:19, 22:13-22:38, 22:59:24-32, 23:11:24-34, 23:16-23:23, 23:29-23:31, 23:41). 16 native assistant text messages missing (uuids incl. 6299b5cf-7941-4355-8063-eb9d60d7216f @21:19:41, d226f500-43a0-489e-a1bd-888747c56495 @22:38:54, 093e91b9-0d5b-4ad9-a7a9-2ef06c4c2021 @23:41:52). Zero orchestration_events on the stream between 22:10:30 and 22:48:00 except one provider-session.updated (stopped) at 22:41:50.039Z. No run/message has inputIntent provider_wakeup; all 16 user messages have creationSource=web. This is the documented 'invisible post-turn turns' issue diagnosed on this exact thread (fix implemented later on branch t3code/codex-turn-mapping); this session's data predates the fix.",
+            "repro": "SELECT COUNT(*) FROM orchestration_events WHERE stream_id='47763f5e-76c1-4d67-8037-442a280f1514' AND occurred_at>'2026-07-01T22:10:30' AND occurred_at<'2026-07-01T22:48:00'; -- =1 (session stop only), while the native log shows 5 full result turns in that window: grep '\"type\":\"result\"' ~/.t3/userdata-v2/logs/provider/47763f5e-76c1-4d67-8037-442a280f1514.log.1 | grep 'T22:[123]'",
+            "sessionKey": "47763f5e-claude-fable",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "high",
+                "reasoning": "Every evidence point reproduces: 25 decoded result messages in the native log vs 16 projected runs, with the exact 10 cited orphan results unmatched by any run completed_at; the repro SQL returns 1 (only a provider-session stop at 22:41:50.039Z) for a window where the log shows 5 full turns; 86 top-level tool_use ids (371 in log vs 285 projected across all threads) are missing, all timestamped in the orphan-turn windows; cited assistant texts/uuids exist in the log but in zero projection rows; and no run/message carries provider_wakeup intent. This is real, substantial user-facing data loss (whole review-fix rounds with real git pushes invisible), matching the documented pre-fix \"invisible post-turn turns\" issue on this exact thread \u2014 known issue, but the lost session data is not backfilled by the fix, so high severity stands."
+            }
+        },
+        {
+            "title": "Invisible post-turn wakeup turns: 42 native tool calls + final assistant messages never ingested or projected",
+            "category": "lost-data",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": true,
+            "evidence": "Three windows where the claudeAgent SDK kept working after the orchestrator closed the run: 23:31:27-23:36:48 (16 calls: Bash/Read/Edit/TaskCreate/TaskUpdate, after run 5 completed 23:30:07), 00:16:13-00:17:13 (9 calls, after run 6 completed 00:16:09), 00:33:32-00:37:24 (16 calls incl. mcp__t3-code__preview_* tools, after run 7 completed 00:33:22). Native results confirm full turns: [2026-07-02T00:17:51.602Z] subtype success num_turns:10 and [00:37:39.534Z] num_turns:17. Zero rows in orchestration_events for e.g. toolu_012dzkuS4eoKeRiAaQ3icFpD (Bash 00:17:05.797Z); zero main-stream events between 00:16:10 and 00:21:50. The wakeup turn's final assistant text 'Done \u2014 comment posted: https://github.com/pingdotgg/t3code/pull/2829#issuecomment-4861082710' (log.2, 00:17:4x) has 0 events and 0 turn_items \u2014 the agent posted a GitHub comment with no user-visible record. This is the diagnosed 'invisible post-turn turns' issue; the fix (turn.wakeup / ProviderWakeupService / attach_wakeup) is on this branch but this session ran on the pre-fix build (this thread is itself the diagnosis session, title 'check in on this thread: 47763f5e...').",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT count(*) FROM orchestration_events WHERE payload_json LIKE '%toolu_012dzkuS4eoKeRiAaQ3icFpD%'\"  -- returns 0; grep toolu_012dzkuS4eoKeRiAaQ3icFpD ~/.t3/userdata-v2/logs/provider/ea84f015-*.log.2 shows the Bash tool_use",
+            "sessionKey": "ea84f015-cursor-handoff",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "high",
+                "reasoning": "Re-ran the full evidence trail: run 5/6/7 completion timestamps match, all 9 window-2 tool ids (e.g. toolu_012dzkuS4eoKeRiAaQ3icFpD) and 33 window-1/3 ids have zero rows in orchestration_events, zero main-stream events exist in all three gap windows, and the final assistant text with the posted GitHub comment URL (issuecomment-4861082710) has 0 events and 0 turn_items despite 4 native log occurrences with a success result (num_turns:10 at 00:17:51.602Z). Minor correction: 5 ids the finding attributed to window 1 belong to run 6 and were ingested, but the total lost count is still exactly 42. The session ran on the pre-fix build (the fix lives uncommitted on this branch), so whole turns including a real-world side effect were permanently lost with no user-visible record \u2014 real lost-data, correctly flagged as a known issue, severity stays high."
+            }
+        },
+        {
+            "title": "Cursor turn failure projected with only generic 'Provider turn failed.' \u2014 real error detail (auth error) never captured",
+            "category": "error-handling",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Run 2 (native run-f4d64e64-0af6-42bc-8813-5b6ce53a328d) failed: native log line [2026-07-02T02:35:28.424Z] run.completed result {status:\"error\", requestId:\"beca30c7-7e90-481b-abf7-fdab84b3c48d\", durationMs:440732} \u2014 no error field in the decoded payload, and zero interaction.updates for the entire 440s turn (only run.started at 02:28:07.973Z then silence). Projected error item turn-item:provider:cursor:native-item:terminal-failure%3Aprovider-turn%3A...run-f4d64e64... (event seq 38493, occurred_at 2026-07-02T02:35:28.524Z) carries failure {class:\"provider_error\", message:\"Provider turn failed.\", code:null, retryable:null} \u2014 requestId and durationMs from the native payload are dropped too. Cause: CursorAdapterV2.ts:2165-2168 maps `cause: (result as { readonly error?: unknown }).error` which is undefined on the SDK RunResult, falling back to DEFAULT_PROVIDER_FAILURE_MESSAGE. The session's own in-turn diagnosis (final assistant item ...assistant%3Arun-1cbebefe...%3A5) confirmed the real cause lives only in the Cursor SDK store runs.error_code (\"Authentication error If you are logged in, try logging out and back in.\") which T3 never reads. The failure IS surfaced user-visibly (error item status failed, run/attempt/provider-turn all 'failed'), but with zero debuggable detail \u2014 this exact gap forced the user to spawn this debugging thread, and then recurred on the thread itself (run ordinal 2).",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.failure') FROM orchestration_v2_projection_turn_items WHERE thread_id='c9e72a05-4c87-4dd5-b1b6-83834cc73afe' AND type='error';\" ; grep 'run.completed' ~/.t3/userdata-v2/logs/provider/c9e72a05-4c87-4dd5-b1b6-83834cc73afe.log | tail -1",
+            "sessionKey": "c9e72a05-cursor-failing-turns",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "high",
+                "reasoning": "Fully reproduced: the projected error item for run-f4d64e64 carries only {\"message\":\"Provider turn failed.\",\"code\":null}, while the native log's run.completed (02:35:28.424Z, status \"error\", requestId beca30c7, durationMs 440732) confirms no detail was captured and requestId/durationMs were dropped. The cited code (CursorAdapterV2.ts:2165-2168) reads (result as {error?: unknown}).error, but @cursor/sdk@1.0.22's RunResult type has no error field whatsoever \u2014 the fallback is guaranteed dead-code behavior for EVERY failed Cursor turn, and the SDK's public store API does expose RunRecord.errorCode (\"Authentication error...\") which T3 never reads. The failure is surfaced user-visibly with correct terminal states (so nothing is swallowed), but the projection retains zero debuggable detail for a systematic, provider-wide failure path, which matches the audit's explicit error-handling criterion; severity high stands."
+            }
+        },
+        {
+            "title": "Shared codex session native logs written to opener thread's file, not the active thread's \u2014 no log file ever created for these threads",
+            "category": "other",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "All four threads bind provider_session_id 'provider-session:provider-instance:codex:shared'. Their codex app-server protocol traffic appears in 71e29ba5-654b-4f67-b363-ad400e5bd016.log.6/.9/.10 (e.g. 019f1b62-f532 = c878541b's nativeThreadRef: 4768 hits in .log.10, 2828 in .log.9), interleaved with that thread's own claudeAgent and codex (019f1b50-4248) traffic. Cause: in /Users/julius/.t3/worktrees/codething-mvp/t3code-c1e5e1d1/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts, codexAppServerClientFactoryFromSettingsLayer.open builds makeCodexAppServerProtocolLogger({ nativeEventLogger, threadId: input.threadId, ... }) once per app-server process; EventNdjsonLogger.write routes to `${threadSegment}.log` from that frozen threadId, so every thread multiplexed onto the shared session logs under the opener's file. No file named c878541b-*/de5f191a-*/68f7595b-*/af66fc2c-* was ever created.",
+            "repro": "grep -l '019f1b62-f532' ~/.t3/userdata-v2/logs/provider/*.log*   # hits only 71e29ba5-654b-...log.{6,9,10}, never a file named after the audited threads",
+            "sessionKey": "codex-no-native-logs",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Fully reproduced: all four threads bind provider-session:provider-instance:codex:shared; c878541b's nativeThreadRef 019f1b62-f532 appears exactly 4768x in 71e29ba5.log.10 and 2828x in .log.9 (interleaved with 71e29ba5's own codex ref 019f1b50-4248), and no log file named after any of the four threads exists. Code confirms the cause: CodexAdapterV2.ts line 1136 freezes input.threadId into makeCodexAppServerProtocolLogger at app-server open, so every multiplexed thread's protocol traffic routes to the opener's `${threadSegment}.log` \u2014 defeating EventNdjsonLogger's per-write threadId routing, so this is a misrouting bug, not intent. Downgraded to medium because ingestion/projections for these threads are intact (observability-only defect), though rotation under the busy opener file has permanently deleted 3 of 4 threads' protocol history."
+            }
+        },
+        {
+            "title": "Invisible post-turn wakeup turns (claudeAgent): 76 completed tool calls + assistant text never ingested or projected",
+            "category": "lost-data",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": true,
+            "evidence": "1130 unique toolu_ ids in decoded native logs vs 1045 projected nativeItemRef ids. Of the 85 unmatched, 7 are Agent spawns (projected under task:<hash>:subagent ids, fine) and 2 are stream-only in-flight blocks; the remaining 76 (60 Bash, 7 Edit, 5 Read, 4 ScheduleWakeup) ALL fall in gaps between run windows \u2014 0 fall inside any run. Example: run 56 completed 2026-07-01T22:18:57.958Z (result subtype=success 22:18:57.333Z); at 22:20:52.374Z 'system task_notification bk7bmoyti' re-woke the session, assistant emitted text 'The build failed \u2014 let me see the actual error.' (22:20:58.275Z) then Bash toolu_011YH7oQm6yGVjWTfxwQ1QsH (22:20:59, tool_result 22:21:00) etc. \u2014 none exist in orchestration_events or turn_items (LIKE search for that text returns 0). This thread has ZERO wakeup runs/messages (0 messages with inputIntent provider_wakeup / creationSource other than agent|provider,user|web), while 367 provider_wakeup events exist elsewhere in the DB (first at 2026-07-01T22:47:41) \u2014 this is the thread on which the fix was being developed (memory: diagnosed 2026-07-01 on threads 47763f5e & 71e29ba5).",
+            "repro": "comm -23 /tmp/native_toolu.txt /tmp/proj_toolu.txt (native ids from grep -h '\"stage\":\"decoded\"' ~/.t3/userdata-v2/logs/provider/71e29ba5-654b-4f67-b363-ad400e5bd016.log* | grep -o 'toolu_[A-Za-z0-9]*' vs SELECT json_extract(payload_json,'$.nativeItemRef.nativeId') FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE '%71e29ba5%')",
+            "sessionKey": "71e29ba5-claude-mega",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "high",
+                "reasoning": "Re-ran the full evidence trail: 85 genuine claudeAgent tool_use ids in decoded native logs have no projection; after excluding 7 Agent spawns (verified projected as task:<hash> items) and 2 stream-only in-flight blocks, exactly 76 completed tool calls (60 Bash, 7 Edit, 5 Read, 4 ScheduleWakeup) all fall in gaps between run windows (0 inside any of the 127 runs). The cited example reproduces: assistant text 'The build failed...' at 2026-07-01T22:20:58.275Z between run 56 (ended 22:18:57.958Z) and run 57 (started 22:22:38.734Z), with 0 matching rows in orchestration_events; the thread has 0 provider_wakeup events/messages while 367 exist elsewhere. This is the documented known issue the branch fixes, but for this session the provider-emitted tool calls, results, and assistant text are unrecoverably absent from ingestion and projections, with losses continuing into 2026-07-02 \u2014 real high-severity lost data, correctly flagged knownIssue=true."
+            }
+        },
+        {
+            "title": "Provider failures persist only generic error strings; underlying cause is unrecoverable from the DB",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "4 claudeAgent error items say only 'Claude Agent SDK query failed.' (class transport_error, code null) \u2014 e.g. run:thread:47763f5e-76c1-4d67-8037-442a280f1514:ordinal:10 failed 2026-07-01T22:48:38 with zero native-log traffic in that minute, so the real exception exists nowhere. Root cause: ClaudeAgentSdkQueryRunnerError.message getter in apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:280 hardcodes the string and discards `cause`. Similarly 4 cursor items say 'Provider turn failed.' (code null) while the native run.completed carried status:'error' plus requestId d1cd7f44-91fb-45ce-bdd3-86e9b5cc8e3e and durationMs 2434335 that were dropped. Counter-example showing it can be done right: codex errors keep full detail ('stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)' and the full 400 invalid_request_error body for gpt-5.3-codex).",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT thread_id, json_extract(payload_json,'$.failure.message') FROM orchestration_v2_projection_turn_items WHERE type='error';\"",
+            "sessionKey": "GLOBAL",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Reproduced the SQL: all 4 claudeAgent error items persist only 'Claude Agent SDK query failed.' (code/retryable null) and no richer detail exists in any orchestration_events row for those failures; the root cause is confirmed at ClaudeAdapterV2.ts:279-281 where the message getter hardcodes the string while the Schema.Defect cause field is discarded by makeProviderFailure (real exception goes only to Effect.logWarning). This is not intentional: ProviderFailure.ts has redaction/4096-char bounding built to persist real error text, and codex failures do persist full detail. Minor correction: the '47763f5e had zero native-log traffic at 22:48' claim is false (8 lines exist in .log.1, outgoing query.open/prompt.offer at 22:48:38.086), and the cursor generic message is partly upstream (native run.completed carried no error message, only requestId d1cd7f44/durationMs which were dropped) \u2014 but the core finding stands, so severity stays medium."
+            }
+        },
+        {
+            "title": "Delegated Claude task failed with 401 auth error but all statuses say 'completed' (is_error ignored on success-subtype result)",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Child native log thread-delegated-task-command-3amcp-3a1156181e-...log (2026-06-28T05:22:33Z) shows SDK result {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"Failed to authenticate. API Error: 401 Invalid authentication credentials\"}. Projections: child run run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253A1156181e-...:ordinal:1 status=completed; provider_turn status=completed; subagent row node:delegated-task:command%3Amcp%3A1156181e-...%3Ahello-opus-48 status='completed' with result='Failed to authenticate...'; delegate_task tool item call_qV0wnlB5N6Osa6CPxTGN1Ajh output.status='completed'. Root cause in current code: ClaudeAdapterV2.ts terminalStatusFromResult (~line 1658) returns 'completed' whenever message.subtype==='success' without checking is_error, and the result handler (~line 3254) only attaches a ProviderFailure when subtype!=='success'. Mitigating: the error text IS preserved and user-visible (child assistant item 03e7bb1c-2ee8-46a9-8bf2-f2b66c7501dc text = the 401 message; parent's final assistant message msg_...9bb460 explains the failure), so nothing was swallowed -- but status semantics are wrong for anything filtering on failed tasks.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT status, json_extract(payload_json,'$.result') FROM orchestration_v2_projection_subagents WHERE subagent_id LIKE '%hello-opus-48%'\"  # completed | Failed to authenticate. API Error: 401 ...",
+            "sessionKey": "a5a643b2-codex-heya",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Re-ran every evidence step: the child native log shows SDK result subtype=\"success\" with is_error=true and api_error_status=401 (zero tokens, \"Failed to authenticate. API Error: 401...\"), yet the child run, provider_turn, subagent row, and the parent's delegate_task item (call_qV0wnlB5N6Osa6CPxTGN1Ajh, output.status=\"completed\") all report completed. Source confirms the cause: ClaudeAdapterV2.ts terminalStatusFromResult (line 1658) returns \"completed\" on subtype===\"success\" without checking is_error, and the result handler (lines 3250-3263) only attaches a ProviderFailure when subtype!==\"success\" \u2014 is_error is checked only for tool results, so this is an oversight, not intent. Medium stands: the error text is preserved and user-visible, but status semantics are wrong end-to-end for anything filtering on failed delegated tasks."
+            }
+        },
+        {
+            "title": "Streaming deltas persisted as full-row event pairs cause ~2800x event amplification on child result items",
+            "category": "other",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Child thread ...composer_call_kFjs8 accumulated 2711 events (1352 turn-item.updated + 1352 message.updated + overhead) to stream a single 6274-char result; the 3 children total 5702 turn-item/message events for ~12.6KB of final text. This one 2-minute session wrote 6017 rows to orchestration_events (43k total table), i.e. each streaming delta is persisted as a full-row upsert event for both the turn item and its message. Not a correctness bug (final projections are correct) but a storage/replay-cost anomaly.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT event_type, COUNT(*) FROM orchestration_events WHERE stream_id LIKE 'thread:provider:grok:native-thread:019f1558%' GROUP BY 1;\"",
+            "sessionKey": "20296b49-grok-tasks",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Evidence reproduces exactly: 1352 turn-item.updated + 1352 message.updated events on the single kFjs8 result item with monotonically growing text (4 -> 6274 chars, sequences 2160-4862), and the session totals exactly 6017 event rows. Code confirms the mechanism: AcpAdapterV2.emitSubagentAssistant emits a full-row message+turn-item event pair per agent_message_chunk and ProviderEventIngestor persists each pair durably with no coalescing, throttling, or event-log pruning (ProjectionMaintenance only rebuilds projections by replaying the full log). Quantified: 18.0 MB of payload_json for ~12.6 KB of final subagent text (~1400x, quadratic in output length), 15.5% of the entire event table from one 2-minute session. Final projections are correct so severity stays medium, but the unbounded quadratic storage/replay cost is a real, unmitigated pipeline anomaly, not intended behavior or a misreading."
+            }
+        },
+        {
+            "title": "Run 2 failure projected with generic wrapper message; actual cause dropped from projection and depth-elided in server log",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Error turn item turn-item:provider:cursor:native-item:terminal-failure%3Aprovider-turn%3A...ordinal%25253A2... (ordinal 2000002, status failed, 21:48:40.703Z) persists failure = {class:'provider_error', message:'Failed to start run run:thread:721fc23c-2cf3-42bf-9d84-edd94359dca9:ordinal:2 on cursor provider thread provider-thread:provider:cursor:native-thread:pending%3A...', code:null, retryable:null}. That string is ProviderAdapterTurnStartError's message getter (apps/server/src/orchestration-v2/ProviderAdapter.ts:291); RunExecutionService.ts:830 builds the failure via makeProviderFailure({cause: Cause.squash(cause)}) so the tagged error's wrapped `cause` (the real agent.send rejection from CursorAgentSdk runnerError 'run.start') never reaches the projection. The only other record, server-child.log line 89 at 21:48:40.703Z, printed the cause as \"{ _id: 'Cause', failures: [ [Object] ] }\" \u2014 depth-elided. The underlying reason run 2 failed 4ms after run.start is now unrecoverable. Positive: the failure WAS surfaced user-visibly as an error item and run/attempt/node all show 'failed'.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE thread_id='721fc23c-2cf3-42bf-9d84-edd94359dca9' AND type='error'\" ; grep -n '721fc23c' ~/.t3/userdata-v2/logs/server-child.log",
+            "sessionKey": "721fc23c-cursor",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "All cited evidence reproduces: the projected error item and its source event (orchestration_events sequence 6314) both persist only ProviderAdapterTurnStartError's generic message getter (ProviderAdapter.ts:280-293); RunExecutionService.ts:~831 feeds Cause.squash(cause) into makeProviderFailure, which (ProviderFailure.ts:90-113) reads only .message/.code and never unwraps the nested cause defect that CursorAdapterV2.ts:2203 attaches. server-child.log line 89 depth-elides the cause as \"[ [Object] ]\" and the native provider log ends at the outgoing run.start (21:48:40.699Z) with no error event, so the real reason run 2 failed is unrecoverable from any persisted artifact. The failure was surfaced user-visibly with correct terminal statuses, so medium (not high) is the honest severity \u2014 this is a debuggability gap, not silent loss."
+            }
+        },
+        {
+            "title": "Native provider log never records failure frames \u2014 cursor SDK send errors and process death are invisible in the ground-truth log",
+            "category": "other",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log 721fc23c-2cf3-42bf-9d84-edd94359dca9.log ends at [2026-06-29T21:48:40.699Z] with outgoing run.start 'what did you just say' and no incoming frame, though the turn failed at 21:48:40.703Z. In Adapters/CursorAgentSdk.ts send(), the log writes cover outgoing run.start and incoming run.started/interaction.update/run.completed only; when agent.send rejects, Effect.tryPromise raises runnerError(cause,'run.start') with no protocol log write. Similarly run 1 shows run.started at 21:48:19.834Z and then nothing \u2014 no error, no lifecycle/exit record \u2014 because the process crash killed the logger too. Result: the 'ground truth' log cannot explain either failed turn, which is exactly why this session looked suspicious (7 lines vs 47 events).",
+            "repro": "cat ~/.t3/userdata-v2/logs/provider/721fc23c-2cf3-42bf-9d84-edd94359dca9.log | tail -2 ; grep -n 'runnerError(cause, \"run.start\")' apps/server/src/orchestration-v2/Adapters/CursorAgentSdk.ts",
+            "sessionKey": "721fc23c-cursor",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "low",
+                "reasoning": "Evidence reproduces fully: the native log ends at 21:48:40.699Z with the outgoing run.start and no failure frame while events 6313-6315 record the run failing at 21:48:40.703Z, and CursorAgentSdk.ts's error paths (runnerError catches at lines 408/440; run.completed logged via success-only Effect.tap) confirm no error-frame logging exists \u2014 indeed no adapter has an error/lifecycle log kind at all. However, the pipeline did not swallow anything: the failure was ingested and user-surfaced as turn-item 6314 (type error, status failed) with correct terminal statuses, and the raw cause is logged to the server application log (CursorAdapterV2.ts:2188 logWarning with cause), so this is an observability gap in the debug/protocol log (compounded by the generic projected message with code:null) rather than a data-loss or projection bug. Run 1's \"process crash\" explanation is unproven (DB shows cancelled, lastError null), so I downgrade to low: real, design-wide log-scope limitation worth fixing, but errors remain debuggable and user-visible through other channels."
+            }
+        },
+        {
+            "title": "Failed tool item drops the provider error message (file_search projection has no error/output field)",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Child thread ses_0ea978228: turn-item:provider:opencode:native-item:prt_f15692f30001qL66As1xsUCQXc (ordinal 87) went running->failed at 2026-06-29T22:04:02.915Z (events seq 8284 -> 8286 on stream thread:provider:opencode:native-thread:ses_0ea978228ffeVM6qpFUgGn62Vl). Final payload contains only {status:'failed', type:'file_search', pattern:'/Users/julius/Development/Work/codething-mvp/CLAUDE.md'} \u2014 no error text at all. Root cause in OpenCodeAdapterV2.ts: toolOutput() (line 659) returns part.state.error for status 'error', but the file_search branch (~line 1376) only maps 'pattern'; output/error is only attached for dynamic_tool. The contract (packages/contracts/src/orchestrationV2.ts line 841) also has no output/error field on file_search items, so the failure reason is unrecoverable from projections. Failure IS user-visible via status=failed, but not debuggable.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE turn_item_id='turn-item:provider:opencode:native-item:prt_f15692f30001qL66As1xsUCQXc';\"",
+            "sessionKey": "3029dc85-opencode",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Reproduced the exact projection payload (failed file_search item prt_f15692f30001qL66As1xsUCQXc, ordinal 87, no error text) and the running->failed transition at events seq 8284->8286. Source confirms the mechanism: OpenCodeAdapterV2.ts toolOutput() (line 659) extracts part.state.error, but the file_search branch (lines 1376-1383) only maps pattern \u2014 output/error is attached only for command_execution/dynamic_tool \u2014 and the contract's file_search schema (orchestrationV2.ts line 841) has no field to hold it. The native log is additionally redacted (protocol payloads logged as fieldCount summaries only), so the error message is unrecoverable anywhere; failure is visible via status=failed but not debuggable, so medium stands."
+            }
+        },
+        {
+            "title": "Claude assistant text segments merged without separator into a single end-of-turn item, losing interleaving",
+            "category": "lost-data",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Thread :2 native log has 5 assistant text blocks with distinct SDK uuids (341420a1 len 95 @22:09:54, 78f308a1 len 37 @22:09:58, 26b0aa8d len 90 @22:10:11, 31c4bfa0 len 73 @22:11:40, bfa7a134 len 10347 @22:13:07), interleaved with 19 tool calls. Projection has ONE assistant_message item turn-item:provider:claudeAgent:native-item:bfa7a134-04d5-4434-bb14-66927497fb91, ordinal 1000021 (after all tools), text length 10642 = exact sum, joined with no whitespace: '...read all the files thoroughly.I'll read all files in the directory.Let me gather context...'. The 4 intermediate uuids have ZERO orchestration_events (only seq 11544-11546 reference bfa7a134, all at 22:13:07). Root cause in code that ran (git fc23be8184 ClaudeAdapterV2.ts:2815): `context.assistant.text += assistantText.text` with single emission at result time; current worktree code (emitAssistantTextArtifacts per message.uuid) already emits per-segment items, so this appears fixed for future runs.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT substr(json_extract(payload_json,'$.text'),80,150) FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE '%126456a2%:2' AND type='assistant_message';\"",
+            "sessionKey": "6d618dc4-mcp-group",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "low",
+                "reasoning": "Reproduced every claim: native log has 5 assistant text blocks (lens 95/37/90/73/10347 at 22:09:54\u201322:13:07) but the projection has one assistant_message item (native ref bfa7a134, ordinal 1000021 after all 19 tools) of length 10642 = exact sum, joined with no separator (\"thoroughly.I'll read all files in the directory.Let me gather context\"); the 4 intermediate uuids have zero orchestration_events while bfa7a134 has seq 11544\u201311547. Historical code (fc23be8184 ClaudeAdapterV2.ts:2815 `context.assistant.text +=`) caused it; current worktree emitAssistantTextArtifacts emits per-nativeItemId, so it is fixed going forward. Real for this session's data, but downgraded to low because no text content was lost (only interleaving/segmentation) and the fix already landed."
+            }
+        },
+        {
+            "title": "Subagent projection marked completed at spawn with placeholder result (lifecycle wrong by ~75s)",
+            "category": "other",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "orchestration_v2_projection_subagents row 'node:provider:grok:native-item:call-cdbbacb3-0c58-4992-86ce-7b549ffb16ce-1' has status=completed, started_at=2026-07-01T01:52:10.677Z, completed_at=2026-07-01T01:52:10.702Z and result='Subagent started in background...\\nUse get_command_or_subagent_output...' \u2014 but the task's real lifetime was 01:52:10Z to 01:53:25Z (duration_secs 74.874 per the TaskOutput payload). The parent 'subagent' turn_item (ordinal 1000007) mirrors the same premature completedAt and placeholder result. Cause visible in AcpAdapterV2.emitSubagent (~lines 1047-1060): when the spawn tool returns 'started in background', taskStatus is non-running and update.result (the bootstrap text) is adopted as assistantText/result; nothing later updates it when the background task actually finishes.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT status, completed_at, substr(json_extract(payload_json,'$.result'),1,60) FROM orchestration_v2_projection_subagents WHERE thread_id='5dcea72d-15e1-4ded-922b-0b00c587de6c';\"",
+            "sessionKey": "5dcea72d-grok-subagent",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Reproduced end-to-end: projection row 'node:provider:grok:native-item:call-cdbbacb3-...-1' has status=completed, completed_at=2026-07-01T01:52:10.702Z with result='Subagent started in background...' while the TaskOutput payload (event seq 14622, 01:53:28.477Z, item call-5ca8a4be-...) shows the task actually ran 01:52:10Z-01:53:25Z (duration_secs 74.874); only 3 subagent.updated events exist, all at spawn time, so nothing ever corrects it. Code confirms the cause: extractXAiAcpSubagentUpdate (XAiAcpExtension.ts:86-91) maps the spawn tool's completed status straight to subagent status with no background-spawn detection, and AcpAdapterV2.ts:1047-1053 adopts the bootstrap text as assistantText/result; the later TaskOutput tool call is projected as an unrelated dynamic_tool item and never routed back to the subagent, and the child thread's only assistant message is also the placeholder. Severity stays medium: the real 15.5KB output survives user-visibly in the separate dynamic_tool item, but the subagent card's lifecycle, result, and child-thread transcript are wrong, and this Grok/ACP path is not covered by the claudeAgent backgrounded-task known issue."
+            }
+        },
+        {
+            "title": "Run 10 terminal failure persisted with only a generic error message",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Run run:thread:7f1dfff1-...:ordinal:10 failed at 2026-07-01T20:47:58.607Z. The projected error item (turn-item:provider:claudeAgent:native-item:terminal-failure%3A...ordinal%25253A10..., event seq 25810) has failure {class:\"transport_error\", message:\"Claude Agent SDK query failed.\", code:null, retryable:null}. run-attempt payload (seq 25811) carries no error detail either. Native log ends at 20:47:58.429Z with outgoing query.open + prompt.offer (user text \".\") and zero incoming SDK messages, so the DB retains no clue what actually failed. Root cause in code: ClaudeAdapterV2.ts:279-280 \u2014 ClaudeAgentSdkQueryRunnerError.message hardcodes \"Claude Agent SDK query failed.\" and the underlying `cause` defect is never propagated into the projected failure. The failure IS user-visible (error item + run failed), but is undebuggable after the fact.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.failure') FROM orchestration_v2_projection_turn_items WHERE thread_id='7f1dfff1-4cbb-450b-8514-764d11c903e1' AND type='error';\"",
+            "sessionKey": "7f1dfff1-claude-scheduled-tasks",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Re-ran the repro: the error turn-item (event seq 25810) and run-attempt (seq 25811) for run ordinal 10 persist only {class:\"transport_error\", message:\"Claude Agent SDK query failed.\", code:null}, and the native log truly ends at 20:47:58.429Z with outgoing query.open/prompt.offer and no incoming SDK data, so no error detail exists anywhere in DB or provider log. Code confirms the mechanism: ClaudeAgentSdkQueryRunnerError.message is hardcoded at ClaudeAdapterV2.ts:279-280 and makeProviderFailure (ProviderFailure.ts:97-100) reads exactly that getter, dropping the Schema.Defect cause; the real cause only reaches an ephemeral Effect.logWarning. Other adapters (e.g. OpenCodeAdapterV2.ts:2202) propagate real detail, so this is an unintended gap, not design \u2014 finding stands at medium since the failure is user-visible but undebuggable after the fact."
+            }
+        },
+        {
+            "title": "401 authentication error result projected as successful run + plain assistant message",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native result at 2026-07-01T20:56:54.878Z has is_error=true with result 'Failed to authenticate. API Error: 401 Invalid authentication credentials'. Run run:thread:47763f5e-...:ordinal:1 is projected status='completed' (completed_at 20:56:54.916Z) and its provider_turn completed. The error text is user-visible only as a normal assistant_message (turn-item:provider:claudeAgent:native-item:94ed662f-814a-43d7-aad3-92e479b9dfe8, status=completed, type=assistant_message) \u2014 no error item, no failed status, so the run reads as a success.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT status FROM orchestration_v2_projection_runs WHERE run_id='run:thread:47763f5e-76c1-4d67-8037-442a280f1514:ordinal:1';\" vs grep -m1 '\"type\":\"result\"' ~/.t3/userdata-v2/logs/provider/47763f5e-76c1-4d67-8037-442a280f1514.log.1 (is_error:true)",
+            "sessionKey": "47763f5e-claude-fable",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Reproduced fully: native result at 20:56:54.878Z has subtype \"success\" with is_error:true and api_error_status:401, yet run ordinal:1 and its provider_turn are projected status=completed, and the error text survives only as a plain completed assistant_message item (94ed662f, itself the SDK's synthetic \"<synthetic>\"-model assistant message). Code confirms this is a gap, not intent: terminalStatusFromResult in ClaudeAdapterV2.ts only inspects message.subtype and the failure payload is attached only for non-\"success\" subtypes; is_error/api_error_status on result messages are never checked. The error text is user-visible via the SDK's synthetic message, but the run's structured status misreports failure as success and the 401 detail is not persisted, so medium severity stands."
+            }
+        },
+        {
+            "title": "Run 10 failure persisted with generic message only \u2014 no root cause anywhere",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Run ordinal:10 failed in 0.5s (requested 22:48:37.674Z, completed 22:48:38.293Z). The only error record is the error turn-item terminal-failure...ordinal%25253A10 with failure {class:'transport_error', message:'Claude Agent SDK query failed.', code:null, retryable:null}. The native log contains no error detail either \u2014 line 6324 (.log.1) shows the outgoing query.open at 22:48:38.086Z using create-style param sessionId:'b896a082-a480-416f-8ffd-c42845e71993' (after the session was closed at 22:41:50), then nothing incoming; the retry run 11 at 22:48:55.300Z used resume:'b896a082...' and succeeded. The actual SDK failure reason was never captured, and the failed open plausibly stems from reopening with sessionId instead of resume. Related: the query.close at 22:41:50 came ~31.8 min after run 9 completed (22:10:01) despite native wakeup activity through 22:38:55 \u2014 consistent with the known idle-session-reaper-vs-wakeup issue.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.failure') FROM orchestration_v2_projection_turn_items WHERE thread_id='47763f5e-76c1-4d67-8037-442a280f1514' AND type='error';\" and sed -n '6323,6327p' ~/.t3/userdata-v2/logs/provider/47763f5e-76c1-4d67-8037-442a280f1514.log.1",
+            "sessionKey": "47763f5e-claude-fable",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Fully reproduced: run ordinal:10 failed in ~0.6s and the only persisted failure anywhere (turn-item event seq 29464) is the generic {class:transport_error, message:'Claude Agent SDK query failed.'}; the native log (.log.1 lines 6324-6325) shows query.open at 22:48:38.086Z with create-style sessionId after the 22:41:50 query.close, no incoming lines, then a successful resume-based retry at 22:48:55. The genericness is by construction: ClaudeAgentSdkQueryRunnerError (ClaudeAdapterV2.ts:279-281) hardcodes its .message getter, defeating makeProviderFailure's cause.message extraction (ProviderFailure.ts), whose redaction/4096-char bounding shows real messages were intended to flow through. Even the fallback Effect.logWarning (server-child.log:457) collapsed the cause to '[Object]', so the root cause is unrecoverable from every persisted artifact \u2014 a real error-handling gap, though user-visibly surfaced and recovered by retry, so medium stands."
+            }
+        },
+        {
+            "title": "Runs 11-13 projected as 'completed' although native result had is_error:true (API 529 Overloaded)",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native results in log.2: [2026-07-02T00:51:30.884Z], [00:55:19.085Z], [01:00:28.143Z] all 'subtype':'success','is_error':true,'num_turns':1 (preceded by 29 api_retry 'overloaded' events and one model_refusal_fallback at 00:51:30.857Z). Projections: runs ordinal 11/12/13 status 'completed', provider_turns 'completed'. The only user-visible signal is that the SDK emitted the error text as an assistant message (turn-item:provider:claudeAgent:native-item:9c0cead6-f253-44c8-8cc7-3c95b58a326e, run 13, text 'API Error: 529 Overloaded...'; run 11 item text 'API Error: Overloaded'). Run/attempt/turn statuses do not reflect the failure, so downstream logic treating these runs as successful is wrong.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT run_id,status FROM orchestration_v2_projection_runs WHERE run_id LIKE '%ea84f015%ordinal:1_' \" vs grep '\"is_error\":true' ~/.t3/userdata-v2/logs/provider/ea84f015-*.log.2",
+            "sessionKey": "ea84f015-cursor-handoff",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Evidence fully reproduces: log.2 has three decoded results with subtype 'success' but is_error:true (00:51:30.884Z 'API Error: Overloaded', 00:55:19.085Z api_error_status:529, 01:00:28.143Z), while runs ordinal 11/12/13 and their provider_turns project as 'completed' with matching completed_at timestamps, and the only trace is the error text projected as a completed assistant_message (item 9c0cead6-... on run 13). Code confirms the gap: terminalStatusFromResult in ClaudeAdapterV2.ts returns 'completed' for any subtype==='success' and attaches a failure payload only for non-success subtypes, even though the SDK's SDKResultSuccess type explicitly carries is_error and api_error_status \u2014 the signal is typed and available but ignored, so this is a real mapping bug, not intended behavior. Severity stays medium: the error is user-visible as assistant text, but structured run/attempt/turn statuses misreport success and the 529 detail is not queryable, which misleads any downstream logic."
+            }
+        },
+        {
+            "title": "Native ground truth for most of the session destroyed by rotation of the opener thread's log",
+            "category": "lost-data",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Because codex traffic shares 71e29ba5's high-churn log (10 files x 10MB), the oldest surviving rotation (71e29ba5-...log.10) starts 2026-07-01T16:00:59.024Z. Everything earlier is deleted: c878541b runs 1-3 (01:54-15:58Z), all of de5f191a runs 1-3 (07:42-15:49Z), all of 68f7595b (05:53-05:56Z) and af66fc2c incl. its interrupted run (05:52-05:53Z). Only c878541b runs 4-6 (16:00-16:44Z) retain native logs. Consequence of the finding above; debuggability loss only \u2014 projections for the lost window exist and are internally consistent.",
+            "repro": "for f in ~/.t3/userdata-v2/logs/provider/71e29ba5-*.log*; do head -1 \"$f\" | cut -c2-25; done   # earliest = 2026-07-01T16:00:59.024Z",
+            "sessionKey": "codex-no-native-logs",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "low",
+                "reasoning": "Evidence fully reproduces: oldest surviving rotation (71e29ba5-...log.10) starts 2026-07-01T16:00:59.024Z; DB run windows confirm c878541b runs 1-3, all of de5f191a/68f7595b/af66fc2c predate it; native item ids from c878541b run 1 (msg_024da2f2..., call_z8cGFhrA...) appear in zero log files while run 4's msg_0e493c0caf68... appears 82x in .log.10, and no dedicated logs exist for the codex threads because CodexAdapterV2's protocol logger is keyed to the shared session's opener thread. Downgraded to low: the loss is a by-design consequence of intentional bounded rotation (10x10MB in EventNdjsonLogger.ts), the durable pipeline record (events + projections) for the lost window is intact and consistent, and the actual defect (codex traffic sharing a high-churn foreign thread's rotation budget) is the parent finding this one merely derives from."
+            }
+        },
+        {
+            "title": "Terminal-failure error items carry only generic message ('Claude Agent SDK query failed.'), underlying cause not preserved",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "All 4 failed runs (37, 54 codex; 89, 119 claudeAgent) DO get a user-visible type='error' item (good surfacing), but payload is generic: run 119 item failure = {class:'transport_error', message:'Claude Agent SDK query failed.', code:null, retryable:null}, title 'Provider error'. The native log at both claude failure sites (2026-07-02T04:47:07.200Z and 16:45:25.921Z) shows only outgoing query.open/prompt.offer with no captured error line, so neither projection nor provider log retains the actual failure reason \u2014 undebuggable after the fact.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.failure'), json_extract(payload_json,'$.title') FROM orchestration_v2_projection_turn_items WHERE thread_id='71e29ba5-654b-4f67-b363-ad400e5bd016' AND type='error'\"",
+            "sessionKey": "71e29ba5-claude-mega",
+            "verdict": {
+                "isReal": true,
+                "adjustedSeverity": "medium",
+                "reasoning": "Reproduced fully: claudeAgent failed runs 89/119 project only {class:'transport_error', message:'Claude Agent SDK query failed.', code:null} (event seq 43072), and the provider log at both failure sites (04:47:07.200Z log.2:790, 16:45:25.921Z log:3026) shows only outgoing query.open/prompt.offer with no error line. Source confirms the mechanism: ClaudeAgentSdkQueryRunnerError (ClaudeAdapterV2.ts:280) hardcodes its message getter while the real error lives in its cause Defect, which makeProviderFailure (ProviderFailure.ts:90) never unwraps \u2014 defeating the redaction/bounding machinery built to carry real messages (codex failures on this same thread DO carry specific messages, proving intent). The adapter's Effect.logWarning with the full cause was not found in any retained server trace log, so the failure reason is genuinely lost; medium severity stands since errors are surfaced but undebuggable."
+            }
+        }
+    ],
+    "refuted": [
+        {
+            "title": "Orchestrator ingestion gap 16:10-16:40 Jul 1 (codex era): 119 native command/fileChange items lost; assistant messages backfilled with flattened timestamps",
+            "category": "lost-data",
+            "severity": "high",
+            "confidence": "high",
+            "knownIssue": true,
+            "evidence": "Zero orchestration_events for the stream between 2026-07-01T16:10:19 (run 50 completed) and 16:40:12 (run 51 requested), yet the native codex log shows substantive work in that window and around it: item/started fileChange items and commandExecutions incl. 'vp test .../OrchestratorReplayFixtures', 'vp check', 'git add apps/server/src/orchestration-v2/Adapters/Claude...' (call_0j3Wjk1K3an2l1CpCRgYBp8b 16:43:43) and 'git push origin t3code/codex-turn-mapping' (call_Hc9NQMOiQ9wo3by6RnzGbShQ 16:43:50), all with source 'unifiedExecStartup' on native thread 019f1b62-f532-79e2-9553-af817911965c. 119 of 450 native call_ ids have no projected turn_item (comm diff), all first seen 16:01-16:43 Jul 1. When run 51 started, 13 assistant messages (message:provider:codex:native-item:msg_*) were backfilled with IDENTICAL created_at 2026-07-01T16:40:14.821Z describing that missing work, but 0 turn_items have startedAt in 16:11-16:40. Text recovered, tool/file items and real timestamps lost. Mechanism (server down/restart vs codex turn-mapping bug) not fully determinable because logs older than 16:00:59Z were rotated away; loss itself is certain.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT count(*) FROM orchestration_events WHERE stream_id='71e29ba5-654b-4f67-b363-ad400e5bd016' AND occurred_at BETWEEN '2026-07-01T16:11' AND '2026-07-01T16:39'\" -> 0; SELECT count(*) FROM orchestration_v2_projection_messages WHERE thread_id='71e29ba5-654b-4f67-b363-ad400e5bd016' AND created_at='2026-07-01T16:40:14.821Z' -> 13",
+            "sessionKey": "71e29ba5-claude-mega",
+            "verdict": {
+                "isReal": false,
+                "reasoning": "The \"lost\" work belongs to a different session: the codex provider session is shared, so this thread's log contains other threads' traffic. All gap-window log lines (1322 decoded events, 16:11-16:39) carry threadId 019f1b62-f532-..., which per orchestration_v2_projection_provider_threads is owned by thread c878541b-a832-..., not 71e29ba5 (whose codex nativeThreadRef is 019f1b50-4248-...). Exactly 119 call_ ids in the log belong to 019f1b62 and ALL 119 (including the cited call_0j3Wjk1K3an2l1CpCRgYBp8b and call_Hc9NQMOiQ9wo3by6RnzGbShQ) are projected on thread c878541b; all 62 call_ ids on this thread's own native id are projected on 71e29ba5 (comm diff = 0 both ways). The zero-event window is genuine idle time between run 50 (completed 16:10:19) and run 51 (requested 16:40:12), and the 13 messages at created_at 16:40:14.821Z are run 51's live-streamed assistant messages (e.g. msg_00c4d1e6... streamed at 16:48:38 on threadId 019f1b50) \u2014 every one of the 55 codex runs shows the same pattern of assistant messages sharing created_at = run start, so this is systematic projection behavior, not backfill of lost work."
+            }
+        },
+        {
+            "title": "All thinking/reasoning blocks dropped for main thread (122 native thinking messages, 0 reasoning items)",
+            "category": "lost-data",
+            "severity": "medium",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Native log contains 122 distinct main-thread assistant messages with thinking content blocks plus 646 'thinking_tokens' system events, but the main thread has zero projected reasoning turn-items (the only 2 'reasoning' items in the session are subagent-progress placeholders on the child threads, e.g. turn-item:...task%3Aac08aa451ed54d3f6%3Aprogress). ClaudeAdapterV2.ts only extracts part.type==='text' blocks (line 730: content.flatMap((part) => (part.type === \"text\" ? [part.text] : []))). May be an intentional product choice for claudeAgent, but it means no reasoning is ever visible/persisted for this provider.",
+            "repro": "cat log.1 log | jq 'select(.event.payload.type==\"assistant\" and .event.payload.parent_tool_use_id==null) | select([.event.payload.message.content[]?|select(.type==\"thinking\")]|length>0) | .event.payload.uuid' | sort -u | wc -l  # 122, vs SELECT COUNT(*) FROM orchestration_v2_projection_turn_items WHERE thread_id='47763f5e-76c1-4d67-8037-442a280f1514' AND type='reasoning'; -- 0",
+            "sessionKey": "47763f5e-claude-fable",
+            "verdict": {
+                "isReal": false,
+                "reasoning": "The counts reproduce (155 native thinking blocks, 0 projected reasoning items), but inspection of the actual block contents refutes the lost-data claim: every final thinking block in the native log is {\"thinking\":\"\",\"signature\":\"...\"} and all 593 thinking_delta stream events are {\"thinking\":\"\",\"estimated_tokens\":N} \u2014 the Claude Agent SDK redacted all thinking text at the source for claude-fable-5, so there was never any reasoning content to project. ClaudeAdapterV2.ts:730 extracting only text parts drops nothing user-visible here; projecting these blocks would produce 155 empty reasoning items. The 646 'thinking_tokens' system events are token telemetry, not content."
+            }
+        },
+        {
+            "title": "Failed cursor runs 15/16/17 keep only a generic 'Provider turn failed.' with code:null \u2014 no diagnostic detail persisted",
+            "category": "error-handling",
+            "severity": "medium",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Error items exist and are user-visible (turn-item:provider:cursor:native-item:terminal-failure%3A...run-abf255cf / run-ceb09abc / run-f5fe7fcf, status failed, ordinals 15000098/16000002/17000002) but failure = {class:'provider_error', message:'Provider turn failed.', code:null, retryable:null}; run and run_attempt payloads contain no error field at all. Native run.completed results (log: 02:05:24.474Z, 02:16:37.138Z, 02:19:07.097Z) carry status:'error' with no message either \u2014 so cursor itself gave nothing \u2014 but available context (result.status, requestId d1cd7f44/55687657/6de8f367, durationMs 2434335/1223/657) was dropped. Run 15 did 40 min of work then errored; runs 16/17 ('continue') died in ~1s each with only 'Provider error' shown.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE thread_id='ea84f015-e597-4f79-9557-d39b5a895fba' AND type='error'\"",
+            "sessionKey": "ea84f015-cursor-handoff",
+            "verdict": {
+                "isReal": false,
+                "reasoning": "The evidence reproduces (three failed cursor runs projected with the generic 'Provider turn failed.' failure), but the native log shows cursor's run.completed results carried status:'error' with NO error/message/code field at all, so there was no provider diagnostic to persist. The code path is intentional: CursorAdapterV2 forwards result.error as cause, and makeProviderFailure (ProviderFailure.ts) extracts message/code when supplied, falling back to the tested DEFAULT_PROVIDER_FAILURE_MESSAGE \u2014 including an explicit test asserting arbitrary cause objects are deliberately not serialized. The 'dropped context' claim largely fails: result.status is persisted as failed on item/run/provider_turn, and durationMs is recoverable from the persisted provider_turn startedAt/completedAt (01:24:50.203Z\u219202:05:24.475Z \u2248 2434335ms); only cursor's requestId is unpersisted, which the ProviderFailure contract intentionally omits and which remains in the provider log. This is an upstream cursor SDK limitation plus a possible enhancement (persist requestId), not a pipeline discrepancy.",
+                "adjustedSeverity": "low"
+            }
+        }
+    ],
+    "lowUnverified": [
+        {
+            "title": "Interrupt-result turn item references an interrupt-request parent that was never emitted",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "turn_item 'turn-item:run:run%3Athread%3Aea84f015-e597-4f79-9557-d39b5a895fba%3Aordinal%3A15:signal:interrupt-result' (event seq 34176, 2026-07-02T01:24:49.393Z) has parent_item_id '...:signal:interrupt-request' with no matching row/event. Contrast thread af66fc2c-73cd-4c30-bea5-66932ecdba29 where both request (seq 20000) and result (seq 20003) were emitted. Code: makeInterruptResultTurnItem in apps/server/src/orchestration-v2/RunExecutionService.ts (line ~874) unconditionally derives parentItemId from the request id without ensuring that item was emitted; the request emission lives on a separate path in Orchestrator.ts:4422.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT turn_item_id, parent_item_id FROM orchestration_v2_projection_turn_items ti WHERE parent_item_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items p WHERE p.turn_item_id=ti.parent_item_id);\"",
+            "sessionKey": "GLOBAL"
+        },
+        {
+            "title": "Synthesized terminal-failure error item references a provider_turn_id that was never projected",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "turn_item 'turn-item:provider:cursor:native-item:terminal-failure%3A...' on thread 721fc23c-2cf3-42bf-9d84-edd94359dca9 (updated 2026-06-29T21:48:40.703Z) carries providerTurnId 'provider-turn:provider:cursor:native-turn:failed%3Arun-attempt%3A...ordinal%253A2%3Aattempt%3A1' which has no row in orchestration_v2_projection_provider_turns. The run failed 4ms after the outgoing run.start ('what did you just say', log 2026-06-29T21:48:40.699Z) with no incoming response; the synthetic 'failed' turn id was minted for the failure item but the turn itself never projected.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT turn_item_id FROM orchestration_v2_projection_turn_items ti WHERE ti.provider_turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_turns p WHERE p.provider_turn_id=ti.provider_turn_id);\"",
+            "sessionKey": "GLOBAL"
+        },
+        {
+            "title": "provider_sessions stay status='ready' after provider-session.detached (projection ignores detach)",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Session provider-session:...claudeAgent:thread:47763f5e...:1c70abe8-4ecb-... got provider-session.detached event seq 31344 (2026-07-01T23:44:29.976Z, reason 'Thread archived.') and session ...ea84f015...:21ed85a2-... got detached seq 32566 (2026-07-02T01:03:00.273Z), yet both projection rows still show status='ready' with stale updated_at (22:48:37 / 22:12:31 \u2014 predating even later provider-session.updated events like seq 31274 at 23:42:43). The 16 'stopped' sessions were transitioned via updated events; detach alone leaves rows 'ready' indefinitely on archived threads.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT s.provider_session_id, s.status, s.updated_at FROM orchestration_v2_projection_provider_sessions s WHERE s.status='ready' AND EXISTS (SELECT 1 FROM orchestration_events e WHERE e.event_type='provider-session.detached' AND e.payload_json LIKE '%'||s.provider_session_id||'%');\"",
+            "sessionKey": "GLOBAL"
+        },
+        {
+            "title": "13 backgrounded local_bash tasks projected as subagents with empty prompts and synthetic child threads",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": true,
+            "evidence": "Thread 7f1dfff1-4cbb-450b-8514-764d11c903e1 run 2 (2026-07-01T15:51): tasks bw28jiyac, bzmkw8629, bnkw62tp7, etc. are task_type 'local_bash' in the native log (task_started has only a 'description' like 'vp run --filter @t3tools/web typecheck...', no prompt), yet each got a subagent row (prompt length 0), a child thread, and a user_message prompt item with text ''. Newer local_agent tasks (a-prefixed 16-hex ids) capture full prompts (1.9k-4.3k chars). Predates the backgrounded-Bash redesign on t3code/codex-turn-mapping where local_bash stays a running Bash item completed cross-run; these are stale artifacts of the old mapping, not current behavior.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT turn_item_id FROM orchestration_v2_projection_turn_items WHERE type='user_message' AND coalesce(json_extract(payload_json,'$.text'),'')='';\"",
+            "sessionKey": "GLOBAL"
+        },
+        {
+            "title": "Cursor stream stall: abandoned partial-tool-call finalized as 'completed'; provider retry duplicated assistant text",
+            "category": "duplicate",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Thread ea84f015 run 15: partial-tool-call toolu_01HgLigck78NC9MSVyjitDXe (edit) at log 2026-07-02T01:54:20.622Z never received tool-call-started/completed (stream stalled 6.5 min, cursor retried at 02:00:47 with new callId toolu_01NkWmCzHTn5ofjtYi4NkhsJ); the abandoned call's item 'turn-item:provider:cursor:native-item:toolu_01HgLigck78NC9MSVyjitDXe' (type file_change) was finalized status='completed' at run end (02:05:24.475Z) though the edit never executed. The retry also re-emitted identical assistant text ('Now the `WorkGroupSection` filter and the `SimpleWorkEntryRow` indicator.') producing items ...abf255cf...%3A6 (ordinal 15000077) and %3A7 (15000079) with duplicate visible text \u2014 faithful to two native text-delta emissions (log 01:54:19.813Z and 02:00:47.715Z), so provider-side, but rendered twice to the user.",
+            "repro": "grep -a 'SimpleWorkEntryRow\\` indicator' ~/.t3/userdata-v2/logs/provider/ea84f015-e597-4f79-9557-d39b5a895fba.log | cut -c1-30",
+            "sessionKey": "GLOBAL"
+        },
+        {
+            "title": "provider_turn status has no 'waiting' literal during ScheduleWakeup sleep loops",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": true,
+            "evidence": "Known issue per assignment; currently only 1 provider_turn 'running' (thread 71e29ba5, started 2026-07-02T17:03:04.470Z \u2014 genuinely live at audit time 17:07Z), so no stale instance observed in this pass, but the schema/status distribution confirms no 'waiting' state exists (statuses seen: cancelled/completed/failed/interrupted/running).",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT status, count(*) FROM orchestration_v2_projection_provider_turns GROUP BY status;\"",
+            "sessionKey": "GLOBAL"
+        },
+        {
+            "title": "Codex reasoning items never ingested (no content lost in this session: all summaries empty)",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Native log contains 5 reasoning item/completed events (e.g. rs_0cfa4cea83165175016a40a8e17de08199a84ec646c88a40cd run 2, rs_0cfa4cea...8c48/9052/9329 run 4), all with summary: []. SQL: 0 orchestration_events on stream a5a643b2-... with payload LIKE '%native-item:rs_%', and 0 turn_items of reasoning type with a codex provider_thread anywhere in the DB (172 reasoning items exist for other providers). CodexAdapterV2.ts has no reasoning item mapping (grep hits only 'reasoningEffort' config). With empty summaries nothing user-visible was lost here, and dropping empty reasoning may be intentional, but non-empty reasoning summaries would be silently dropped.",
+            "repro": "sed 's/^\\[[^]]*\\] NTIVE: //' ~/.t3/userdata-v2/logs/provider/a5a643b2-6ca8-4250-9c54-ddefe7d55565.log | jq -c 'select(.event.stage==\"decoded\") | .event.payload | select(.method==\"item/completed\" and .params.item.type==\"reasoning\")' | wc -l  # 5, vs sqlite count 0",
+            "sessionKey": "a5a643b2-codex-heya"
+        },
+        {
+            "title": "Codex reasoning items are silently dropped by CodexAdapterV2 (no handler for item type \"reasoning\")",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log emits item/started + item/completed for reasoning item rs_056ea93bc8adc0f3016a42c0594d788194ad4afb537a0a0b16 at 2026-06-29T18:58:33.314Z/33.340Z (turn 019f14bf-4440-7bb0-9655-7194b384e690), but zero rows in orchestration_events reference it and no turn_item exists. Code confirms: CodexAdapterV2.ts item/started (line 2802) and item/completed (line 2875) handlers cover userMessage, subAgentActivity, commandExecution, mcpToolCall/dynamicToolCall, fileChange, webSearch, plan, collabAgentToolCall, agentMessage \u2014 no \"reasoning\" branch and no item/reasoning delta handler, despite capabilities declaring streamsReasoning: true (line 139). In THIS session the item had empty summary/content so no user-visible text was lost, hence severity low \u2014 but any non-empty reasoning summary would vanish.",
+            "repro": "grep 'rs_056ea93bc8adc0f3' ~/.t3/userdata-v2/logs/provider/a61e9269-0180-4f4c-988a-aca00b240469.log ; sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT count(*) FROM orchestration_events WHERE payload_json LIKE '%rs_056ea93bc8adc0f3%'\" -- returns 0",
+            "sessionKey": "a61e9269-codex"
+        },
+        {
+            "title": "thread/tokenUsage/updated and account/rateLimits/updated notifications never ingested; runs have no usage data",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Native log contains 5 thread/tokenUsage/updated and 5 account/rateLimits/updated decoded notifications; CodexAdapterV2.ts registers no handler for either (only item/agentMessage/delta, item/plan/delta, turn/plan/updated, turn/started, item/started, item/completed, turn/completed at lines 2693-3395). Runs projection payload has usage:null for both run:thread:a61e9269-0180-4f4c-988a-aca00b240469:ordinal:1 and :2, and no orchestration_events row carries token usage. May be intentional scope, but per-turn token accounting from the provider is discarded.",
+            "repro": "sed 's/^\\[[^]]*\\] NTIVE: //' ~/.t3/userdata-v2/logs/provider/a61e9269-0180-4f4c-988a-aca00b240469.log | jq -r 'select(.event.stage==\"decoded\") | .event.payload.method' | grep -c tokenUsage",
+            "sessionKey": "a61e9269-codex"
+        },
+        {
+            "title": "Child task threads projecting only 2 items is intended, not data loss",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Each child stream (e.g. ...composer_call_kFjs8) has exactly 2 distinct turn-item ids across its 2711 events: ...%3Aprompt (user_message, 1 event) and ...%3Aresult (assistant_message, 1352 events growing text 4->6274 chars). Grok's ACP Task envelope only exposes rawInput.prompt plus streamed output text (apps/server/src/provider/acp/XAiAcpExtension.ts extractXAiAcpSubagentUpdate / xAiTaskOutputText), and the child's intermediate narration is contained in the streamed result text ('I'll read the connection files...'). Parent subagent items' result lengths (3721/6274/2647) exactly equal child assistant_message text lengths \u2014 nothing truncated.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.id'), COUNT(*), MAX(length(json_extract(payload_json,'$.text'))) FROM orchestration_events WHERE stream_id LIKE '%composer_call_kFjs8' AND event_type='turn-item.updated' GROUP BY 1;\"",
+            "sessionKey": "20296b49-grok-tasks"
+        },
+        {
+            "title": "Every successful grok turn logs session/prompt as failed with errorTag Interrupt",
+            "category": "error-handling",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log events ec0b4762-8c1d-41c9-b4b3-2687da09d40b (2026-06-29T21:46:13.448Z) and 5a4a5b58-40ad-4f71-b2de-6e703e0c9173 (21:47:37.827Z): payload {method:'session/prompt',status:'failed',errorTag:'Interrupt'} \u2014 yet both runs completed successfully (run ordinal 1 completedAt 21:46:13.476Z, ordinal 2 completedAt 21:47:38.686Z). Cause: XAiAcpExtension races the direct prompt request against the private _x.ai/session/prompt_complete fallback; the losing fiber is interrupted and logged as a failed request. Correctly NOT surfaced as a user-visible error (nothing to surface), but the 'failed' log entries are misleading noise for future debugging.",
+            "repro": "grep '\"status\":\"failed\"' ~/.t3/userdata-v2/logs/provider/20296b49-edbf-420b-a862-d04238c10caf.log",
+            "sessionKey": "20296b49-grok-tasks"
+        },
+        {
+            "title": "Grok native log redacts all payload content, limiting ground-truth audits",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "All 3694 protocol lines in ~/.t3/userdata-v2/logs/provider/20296b49-edbf-420b-a862-d04238c10caf.log carry only shape summaries, e.g. payload {valueType:'string',byteLength:165} or {valueType:'array',itemCount:1} \u2014 no message text, tool names, or ids. Content-level loss/truncation verification against the provider is impossible from this log; verification here relied on internal consistency (event max text length == projection text length). If other providers' logs contain full JSON, grok's redaction is an inconsistency worth knowing about.",
+            "repro": "grep -c 'byteLength' ~/.t3/userdata-v2/logs/provider/20296b49-edbf-420b-a862-d04238c10caf.log",
+            "sessionKey": "20296b49-grok-tasks"
+        },
+        {
+            "title": "Child task thread items carry null run_id/provider_thread_id/provider_turn_id",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "All 6 child items have runId=null, providerThreadId=null, providerTurnId=null (e.g. turn-item ...composer_call_Olv1X%3Aprompt payload: runId:null, nodeId:'node:...%3Achild-root', creationSource:'provider'); child threads have zero run.created / provider-turn events. node_id resolves (child-root nodes exist) and the subagents projection links parent node -> child_thread_id, so navigation works via subagents rather than runs. Appears intentional for provider-native task children (no orchestrator run exists), but any consumer that groups items by run_id will see these as orphans.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT turn_item_id, run_id, provider_turn_id FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE 'thread:provider:grok:native-thread:019f1558%';\"",
+            "sessionKey": "20296b49-grok-tasks"
+        },
+        {
+            "title": "run_attempts.provider_turn_id is never populated (null for all 207 attempts DB-wide) \u2014 back-link from attempt to provider turn missing",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "This session: run-attempt:run:run%3Athread%3A721fc23c...%3Aordinal%3A1:attempt:1 has providerTurnId:null although provider-turn:provider:cursor:native-turn:run-9d9ff525-e89c-41e3-90e6-1f7e841cc188 references that exact runAttemptId (forward link intact, nativeTurnRef strong). Global check: SELECT provider_turn_id IS NULL, count(*) FROM orchestration_v2_projection_run_attempts GROUP BY 1 shows every row (completed 188, failed 12, cancelled 4, interrupted 1, running 1, superseded 1) has NULL \u2014 the column/payload field exists but nothing ever writes it. Forward resolution via provider_turns.run_attempt_id works, so impact is limited to reverse-lookup ergonomics; may be intentional but the schema advertises the field.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT status, provider_turn_id IS NULL, count(*) FROM orchestration_v2_projection_run_attempts GROUP BY 1,2\"",
+            "sessionKey": "721fc23c-cursor"
+        },
+        {
+            "title": "Run orphaned by server restart is cancelled with no user-visible or persisted reason; user's message got no response",
+            "category": "error-handling",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log ends at run.started 2026-06-29T21:49:09.097Z (runId run-f062e5d9-534a-48a8-8214-48fea97bc268) with zero assistant output. Events seq 6341-6346 (command:runtime-reconcile:startup:48663fb7-...:2026-06-29T21:49:10.775Z) set run:thread:48663fb7-...:ordinal:1, its attempt, and provider-turn:provider:cursor:native-turn:run-f062e5d9-... to status 'cancelled' with no reason field in any payload, indistinguishable from a user cancel. No error/system turn_item was emitted, so the timeline shows only the user 'hello' and 'Workspace ready' with nothing explaining the missing reply. Source: ProviderRuntimeRecoveryService.ts:107 builds detail 'Cancelled because the server restarted before the provider work completed.' but attaches it only to runtime-request payloads and outbox effect cancellations (lines 291/316), never to run/attempt/turn/item rows \u2014 intentional code path, but a debuggability/UX gap.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT sequence, event_type, payload_json FROM orchestration_events WHERE stream_id='48663fb7-fbd6-4be2-ad14-d8163282c069' AND command_id LIKE 'command:runtime-reconcile:%'\" \u2014 note status 'cancelled' payloads contain no reason; and grep -c NTIVE ~/.t3/userdata-v2/logs/provider/48663fb7-fbd6-4be2-ad14-d8163282c069.log shows only 4 lines with no assistant output.",
+            "sessionKey": "48663fb7-cursor"
+        },
+        {
+            "title": "file_search items never carry results (read/grep/glob outputs dropped) despite contract supporting them",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "All 117 file_search items across the 5 opencode child threads have results=NULL (contract OrchestrationV2FileSearchResult array at orchestrationV2.ts:843 is never populated by OpenCodeAdapterV2 \u2014 its file_search branch emits only 'pattern'). Example: prt_f15688536002X4CTVKyjMIxGfL (ses_0ea978228, ordinal 3) has only pattern '/Users/julius/Development/Work/codething-mvp'. Tool outputs (file contents read, matches found) exist in opencode's part.state.output but are discarded for this item type. Likely intentional UI minimalism, but it is provider-emitted content with no projection.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT COUNT(*), SUM(json_extract(payload_json,'$.results') IS NOT NULL) FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE 'thread:provider:opencode:native-thread:ses_%' AND type='file_search';\" -- returns 117|0",
+            "sessionKey": "3029dc85-opencode"
+        },
+        {
+            "title": "Placeholder 'pending' provider_thread row persists alongside the real one; orchestrator-synthesized items split across the two",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Main thread has TWO provider_thread rows: provider-thread:provider:opencode:native-thread:pending%3Arun%3Athread%3A3029dc85...%3Aordinal%3A1 (status idle, first/last run ordinals 1-7) and the real provider-thread:provider:opencode:native-thread:ses_0ea983868ffens4ayJQLKgPE6J (idle, 1-7). 20 items (7 user_message, 7 checkpoint, 3 thread_created, 2 delegated subagent, 1 command_execution) still reference the pending placeholder while all native items reference ses_0ea983868 \u2014 e.g. thread_created item turn-item:created-thread:...126456a2...%3A0 has providerThreadId '...pending%3Arun%3A...ordinal%3A1' but providerTurnId pointing at the real session ses_0ea983868. Lineage is queryable but split; the placeholder was never collapsed after the native session id was learned.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT provider_thread_id, status, first_run_ordinal, last_run_ordinal FROM orchestration_v2_projection_provider_threads WHERE thread_id='3029dc85-93b7-43c5-8993-1beff41b1c98';\"",
+            "sessionKey": "3029dc85-opencode"
+        },
+        {
+            "title": "Single occurred_at inversion on main stream (checkpoint capture vs concurrent subagent-result handoff)",
+            "category": "ordering",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Stream 3029dc85...: stream_version 1868 (sequence 10004, checkpoint.captured, occurred_at 2026-06-29T22:09:54.344Z, checkpoint root:name:5 for run 5) was appended AFTER stream_versions 1863-1867 (sequences 9881-9885, delegated subagent d43de13f completion + context-handoff/transfer, occurred_at 22:09:54.779Z) \u2014 occurred_at goes backwards by 435ms. Benign concurrency between run-5 completion checkpointing and the delegated claudeAgent subagent result handoff landing; projection ordinals unaffected (0 ordinal inversions vs first-seen event order across all 6 threads).",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT stream_version, sequence, event_type, occurred_at FROM (SELECT stream_version, sequence, event_type, occurred_at, LAG(occurred_at) OVER (ORDER BY stream_version) prev FROM orchestration_events WHERE stream_id='3029dc85-93b7-43c5-8993-1beff41b1c98') WHERE occurred_at < prev;\"",
+            "sessionKey": "3029dc85-opencode"
+        },
+        {
+            "title": "Native provider log payloads are fully redacted (valueType/fieldCount only), preventing content-level loss auditing",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Every one of the 17,198 log lines in 3029dc85-93b7-43c5-8993-1beff41b1c98.log(.1) has kind='protocol' with inner payload reduced to {valueType:'object', fieldCount:N} \u2014 e.g. message.part.updated lines carry no part id, text, or error. Only method-level counts are auditable (15,542 message.part.delta, 723 message.part.updated, 204 message.updated, 7 session.promptAsync, 5 session.created, 12 session.idle). Method counts DO reconcile with projections (7 promptAsync = 7 runs; 5 session.created = 5 child threads; 12 session.idle = 7 main turns + 5 child turns), but text truncation and the actual error string of the failed file_search cannot be verified against the wire. If these logs are meant to be 'ground truth', the opencode SSE logger is not recording decoded payloads.",
+            "repro": "grep -h '\"message.part.updated\"' ~/.t3/userdata-v2/logs/provider/3029dc85-93b7-43c5-8993-1beff41b1c98.log.1 | head -1",
+            "sessionKey": "3029dc85-opencode"
+        },
+        {
+            "title": "Split provider-thread identity: run/attempt/provider_turn reference the pending-keyed provider-thread row while turn items and threads.active_provider_thread_id reference the ses_-keyed row",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Two rows in orchestration_v2_projection_provider_threads for the same native session: 'provider-thread:provider:opencode:native-thread:pending%3Arun%3Athread%3A9f8d616d-...%3Aordinal%3A1' and 'provider-thread:provider:opencode:native-thread:ses_0ea7ea5deffe0eNd8RbfyTfgAw' (both idle, same provider_session_id, and the pending row's payload has nativeThreadRef.nativeId=ses_0ea7ea5deffe0eNd8RbfyTfgAw strength strong). projection_runs.provider_thread_id, run_attempts.provider_thread_id and provider_turns.provider_thread_id all point at the pending-keyed row, while the two provider-part turn_items (prt_f158168eb001r0Ubqqry5Z31Q1, prt_f158169d0002CgOsT8eNRkPGI3) and threads.active_provider_thread_id point at the ses_-keyed row. Notably provider_turns row provider-turn:...ses_0ea7ea5deffe0eNd8RbfyTfgAw%3Aattempt... encodes ses_ in its own id but its provider_thread_id column is the pending row. Pending id minted in Orchestrator.ts (`nativeThreadId: \\`pending:${runId}\\``, lines 2384/2772); the pending row is resolved via nativeThreadRef rather than rebinding downstream rows, so joins on provider_thread_id split the turn across two ids.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT provider_thread_id FROM orchestration_v2_projection_provider_turns WHERE thread_id='9f8d616d-86ee-4560-bd52-2387d6adb1c3'; SELECT DISTINCT provider_thread_id FROM orchestration_v2_projection_turn_items WHERE thread_id='9f8d616d-86ee-4560-bd52-2387d6adb1c3';\"",
+            "sessionKey": "9f8d616d-opencode"
+        },
+        {
+            "title": "Real provider-thread row stayed status 'active' for ~20h after the provider session stopped",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "provider-session.updated seq 13792 marks session stopped at 2026-06-29T23:00:38.028Z (idle reaper ~30min after last activity 22:30:30; last native log line heartbeat 2026-06-29T23:00:27.024Z). The pending-keyed provider-thread went idle at turn completion (seq 13783, 22:30:30.877Z), but the ses_0ea7ea5deffe0eNd8RbfyTfgAw provider-thread's last status update before shutdown was 'active' (seq 13779, 22:30:30.876Z) and it was only flipped to idle by seq 13797 at 2026-06-30T18:59:15.308Z, ~20h later (presumably on next app start). During that window the projection showed an active provider-thread bound to a stopped session. Eventually reconciled; final state is consistent.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT sequence, occurred_at, json_extract(payload_json,'$.id'), json_extract(payload_json,'$.status') FROM orchestration_events WHERE stream_id='9f8d616d-86ee-4560-bd52-2387d6adb1c3' AND event_type IN ('provider-thread.updated','provider-session.updated') ORDER BY sequence\"",
+            "sessionKey": "9f8d616d-opencode"
+        },
+        {
+            "title": "OpenCode native log payloads are redacted to shape summaries, preventing content-level ground-truth verification",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Every one of the 273 lines in 9f8d616d-86ee-4560-bd52-2387d6adb1c3.log is kind 'protocol' (opencode-sdk.sse) with payload reduced to e.g. {\"payload\":{\"valueType\":\"object\",\"fieldCount\":3}} \u2014 no message text, part ids, or tool args (contrast with claude logs which carry full decoded JSON). Only method names/counts are auditable: 31 message.part.delta, 7 message.part.updated, 6 message.updated, 1 session.idle, 0 session.error. Projected content was spot-checked instead and looks sensible and un-truncated (user 'hey'; reasoning 'The user is just saying \"hey\" - a casual greeting...'; assistant 'Hey! What can I help you with?').",
+            "repro": "sed -E 's/^\\[[^]]+\\] NTIVE: //' ~/.t3/userdata-v2/logs/provider/9f8d616d-86ee-4560-bd52-2387d6adb1c3.log | jq -r '[.event.payload.direction,.event.payload.method]|@tsv' | sort | uniq -c",
+            "sessionKey": "9f8d616d-opencode"
+        },
+        {
+            "title": "run_attempt.provider_turn_id never populated (null on all 207 attempts DB-wide)",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "run-attempt row run-attempt:...ordinal%3A1:attempt:1 has providerTurnId:null in payload_json and empty provider_turn_id column, while the provider_turn row correctly back-references runAttemptId. DB-wide: SELECT count(*), sum(provider_turn_id IS NOT NULL AND provider_turn_id != '') FROM orchestration_v2_projection_run_attempts \u2192 207|0. Forward lineage attempt\u2192turn is only recoverable by scanning provider_turns; may be intentional (reverse-only linkage) but the column exists and is never filled.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT count(*), sum(provider_turn_id IS NOT NULL AND provider_turn_id != '') FROM orchestration_v2_projection_run_attempts;\"",
+            "sessionKey": "1156181e-delegated-task"
+        },
+        {
+            "title": "Provider session stayed 'running' ~25h after turn ended; only reconciled to 'stopped' at server shutdown",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": true,
+            "evidence": "Turn completed 2026-06-28T05:22:33.360Z (last native log line); no further session events until sequence 168 provider-session.updated at 2026-06-29T06:33:36.481Z via command:runtime-reconcile:shutdown, which set status=stopped. No provider-session.detached was ever emitted for this thread. Related to the known idle-session-reaper/session-lifecycle area; state is correct now, so no data impact, but the projection reported a live session for a day for a one-shot delegated task.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT sequence, event_type, occurred_at FROM orchestration_events WHERE stream_id LIKE '%1156181e%' AND event_type LIKE 'provider-session%' ORDER BY sequence;\"",
+            "sessionKey": "1156181e-delegated-task"
+        },
+        {
+            "title": "claudeAgent provider sessions never idle-reaped; stayed 'ready' ~21 hours until simultaneous shutdown sweep",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "codex session stopped 2026-06-29T22:39:55 (seq 13789, 30 min after its 22:09:55 failure) and grok stopped 22:41:44 (seq 13790, 30 min after 22:11:44 completion) \u2014 idle reaper working. But all 3 claudeAgent sessions (last activity 22:08:48 / 22:09:50 / 22:13:07 on 6/29) only transitioned ready->stopped at 2026-06-30T18:59:15.286/.289/.291 (seq 13793-13795), simultaneously, ~21h later \u2014 a shutdown sweep, not the 30-min reaper. Native logs show no claude activity after 22:13, so either processes lingered or projections misreported 'ready' for a day. Inverse of the known 'reaper kills long sleeps' issue: reaper never fired for claudeAgent.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT sequence, occurred_at, json_extract(payload_json,'$.status') FROM orchestration_events WHERE event_type LIKE 'provider-session%' AND stream_id LIKE '%6d618dc4%' ORDER BY sequence;\"",
+            "sessionKey": "6d618dc4-mcp-group"
+        },
+        {
+            "title": "Codex model-rejection error fully preserved and user-visible (works as intended)",
+            "category": "error-handling",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log 22:09:55.424 method 'error' / turn/completed status failed with message 'The gpt-5.3-codex model is not supported when using Codex with a ChatGPT account' (400 invalid_request_error). Projection: turn_item turn-item:provider:codex:native-item:terminal-failure%3A...019f156e-851a... type=error status=failed carries the verbatim JSON error in failure.message; run/run_attempt/provider_turn all 'failed'. No swallowing \u2014 this is a positive verification, listed for completeness.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.failure.message') FROM orchestration_v2_projection_turn_items WHERE turn_item_id LIKE '%terminal-failure%019f156e-851a%';\"",
+            "sessionKey": "6d618dc4-mcp-group"
+        },
+        {
+            "title": "Grok session/prompt request ends with errorTag 'Interrupt' at the instant the turn completes",
+            "category": "other",
+            "severity": "low",
+            "confidence": "low",
+            "knownIssue": false,
+            "evidence": "Log 2026-06-29T22:11:44.909Z: {method:'session/prompt',status:'failed',errorTag:'Interrupt'} while provider_turn 019f156e-797f...:turn:1 completedAt 22:11:44.910 status=completed and the 6663-char assistant report is fully projected (item ordinal 1000074). Likely adapter-initiated interrupt cleanup after observing turn completion (grok capabilities: supportsSteeringByInterruptRestart=true); no data lost, but a native 'failed' prompt request maps to a 'completed' turn, which could confuse future debugging.",
+            "repro": "grep '\"method\":\"session/prompt\",\"status\":\"failed\"' ~/.t3/userdata-v2/logs/provider/thread-mcp-6d618dc4-25fd-453b-9193-fd22a6739d1f-126456a2-f1ff-4098-a0a0-fde04bb1.log",
+            "sessionKey": "6d618dc4-mcp-group"
+        },
+        {
+            "title": "Grok file_search/read items persist only pattern + fileName echo, no tool output; grok native log fully redacted",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "low",
+            "knownIssue": false,
+            "evidence": "49 file_search items on thread :1 store e.g. pattern='pnpm-workspace.yaml', results=[{'fileName':'pnpm-workspace.yaml'}] (item turn-item:provider:grok:native-item:...call-e4489e09-...-1, ordinal 1000004) \u2014 the file content the tool returned is not kept, unlike claudeAgent command items which keep full stdout envelopes. Additionally the grok log redacts all decoded payloads to shape summaries ({'valueType':'array','itemCount':1}), so native-vs-projection content verification is impossible for grok; command_execution and reasoning items do carry real content, so this may be an intentional thin mapping for read-style tools.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT json_extract(payload_json,'$.pattern'), json_extract(payload_json,'$.results') FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE '%126456a2%:1' AND type='file_search' LIMIT 5;\"",
+            "sessionKey": "6d618dc4-mcp-group"
+        },
+        {
+            "title": "Both session/prompt requests logged as failed with errorTag=Interrupt despite runs completing",
+            "category": "error-handling",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Native log request events: session/prompt started 01:51:45.517 -> failed errorTag=Interrupt at 01:52:13.249; session/prompt started 01:53:00.071 -> failed errorTag=Interrupt at 01:53:37.665. These timestamps exactly equal provider_turn completed_at values (turn 1: 01:52:13.249, turn 2: 01:53:37.665), and both runs/turns/items project as completed with full assistant content, so this appears to be intentional adapter teardown (interrupting the pending ACP prompt fiber once the turn result is reached; grok sets interruptPromptOnCancel:false in GrokAdapterV2.ts line 90/641). No content was lost and no spurious failure surfaced, but the log-level 'failed' status for successful turns will mislead debugging.",
+            "repro": "sed 's/^\\[[^]]*\\] NTIVE: //' ~/.t3/userdata-v2/logs/provider/5dcea72d-15e1-4ded-922b-0b00c587de6c.log | jq -c 'select(.event.kind==\"request\" and .event.payload.method==\"session/prompt\")'",
+            "sessionKey": "5dcea72d-grok-subagent"
+        },
+        {
+            "title": "run_attempts.provider_turn_id never populated (reverse link only)",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Both attempts for this session (run-attempt:run:run%3Athread%3A5dcea72d...ordinal%3A1:attempt:1 and ...ordinal%3A2:attempt:1) have provider_turn_id NULL in both the column and payload_json; DB-wide, 0 of all rows in orchestration_v2_projection_run_attempts have a non-NULL provider_turn_id. Lineage is still resolvable via orchestration_v2_projection_provider_turns.run_attempt_id (both turns correctly reference their attempts), so this may be an intentionally unused column, but the forward link is dead.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT COUNT(*) FROM orchestration_v2_projection_run_attempts WHERE provider_turn_id IS NOT NULL;\"",
+            "sessionKey": "5dcea72d-grok-subagent"
+        },
+        {
+            "title": "Backgrounded-bash child threads have empty-text prompt user_message items",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "All 13 backgrounded-bash child threads project a user_message item task%3A<id>%3Aprompt with text:\"\" (e.g. turn-item:provider:claudeAgent:native-item:task%3Abw28jiyac%3Aprompt, startedAt 2026-07-01T15:51:26.160Z), even though the native task_started event carried description \"vp run --filter @t3tools/web typecheck 2>&1 | tail...\". The command is still user-visible via the main-thread subagent item title, so impact is cosmetic (empty bubble if the child thread is opened).",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT turn_item_id FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE '%7f1dfff1%' AND type='user_message' AND json_extract(payload_json,'$.text')='';\"",
+            "sessionKey": "7f1dfff1-claude-scheduled-tasks"
+        },
+        {
+            "title": "Codex run 1 (169 items) has no surviving native log to verify against",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Run ordinal 1 (codex, 2026-07-01T01:45:03Z\u201302:01:10Z, 169 items incl. 10 failed command_executions) predates the oldest surviving log rotation: 7f1dfff1-...log.1 first line is 2026-07-01T15:48:00.224Z (run 2). The codex portion of the log was rotated away, so item-level loss/ordering for run 1 could not be ground-truthed; its events/projections are internally consistent (contiguous ordinals 1000001-1000169, all terminal).",
+            "repro": "head -1 ~/.t3/userdata-v2/logs/provider/7f1dfff1-4cbb-450b-8514-764d11c903e1.log.1",
+            "sessionKey": "7f1dfff1-claude-scheduled-tasks"
+        },
+        {
+            "title": "Provider session projection stuck at status 'ready' after detach/archive",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "provider-session.detached event at 2026-07-01T23:44:29.976Z (reason 'Thread archived.') for provider-session:...:1c70abe8-4ecb-43f8-8ee6-9ce19beddcfe, but the orchestration_v2_projection_provider_sessions row still shows status='ready' with updated_at=2026-07-01T22:48:37.724Z and thread_id still bound. The event stream also shows the session flip stopped\u2192ready correctly at 22:41:50/22:48:37, so the projection simply never reflects the final detached/terminated state.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT status, updated_at FROM orchestration_v2_projection_provider_sessions WHERE thread_id='47763f5e-76c1-4d67-8037-442a280f1514';\"",
+            "sessionKey": "47763f5e-claude-fable"
+        },
+        {
+            "title": "Detached claudeAgent provider session left in status 'ready' forever after handoff",
+            "category": "stuck-state",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Event seq 32566 provider-session.detached at 2026-07-02T01:03:00.273Z (reason 'Provider or model selection changed.') for provider-session:provider-instance:claudeAgent:thread:ea84f015-...:21ed85a2-2ed1-4bd8-94be-1e5affe1aa72, but the orchestration_v2_projection_provider_sessions row still shows status='ready' \u2014 no stopped update was ever emitted. The replacement cursor session was correctly moved to 'stopped' at 02:49:07 (seq 38639).",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT provider_session_id,status FROM orchestration_v2_projection_provider_sessions WHERE provider_session_id LIKE '%ea84f015%'\"",
+            "sessionKey": "ea84f015-cursor-handoff"
+        },
+        {
+            "title": "Subagent child-thread items have null run_id / provider_thread_id / provider_turn_id",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "All 34 items of child thread ...a4bd1db1834cb086a and 52 items of ...ab96794f302d5fd03 have runId:null, providerThreadId:null, providerTurnId:null (e.g. turn-item:provider:claudeAgent:native-item:toolu_01L5SAT2nkGMce3gWf3qFFqJ). Lineage back to the parent exists only via orchestration_v2_projection_subagents (child_thread_id set, run_id = parent runs ordinal 2 and 5, both completed) and the two parent subagent turn items (task%3Aa4bd1db1834cb086a%3Asubagent / task%3Aab96794f302d5fd03%3Asubagent). Likely by design (child threads have no runs of their own), but items cannot be joined to any run/turn directly.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT count(*) FROM orchestration_v2_projection_turn_items WHERE thread_id LIKE 'thread:provider:claudeAgent%ea84f015%' AND run_id IS NULL\"",
+            "sessionKey": "ea84f015-cursor-handoff"
+        },
+        {
+            "title": "error_during_execution result during run 5 coincides with steering message \u2014 absorbed without any projected trace",
+            "category": "error-handling",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "log.3 line 677 [2026-07-01T23:13:24.083Z] result subtype error_during_execution, is_error:true, duration_api_ms 2473149, session 44cbb4c7. A user steering message was ingested 50ms earlier (seq 30447 message.updated 23:13:24.031Z, message 513621d3-5a03-46e1-8fd7-cc4de4b417f1, run 5), so this looks like the intentional interrupt-for-steering path; run 5 continued and completed at 23:30:07 with items after 23:13. No event records the aborted query, which is acceptable if intentional but leaves no audit trail of the abort.",
+            "repro": "grep -n error_during_execution ~/.t3/userdata-v2/logs/provider/ea84f015-e597-4f79-9557-d39b5a895fba.log.3",
+            "sessionKey": "ea84f015-cursor-handoff"
+        },
+        {
+            "title": "5 tool calls that never returned natively were auto-marked 'completed' (with no results) at turn end",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log has 123 distinct tool-call-started but only 118 tool-call-completed; the 5 without completion (tool_e1f3ce39... glob, tool_fd1ba594..., tool_e2f6262c..., tool_840aeaa9... grep, tool_671d1b53... read) are all projected as status 'completed' with completedAt forced to the turn-end timestamp 2026-07-02T02:25:57.991Z and no results payload (e.g. turn-item:provider:cursor:native-item:tool_e1f3ce39-4604-4ced-8039-bbd5e75946b ends with pattern:'**/*' and no results field). This is the intentional finalizeTurn flush (CursorAdapterV2.ts:1886-1889 emitToolArtifacts({completed:true})), but 'completed' misrepresents tools whose results never arrived; something like 'interrupted' or an explicit no-result marker would be more truthful. Minor: cursor itself abandoned these calls, so no user-visible content was lost.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT status, json_extract(payload_json,'$.completedAt') FROM orchestration_v2_projection_turn_items WHERE json_extract(payload_json,'$.nativeItemRef.nativeId')='tool_e1f3ce39-4604-4ced-8039-bbd5e75946b';\"",
+            "sessionKey": "c9e72a05-cursor-failing-turns"
+        },
+        {
+            "title": "Run 2 was a 7.3-minute silent hang before failing \u2014 nothing projected during the window (faithful to provider, but no progress/heartbeat signal exists)",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log: run.started for run-f4d64e64 at 02:28:07.973Z, next event is run.completed status 'error' at 02:35:28.424Z \u2014 zero interaction.updates in between. Ingested events for the stream in that window: 0 (SELECT COUNT(*) ... occurred_at BETWEEN '02:28:09' AND '02:35:28' returns 0). The pipeline mirrors the provider exactly (nothing lost), but the projection offers no signal distinguishing 'model working' from 'SDK dead due to auth error' during those 440s; the user just saw a running turn that eventually failed generically.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT COUNT(*) FROM orchestration_events WHERE stream_id='c9e72a05-4c87-4dd5-b1b6-83834cc73afe' AND occurred_at > '2026-07-02T02:28:09' AND occurred_at < '2026-07-02T02:35:28';\"",
+            "sessionKey": "c9e72a05-cursor-failing-turns"
+        },
+        {
+            "title": "Native 'read' tool calls are projected as type 'file_search'",
+            "category": "other",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "18 native 'read' tool calls (e.g. tool_671d1b53-bb49-46ef-94de-8f682391c93 reading a file path) are projected as type 'file_search' with the file path as 'pattern'. Intentional per CursorAdapterV2.ts:1203-1219 (glob/grep/read/ls/readLints/semSearch all map to file_search), so the content is preserved, but the item type flattens semantically distinct operations (file reads rendered as searches). Cosmetic fidelity note only.",
+            "repro": "sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \"SELECT type FROM orchestration_v2_projection_turn_items WHERE json_extract(payload_json,'$.nativeItemRef.nativeId')='tool_671d1b53-bb49-46ef-94de-8f682391c93';\"",
+            "sessionKey": "c9e72a05-cursor-failing-turns"
+        },
+        {
+            "title": "Token usage from turn-ended/run.completed is dropped by the ingestion pipeline",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log line 663 (2026-07-02T07:08:07.565Z) turn-ended carries usage {inputTokens:596379, outputTokens:6430, cacheReadTokens:522080}; line 664 run.completed repeats it with totalTokens:1124889. No event for stream_id=8ee00dcc-fa04-4fe7-9920-cd3432d45415 contains 'usage' or 'Tokens' (query returned 0 rows), and neither the run nor provider_turn projection payloads have a usage field. grep for 'usage' in apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.ts, ProviderEventIngestor.ts and ProviderAdapter.ts returns nothing \u2014 the v2 contract simply doesn't model usage, so this looks like a pipeline-wide design gap rather than a session bug, but users lose per-turn token/cost data.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT count(*) FROM orchestration_events WHERE stream_id='8ee00dcc-fa04-4fe7-9920-cd3432d45415' AND payload_json LIKE '%Tokens%';\" (returns 0) vs grep -c 'inputTokens' ~/.t3/userdata-v2/logs/provider/8ee00dcc-fa04-4fe7-9920-cd3432d45415.log (returns 2)",
+            "sessionKey": "8ee00dcc-cursor-spacing"
+        },
+        {
+            "title": "run_attempt.provider_turn_id never backfilled (forward link missing; reverse link intact)",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "orchestration_v2_projection_run_attempts row run-attempt:run:run%3Athread%3A8ee00dcc-fa04-4fe7-9920-cd3432d45415%3Aordinal%3A1:attempt:1 has provider_turn_id='' and payload providerTurnId:null even after completion, while orchestration_v2_projection_provider_turns row provider-turn:provider:cursor:native-turn:run-ee800ef2-cd0e-45bd-9481-65fd5cfdae67 correctly points back via run_attempt_id to that attempt. Lineage is resolvable only in one direction (turn->attempt).",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT a.attempt_id, a.provider_turn_id, t.provider_turn_id FROM orchestration_v2_projection_run_attempts a JOIN orchestration_v2_projection_provider_turns t ON t.run_attempt_id=a.attempt_id WHERE a.thread_id='8ee00dcc-fa04-4fe7-9920-cd3432d45415';\"",
+            "sessionKey": "8ee00dcc-cursor-spacing"
+        },
+        {
+            "title": "file_change diffStr has malformed diff headers (a//abs/path, b//abs/path)",
+            "category": "other",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "turn-item:provider:cursor:native-item:tool_fee434e5-6388-483d-82f1-9e6c6ab418c (ordinal 1000042) payload diffStr begins '--- a//Users/julius/.t3/worktrees/codething-mvp/t3code-3cba2658/apps/mobile/src/features/home/HomeScreen.tsx' \u2014 absolute path concatenated after 'a/' yields double slash and a non-standard diff header; same for the other two file_change items (tool_361abe3b, tool_b586252d). Diff hunk content itself is intact (additions:2 deletions:1 recorded). Cosmetic, but breaks strict unified-diff parsers.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT substr(json_extract(payload_json,'$.diffStr'),1,80) FROM orchestration_v2_projection_turn_items WHERE thread_id='8ee00dcc-fa04-4fe7-9920-cd3432d45415' AND type='file_change';\"",
+            "sessionKey": "8ee00dcc-cursor-spacing"
+        },
+        {
+            "title": "Codex 'reasoning' items are silently dropped (no adapter handler, no projection)",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Surviving log window shows 45 item/started + 45 item/completed reasoning items for native thread 019f1b62-f532 (c878541b runs 4-6), but the projection has 0 reasoning-type turn_items for any of the four threads (types present: assistant_message, command_execution, file_change, user_message, checkpoint, dynamic_tool, run_interrupt_*). CodexAdapterV2.ts item/started / item/completed handlers dispatch on userMessage/commandExecution/mcpToolCall/dynamicToolCall/fileChange/webSearch/plan/collabAgentToolCall/subAgentActivity and fall through for 'reasoning' despite capabilities streamsReasoning:true (line 139). Mitigating: every observed reasoning item had empty summary/content (e.g. rs_0e493c0caf681939016a4539c1c0988193b7174c9c067dfdb2, summary:[], content:[]), so no user-visible text was actually lost in this session.",
+            "repro": "cat ~/.t3/userdata-v2/logs/provider/71e29ba5-*.log.10 | grep '\"decoded\"' | grep '\"item/completed\"' | grep '019f1b62' | grep -c '\"reasoning\"'  vs  SELECT count(*) FROM orchestration_v2_projection_turn_items WHERE thread_id='c878541b-a832-4757-a254-5550e3f6c2d1' AND type LIKE '%reason%';",
+            "sessionKey": "codex-no-native-logs"
+        },
+        {
+            "title": "contextCompaction native item has no projection representation",
+            "category": "lost-data",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Native log shows item/completed contextCompaction id ad331e6d-f971-46a9-a04a-c70a1b86894f on turn 019f1e69-826e-7de2-9200-b6852ff53138 (c878541b run 4, ~16:00-16:05Z); no turn_item, node, or event for it exists (payload_json LIKE '%ompaction%' matches only incidental message text). Users cannot see that context was compacted mid-run. Native item carries only an id (no content), so the informational loss is small.",
+            "repro": "grep 'contextCompaction' ~/.t3/userdata-v2/logs/provider/71e29ba5-*.log.10 | grep 019f1b62",
+            "sessionKey": "codex-no-native-logs"
+        },
+        {
+            "title": "Run 119 marked failed while its native query kept running; retry run 120 adopted the result, leaving a duplicated user message",
+            "category": "duplicate",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Run 119 failed at 2026-07-02T16:45:26.143Z (transport_error, ~1.5s after requested_at 16:45:24.618Z), but the native log shows query.open + prompt.offer at 16:45:25.921Z proceeding to SessionStart:resume (16:45:41) and a successful result at 16:47:00.764Z. Retry run 120 (requested 16:45:36.222Z) completed at 16:47:01.354Z with that assistant message (message:provider:claudeAgent:native-item:693d3576-4e56-4c10-9b0f-90ff9825f663, 3190 chars, intact). Two user messages with identical text exist: 9b135da3-dd1b-4a9a-90bc-ee4166bce48d (run 119) and 0f1b1078-74cb-4488-9626-e1ddbe933a9a (run 120) \u2014 timeline shows the prompt twice (plus the error item). Content preserved; cosmetic/duplication issue only.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT message_id, run_id, created_at FROM orchestration_v2_projection_messages WHERE thread_id='71e29ba5-654b-4f67-b363-ad400e5bd016' AND created_at BETWEEN '2026-07-02T16:45' AND '2026-07-02T16:46'\"",
+            "sessionKey": "71e29ba5-claude-mega"
+        },
+        {
+            "title": "4 native error_during_execution results silently recovered in-adapter with no projection trace",
+            "category": "error-handling",
+            "severity": "low",
+            "confidence": "medium",
+            "knownIssue": false,
+            "evidence": "Native results with subtype=error_during_execution/is_error=true at 2026-07-02T01:34:23.046Z, 02:29:30.034Z, 05:08:27.090Z, 17:03:10.206Z fall inside runs 73/80/95/122 \u2014 all completed with a single run attempt and no error item/event. At 01:34:23 the error coincides with an outgoing prompt.offer (mid-stream steering) followed immediately by system init and continued streaming, so the adapter's transparent re-query is likely intentional; but the transient error is invisible to projections (debug info only in provider log).",
+            "repro": "grep -h '\"subtype\":\"error_during_execution\"' ~/.t3/userdata-v2/logs/provider/71e29ba5*.log* | grep '\"stage\":\"decoded\"'",
+            "sessionKey": "71e29ba5-claude-mega"
+        },
+        {
+            "title": "Session has 7 subagent child threads, not 9 as briefed; all 7 fully linked and consistent",
+            "category": "lineage",
+            "severity": "low",
+            "confidence": "high",
+            "knownIssue": false,
+            "evidence": "Native log contains exactly 7 top-level Agent tool_use spawns (toolu_01CtiEb3..., 01CrTuja..., 01TiUmm..., 01W2SNA..., 01RjCn6..., 017H3QK..., 018VQWh...); projections have 7 type='subagent' items, 7 orchestration_v2_projection_subagents rows all with non-null child_thread_id resolving to existing thread rows, and 7 child-thread event streams (79-260 events each) with items on the correct thread ids (0 items with mismatched threadId). The 2 failed subagents (task%3Aafbafdde..., task%3Aa0e0b5f3..., completed_at 2026-07-02T08:34:33.868Z) match native '[Request interrupted by user for tool use]' is_error tool_results for toolu_017H3QKcEb9FrecsT4tyzg1M / toolu_018VQWhHKSAP1cFkZwZGRGe5 at 08:34:33.867Z \u2014 correct failure surfacing, not a bug.",
+            "repro": "sqlite3 ~/.t3/userdata-v2/state.sqlite \"SELECT count(*) FROM orchestration_v2_projection_subagents WHERE thread_id='71e29ba5-654b-4f67-b363-ad400e5bd016'\"",
+            "sessionKey": "71e29ba5-claude-mega"
+        }
+    ]
+}

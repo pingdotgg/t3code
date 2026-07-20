@@ -515,6 +515,9 @@ it.effect(
           ["provider-turn.updated", "cancelled"],
           ["message.updated", null],
           ["turn-item.updated", "cancelled"],
+          // Synthesized "Run interrupted" notice: reconcile cancellations
+          // must be user-visible, not silent.
+          ["turn-item.updated", "cancelled"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],

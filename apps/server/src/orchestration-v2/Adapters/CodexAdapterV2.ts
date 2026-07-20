@@ -966,6 +966,13 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    /**
+     * Routes protocol log frames to the app thread that owns the native
+     * codex thread. One shared app-server process multiplexes many app
+     * threads; without per-frame routing every thread's traffic lands in
+     * the opener's log file (audit plan #9).
+     */
+    readonly resolveLogThreadId?: (nativeThreadId: string | undefined) => ThreadId;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapterOpenSessionError,
@@ -1072,18 +1079,57 @@ export const makeCodexAppServerClientFactoryCommandLayer = (
     }),
   );
 
+const CODEX_RAW_THREAD_ID_PATTERN = /"threadId"\s*:\s*"([^"]+)"/;
+
+/** Best-effort native thread id extraction from a protocol log frame. */
+export function codexNativeThreadIdFromProtocolEvent(event: unknown): string | undefined {
+  if (typeof event !== "object" || event === null) {
+    return undefined;
+  }
+  const payload = (event as { readonly payload?: unknown }).payload;
+  if (typeof payload === "string") {
+    return CODEX_RAW_THREAD_ID_PATTERN.exec(payload)?.[1];
+  }
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const container of [record["params"], record["result"], record]) {
+    if (typeof container !== "object" || container === null) {
+      continue;
+    }
+    const threadId = (container as Record<string, unknown>)["threadId"];
+    if (typeof threadId === "string") {
+      return threadId;
+    }
+    const thread = (container as Record<string, unknown>)["thread"];
+    if (typeof thread === "object" && thread !== null) {
+      const id = (thread as Record<string, unknown>)["id"];
+      if (typeof id === "string") {
+        return id;
+      }
+    }
+  }
+  return undefined;
+}
+
 export function makeCodexAppServerProtocolLogger(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  readonly resolveThreadId?: (nativeThreadId: string | undefined) => ThreadId;
 }): CodexClient.CodexAppServerClientOptions["logger"] | undefined {
   const { nativeEventLogger } = input;
   if (nativeEventLogger === undefined) {
     return undefined;
   }
 
-  return (event) =>
-    nativeEventLogger
+  return (event) => {
+    const threadId =
+      input.resolveThreadId === undefined
+        ? input.threadId
+        : input.resolveThreadId(codexNativeThreadIdFromProtocolEvent(event));
+    return nativeEventLogger
       .write(
         {
           provider: CODEX_PROVIDER,
@@ -1092,9 +1138,10 @@ export function makeCodexAppServerProtocolLogger(input: {
           providerSessionId: input.providerSessionId,
           event: redactCodexProtocolValue(event),
         },
-        input.threadId,
+        threadId,
       )
       .pipe(Effect.ignore);
+  };
 }
 
 export function redactCodexProtocolValue(value: unknown): unknown {
@@ -1164,6 +1211,9 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
             nativeEventLogger,
             threadId: input.threadId,
             providerSessionId: input.providerSessionId,
+            ...(input.resolveLogThreadId === undefined
+              ? {}
+              : { resolveThreadId: input.resolveLogThreadId }),
           });
           const clientOptions: CodexClient.CodexAppServerClientOptions =
             protocolLogger === undefined
@@ -1290,6 +1340,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: (input) =>
       Effect.gen(function* () {
+        // native codex thread id → owning app thread. Mutable on purpose:
+        // the resolver closes over it before any turn registers a route.
+        // Unknown ids fall back to the opener (its own handshake frames carry
+        // no route yet); a subagent's earliest frames may land here before its
+        // route registers, but the bulk of its traffic gets a dedicated file —
+        // enough that the opener log's rotation no longer destroys other
+        // threads' ground truth (audit plan #9).
+        const logThreadRoutes = new Map<string, ThreadId>();
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
@@ -1297,6 +1355,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           runtimePolicy: input.runtimePolicy,
           settings: adapterOptions.settings,
           environment: adapterOptions.environment,
+          resolveLogThreadId: (nativeThreadId) =>
+            (nativeThreadId === undefined ? undefined : logThreadRoutes.get(nativeThreadId)) ??
+            input.threadId,
         });
         const initialized = yield* Ref.make(false);
         const ensureInitialized = Effect.gen(function* () {
@@ -1354,6 +1415,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly startedAt: DateTime.Utc;
         }) =>
           Effect.gen(function* () {
+            const nativeThreadId = input.turnInput.providerThread.nativeThreadRef?.nativeId;
+            if (nativeThreadId !== undefined && nativeThreadId !== null) {
+              logThreadRoutes.set(nativeThreadId, input.turnInput.threadId);
+            }
             const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
             if (existing !== undefined) {
               return existing;
@@ -1716,6 +1781,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               driver: CODEX_PROVIDER,
               nativeThreadId: input.nativeThreadId,
             });
+            logThreadRoutes.set(input.nativeThreadId, childThreadId);
             const turnItemOrdinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
             const providerThread = {
               id: idAllocator.derive.providerThread({
