@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -177,6 +178,20 @@ export interface GitResolveRemoteTrackingCommitResult {
   remoteRefName: string;
 }
 
+export class RemoteTrackingRefNotFoundError extends Schema.TaggedErrorClass<RemoteTrackingRefNotFoundError>()(
+  "RemoteTrackingRefNotFoundError",
+  {
+    cwd: Schema.String,
+    remoteRefName: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Remote tracking ref '${this.remoteRefName}' does not exist (${this.cwd}).`;
+  }
+}
+
+export const isRemoteTrackingRefNotFound = Schema.is(RemoteTrackingRefNotFoundError);
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -240,7 +255,10 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,
-    ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
+    ) => Effect.Effect<
+      GitResolveRemoteTrackingCommitResult,
+      GitCommandError | RemoteTrackingRefNotFoundError
+    >;
     readonly fetchRemoteBranch: (
       input: GitFetchRemoteBranchInput,
     ) => Effect.Effect<void, GitCommandError>;

@@ -1,5 +1,6 @@
 "use client";
 
+import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -11,12 +12,12 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
   type ProjectId,
   ProviderInstanceId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
-  PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -33,6 +34,8 @@ import {
   SquarePenIcon,
 } from "lucide-react";
 import {
+  type KeyboardEvent,
+  type ReactNode,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -41,28 +44,17 @@ import {
   useReducer,
   useRef,
   useState,
-  type KeyboardEvent,
-  type ReactNode,
 } from "react";
-import { useAtomValue } from "@effect/atom-react";
 import { OpenAddProjectCommandPaletteProvider } from "../commandPaletteContext";
-import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
+import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
+import { desktopLocalBackendId, isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
-import { readLocalApi } from "../localApi";
-import { desktopLocalBackendId } from "../connection/desktopLocal";
-import { filesystemEnvironment } from "../state/filesystem";
-import { projectEnvironment } from "../state/projects";
-import { useEnvironmentQuery } from "../state/query";
-import { sourceControlEnvironment } from "../state/sourceControl";
-import { useAtomCommand } from "../state/use-atom-command";
-import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { resolveShortcutCommand } from "../keybindings";
 import {
-  startNewThreadInProjectFromContext,
   startNewThreadFromContext,
+  startNewThreadInProjectFromContext,
 } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -82,6 +74,16 @@ import {
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { getLatestThreadForProject } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
+import { readLocalApi } from "../localApi";
+import { useProjects, useThreadShells } from "../state/entities";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { filesystemEnvironment } from "../state/filesystem";
+import { projectEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import { sourceControlEnvironment } from "../state/sourceControl";
+import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
@@ -90,6 +92,7 @@ import {
   resolveProjectPickerTarget,
   resolveWslProjectSelection,
 } from "../wslPaths";
+import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
@@ -106,13 +109,12 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
 } from "./CommandPalette.logic";
-import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
+import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { primaryServerKeybindingsAtom } from "../state/server";
-import { resolveShortcutCommand } from "../keybindings";
+import { Button } from "./ui/button";
 import {
   Command,
   CommandDialog,
@@ -121,12 +123,9 @@ import {
   CommandInput,
   CommandPanel,
 } from "./ui/command";
-import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
-import type { ChatComposerHandle } from "./chat/ChatComposer";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -471,8 +470,16 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironment = usePrimaryEnvironment();
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
-    useHandleNewThread();
+  const {
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    defaultNewWorktreesStartFromOrigin,
+    defaultThreadEnvMode,
+    handleNewThread,
+    resolveDefaultMainCheckout,
+    resolveNewThreadDefaults,
+  } = useHandleNewThread();
   const projects = useProjects();
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -624,7 +631,12 @@ function OpenCommandPaletteDialog(props: {
   const isBrowsePending = browseQuery.isPending;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { filteredEntries: filteredBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
-    () => filterBrowseEntries({ browseEntries, browseFilterQuery, highlightedItemValue }),
+    () =>
+      filterBrowseEntries({
+        browseEntries,
+        browseFilterQuery,
+        highlightedItemValue,
+      }),
     [browseEntries, browseFilterQuery, highlightedItemValue],
   );
 
@@ -686,13 +698,27 @@ function OpenCommandPaletteDialog(props: {
               activeDraftThread,
               activeThread: activeThread ?? undefined,
               defaultProjectRef,
+              defaultThreadEnvMode,
+              defaultNewWorktreesStartFromOrigin,
               handleNewThread,
+              resolveDefaultMainCheckout,
+              resolveNewThreadDefaults,
             },
             scopeProjectRef(project.environmentId, project.id),
           );
         },
       }),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
+    [
+      activeDraftThread,
+      activeThread,
+      defaultNewWorktreesStartFromOrigin,
+      defaultProjectRef,
+      defaultThreadEnvMode,
+      handleNewThread,
+      projects,
+      resolveDefaultMainCheckout,
+      resolveNewThreadDefaults,
+    ],
   );
 
   const allThreadItems = useMemo(
@@ -875,7 +901,13 @@ function OpenCommandPaletteDialog(props: {
         });
       }
 
-      return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
+      return [
+        {
+          value: `sources:${environmentId}`,
+          label: "Sources",
+          items: sourceItems,
+        },
+      ];
     },
     [openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
   );
@@ -984,7 +1016,11 @@ function OpenCommandPaletteDialog(props: {
             activeDraftThread,
             activeThread: activeThread ?? undefined,
             defaultProjectRef,
+            defaultThreadEnvMode,
+            defaultNewWorktreesStartFromOrigin,
             handleNewThread,
+            resolveDefaultMainCheckout,
+            resolveNewThreadDefaults,
           });
         },
       });
@@ -1614,7 +1650,13 @@ function OpenCommandPaletteDialog(props: {
               (candidate) => candidate.httpBaseUrl === environment.displayUrl,
             );
             const runningDistro = bootstrap?.runningDistro ?? null;
-            return [{ environmentId: environment.environmentId, backendId, runningDistro }];
+            return [
+              {
+                environmentId: environment.environmentId,
+                backendId,
+                runningDistro,
+              },
+            ];
           }),
           primaryEnvironmentId,
           desktopWslState ?? null,
@@ -1822,9 +1864,13 @@ function OpenCommandPaletteDialog(props: {
                       : "Enter a repository path and press Enter to look it up.",
                 }
               : addProjectCloneFlow?.step === "confirm"
-                ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
+                ? {
+                    emptyStateMessage: "Choose a destination path and press Enter to clone.",
+                  }
                 : relativePathNeedsActiveProject
-                  ? { emptyStateMessage: "Relative paths require an active project." }
+                  ? {
+                      emptyStateMessage: "Relative paths require an active project.",
+                    }
                   : willCreateProjectPath
                     ? {
                         emptyStateMessage:

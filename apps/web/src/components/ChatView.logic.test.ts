@@ -20,6 +20,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveEffectiveServerThreadWorktreePath,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -258,6 +259,28 @@ describe("resolveSendEnvMode", () => {
   it("keeps worktree mode only for git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("resolveEffectiveServerThreadWorktreePath", () => {
+  it("uses a pending existing-worktree selection before metadata round-trips", () => {
+    expect(
+      resolveEffectiveServerThreadWorktreePath({
+        canOverride: true,
+        persistedWorktreePath: null,
+        pendingWorktreePath: "/repo/worktrees/selected",
+      }),
+    ).toBe("/repo/worktrees/selected");
+  });
+
+  it("uses persisted metadata once overrides are locked", () => {
+    expect(
+      resolveEffectiveServerThreadWorktreePath({
+        canOverride: false,
+        persistedWorktreePath: "/repo/worktrees/persisted",
+        pendingWorktreePath: "/repo/worktrees/stale",
+      }),
+    ).toBe("/repo/worktrees/persisted");
   });
 });
 

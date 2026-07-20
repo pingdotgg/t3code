@@ -75,7 +75,7 @@ export class GitWorkflowService extends Context.Service<
       readonly fallbackRemoteName: string;
     }) => Effect.Effect<
       { readonly commitSha: string; readonly remoteRefName: string },
-      GitCommandError
+      GitCommandError | GitVcsDriver.RemoteTrackingRefNotFoundError
     >;
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,

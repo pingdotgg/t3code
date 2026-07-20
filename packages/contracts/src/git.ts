@@ -256,6 +256,7 @@ export const VcsListRefsResult = Schema.Struct({
   refs: Schema.Array(VcsRef),
   isRepo: Schema.Boolean,
   hasPrimaryRemote: Schema.Boolean,
+  mainCheckoutPath: Schema.optional(TrimmedNonEmptyStringSchema.pipe(Schema.NullOr)),
   nextCursor: NonNegativeInt.pipe(Schema.NullOr),
   totalCount: NonNegativeInt,
 });

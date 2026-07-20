@@ -1,20 +1,34 @@
+import {
+  EnvironmentId,
+  type OrchestrationLatestTurn,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type Project,
+  type Thread,
+} from "../types";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  getFallbackThreadIdAfterDelete,
+  getProjectSortTimestamp,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
-  resolveAdjacentThreadId,
-  getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
-  getProjectSortTimestamp,
+  groupSidebarThreadsByWorktree,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  orderSidebarThreadsByWorktree,
+  resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
-  resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -24,19 +38,6 @@ import {
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
-import {
-  EnvironmentId,
-  OrchestrationLatestTurn,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
-import {
-  DEFAULT_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
-  type Project,
-  type Thread,
-} from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -104,6 +105,204 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("groupSidebarThreadsByWorktree", () => {
+  it("groups threads sharing a worktree and labels the group with its branch", () => {
+    const threads = [
+      {
+        environmentId: "local",
+        projectId: "project",
+        branch: "feature/shared",
+        worktreePath: "/repo/.t3/worktrees/shared",
+        id: "one",
+      },
+      {
+        environmentId: "local",
+        projectId: "project",
+        branch: "feature/shared",
+        worktreePath: "/repo/.t3/worktrees/shared",
+        id: "two",
+      },
+    ];
+
+    expect(groupSidebarThreadsByWorktree(threads)).toEqual([
+      {
+        key: "local:worktree:/repo/.t3/worktrees/shared",
+        label: "feature/shared",
+        threads,
+      },
+    ]);
+  });
+
+  it("keeps main checkouts from different projects in separate groups", () => {
+    const groups = groupSidebarThreadsByWorktree([
+      {
+        environmentId: "local",
+        projectId: "one",
+        branch: "main",
+        worktreePath: null,
+      },
+      {
+        environmentId: "local",
+        projectId: "two",
+        branch: "main",
+        worktreePath: null,
+      },
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.label)).toEqual(["main", "main"]);
+  });
+
+  it("distinguishes a registered linked worktree from the actual main checkout", () => {
+    const linkedCheckoutThread = {
+      environmentId: "local",
+      projectId: "project",
+      branch: "t3code/group-threads-worktrees",
+      worktreePath: null,
+    };
+    const mainCheckoutThread = {
+      environmentId: "local",
+      projectId: "project",
+      branch: "main",
+      worktreePath: "/repo",
+    };
+
+    expect(
+      groupSidebarThreadsByWorktree(
+        [linkedCheckoutThread, mainCheckoutThread],
+        [
+          {
+            environmentId: "local",
+            projectId: "project",
+            projectCheckoutPath: "/repo/.t3/worktrees/group-threads-worktrees",
+            projectCheckoutLabel: "t3code/group-threads-worktrees",
+            mainCheckoutPath: "/repo",
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        key: "local:worktree:/repo/.t3/worktrees/group-threads-worktrees",
+        label: "t3code/group-threads-worktrees",
+        threads: [linkedCheckoutThread],
+      },
+      {
+        key: "local:worktree:/repo",
+        label: "Main checkout",
+        threads: [mainCheckoutThread],
+      },
+    ]);
+  });
+
+  it("reconciles each logical-project member with its own checkout", () => {
+    const memberOneImplicit = {
+      environmentId: "local",
+      projectId: "one",
+      branch: "feature/one",
+      worktreePath: null,
+    };
+    const memberTwoImplicit = {
+      environmentId: "local",
+      projectId: "two",
+      branch: "feature/two",
+      worktreePath: null,
+    };
+    const memberTwoExplicit = {
+      environmentId: "local",
+      projectId: "two",
+      branch: "feature/two",
+      worktreePath: "/repo-two",
+    };
+
+    const groups = groupSidebarThreadsByWorktree(
+      [memberOneImplicit, memberTwoImplicit, memberTwoExplicit],
+      [
+        {
+          environmentId: "local",
+          projectId: "one",
+          projectCheckoutPath: "/repo-one",
+          projectCheckoutLabel: "feature/one",
+          mainCheckoutPath: "/repo-one",
+        },
+        {
+          environmentId: "local",
+          projectId: "two",
+          projectCheckoutPath: "/repo-two",
+          projectCheckoutLabel: "feature/two",
+          mainCheckoutPath: null,
+        },
+      ],
+    );
+
+    expect(groups).toEqual([
+      {
+        key: "local:worktree:/repo-one",
+        label: "Main checkout",
+        threads: [memberOneImplicit],
+      },
+      {
+        key: "local:worktree:/repo-two",
+        label: "feature/two",
+        threads: [memberTwoImplicit, memberTwoExplicit],
+      },
+    ]);
+  });
+
+  it("groups Windows workspace paths case-insensitively", () => {
+    const implicitThread = {
+      environmentId: "windows",
+      projectId: "project",
+      branch: "main",
+      worktreePath: null,
+    };
+    const explicitThread = {
+      ...implicitThread,
+      worktreePath: "c:\\repo\\worktree",
+    };
+
+    expect(
+      groupSidebarThreadsByWorktree(
+        [implicitThread, explicitThread],
+        [
+          {
+            environmentId: "windows",
+            projectId: "project",
+            projectCheckoutPath: "C:\\Repo\\Worktree",
+            projectCheckoutLabel: "main",
+            mainCheckoutPath: "C:\\REPO\\WORKTREE",
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        key: "windows:worktree:c:/repo/worktree",
+        label: "Main checkout",
+        threads: [implicitThread, explicitThread],
+      },
+    ]);
+  });
+});
+
+describe("orderSidebarThreadsByWorktree", () => {
+  it("matches the visual grouped-row order for interleaved worktrees", () => {
+    const first = {
+      environmentId: "local",
+      projectId: "project",
+      branch: "feature/one",
+      worktreePath: "/repo/one",
+    };
+    const second = {
+      environmentId: "local",
+      projectId: "project",
+      branch: "feature/two",
+      worktreePath: "/repo/two",
+    };
+    const third = { ...first, branch: "feature/one-again" };
+
+    expect(orderSidebarThreadsByWorktree([first, second, third])).toEqual([first, third, second]);
   });
 });
 
@@ -327,93 +526,6 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
-  });
-});
-
-describe("resolveSidebarNewThreadSeedContext", () => {
-  it("prefers the default worktree mode over active thread context", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-1",
-        defaultEnvMode: "worktree",
-        activeThread: {
-          projectId: "project-1",
-          branch: "feature/existing",
-          worktreePath: "/repo/.t3/worktrees/existing",
-        },
-        activeDraftThread: {
-          projectId: "project-1",
-          branch: "feature/draft",
-          worktreePath: "/repo/.t3/worktrees/draft",
-          envMode: "worktree",
-          startFromOrigin: true,
-        },
-      }),
-    ).toEqual({
-      envMode: "worktree",
-    });
-  });
-
-  it("inherits the active server thread context when creating a new thread in the same project", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-1",
-        defaultEnvMode: "local",
-        activeThread: {
-          projectId: "project-1",
-          branch: "effect-atom",
-          worktreePath: null,
-        },
-        activeDraftThread: null,
-      }),
-    ).toEqual({
-      branch: "effect-atom",
-      worktreePath: null,
-      envMode: "local",
-    });
-  });
-
-  it("prefers the active draft thread context when it matches the target project", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-1",
-        defaultEnvMode: "local",
-        activeThread: {
-          projectId: "project-1",
-          branch: "effect-atom",
-          worktreePath: null,
-        },
-        activeDraftThread: {
-          projectId: "project-1",
-          branch: "feature/new-draft",
-          worktreePath: "/repo/worktree",
-          envMode: "worktree",
-          startFromOrigin: true,
-        },
-      }),
-    ).toEqual({
-      branch: "feature/new-draft",
-      worktreePath: "/repo/worktree",
-      envMode: "worktree",
-      startFromOrigin: true,
-    });
-  });
-
-  it("falls back to the default env mode when there is no matching active thread context", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-2",
-        defaultEnvMode: "worktree",
-        activeThread: {
-          projectId: "project-1",
-          branch: "effect-atom",
-          worktreePath: null,
-        },
-        activeDraftThread: null,
-      }),
-    ).toEqual({
-      envMode: "worktree",
-    });
   });
 });
 
@@ -739,7 +851,10 @@ describe("resolveThreadStatusPill", () => {
 
 describe("resolveThreadRowClassName", () => {
   it("uses the darker selected palette when a thread is both selected and active", () => {
-    const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
+    const className = resolveThreadRowClassName({
+      isActive: true,
+      isSelected: true,
+    });
     expect(className).toContain("bg-primary/22");
     expect(className).toContain("hover:bg-primary/26");
     expect(className).toContain("dark:bg-primary/30");
@@ -747,7 +862,10 @@ describe("resolveThreadRowClassName", () => {
   });
 
   it("uses selected hover colors for selected threads", () => {
-    const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
+    const className = resolveThreadRowClassName({
+      isActive: false,
+      isSelected: true,
+    });
     expect(className).toContain("bg-primary/15");
     expect(className).toContain("hover:bg-primary/19");
     expect(className).toContain("dark:bg-primary/22");
@@ -755,7 +873,10 @@ describe("resolveThreadRowClassName", () => {
   });
 
   it("keeps the accent palette for active-only threads", () => {
-    const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
+    const className = resolveThreadRowClassName({
+      isActive: true,
+      isSelected: false,
+    });
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
   });

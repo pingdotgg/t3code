@@ -3,19 +3,304 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  deriveWorkspaceOptions,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
-  resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
+  resolveMainCheckoutTarget,
+  resolveWorkspaceSelection,
   resolveBranchToolbarValue,
-  resolveLockedWorkspaceLabel,
   shouldIncludeBranchPickerItem,
+  withActiveWorkspaceFallback,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("deriveWorkspaceOptions", () => {
+  it("combines the default branch with the local main checkout", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "main",
+        current: true,
+        isDefault: true,
+        worktreePath: "/repo",
+      },
+      {
+        name: "feature/one",
+        current: false,
+        isDefault: false,
+        worktreePath: "/repo/.t3/worktrees/one",
+      },
+      {
+        name: "feature/one-alias",
+        current: false,
+        isDefault: false,
+        worktreePath: "/repo/.t3/worktrees/one",
+      },
+    ];
+
+    expect(deriveWorkspaceOptions(refs, "/repo")).toEqual({
+      mainCheckout: null,
+      existingWorktrees: [
+        {
+          branch: "feature/one",
+          label: "feature/one",
+          path: "/repo/.t3/worktrees/one",
+          isProjectCheckout: false,
+        },
+      ],
+    });
+  });
+
+  it("promotes a separate default-branch worktree to the main checkout option", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "feature/current",
+        current: true,
+        isDefault: false,
+        worktreePath: "/repo/.t3/worktrees/current",
+      },
+      {
+        name: "main",
+        current: false,
+        isDefault: true,
+        worktreePath: "/repo",
+      },
+      {
+        name: "feature/other",
+        current: false,
+        isDefault: false,
+        worktreePath: "/repo/.t3/worktrees/other",
+      },
+    ];
+
+    expect(deriveWorkspaceOptions(refs, "/repo/.t3/worktrees/current", "/repo")).toEqual({
+      mainCheckout: {
+        branch: "main",
+        label: "main",
+        path: "/repo",
+        isProjectCheckout: false,
+      },
+      existingWorktrees: [
+        {
+          branch: "feature/current",
+          label: "feature/current",
+          path: "/repo/.t3/worktrees/current",
+          isProjectCheckout: true,
+        },
+        {
+          branch: "feature/other",
+          label: "feature/other",
+          path: "/repo/.t3/worktrees/other",
+          isProjectCheckout: false,
+        },
+      ],
+    });
+  });
+
+  it("uses checkout metadata when the default branch is not checked out", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "feature/current",
+        current: true,
+        isDefault: false,
+        worktreePath: "/repo/.t3/worktrees/current",
+      },
+      {
+        name: "feature/main-checkout",
+        current: false,
+        isDefault: false,
+        worktreePath: "/repo",
+      },
+      { name: "main", current: false, isDefault: true, worktreePath: null },
+    ];
+
+    expect(deriveWorkspaceOptions(refs, "/repo/.t3/worktrees/current", "/repo")).toMatchObject({
+      mainCheckout: {
+        branch: "feature/main-checkout",
+        path: "/repo",
+      },
+    });
+  });
+
+  it("does not duplicate the project checkout when its current branch is not the default", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "feature/current",
+        current: true,
+        isDefault: false,
+        worktreePath: "/repo",
+      },
+      {
+        name: "main",
+        current: false,
+        isDefault: true,
+        worktreePath: null,
+      },
+      {
+        name: "feature/other",
+        current: false,
+        isDefault: false,
+        worktreePath: "/repo/.t3/worktrees/other",
+      },
+    ];
+
+    expect(deriveWorkspaceOptions(refs, "/repo")).toEqual({
+      mainCheckout: null,
+      existingWorktrees: [
+        {
+          branch: "feature/other",
+          label: "feature/other",
+          path: "/repo/.t3/worktrees/other",
+          isProjectCheckout: false,
+        },
+      ],
+    });
+  });
+});
+
+describe("resolveWorkspaceSelection", () => {
+  const projectCheckout = {
+    branch: "t3code/current",
+    label: "t3code/current",
+    path: "/repo/worktrees/current",
+    isProjectCheckout: true,
+  };
+  const mainCheckout = {
+    branch: "main",
+    label: "main",
+    path: "/repo",
+    isProjectCheckout: false,
+  };
+
+  it("keeps New worktree selected when the registered project is a linked worktree", () => {
+    expect(
+      resolveWorkspaceSelection({
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: null,
+        mainCheckout,
+        existingWorktrees: [projectCheckout],
+      }),
+    ).toMatchObject({
+      isMainCheckout: false,
+      selectedExistingWorktree: undefined,
+      value: "worktree",
+      label: "New worktree",
+    });
+  });
+
+  it("selects the registered project checkout only in local mode", () => {
+    expect(
+      resolveWorkspaceSelection({
+        effectiveEnvMode: "local",
+        activeWorktreePath: null,
+        mainCheckout,
+        existingWorktrees: [projectCheckout],
+      }),
+    ).toMatchObject({
+      selectedExistingWorktree: projectCheckout,
+      value: `existing:${projectCheckout.path}`,
+      label: "t3code/current",
+    });
+  });
+
+  it("normalizes workspace paths when resolving the active selection", () => {
+    expect(
+      resolveWorkspaceSelection({
+        effectiveEnvMode: "local",
+        activeWorktreePath: "C:\\repo\\worktrees\\current\\",
+        mainCheckout,
+        existingWorktrees: [{ ...projectCheckout, path: "C:/repo/worktrees/current" }],
+      }),
+    ).toMatchObject({
+      label: "t3code/current",
+      value: "existing:C:/repo/worktrees/current",
+    });
+  });
+
+  it("treats Windows drive-letter paths as case-insensitive", () => {
+    expect(
+      resolveWorkspaceSelection({
+        effectiveEnvMode: "local",
+        activeWorktreePath: "C:/Repo/worktrees/current",
+        mainCheckout: { ...mainCheckout, path: "c:/repo" },
+        existingWorktrees: [{ ...projectCheckout, path: "c:/repo/worktrees/current" }],
+      }),
+    ).toMatchObject({
+      label: "t3code/current",
+      value: "existing:c:/repo/worktrees/current",
+    });
+  });
+});
+
+describe("withActiveWorkspaceFallback", () => {
+  it("keeps an active worktree visible while refs are unavailable", () => {
+    expect(
+      withActiveWorkspaceFallback(
+        { mainCheckout: null, existingWorktrees: [] },
+        {
+          activeWorktreePath: "/repo/.t3/worktrees/current",
+          activeBranch: "feature/current",
+          projectWorkspaceRoot: "/repo/.t3/worktrees/current",
+        },
+      ),
+    ).toEqual({
+      mainCheckout: null,
+      existingWorktrees: [
+        {
+          branch: "feature/current",
+          label: "feature/current",
+          path: "/repo/.t3/worktrees/current",
+          isProjectCheckout: true,
+        },
+      ],
+    });
+  });
+});
+
+describe("resolveMainCheckoutTarget", () => {
+  it("uses the branch currently checked out in the main project checkout", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "feature/current",
+        current: true,
+        isDefault: false,
+        worktreePath: "/repo",
+      },
+      { name: "main", current: false, isDefault: true, worktreePath: null },
+    ];
+
+    expect(resolveMainCheckoutTarget(refs, "/repo", "/repo")).toEqual({
+      branch: "feature/current",
+      path: null,
+    });
+  });
+
+  it("returns the external main checkout for a registered linked worktree", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "feature/linked",
+        current: true,
+        isDefault: false,
+        worktreePath: "/repo/worktrees/linked",
+      },
+      {
+        name: "feature/main-checkout",
+        current: false,
+        isDefault: false,
+        worktreePath: "/repo",
+      },
+    ];
+
+    expect(resolveMainCheckoutTarget(refs, "/repo/worktrees/linked", "/repo")).toEqual({
+      branch: "feature/main-checkout",
+      path: "/repo",
+    });
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {
@@ -143,28 +428,8 @@ describe("resolveEffectiveEnvMode", () => {
 
 describe("resolveEnvModeLabel", () => {
   it("uses explicit workspace labels", () => {
-    expect(resolveEnvModeLabel("local")).toBe("Current checkout");
+    expect(resolveEnvModeLabel("local")).toBe("Main checkout");
     expect(resolveEnvModeLabel("worktree")).toBe("New worktree");
-  });
-});
-
-describe("resolveCurrentWorkspaceLabel", () => {
-  it("describes the main repo checkout when no worktree path is active", () => {
-    expect(resolveCurrentWorkspaceLabel(null)).toBe("Current checkout");
-  });
-
-  it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
-  });
-});
-
-describe("resolveLockedWorkspaceLabel", () => {
-  it("uses a shorter label for the main repo checkout", () => {
-    expect(resolveLockedWorkspaceLabel(null)).toBe("Local checkout");
-  });
-
-  it("uses a shorter label for an attached worktree", () => {
-    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
   });
 });
 

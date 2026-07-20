@@ -193,6 +193,16 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+export function resolveEffectiveServerThreadWorktreePath(input: {
+  readonly canOverride: boolean;
+  readonly persistedWorktreePath: string | null;
+  readonly pendingWorktreePath: string | null | undefined;
+}): string | null {
+  return input.canOverride && input.pendingWorktreePath !== undefined
+    ? input.pendingWorktreePath
+    : input.persistedWorktreePath;
+}
+
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {

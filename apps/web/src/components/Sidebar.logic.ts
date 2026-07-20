@@ -1,16 +1,16 @@
-import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import * as React from "react";
+import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import {
   getThreadSortTimestamp,
   sortThreads,
-  toSortableTimestamp,
   type ThreadSortInput,
+  toSortableTimestamp,
 } from "../lib/threadSort";
-import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
-import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import type { SidebarThreadSummary, Thread } from "../types";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -18,6 +18,100 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+
+export interface SidebarWorktreeThreadGroup<TThread> {
+  readonly key: string;
+  readonly label: string;
+  readonly threads: readonly TThread[];
+}
+
+export interface SidebarWorkspaceIdentity {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly projectCheckoutPath: string;
+  readonly projectCheckoutLabel: string | null;
+  readonly mainCheckoutPath: string | null;
+}
+
+function normalizeWorkspacePath(path: string): string {
+  const normalized = path.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+function worktreeDisplayName(path: string): string {
+  const normalized = path.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized.split("/").at(-1) || path;
+}
+
+export function groupSidebarThreadsByWorktree<
+  TThread extends {
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  },
+>(
+  threads: readonly TThread[],
+  workspaceIdentities: readonly SidebarWorkspaceIdentity[] = [],
+): SidebarWorktreeThreadGroup<TThread>[] {
+  const groups = new Map<string, { label: string; threads: TThread[] }>();
+
+  for (const thread of threads) {
+    const workspaceIdentity = workspaceIdentities.find(
+      (identity) =>
+        identity.environmentId === thread.environmentId && identity.projectId === thread.projectId,
+    );
+    const matchesWorkspaceIdentity = workspaceIdentity !== undefined;
+    const worktreePath = thread.worktreePath?.trim() || null;
+    const effectivePath =
+      worktreePath ?? (matchesWorkspaceIdentity ? workspaceIdentity.projectCheckoutPath : null);
+    const normalizedEffectivePath = effectivePath ? normalizeWorkspacePath(effectivePath) : null;
+    const isMainCheckout =
+      matchesWorkspaceIdentity &&
+      workspaceIdentity.mainCheckoutPath !== null &&
+      normalizedEffectivePath === normalizeWorkspacePath(workspaceIdentity.mainCheckoutPath);
+    const key = normalizedEffectivePath
+      ? `${thread.environmentId}:worktree:${normalizedEffectivePath}`
+      : `${thread.environmentId}:project:${thread.projectId}:checkout`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.threads.push(thread);
+      continue;
+    }
+    groups.set(key, {
+      label: isMainCheckout
+        ? "Main checkout"
+        : worktreePath
+          ? thread.branch?.trim() || worktreeDisplayName(worktreePath)
+          : matchesWorkspaceIdentity
+            ? (workspaceIdentity.projectCheckoutLabel ??
+              thread.branch?.trim() ??
+              "Project checkout")
+            : thread.branch?.trim() || "Project checkout",
+      threads: [thread],
+    });
+  }
+
+  return [...groups].map(([key, group]) => ({ key, ...group }));
+}
+
+export function orderSidebarThreadsByWorktree<
+  TThread extends {
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  },
+>(
+  threads: readonly TThread[],
+  workspaceIdentities: readonly SidebarWorkspaceIdentity[] = [],
+): TThread[] {
+  return groupSidebarThreadsByWorktree(threads, workspaceIdentities).flatMap(
+    (group) => group.threads,
+  );
+}
 type SidebarProject = {
   id: string;
   title: string;
@@ -242,55 +336,6 @@ export function resolveSidebarNewThreadEnvMode(input: {
   defaultEnvMode: SidebarNewThreadEnvMode;
 }): SidebarNewThreadEnvMode {
   return input.requestedEnvMode ?? input.defaultEnvMode;
-}
-
-export function resolveSidebarNewThreadSeedContext(input: {
-  projectId: string;
-  defaultEnvMode: SidebarNewThreadEnvMode;
-  activeThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-  } | null;
-  activeDraftThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-    envMode: SidebarNewThreadEnvMode;
-    startFromOrigin: boolean;
-  } | null;
-}): {
-  branch?: string | null;
-  worktreePath?: string | null;
-  envMode: SidebarNewThreadEnvMode;
-  startFromOrigin?: boolean;
-} {
-  if (input.defaultEnvMode === "worktree") {
-    return {
-      envMode: "worktree",
-    };
-  }
-
-  if (input.activeDraftThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeDraftThread.branch,
-      worktreePath: input.activeDraftThread.worktreePath,
-      envMode: input.activeDraftThread.envMode,
-      startFromOrigin: input.activeDraftThread.startFromOrigin,
-    };
-  }
-
-  if (input.activeThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeThread.branch,
-      worktreePath: input.activeThread.worktreePath,
-      envMode: input.activeThread.worktreePath ? "worktree" : "local",
-    };
-  }
-
-  return {
-    envMode: input.defaultEnvMode,
-  };
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

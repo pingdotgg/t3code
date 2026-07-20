@@ -31,6 +31,18 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings sidebar thread grouping", () => {
+  it("groups threads by worktree by default", () => {
+    expect(decodeClientSettings({}).sidebarThreadGroupingMode).toBe("worktree");
+  });
+
+  it("preserves the legacy separate-thread presentation when selected", () => {
+    expect(
+      decodeClientSettings({ sidebarThreadGroupingMode: "separate" }).sidebarThreadGroupingMode,
+    ).toBe("separate");
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

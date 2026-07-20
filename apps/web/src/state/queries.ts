@@ -138,6 +138,9 @@ export function usePaginatedBranches(target: VcsRefTarget) {
           refs: [...refs.values()],
           isRepo: first.isRepo,
           hasPrimaryRemote: first.hasPrimaryRemote,
+          ...(first.mainCheckoutPath !== undefined
+            ? { mainCheckoutPath: first.mainCheckoutPath }
+            : {}),
           nextCursor: last.nextCursor,
           totalCount: Math.max(...values.map((value) => value.totalCount)),
         };
@@ -151,6 +154,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
             : "Failed to load refs.";
         })()
       : null;
+  const failedPage = pageAtoms[results.findIndex((result) => result._tag === "Failure")] ?? null;
   const refresh = useCallback(() => {
     const firstPage = pageAtoms[0];
     setPagination({ targetKey, cursors: INITIAL_BRANCH_CURSORS });
@@ -159,6 +163,10 @@ export function usePaginatedBranches(target: VcsRefTarget) {
     }
   }, [pageAtoms, targetKey]);
   const loadNext = useCallback(() => {
+    if (failedPage !== null) {
+      appAtomRegistry.refresh(failedPage);
+      return;
+    }
     if (targetKey === null || data?.nextCursor === null || data?.nextCursor === undefined) {
       return;
     }
@@ -169,7 +177,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
         ? { targetKey, cursors: currentCursors }
         : { targetKey, cursors: [...currentCursors, data.nextCursor!] };
     });
-  }, [data?.nextCursor, targetKey]);
+  }, [data?.nextCursor, failedPage, targetKey]);
 
   return {
     data,
@@ -179,6 +187,28 @@ export function usePaginatedBranches(target: VcsRefTarget) {
     refresh,
     loadNext,
   };
+}
+
+export function useAllBranches(target: VcsRefTarget) {
+  const state = usePaginatedBranches(target);
+  const nextCursor = state.data?.nextCursor;
+
+  useEffect(() => {
+    if (state.isPending) {
+      return;
+    }
+    if (state.error !== null) {
+      const retry = window.setInterval(state.loadNext, 1_000);
+      return () => {
+        window.clearInterval(retry);
+      };
+    }
+    if (nextCursor !== null && nextCursor !== undefined) {
+      state.loadNext();
+    }
+  }, [nextCursor, state.error, state.isPending, state.loadNext]);
+
+  return state;
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
