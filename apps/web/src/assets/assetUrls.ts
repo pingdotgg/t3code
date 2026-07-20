@@ -9,7 +9,15 @@ import { usePreparedConnection } from "~/state/session";
 
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
-export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResource): string | null {
+export type AssetUrlState =
+  | { readonly _tag: "Loading" }
+  | { readonly _tag: "Failure" }
+  | { readonly _tag: "Success"; readonly url: string };
+
+export function useAssetUrlState(
+  environmentId: EnvironmentId,
+  resource: AssetResource,
+): AssetUrlState {
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     assetEnvironment.createUrl({
@@ -17,10 +25,22 @@ export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResourc
       input: { resource },
     }),
   );
+  if (result._tag === "Failure") {
+    return { _tag: "Failure" };
+  }
   if (preparedConnection._tag === "None" || result._tag !== "Success") {
+    return { _tag: "Loading" };
+  }
+  const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
+  return url === null ? { _tag: "Failure" } : { _tag: "Success", url };
+}
+
+export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResource): string | null {
+  const result = useAssetUrlState(environmentId, resource);
+  if (result._tag !== "Success") {
     return null;
   }
-  return resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
+  return result.url;
 }
 
 export function useAssetUrls(
