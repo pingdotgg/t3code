@@ -131,12 +131,16 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
         )
       `;
       yield* storage.archiveThread(threadId);
+      const coldShells = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM projection_threads WHERE thread_id = ${threadId}
+      `;
       const coldManifests = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM thread_archive_manifests WHERE thread_id = ${threadId}
       `;
       const coldChunks = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM cold_archive.archive_thread_chunks WHERE thread_id = ${threadId}
       `;
+      assert.deepStrictEqual(coldShells, [{ count: 1 }]);
       assert.deepStrictEqual(coldManifests, [{ count: 1 }]);
       assert.isAbove(coldChunks[0]?.count ?? 0, 0);
 
