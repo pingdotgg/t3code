@@ -15,6 +15,13 @@ export default Effect.gen(function* () {
     )
   `;
 
+  const projectionThreadColumns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_threads)
+  `;
+  if (!projectionThreadColumns.some((column) => column.name === "pending_approval_count")) {
+    return;
+  }
+
   yield* sql`
     UPDATE projection_threads
     SET pending_approval_count = COALESCE((
