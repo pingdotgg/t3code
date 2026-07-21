@@ -3843,6 +3843,60 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("rejects AskUserQuestion callbacks after the session has stopped", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const canUseTool = harness.getLastCreateQueryInput()?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        assert.fail("Expected Claude canUseTool callback");
+      }
+
+      yield* adapter.stopSession(session.threadId);
+      const exited = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(exited._tag, "Some");
+      if (exited._tag === "Some") {
+        assert.equal(exited.value.type, "session.exited");
+      }
+
+      const result = yield* Effect.promise(() =>
+        canUseTool(
+          "AskUserQuestion",
+          {
+            questions: [
+              {
+                question: "Which path should we take?",
+                header: "Path",
+                options: [{ label: "A", description: "First path" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-ask-after-stop",
+          },
+        ),
+      );
+
+      assert.deepEqual(result, {
+        behavior: "deny",
+        message: "Claude session context is unavailable or stopped.",
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect.each([
     { exitKind: "normal" as const, expectedTypes: ["user-input.resolved", "session.exited"] },
     {

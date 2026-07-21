@@ -2978,33 +2978,39 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return false;
     }
 
-    context.pendingUserInputs.delete(requestId);
     // A teardown may race the request callback between registration and
     // publication. Preserve requested -> resolved ordering for projections.
     yield* Deferred.await(pending.requested);
-    const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
-      type: "user-input.resolved",
-      eventId: stamp.eventId,
-      provider: PROVIDER,
-      createdAt: stamp.createdAt,
-      threadId: context.session.threadId,
-      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-      requestId: asRuntimeRequestId(requestId),
-      payload: { answers: resolution.answers },
-      providerRefs: nativeProviderRefs(context, {
-        providerItemId: pending.providerItemId,
-      }),
-      raw: {
-        source: "claude.sdk.permission",
-        method:
-          resolution._tag === "answered"
-            ? "canUseTool/AskUserQuestion/resolved"
-            : "canUseTool/AskUserQuestion/cancelled",
+    yield* Effect.gen(function* () {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "user-input.resolved",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        requestId: asRuntimeRequestId(requestId),
         payload: { answers: resolution.answers },
-      },
-    });
-    yield* Deferred.succeed(pending.published, undefined);
+        providerRefs: nativeProviderRefs(context, {
+          providerItemId: pending.providerItemId,
+        }),
+        raw: {
+          source: "claude.sdk.permission",
+          method:
+            resolution._tag === "answered"
+              ? "canUseTool/AskUserQuestion/resolved"
+              : "canUseTool/AskUserQuestion/cancelled",
+          payload: { answers: resolution.answers },
+        },
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => context.pendingUserInputs.delete(requestId)).pipe(
+          Effect.andThen(Deferred.succeed(pending.published, undefined)),
+        ),
+      ),
+    );
     return true;
   }, Effect.uninterruptible);
 
@@ -3229,38 +3235,54 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           published: publishedDeferred,
           ...(callbackOptions.toolUseID ? { providerItemId: callbackOptions.toolUseID } : {}),
         };
-        pendingUserInputs.set(requestId, pendingInput);
 
         // Emit user-input.requested so the UI can present the questions.
         const requestedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
-          type: "user-input.requested",
-          eventId: requestedStamp.eventId,
-          provider: PROVIDER,
-          createdAt: requestedStamp.createdAt,
-          threadId: context.session.threadId,
-          ...(context.turnState
-            ? {
-                turnId: asCanonicalTurnId(context.turnState.turnId),
-              }
-            : {}),
-          requestId: asRuntimeRequestId(requestId),
-          payload: { questions },
-          providerRefs: nativeProviderRefs(context, {
-            providerItemId: callbackOptions.toolUseID,
-          }),
-          raw: {
-            source: "claude.sdk.permission",
-            method: "canUseTool/AskUserQuestion",
-            payload: {
-              toolName: "AskUserQuestion",
-              input: toolInput,
+        const didRegister = yield* Effect.gen(function* () {
+          const registered = yield* Effect.sync(() => {
+            if (context.stopped || callbackOptions.signal.aborted) {
+              return false;
+            }
+            pendingUserInputs.set(requestId, pendingInput);
+            return true;
+          });
+          if (!registered) {
+            return false;
+          }
+
+          yield* offerRuntimeEvent({
+            type: "user-input.requested",
+            eventId: requestedStamp.eventId,
+            provider: PROVIDER,
+            createdAt: requestedStamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState
+              ? {
+                  turnId: asCanonicalTurnId(context.turnState.turnId),
+                }
+              : {}),
+            requestId: asRuntimeRequestId(requestId),
+            payload: { questions },
+            providerRefs: nativeProviderRefs(context, {
+              providerItemId: callbackOptions.toolUseID,
+            }),
+            raw: {
+              source: "claude.sdk.permission",
+              method: "canUseTool/AskUserQuestion",
+              payload: {
+                toolName: "AskUserQuestion",
+                input: toolInput,
+              },
             },
-          },
-        }).pipe(
-          Effect.tap(() => Deferred.succeed(requestedDeferred, undefined)),
-          Effect.uninterruptible,
-        );
+          }).pipe(Effect.ensuring(Deferred.succeed(requestedDeferred, undefined)));
+          return true;
+        }).pipe(Effect.uninterruptible);
+        if (!didRegister) {
+          return {
+            behavior: "deny",
+            message: "Claude session context is unavailable or stopped.",
+          } satisfies PermissionResult;
+        }
 
         // Handle abort (e.g. turn interrupted while waiting for user input).
         const onAbort = () => {
