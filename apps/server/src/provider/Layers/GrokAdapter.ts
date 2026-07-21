@@ -201,11 +201,13 @@ export function extractGrokPlanFilePath(rawPayload: unknown): string | undefined
     }
     const planFilePath = value.plan_file_path.trim();
     // The path is agent-supplied: accept only absolute, NUL-free paths so a
-    // malformed value cannot resolve somewhere surprising.
+    // malformed value cannot resolve somewhere surprising. Roots are limited
+    // to a Windows drive letter or a POSIX "/" — a bare leading backslash is
+    // relative on POSIX and rejected.
     if (
       planFilePath.length > 0 &&
       !planFilePath.includes("\0") &&
-      /^(?:[A-Za-z]:[\\/]|[\\/])/.test(planFilePath)
+      /^(?:[A-Za-z]:[\\/]|\/)/.test(planFilePath)
     ) {
       return planFilePath;
     }
