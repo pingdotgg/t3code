@@ -1,6 +1,8 @@
 export const LIST_PANE_WIDTH = 34;
 export const RIGHT_PANEL_WIDTH = 32;
 export const MIN_CHAT_PANE_WIDTH = 48;
+/** Terminal-cell equivalent of the web UI's shared `max-w-3xl` chat column. */
+export const CHAT_CONTENT_MAX_WIDTH = 96;
 export const COMPOSER_MIN_EDITOR_ROWS = 3;
 export const COMPOSER_MAX_EDITOR_ROWS = 8;
 export const MIN_TERMINAL_DRAWER_ROWS = 6;

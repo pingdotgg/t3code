@@ -21,6 +21,7 @@ import { type ActionableProposedPlan, latestActionableProposedPlan } from "../pr
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import type { ExpandedImagePreview } from "./ImageLightbox.tsx";
+import { CHAT_CONTENT_MAX_WIDTH } from "./ChatView.layout.ts";
 import {
   changedFilesByMessage,
   deriveTimelineEntries,
@@ -297,7 +298,7 @@ function FoldableRowView({
       </box>
     ) : null;
   if (message.role === "user") {
-    const maxBubble = Math.max(8, Math.floor(width * 0.72));
+    const maxBubble = Math.max(8, Math.floor(width * 0.8));
     const longestLine = rawBody
       .split("\n")
       .reduce((max, line) => Math.max(max, Bun.stringWidth(line)), 1);
@@ -608,10 +609,9 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   // The outer border and horizontal padding consume four cells. Concrete child
   // widths must use the inner width or right-aligned rows paint out of bounds.
   const contentWidth = Math.max(1, width - 4);
-  // OpenTUI overlays the vertical scrollbar instead of subtracting it from the
-  // viewport. Keep every row on this one definite width; auto-sized markdown
-  // rows can otherwise leave a horizontal range after reflow.
-  const timelineWidth = contentWidth;
+  // Match the web timeline and composer: both share a centered max-w-3xl
+  // content column instead of stretching prose across an ultrawide workspace.
+  const timelineWidth = Math.min(CHAT_CONTENT_MAX_WIDTH, contentWidth);
   const contextWindow = React.useMemo(
     () => (detail ? deriveContextWindow(detail.activities) : null),
     [detail],
@@ -750,23 +750,40 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           contentOptions: { width: "100%", maxWidth: "100%", overflow: "hidden" },
         }}
       >
-        {timeline.map((row) => {
-          if (row.kind === "turn-fold") {
-            return (
-              <TurnFoldSection
-                key={row.id}
-                label={row.label}
-                hiddenRows={row.hiddenRows}
-                ctx={rowCtx}
-              />
-            );
-          }
-          return <FoldableRowView key={row.id} row={row} ctx={rowCtx} />;
-        })}
-        {proposedPlan ? (
-          <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
-        ) : null}
-        {working ? <WorkingIndicator startedAt={startedAt} /> : null}
+        <box
+          id="timeline-column-shell"
+          flexDirection="row"
+          width={contentWidth}
+          justifyContent="center"
+          flexShrink={0}
+          overflow="hidden"
+        >
+          <box
+            id="timeline-column"
+            flexDirection="column"
+            width={timelineWidth}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            {timeline.map((row) => {
+              if (row.kind === "turn-fold") {
+                return (
+                  <TurnFoldSection
+                    key={row.id}
+                    label={row.label}
+                    hiddenRows={row.hiddenRows}
+                    ctx={rowCtx}
+                  />
+                );
+              }
+              return <FoldableRowView key={row.id} row={row} ctx={rowCtx} />;
+            })}
+            {proposedPlan ? (
+              <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
+            ) : null}
+            {working ? <WorkingIndicator startedAt={startedAt} /> : null}
+          </box>
+        </box>
       </scrollbox>
 
       {approvals.length > 0 ? (
@@ -775,6 +792,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           border
           borderStyle="rounded"
           borderColor={ansi("red")}
+          width={timelineWidth}
+          alignSelf="center"
           paddingLeft={1}
           paddingRight={1}
         >

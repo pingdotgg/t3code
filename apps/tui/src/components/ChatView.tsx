@@ -60,6 +60,7 @@ import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts"
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import {
+  CHAT_CONTENT_MAX_WIDTH,
   COMPOSER_MAX_EDITOR_ROWS,
   COMPOSER_MIN_EDITOR_ROWS,
   countWrappedComposerLines,
@@ -103,7 +104,6 @@ import {
 } from "../terminalTabs.ts";
 import { clip } from "../format.ts";
 
-const COMPOSER_MAX_WIDTH = 96;
 /** Conversation lines scrolled per page key. */
 const SCROLL_STEP = 8;
 /** Cap on terminals per thread (mirrors the web's per-group limit). */
@@ -1026,7 +1026,7 @@ export function ChatView({
   const { sidebarVisible, listWidth, mainWidth, chatWidth, rightWidth, rightPanelAsMain } =
     columnLayout;
   const sidebarAsMain = !sidebarVisible && focus === "filter";
-  const composerSurfaceWidth = Math.max(8, Math.min(COMPOSER_MAX_WIDTH, chatWidth - 2));
+  const composerSurfaceWidth = Math.max(8, Math.min(CHAT_CONTENT_MAX_WIDTH, chatWidth - 2));
   const composerContext: ComposerDockContext | null =
     focus === "new"
       ? {

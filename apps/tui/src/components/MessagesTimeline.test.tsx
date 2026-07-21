@@ -742,13 +742,13 @@ describe("MessagesTimeline body", () => {
         approvals={[]}
         approvalIndex={0}
         projectHint={null}
-        width={60}
+        width={140}
         height={30}
         syntaxStyle={SyntaxStyle.create()}
         scrollRef={ref}
         treeSitterClient={mock}
       />,
-      { width: 60, height: 30 },
+      { width: 140, height: 30 },
     );
     for (let i = 0; i < 8; i += 1) {
       await t.renderOnce();
@@ -759,16 +759,18 @@ describe("MessagesTimeline body", () => {
       }
       await t.flush();
     }
+    const columnShell = ref.current?.getRenderable("timeline-column-shell");
+    const column = columnShell?.getRenderable("timeline-column");
+    const content = ref.current?.content;
+    expect(content?.width).toBe(ref.current?.viewport.width);
+    expect(columnShell?.width).toBe(content?.width);
+    expect(column?.x).toBe((content?.x ?? 0) + Math.floor(((content?.width ?? 0) - 96) / 2));
+    expect(column?.width).toBe(96);
+
     ref.current?.scrollTo({ x: 20, y: 7 });
     await t.renderOnce();
     const frame = t.captureCharFrame();
-    const userRow = ref.current?.getRenderable("timeline-row-u-wide");
-    const assistantRow = ref.current?.getRenderable("timeline-row-a-left-edge");
-    const viewportRight = (ref.current?.viewport.x ?? 0) + (ref.current?.viewport.width ?? 0);
     expect(ref.current?.scrollLeft).toBe(0);
-    expect((userRow?.x ?? 0) + (userRow?.width ?? 0)).toBeLessThanOrEqual(viewportRight);
-    expect(assistantRow?.x).toBe(ref.current?.viewport.x);
-    expect(assistantRow?.width).toBe(ref.current?.viewport.width);
     expect(frame).toContain("LEFT EDGE MUST STAY VISIBLE");
     t.renderer.destroy();
   });
