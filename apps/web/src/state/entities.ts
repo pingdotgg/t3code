@@ -17,6 +17,7 @@ import type {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -140,10 +141,27 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
+export function shouldSubscribeToThreadDetail(input: {
+  readonly hasLocalDraft: boolean;
+  readonly hasServerShell: boolean;
+}): boolean {
+  return !input.hasLocalDraft || input.hasServerShell;
+}
+
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
 export function useThread(ref: ScopedThreadRef | null): EnvironmentThread | null {
   const shell = useThreadShell(ref);
-  const detail = useThreadDetail(ref);
+  const hasLocalDraft = useComposerDraftStore((store) =>
+    ref === null ? false : store.getDraftThreadByRef(ref) !== null,
+  );
+  const detail = useThreadDetail(
+    shouldSubscribeToThreadDetail({
+      hasLocalDraft,
+      hasServerShell: shell !== null,
+    })
+      ? ref
+      : null,
+  );
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 
