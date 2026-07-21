@@ -703,6 +703,7 @@ const buildAppUnderTest = (options?: {
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
+          hasThreadById: () => Effect.succeed(false),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
@@ -5692,7 +5693,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           projectionSnapshotQuery: {
-            getThreadShellById: () => Effect.succeed(Option.none()),
+            hasThreadById: () => Effect.succeed(false),
             getThreadDetailSnapshot: () => Effect.die("unused for resumed subscriptions"),
           },
         },
@@ -5719,19 +5720,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           projectionSnapshotQuery: {
-            getThreadShellById: () => Effect.succeed(Option.none()),
-            getArchivedShellSnapshot: () =>
-              Effect.succeed({
-                snapshotSequence: 7,
-                projects: [],
-                threads: [
-                  makeDefaultOrchestrationThreadShell({
-                    id: defaultThreadId,
-                    archivedAt: "2026-01-01T00:00:00.000Z",
-                  }),
-                ],
-                updatedAt: "2026-01-01T00:00:00.000Z",
-              }),
+            hasThreadById: () => Effect.succeed(true),
+            getThreadShellById: () =>
+              Effect.die("active shell lookup must not determine existence"),
             getThreadDetailSnapshot: () => Effect.die("unused for resumed subscriptions"),
           },
         },
