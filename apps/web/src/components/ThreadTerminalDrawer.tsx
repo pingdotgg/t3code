@@ -66,6 +66,12 @@ import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
+import {
+  applyTerminalAppearance,
+  resolveTerminalFontFamily,
+  type TerminalAppearanceUpdateState,
+} from "../terminalAppearance";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -198,6 +204,32 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
   };
 }
 
+export function classifyTerminalExitTransition(options: {
+  previousVersion: number;
+  previousStatus: string;
+  currentStatus: string;
+}): "none" | "initial" | "live" {
+  if (options.currentStatus !== "closed" && options.currentStatus !== "exited") {
+    return "none";
+  }
+  if (options.previousVersion === 0) {
+    return "initial";
+  }
+  return options.previousStatus === "running" ? "live" : "none";
+}
+
+export function shouldHandleLiveTerminalExit(options: {
+  previousStatus: string;
+  currentStatus: string;
+  hasHandledExit: boolean;
+}): boolean {
+  return (
+    options.previousStatus === "running" &&
+    (options.currentStatus === "closed" || options.currentStatus === "exited") &&
+    !options.hasHandledExit
+  );
+}
+
 function getTerminalSelectionRect(mountElement: HTMLElement): DOMRect | null {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -311,6 +343,10 @@ export function TerminalViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalAppearanceUpdateRef = useRef<TerminalAppearanceUpdateState>({ generation: 0 });
+  const { terminalFontFamily, terminalFontSize } = useClientSettings();
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const resolvedTerminalFontFamily = resolveTerminalFontFamily(terminalFontFamily);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -368,6 +404,7 @@ export function TerminalViewport({
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const terminalVersion = terminalSession.version;
+  const previousTerminalStatusRef = useRef(terminalStatus);
   const previousSessionRef = useRef({
     buffer: terminalBuffer,
     error: terminalError,
@@ -381,7 +418,7 @@ export function TerminalViewport({
 
   useEffect(() => {
     const mount = containerRef.current;
-    if (!mount) return;
+    if (!mount || !clientSettingsHydrated) return;
 
     const localApi = readLocalApi();
 
@@ -389,10 +426,9 @@ export function TerminalViewport({
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: 1,
-      fontSize: 12,
+      fontSize: terminalFontSize,
       scrollback: 5_000,
-      fontFamily:
-        '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: resolvedTerminalFontFamily,
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
@@ -734,7 +770,47 @@ export function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [
+    clientSettingsHydrated,
+    cwd,
+    environmentId,
+    runtimeEnvKey,
+    terminalId,
+    threadId,
+    worktreePath,
+  ]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!terminal || !fitAddon) return;
+    return applyTerminalAppearance({
+      state: terminalAppearanceUpdateRef.current,
+      terminal,
+      fontFamily: resolvedTerminalFontFamily,
+      fontSize: terminalFontSize,
+      ...(document.fonts?.ready ? { fontsReady: document.fonts.ready } : {}),
+      fit: () => {
+        fitTerminalSafely(fitAddon);
+      },
+      resize: (cols, rows) => {
+        void resizeTerminal(cols, rows);
+      },
+      isTargetCurrent: () => terminalRef.current === terminal && fitAddonRef.current === fitAddon,
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+    });
+  }, [
+    clientSettingsHydrated,
+    cwd,
+    environmentId,
+    resolvedTerminalFontFamily,
+    runtimeEnvKey,
+    terminalFontSize,
+    terminalId,
+    threadId,
+    worktreePath,
+  ]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -750,6 +826,7 @@ export function TerminalViewport({
     }
 
     const previous = previousSessionRef.current;
+    const isInitialSessionSync = previous.version === 0;
     if (current.version === previous.version) {
       return;
     }
@@ -768,32 +845,56 @@ export function TerminalViewport({
       writeSystemMessage(terminal, current.error);
     }
 
-    if (current.status === "running") {
-      hasHandledExitRef.current = false;
-    } else if (
-      (current.status === "closed" || current.status === "exited") &&
-      current.status !== previous.status &&
-      !hasHandledExitRef.current
-    ) {
-      hasHandledExitRef.current = true;
+    const exitTransition = classifyTerminalExitTransition({
+      previousVersion: previous.version,
+      previousStatus: previous.status,
+      currentStatus: current.status,
+    });
+    if (exitTransition !== "none") {
       writeSystemMessage(
         terminal,
         current.status === "closed" ? "Terminal closed" : "Process exited",
       );
-      window.setTimeout(() => {
-        if (hasHandledExitRef.current) {
-          handleSessionExited();
-        }
-      }, 0);
     }
 
-    if (previous.version === 0 && autoFocus) {
+    if (isInitialSessionSync && autoFocus) {
       window.requestAnimationFrame(() => {
         terminal.focus();
       });
     }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+  }, [
+    autoFocus,
+    clientSettingsHydrated,
+    terminalBuffer,
+    terminalError,
+    terminalStatus,
+    terminalVersion,
+  ]);
+
+  useEffect(() => {
+    const previousStatus = previousTerminalStatusRef.current;
+    previousTerminalStatusRef.current = terminalStatus;
+    if (terminalStatus === "running") {
+      hasHandledExitRef.current = false;
+      return;
+    }
+    if (
+      !shouldHandleLiveTerminalExit({
+        previousStatus,
+        currentStatus: terminalStatus,
+        hasHandledExit: hasHandledExitRef.current,
+      })
+    ) {
+      return;
+    }
+    hasHandledExitRef.current = true;
+    window.setTimeout(() => {
+      if (hasHandledExitRef.current) {
+        handleSessionExited();
+      }
+    }, 0);
+  }, [terminalStatus]);
 
   useEffect(() => {
     if (!autoFocus) return;

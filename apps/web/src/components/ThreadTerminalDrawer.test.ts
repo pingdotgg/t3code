@@ -1,10 +1,94 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  classifyTerminalExitTransition,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
+  shouldHandleLiveTerminalExit,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
+
+describe("classifyTerminalExitTransition", () => {
+  it("keeps an initially exited session visible after its buffer is replayed", () => {
+    expect(
+      classifyTerminalExitTransition({
+        previousVersion: 0,
+        previousStatus: "closed",
+        currentStatus: "exited",
+      }),
+    ).toBe("initial");
+  });
+
+  it("treats the synthetic closed baseline as an initial closed snapshot", () => {
+    expect(
+      classifyTerminalExitTransition({
+        previousVersion: 0,
+        previousStatus: "closed",
+        currentStatus: "closed",
+      }),
+    ).toBe("initial");
+  });
+
+  it("distinguishes a live exit from later exit snapshots", () => {
+    expect(
+      classifyTerminalExitTransition({
+        previousVersion: 3,
+        previousStatus: "running",
+        currentStatus: "exited",
+      }),
+    ).toBe("live");
+    expect(
+      classifyTerminalExitTransition({
+        previousVersion: 4,
+        previousStatus: "closed",
+        currentStatus: "exited",
+      }),
+    ).toBe("none");
+    expect(
+      classifyTerminalExitTransition({
+        previousVersion: 5,
+        previousStatus: "exited",
+        currentStatus: "exited",
+      }),
+    ).toBe("none");
+  });
+});
+
+describe("shouldHandleLiveTerminalExit", () => {
+  it("tracks live exits independently of an xterm remount baseline", () => {
+    expect(
+      shouldHandleLiveTerminalExit({
+        previousStatus: "running",
+        currentStatus: "exited",
+        hasHandledExit: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores initial or already-handled exited snapshots", () => {
+    expect(
+      shouldHandleLiveTerminalExit({
+        previousStatus: "closed",
+        currentStatus: "exited",
+        hasHandledExit: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandleLiveTerminalExit({
+        previousStatus: "exited",
+        currentStatus: "exited",
+        hasHandledExit: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandleLiveTerminalExit({
+        previousStatus: "running",
+        currentStatus: "exited",
+        hasHandledExit: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {

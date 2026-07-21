@@ -3,13 +3,16 @@ import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ClientSettingsPatch,
   ClientSettingsSchema,
+  DEFAULT_TERMINAL_FONT_SIZE,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -28,6 +31,38 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings terminal appearance", () => {
+  it("hydrates legacy settings with terminal defaults", () => {
+    const decoded = decodeClientSettings({ wordWrap: false });
+    expect(decoded.terminalFontFamily).toBe("");
+    expect(decoded.terminalFontSize).toBe(DEFAULT_TERMINAL_FONT_SIZE);
+    expect(decoded.wordWrap).toBe(false);
+  });
+
+  it("trims and round-trips valid terminal appearance preferences", () => {
+    const decoded = decodeClientSettings({
+      terminalFontFamily: "  MesloLGS NF  ",
+      terminalFontSize: 14,
+    });
+    expect(decoded.terminalFontFamily).toBe("MesloLGS NF");
+    expect(decoded.terminalFontSize).toBe(14);
+  });
+
+  it("accepts terminal appearance patches and rejects invalid sizes", () => {
+    expect(
+      decodeClientSettingsPatch({
+        terminalFontFamily: "  JetBrainsMono Nerd Font  ",
+        terminalFontSize: 15,
+      }),
+    ).toEqual({
+      terminalFontFamily: "JetBrainsMono Nerd Font",
+      terminalFontSize: 15,
+    });
+    expect(() => decodeClientSettingsPatch({ terminalFontSize: 7 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ terminalFontSize: 12.5 })).toThrow();
   });
 });
 
