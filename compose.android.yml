@@ -1,0 +1,9 @@
+services:
+  apk-server:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: docker/android/Dockerfile
+    ports:
+      - "8088:80"
+    restart: unless-stopped
