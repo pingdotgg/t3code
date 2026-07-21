@@ -215,7 +215,15 @@ export const BranchToolbar = memo(function BranchToolbar({
       hasServerThread: serverThread !== undefined,
       draftThreadEnvMode: draftThread?.envMode,
     });
-  const envModeLocked = envLocked || (serverThread !== undefined && activeWorktreePath !== null);
+  const canPrepareServerWorktree = Boolean(
+    serverThread !== undefined &&
+    activeWorktreePath === null &&
+    effectiveEnvModeOverride !== undefined,
+  );
+  const envModeLocked =
+    (envLocked && !canPrepareServerWorktree) ||
+    (serverThread !== undefined && activeWorktreePath !== null);
+  const branchLocked = envLocked && !(canPrepareServerWorktree && effectiveEnvMode === "worktree");
 
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
@@ -271,7 +279,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         environmentId={environmentId}
         threadId={threadId}
         {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
+        envLocked={branchLocked}
         {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
         {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}

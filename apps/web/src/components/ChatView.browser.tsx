@@ -2601,14 +2601,25 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("keeps new-worktree mode on empty server threads and bootstraps the first send", async () => {
+  it("hands an existing server thread to a new worktree on its next send", async () => {
     const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: {
         ...snapshot,
         threads: snapshot.threads.map((thread) =>
-          thread.id === THREAD_ID ? Object.assign({}, thread, { session: null }) : thread,
+          thread.id === THREAD_ID
+            ? Object.assign({}, thread, {
+                session: null,
+                messages: [
+                  createUserMessage({
+                    id: "msg-existing-thread-worktree-handoff" as MessageId,
+                    text: "Earlier work",
+                    offsetSeconds: 0,
+                  }),
+                ],
+              })
+            : thread,
         ),
       },
       resolveRpc: (body) => {

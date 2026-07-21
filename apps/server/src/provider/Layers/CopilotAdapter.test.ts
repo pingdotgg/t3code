@@ -1318,6 +1318,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
             readonly name: string;
             readonly command: string;
             readonly args: string[];
+            readonly env: ReadonlyArray<{ readonly name: string; readonly value: string }>;
           }>
         >(mcpLogPath),
       );
@@ -1330,6 +1331,10 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
         process.cwd(),
         "--toolsets",
         "read_file,search_files",
+      ]);
+      assert.deepEqual(mcpServers?.[0]?.env, [
+        { name: "T3_MCP_THREAD_ID", value: threadId },
+        { name: "T3_MCP_CLI_COMMAND", value: "t3-test" },
       ]);
 
       yield* adapter.stopSession(threadId);

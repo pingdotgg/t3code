@@ -133,6 +133,22 @@ describe("buildSidebarThreadRows", () => {
     expect(result.orderedThreadKeys).toEqual([key(parent.id), key(child.id), key(grandchild.id)]);
   });
 
+  it("collapses settled parents by default so nested chats stay hidden", () => {
+    const parent = thread("thread-1");
+    const child = thread("thread-2", { parentThreadId: parent.id });
+
+    const result = buildSidebarThreadRows({
+      threads: [parent, child],
+      pinnedThreadKeys: [],
+      expandedOverrideByThreadKey: new Map(),
+      sortOrder: "created_at",
+      resolveThreadStatus: () => null,
+    });
+
+    expect(result.rowViews.map((row) => row.thread.id)).toEqual([parent.id]);
+    expect(result.rowViews[0]).toMatchObject({ hasChildren: true, isExpanded: false });
+  });
+
   it("keeps the active settled child and its ancestors visible", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });
@@ -152,6 +168,22 @@ describe("buildSidebarThreadRows", () => {
       child.id,
       grandchild.id,
     ]);
+  });
+
+  it("auto-expands parents whose descendants are active", () => {
+    const parent = thread("thread-1");
+    const child = thread("thread-2", { parentThreadId: parent.id });
+
+    const result = buildSidebarThreadRows({
+      threads: [parent, child],
+      pinnedThreadKeys: [],
+      expandedOverrideByThreadKey: new Map(),
+      sortOrder: "created_at",
+      resolveThreadStatus: (candidate) => (candidate.id === child.id ? workingStatus : null),
+    });
+
+    expect(result.rowViews.map((row) => row.thread.id)).toEqual([parent.id, child.id]);
+    expect(result.rowViews[0]?.isExpanded).toBe(true);
   });
 
   it("omits collapsed descendants while rolling up their status", () => {

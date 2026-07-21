@@ -714,4 +714,15 @@ describe("uiStateStore persistence round-trip", () => {
 
     expect(rehydrated.projectExpandedById[nextLogicalKey]).toBe(false);
   });
+
+  it("persists dismissed agent-run keys as an array across restart", () => {
+    const dismissedKey = "agent-run:thread-1:task-1";
+    const state = setAgentRunDismissed(makeUiState(), dismissedKey, true);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.dismissedAgentRunKeys).toEqual([dismissedKey]);
+  });
 });

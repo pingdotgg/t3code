@@ -39,6 +39,8 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { reviewFindingAnnotation, reviewFindingSelectedLines } from "./reviewDiffAnnotations";
+import { formatReviewFinding } from "../lib/reviewFindingFormat";
+import { MessageCopyButton } from "./chat/MessageCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Badge } from "./ui/badge";
@@ -77,11 +79,17 @@ function ReviewFindingPopover({
     <article
       data-review-finding-id={finding.id}
       className={cn(
-        "mx-2 mb-2 max-w-full overflow-hidden rounded-md border bg-card p-3 shadow-sm",
+        "group/finding relative mx-2 mb-2 max-w-full overflow-hidden rounded-md border bg-card p-3 shadow-sm",
         selected ? "border-primary ring-1 ring-primary/30" : "border-border",
       )}
     >
-      <div className="flex items-center gap-2">
+      <MessageCopyButton
+        size="icon-xs"
+        variant="ghost"
+        className="absolute right-2 top-2 text-muted-foreground opacity-0 transition-opacity group-hover/finding:opacity-100 focus-visible:opacity-100"
+        text={formatReviewFinding(finding)}
+      />
+      <div className="flex items-center gap-2 pr-8">
         <Badge size="sm" variant={priority}>
           {label}
         </Badge>

@@ -1552,6 +1552,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     };
   }, [
     activeRouteThreadKey,
+    threadExpandedOverrides,
     pinnedThreadKeys,
     projectThreads,
     threadLastVisitedAts,

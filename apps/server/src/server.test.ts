@@ -4510,6 +4510,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   interactionMode: "default",
                   branch: "main",
                   worktreePath: null,
+                  reviewSnapshot: {
+                    scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
+                    diff: "diff --git a/example.ts b/example.ts",
+                    diffHash: "review-snapshot-hash",
+                  },
                   createdAt,
                 },
                 prepareWorktree: {
@@ -4548,6 +4553,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           worktreePath: "/tmp/bootstrap-worktree",
         });
         assert.deepEqual(refreshStatus.mock.calls[0]?.[0], "/tmp/bootstrap-worktree");
+        const createThreadCommand = dispatchedCommands[0];
+        assertTrue(createThreadCommand?.type === "thread.create");
+        if (createThreadCommand?.type === "thread.create") {
+          assert.deepEqual(createThreadCommand.reviewSnapshot, {
+            scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
+            diff: "diff --git a/example.ts b/example.ts",
+            diffHash: "review-snapshot-hash",
+          });
+        }
 
         const setupActivities = dispatchedCommands.filter(
           (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
