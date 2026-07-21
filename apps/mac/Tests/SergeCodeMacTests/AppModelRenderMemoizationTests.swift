@@ -97,6 +97,41 @@ struct AppModelRenderMemoizationTests {
         #expect(model.timelineStructureVersion(threadID: "t1") == 4)
     }
 
+    @Test("subagent progress refreshes content without regrouping the transcript")
+    func subagentProgressIsContentOnly() {
+        let model = makeModel()
+        let startedAt = Date(timeIntervalSince1970: 1)
+
+        func task(progress: String) -> TimelineItem {
+            .subagentTask(
+                SubagentTaskItem(
+                    taskId: "agent-1",
+                    taskType: "sub-agent",
+                    description: "Inspect the repository",
+                    state: .running,
+                    latestProgress: progress,
+                    startedAt: startedAt,
+                    lastActivityAt: startedAt,
+                    duration: nil))
+        }
+
+        model.enqueue(.timelineAppended(threadID: "t1", item: task(progress: "Starting")))
+        model.flushPendingEvents()
+        #expect(model.timelineVersion(threadID: "t1") == 1)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
+
+        model.enqueue(.timelineAppended(threadID: "t1", item: task(progress: "Reading files")))
+        model.flushPendingEvents()
+
+        #expect(model.timelineVersion(threadID: "t1") == 2)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
+        guard case .subagentTask(let refreshed) = model.timeline(threadID: "t1").first else {
+            Issue.record("expected a subagent task row")
+            return
+        }
+        #expect(refreshed.latestProgress == "Reading files")
+    }
+
     @Test("updatedAt-only threadUpserted does not rewrite the sidebar list")
     func updatedAtOnlyUpsertSkipsRewrite() {
         let model = makeModel()

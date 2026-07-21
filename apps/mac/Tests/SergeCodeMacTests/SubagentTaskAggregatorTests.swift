@@ -55,6 +55,28 @@ struct SubagentTaskAggregatorTests {
         #expect(aggregator.entries.allSatisfy { !$0.isLive })
     }
 
+    @Test("agents roster excludes command and workflow task rows")
+    func rosterOnlyIncludesSubagents() {
+        let aggregator = SubagentTaskAggregator()
+        aggregator.updateThread(thread(id: "thread-1", title: "Mixed work"))
+        aggregator.replaceTasks(
+            [
+                task(id: "agent", state: .running, entityKind: .subagent),
+                task(id: "bash", state: .running, entityKind: .command),
+                task(id: "workflow", state: .running, entityKind: .workflow),
+            ],
+            for: "thread-1")
+        aggregator.setLive(true, for: "thread-1")
+
+        #expect(aggregator.entries.map(\.task.taskId) == ["agent"])
+        #expect(aggregator.runningCount == 1)
+        #expect(aggregator.threadGroups.count == 1)
+        #expect(aggregator.threadGroups[0].entries.map(\.task.taskId) == ["agent"])
+        // Filtering the roster must not remove task state used by the
+        // transcript and inner-thread lookup.
+        #expect(aggregator.task(taskId: "bash", threadID: "thread-1")?.entityKind == .command)
+    }
+
     private func thread(id: String, title: String) -> ChatThread {
         ChatThread(
             id: id,
@@ -65,10 +87,15 @@ struct SubagentTaskAggregatorTests {
             updatedAt: Date(timeIntervalSince1970: 1))
     }
 
-    private func task(id: String, state: SubagentTaskState) -> SubagentTaskItem {
+    private func task(
+        id: String,
+        state: SubagentTaskState,
+        entityKind: SubagentTaskEntityKind = .subagent
+    ) -> SubagentTaskItem {
         SubagentTaskItem(
             taskId: id,
             taskType: "reviewer",
+            entityKind: entityKind,
             description: "Inspect the current changes",
             state: state,
             latestProgress: nil,
