@@ -543,6 +543,65 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not fake a completion when the announced turn's only prompt fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-prompt-fails-after-announce-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_FAIL_FIRST_PROMPT: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      // The turn is announced, then its only prompt fails: the error must
+      // reach the caller (orchestration settles the thread through turn-start
+      // failure recovery) without the drain minting a successful
+      // turn.completed that would race that recovery and mask the error.
+      const failure = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "hello mock",
+          attachments: [],
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+
+      const nextTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "hello again",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // Both turns announce, but only the successful one completes.
+      assert.equal(turnStartedEvents.length, 2);
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(nextTurn.turnId));
+      assert.notEqual(String(turnStartedEvents[0]?.turnId), String(nextTurn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

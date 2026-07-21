@@ -1097,7 +1097,12 @@ export function makeCursorAdapter(
                 ctx.activeTurnId = undefined;
                 return;
               }
-              if (!ctx.activeTurnSettled) {
+              // Settle only when some prompt of the merged turn actually
+              // resolved (a stop reason was recorded). If every prompt failed,
+              // emitting turn.completed here would report the failed turn as
+              // successful and race the caller's turn-start failure recovery,
+              // masking the real error.
+              if (!ctx.activeTurnSettled && ctx.activeTurnLastStopReason !== undefined) {
                 // This prompt failed after another prompt of the merged turn
                 // resolved while both were still counted, so neither settled
                 // it on the way out. Settle here with the last known result —
