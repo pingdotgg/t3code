@@ -1,13 +1,14 @@
-import type {
+import {
   EnvironmentResourceNotFoundError,
-  OrchestrationThreadDetailSnapshot,
-  ThreadId,
+  type OrchestrationThreadDetailSnapshot,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
 import type { PreparedConnection } from "../connection/model.ts";
@@ -64,16 +65,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
 
 export type FetchEnvironmentThreadSnapshotError = RemoteEnvironmentRequestError;
 
-function isThreadSnapshotNotFoundError(error: unknown): error is EnvironmentResourceNotFoundError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "EnvironmentResourceNotFoundError" &&
-    "reason" in error &&
-    error.reason === "thread_not_found"
-  );
-}
+const isThreadSnapshotNotFoundError = Schema.is(EnvironmentResourceNotFoundError);
 
 /**
  * Loads a thread's detail snapshot over HTTP, returning `Option.none()` for
@@ -118,7 +110,7 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
           // than fall into its retry loop.
           Effect.catchCause((cause) => {
             for (const reason of cause.reasons) {
-              if (reason._tag === "Fail" && isThreadSnapshotNotFoundError(reason.error)) {
+              if (Cause.isFailReason(reason) && isThreadSnapshotNotFoundError(reason.error)) {
                 return Effect.fail(reason.error);
               }
             }

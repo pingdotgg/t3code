@@ -268,8 +268,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ),
           );
           const httpSnapshot = yield* snapshotLoader.load(prepared, threadId).pipe(
-            Effect.catch(() =>
+            Effect.catchTag("EnvironmentResourceNotFoundError", (error) =>
               Effect.gen(function* () {
+                yield* Effect.logDebug(
+                  "Thread snapshot was not found over HTTP; terminating the subscription.",
+                ).pipe(
+                  Effect.annotateLogs({
+                    environmentId,
+                    threadId,
+                    reason: error.reason,
+                    traceId: error.traceId,
+                  }),
+                );
                 yield* setDeleted();
                 return yield* Effect.interrupt;
               }),

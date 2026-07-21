@@ -141,6 +141,11 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
+/**
+ * Local drafts have a client-generated thread id before `thread.created` adds
+ * the server shell. Waiting for that shell prevents the expected pre-creation
+ * HTTP 404 from being treated as an authoritative deletion.
+ */
 export function shouldSubscribeToThreadDetail(input: {
   readonly hasLocalDraft: boolean;
   readonly hasServerShell: boolean;

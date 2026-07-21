@@ -15,6 +15,7 @@ Primary files:
 - `packages/client-runtime/src/state/threads.ts`
 - `packages/client-runtime/src/state/threads-sync.test.ts`
 - `apps/web/src/state/entities.ts`
+- `apps/web/src/state/entities.test.ts`
 
 ## Development Ports
 
