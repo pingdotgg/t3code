@@ -103,6 +103,22 @@ describe("GitRunStackedActionInput", () => {
 });
 
 describe("GitActionProgressEvent", () => {
+  it("defaults omitted failure classifications for older action-failure payloads", () => {
+    const parsed = decodeActionProgressEvent({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      kind: "action_failed",
+      phase: "commit",
+      message: "Commit failed.",
+    });
+
+    expect(parsed).toMatchObject({
+      kind: "action_failed",
+      failureKind: "unknown",
+    });
+  });
+
   it("accepts action failures with an unknown classification", () => {
     const parsed = decodeActionProgressEvent({
       actionId: "action-1",
@@ -144,12 +160,20 @@ describe("GitCommandError", () => {
     operation: "GitVcsDriver.commit.commit",
     command: "git",
     cwd: "/repo",
-    failureKind: "unknown",
     detail: "Git command exited with a non-zero status.",
   } as const;
 
-  it("accepts errors with an unknown classification", () => {
+  it("defaults omitted failure classifications for older command-error payloads", () => {
     expect(decodeGitCommandError(baseError).failureKind).toBe("unknown");
+  });
+
+  it("accepts errors with an unknown classification", () => {
+    expect(
+      decodeGitCommandError({
+        ...baseError,
+        failureKind: "unknown",
+      }).failureKind,
+    ).toBe("unknown");
   });
 
   it("accepts classified commit-signing errors", () => {

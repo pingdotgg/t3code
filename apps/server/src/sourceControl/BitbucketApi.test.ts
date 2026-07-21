@@ -656,6 +656,7 @@ it.effect("preserves Git checkout failures without deriving the domain message f
     operation: "fetchRemoteBranch",
     command: "git fetch origin feature/source-control",
     cwd: "/repo",
+    failureKind: "unknown",
     detail: "remote rejected the request",
   });
   const { layer } = makeLayer({

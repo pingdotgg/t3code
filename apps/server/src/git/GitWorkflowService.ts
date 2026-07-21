@@ -170,6 +170,7 @@ export const make = Effect.gen(function* () {
             operation,
             command: "vcs-route",
             cwd,
+            failureKind: "unknown",
             detail: "Failed to resolve the VCS driver for this Git command.",
             cause,
           }),
@@ -180,6 +181,7 @@ export const make = Effect.gen(function* () {
         operation,
         command: "vcs-route",
         cwd,
+        failureKind: "unknown",
         detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
       });
     }
@@ -222,6 +224,7 @@ export const make = Effect.gen(function* () {
             operation,
             command: "vcs-route",
             cwd,
+            failureKind: "unknown",
             detail: "Failed to detect a VCS repository for this Git command.",
             cause,
           }),
@@ -235,6 +238,7 @@ export const make = Effect.gen(function* () {
         operation,
         command: "vcs-route",
         cwd,
+        failureKind: "unknown",
         detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
       });
     }

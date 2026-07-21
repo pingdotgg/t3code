@@ -32,7 +32,7 @@ export type GitActionProgressKind = typeof GitActionProgressKind.Type;
 export const GitActionFailureKind = Schema.Literals(["unknown", "commit_signing_failed"]);
 export type GitActionFailureKind = typeof GitActionFailureKind.Type;
 const GitActionFailureKindWithDefault = GitActionFailureKind.pipe(
-  Schema.withConstructorDefault(Effect.succeed("unknown" as const)),
+  Schema.withDecodingDefaultKey(Effect.succeed("unknown" as const)),
 );
 export const GitActionProgressStream = Schema.Literals(["stdout", "stderr"]);
 export type GitActionProgressStream = typeof GitActionProgressStream.Type;

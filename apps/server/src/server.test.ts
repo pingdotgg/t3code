@@ -5118,6 +5118,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         operation: "pull",
         command: "git pull --ff-only",
         cwd: "/tmp/repo",
+        failureKind: "unknown",
         detail: "upstream missing",
       });
       let invalidationCalls = 0;
@@ -5198,6 +5199,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         operation: "commit",
         command: "git commit",
         cwd: "/tmp/repo",
+        failureKind: "unknown",
         detail: "nothing to commit",
       });
       let invalidationCalls = 0;

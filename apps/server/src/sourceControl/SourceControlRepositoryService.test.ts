@@ -364,6 +364,7 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
                     operation: input.operation,
                     command: "git rev-parse --verify HEAD",
                     cwd: input.cwd,
+                    failureKind: "unknown",
                     detail: "fatal: Needed a single revision",
                   }),
                 )

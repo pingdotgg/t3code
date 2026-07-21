@@ -3764,7 +3764,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       NodeFS.writeFileSync(NodePath.join(repoDir, "hook-failure.txt"), "broken\n");
       NodeFS.writeFileSync(
         NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
-        '#!/bin/sh\necho "hook: fail" >&2\nexit 1\n',
+        '#!/bin/sh\necho "hook: fail" >&2\nsleep 0.05\nexit 1\n',
         { mode: 0o755 },
       );
 

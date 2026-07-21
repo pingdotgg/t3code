@@ -330,6 +330,7 @@ export function useSelectedThreadGitActions() {
     async (input: GitActionRequestInput): Promise<GitRunStackedActionResult | null> => {
       async function runAction(
         actionInput: GitActionRequestInput,
+        options?: { readonly syncCurrentBranchOnSuccess?: boolean },
       ): Promise<GitRunStackedActionResult | null> {
         const actionId = uuidv4();
         return await runSelectedThreadGitMutation(
@@ -368,6 +369,21 @@ export function useSelectedThreadGitActions() {
               if (AsyncResult.isFailure(syncResult)) {
                 return AsyncResult.failure(syncResult.cause);
               }
+            } else if (options?.syncCurrentBranchOnSuccess) {
+              const status = await refreshSelectedThreadGitStatus({ quiet: true, cwd });
+              if (status?.refName) {
+                const syncResult = await syncSelectedThreadBranchState({
+                  thread,
+                  cwd,
+                  nextThreadState: {
+                    branch: status.refName,
+                    worktreePath: selectedThreadWorktreePath,
+                  },
+                });
+                if (AsyncResult.isFailure(syncResult)) {
+                  return AsyncResult.failure(syncResult.cause);
+                }
+              }
             } else {
               await refreshSelectedThreadGitStatus({ quiet: true, cwd });
             }
@@ -387,7 +403,9 @@ export function useSelectedThreadGitActions() {
                   {
                     text: "Retry without signing",
                     onPress: () => {
-                      void runAction(buildUnsignedCommitRetryInput(actionInput));
+                      void runAction(buildUnsignedCommitRetryInput(actionInput), {
+                        syncCurrentBranchOnSuccess: actionInput.featureBranch === true,
+                      });
                     },
                   },
                 ],
