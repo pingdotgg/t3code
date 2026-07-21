@@ -541,7 +541,10 @@ export default function DiffPanel({
           stackedThreadToast({
             type: "warning",
             title: "Unable to open image preview",
-            description: error instanceof Error ? error.message : "Opening the file instead.",
+            description:
+              error instanceof Error
+                ? `${error.message} Opening the file instead.`
+                : "Opening the file instead.",
           }),
         );
         openFallback();

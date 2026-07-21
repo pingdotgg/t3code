@@ -100,35 +100,35 @@ describe("openFileInPreview", () => {
     expect(JSON.stringify(error)).not.toContain("signed-secret-token");
     expect(openPreview).not.toHaveBeenCalled();
   });
-});
 
-it("does not apply an older preview response after another caller starts a newer request", async () => {
-  const firstSnapshot = snapshot("tab-1", "https://assets.test/first.png");
-  const secondSnapshot = snapshot("tab-2", "https://assets.test/second.png");
-  let resolveFirst!: (result: AtomCommandResult<PreviewSessionSnapshot, never>) => void;
-  const openPreview: OpenPreviewMutation<never> = ({ input }) =>
-    input.url === "https://assets.test/first.png"
-      ? new Promise<AtomCommandResult<PreviewSessionSnapshot, never>>((resolve) => {
-          resolveFirst = resolve;
-        })
-      : Promise.resolve(AsyncResult.success(secondSnapshot));
+  it("does not apply an older preview response after another caller starts a newer request", async () => {
+    const firstSnapshot = snapshot("tab-1", "https://assets.test/first.png");
+    const secondSnapshot = snapshot("tab-2", "https://assets.test/second.png");
+    let resolveFirst!: (result: AtomCommandResult<PreviewSessionSnapshot, never>) => void;
+    const openPreview: OpenPreviewMutation<never> = ({ input }) =>
+      input.url === "https://assets.test/first.png"
+        ? new Promise<AtomCommandResult<PreviewSessionSnapshot, never>>((resolve) => {
+            resolveFirst = resolve;
+          })
+        : Promise.resolve(AsyncResult.success(secondSnapshot));
 
-  const firstRequest = openUrlInPreview({
-    threadRef,
-    url: "https://assets.test/first.png",
-    openPreview,
+    const firstRequest = openUrlInPreview({
+      threadRef,
+      url: "https://assets.test/first.png",
+      openPreview,
+    });
+
+    await openUrlInPreview({
+      threadRef,
+      url: "https://assets.test/second.png",
+      openPreview,
+    });
+    resolveFirst(AsyncResult.success(firstSnapshot));
+    await firstRequest;
+
+    expect(readThreadPreviewState(threadRef).snapshot).toEqual(secondSnapshot);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
+    ).toEqual([{ id: "browser:tab-2", kind: "preview", resourceId: "tab-2" }]);
   });
-
-  await openUrlInPreview({
-    threadRef,
-    url: "https://assets.test/second.png",
-    openPreview,
-  });
-  resolveFirst(AsyncResult.success(firstSnapshot));
-  await firstRequest;
-
-  expect(readThreadPreviewState(threadRef).snapshot).toEqual(secondSnapshot);
-  expect(
-    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
-  ).toEqual([{ id: "browser:tab-2", kind: "preview", resourceId: "tab-2" }]);
 });
