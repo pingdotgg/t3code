@@ -690,9 +690,18 @@ export const OpenInPicker = memo(function OpenInPicker({
 
               {invocationType === "mac-application" ? (
                 <div className="space-y-2">
-                  <Label>Application</Label>
+                  <Label htmlFor={`${formId}-application-path`}>Application</Label>
                   <div className="flex gap-2">
-                    <Input readOnly value={applicationPath} placeholder="Choose a .app bundle" />
+                    <Input
+                      id={`${formId}-application-path`}
+                      value={applicationPath}
+                      placeholder="Choose or enter a .app bundle path"
+                      onChange={(event) => {
+                        setApplicationPath(event.target.value);
+                        setFormIcon(null);
+                        setValidationError(null);
+                      }}
+                    />
                     <Button
                       type="button"
                       variant="outline"
