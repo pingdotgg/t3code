@@ -29,6 +29,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
+  addMaxReasoningOptionForCustomModel,
   buildServerProvider,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
@@ -193,7 +194,7 @@ function parseCodexModelListResponse(
   }));
 }
 
-function appendCustomCodexModels(
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderModel> {
@@ -214,7 +215,9 @@ function appendCustomCodexModels(
       slug,
       name: slug,
       isCustom: true,
-      capabilities: fallbackCapabilities,
+      capabilities: fallbackCapabilities
+        ? addMaxReasoningOptionForCustomModel(fallbackCapabilities)
+        : null,
     });
   }
   return customEntries.length === 0 ? models : [...models, ...customEntries];

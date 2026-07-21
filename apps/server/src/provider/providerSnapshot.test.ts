@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  addMaxReasoningOptionForCustomModel,
   isCommandMissingCause,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -69,6 +70,109 @@ describe("providerModelsFromSettings", () => {
 
     expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
     expect(models[1]?.isCustom).toBe(true);
+  });
+});
+
+describe("addMaxReasoningOptionForCustomModel", () => {
+  it("adds Max to an existing reasoning effort selector", () => {
+    expect(
+      addMaxReasoningOptionForCustomModel(
+        createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select",
+              options: [{ id: "medium", label: "Medium", isDefault: true }],
+              currentValue: "medium",
+            },
+          ],
+        }),
+      ),
+    ).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "max", label: "Max" },
+            ],
+            currentValue: "medium",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("adds Max to an existing effort selector", () => {
+    expect(
+      addMaxReasoningOptionForCustomModel(
+        createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [{ id: "medium", label: "Medium", isDefault: true }],
+              currentValue: "medium",
+            },
+          ],
+        }),
+      ),
+    ).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "max", label: "Max" },
+            ],
+            currentValue: "medium",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("does not duplicate an existing Max option", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "max", label: "Max" },
+          ],
+          currentValue: "high",
+        },
+      ],
+    });
+
+    expect(addMaxReasoningOptionForCustomModel(capabilities)).toEqual(capabilities);
+  });
+
+  it("leaves models without an existing reasoning selector unchanged", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "variant",
+          label: "Variant",
+          type: "select",
+          options: [{ id: "medium", label: "Medium", isDefault: true }],
+          currentValue: "medium",
+        },
+      ],
+    });
+
+    expect(addMaxReasoningOptionForCustomModel(capabilities)).toEqual(capabilities);
   });
 });
 

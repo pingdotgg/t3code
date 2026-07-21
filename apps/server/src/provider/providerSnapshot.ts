@@ -1,6 +1,7 @@
 import type {
   ProviderDriverKind,
   ModelCapabilities,
+  ProviderOptionDescriptor,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderSkill,
@@ -138,6 +139,37 @@ export function parseGenericCliVersion(output: string): string | null {
   return match?.[1] ?? null;
 }
 
+const REASONING_OPTION_IDS = new Set(["effort", "reasoningEffort"]);
+
+export function addMaxReasoningOptionForCustomModel(
+  capabilities: ModelCapabilities,
+): ModelCapabilities {
+  const optionDescriptors = capabilities.optionDescriptors;
+  if (!optionDescriptors) {
+    return capabilities;
+  }
+
+  let changed = false;
+  const updatedOptionDescriptors: ProviderOptionDescriptor[] = optionDescriptors.map(
+    (descriptor) => {
+      if (
+        descriptor.type !== "select" ||
+        !REASONING_OPTION_IDS.has(descriptor.id) ||
+        descriptor.options.some((option) => option.id === "max")
+      ) {
+        return descriptor;
+      }
+      changed = true;
+      return {
+        ...descriptor,
+        options: [...descriptor.options, { id: "max", label: "Max" }],
+      };
+    },
+  );
+
+  return changed ? { ...capabilities, optionDescriptors: updatedOptionDescriptors } : capabilities;
+}
+
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
@@ -157,7 +189,7 @@ export function providerModelsFromSettings(
       slug: normalized,
       name: normalized,
       isCustom: true,
-      capabilities: customModelCapabilities,
+      capabilities: addMaxReasoningOptionForCustomModel(customModelCapabilities),
     });
   }
 
