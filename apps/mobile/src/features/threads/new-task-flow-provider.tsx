@@ -371,6 +371,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedModel =
     selectedProjectDraft.modelSelection ??
     selectedProject?.defaultModelSelection ??
+    modelOptions.find((option) => option.isDefault)?.selection ??
     modelOptions[0]?.selection ??
     null;
   const selectedModelKey = selectedModel

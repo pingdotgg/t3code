@@ -214,9 +214,10 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildSelectOptionDescriptor({
           id: "contextWindow",
           label: "Context Window",
+          // Sonnet is 200k-default in Claude Code (1M is opt-in there too).
           options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
           ],
         }),
       ],
@@ -243,9 +244,10 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildSelectOptionDescriptor({
           id: "contextWindow",
           label: "Context Window",
+          // Sonnet is 200k-default in Claude Code (1M is opt-in there too).
           options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
           ],
         }),
       ],
