@@ -287,14 +287,17 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
-const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+interface CodexAppServerProbeInput {
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
   readonly cwd: string;
-  readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
-}) {
+}
+
+const openCodexAppServerProbe = Effect.fn("openCodexAppServerProbe")(function* (
+  input: CodexAppServerProbeInput,
+) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
@@ -337,21 +340,31 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     Effect.provide(clientContext),
   );
 
-  const initialize = yield* client.request("initialize", {
-    clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
-      version: "0.1.0",
-    },
-    capabilities: {
-      experimentalApi: true,
-    },
-  });
+  const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
+
+  return { client, version };
+});
+
+export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const { client } = yield* openCodexAppServerProbe(input);
+  const response = yield* client.request("skills/list", { cwds: [input.cwd] });
+  return parseCodexSkillsListResponse(response, input.cwd);
+});
+
+const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (
+  input: CodexAppServerProbeInput & { readonly customModels?: ReadonlyArray<string> },
+) {
+  const { client, version } = yield* openCodexAppServerProbe(input);
 
   const accountResponse = yield* client.request("account/read", {});
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
@@ -377,7 +390,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd).filter(
+      (skill) => skill.scope !== "repo",
+    ),
   } satisfies CodexAppServerProviderSnapshot;
 });
 

@@ -612,7 +612,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
-      it.effect("does not run provider probes during layer construction", () =>
+      it.effect("does not probe at construction and routes cwd-scoped skill discovery", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
           const codexInstanceId = ProviderInstanceId.make("codex");
@@ -631,6 +631,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             skills: [],
           } as const satisfies ServerProvider;
           const refreshCalls = yield* Ref.make(0);
+          const skillCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+          const workspaceSkill = {
+            name: "project-review",
+            path: "/tmp/project/.agents/skills/project-review/SKILL.md",
+            scope: "repo",
+            enabled: true,
+          } as const;
           const instance = {
             instanceId: codexInstanceId,
             driverKind: codexDriver,
@@ -653,6 +660,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
+            listSkills: (cwd: string) =>
+              Ref.update(skillCwds, (cwds) => [...cwds, cwd]).pipe(Effect.as([workspaceSkill])),
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
             ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -682,6 +691,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const registry = yield* ProviderRegistry.ProviderRegistry;
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+            assert.deepStrictEqual(
+              yield* registry.listSkills({ instanceId: codexInstanceId, cwd: "/tmp/project" }),
+              [workspaceSkill],
+            );
+            assert.deepStrictEqual(yield* Ref.get(skillCwds), ["/tmp/project"]);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
