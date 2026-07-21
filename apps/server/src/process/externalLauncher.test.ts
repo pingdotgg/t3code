@@ -186,7 +186,7 @@ it.effect("bounds slow editor probes concurrently and keeps partial results", ()
     yield* TestClock.adjust(discoveryTimeout);
 
     const editors = yield* Fiber.join(discoveryFiber);
-    assert.deepEqual(editors, ["cursor", "vscode"]);
+    assert.deepEqual(editors, ["cursor", "vscode", "zed"]);
   }).pipe(
     Effect.scoped,
     Effect.provide(
@@ -200,7 +200,9 @@ it.effect("bounds slow editor probes concurrently and keeps partial results", ()
             if (command === "cursor") {
               return Effect.sleep(Duration.seconds(1)).pipe(Effect.as(true));
             }
-            return command === "code" ? Effect.succeed(true) : Effect.never;
+            return command === "code" || command === "zeditor"
+              ? Effect.succeed(true)
+              : Effect.never;
           },
         }),
       ),

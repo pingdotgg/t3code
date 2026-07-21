@@ -285,12 +285,13 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
       const probe =
         editor.commands === null
           ? commandAvailability(fileManagerCommandForPlatform(platform), env)
-          : Effect.gen(function* () {
-              for (const command of editor.commands) {
-                if (yield* commandAvailability(command, env)) return true;
-              }
-              return false;
-            });
+          : Effect.raceAll(
+              editor.commands.map((command) =>
+                commandAvailability(command, env).pipe(
+                  Effect.filterOrFail((available) => available),
+                ),
+              ),
+            ).pipe(Effect.orElseSucceed(() => false));
 
       return probe.pipe(
         Effect.timeoutOption(timeout),
