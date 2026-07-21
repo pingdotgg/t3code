@@ -914,6 +914,12 @@ const make = Effect.gen(function* () {
   // newer than the last agent.snapshot activity, so the next event must
   // re-dispatch even if it is not material on its own.
   const pendingRosterRedispatch = new Set<ThreadId>();
+  // Activities appended per thread since its last agent.snapshot. The
+  // activities projection keeps only the newest 500 rows; refreshing the
+  // roster before the last snapshot can age out guarantees hydration (and the
+  // client's latest-wins scan) always finds one while agents exist.
+  const activitiesSinceAgentSnapshot = new Map<ThreadId, number>();
+  const AGENT_SNAPSHOT_REFRESH_ACTIVITY_COUNT = 400;
   let agentSnapshotDispatchCount = 0;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -1529,11 +1535,10 @@ const make = Effect.gen(function* () {
 
       if (!hydratedAgentThreads.has(thread.id)) {
         // Hydration source is the 500-capped activities projection — the same
-        // list clients derive from. If the last agent.snapshot has aged past
-        // the cap (500 activities with no material agent transition), both
-        // sides have already lost it and hydrating empty is consistent, not a
-        // regression; the roster only ever contains agents from the era the
-        // timeline still shows.
+        // list clients derive from. While agents exist, the refresh counter
+        // below re-publishes the roster every ~400 activities so the latest
+        // snapshot cannot age past the cap; an empty result here means the
+        // thread genuinely has no roster in the visible timeline era.
         const detail = yield* getLoadedThreadDetail();
         const latestSnapshot = detail?.activities.findLast(
           (activity) => activity.kind === THREAD_AGENTS_ACTIVITY_KIND,
@@ -1581,6 +1586,13 @@ const make = Effect.gen(function* () {
       if (pendingRosterRedispatch.has(thread.id) && threadAgents.size > 0) {
         agentRosterMaterial = true;
       }
+      if (
+        !agentRosterMaterial &&
+        threadAgents.size > 0 &&
+        (activitiesSinceAgentSnapshot.get(thread.id) ?? 0) >= AGENT_SNAPSHOT_REFRESH_ACTIVITY_COUNT
+      ) {
+        agentRosterMaterial = true;
+      }
       if (agentRosterMaterial) {
         pruneSettledAgents(threadAgents);
         const roster = Array.from(threadAgents.values());
@@ -1605,20 +1617,37 @@ const make = Effect.gen(function* () {
         // The in-memory roster is authoritative (already folded); if the
         // append fails, keep it and flag the thread so the NEXT event
         // re-dispatches the full roster — discarding memory here would lose
-        // transitions newer than the last persisted snapshot.
-        // Armed before the dispatch and cleared only on success: if the append
-        // fails (the error propagates to processInputSafely as usual), the
-        // flag makes the NEXT event re-dispatch the full roster.
+        // transitions newer than the last persisted snapshot. The failure is
+        // swallowed (logged) rather than raised: agent observability must
+        // never block the rest of this event's ingestion (message deltas,
+        // session status, timeline activities). Interrupts still propagate.
         pendingRosterRedispatch.add(thread.id);
-        yield* orchestrationEngine.dispatch({
-          type: "thread.activity.append",
-          commandId: yield* providerCommandId(event, "agent-snapshot-append"),
-          threadId: thread.id,
-          activity,
-          createdAt: activity.createdAt,
-        });
-        pendingRosterRedispatch.delete(thread.id);
-        agentSnapshotDispatchCount += 1;
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.activity.append",
+            commandId: yield* providerCommandId(event, "agent-snapshot-append"),
+            threadId: thread.id,
+            activity,
+            createdAt: activity.createdAt,
+          })
+          .pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                pendingRosterRedispatch.delete(thread.id);
+                activitiesSinceAgentSnapshot.set(thread.id, 0);
+                agentSnapshotDispatchCount += 1;
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logWarning("provider agent snapshot append failed; will re-dispatch", {
+                    threadId: thread.id,
+                    agentCount: roster.length,
+                    cause: Cause.pretty(cause),
+                  }),
+            ),
+          );
         yield* Effect.logDebug("provider agent snapshot appended", {
           threadId: thread.id,
           agentCount: roster.length,
@@ -1632,6 +1661,7 @@ const make = Effect.gen(function* () {
       if (event.type === "session.exited" && !pendingRosterRedispatch.has(thread.id)) {
         agentsByThread.delete(thread.id);
         hydratedAgentThreads.delete(thread.id);
+        activitiesSinceAgentSnapshot.delete(thread.id);
       }
 
       const now = event.createdAt;
@@ -2088,6 +2118,12 @@ const make = Effect.gen(function* () {
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);
+      if (activities.length > 0 && agentsByThread.get(thread.id)?.size) {
+        activitiesSinceAgentSnapshot.set(
+          thread.id,
+          (activitiesSinceAgentSnapshot.get(thread.id) ?? 0) + activities.length,
+        );
+      }
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
