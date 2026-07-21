@@ -23,6 +23,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { EnvironmentShellMembership } from "./shellMembership.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -52,6 +53,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
   const snapshotLoader = yield* ShellSnapshotLoader;
+  const shellMembership = yield* Effect.serviceOption(EnvironmentShellMembership);
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
   const cachedSnapshot = yield* cache.loadShell(environmentId).pipe(
@@ -72,6 +74,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   });
   const awaitingCompletion = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
+  const setMembershipUnknown = Option.match(shellMembership, {
+    onNone: () => Effect.void,
+    onSome: (service) => service.setUnknown(environmentId),
+  });
+  const setMembershipAuthoritative = (snapshot: OrchestrationShellSnapshot) =>
+    Option.match(shellMembership, {
+      onNone: () => Effect.void,
+      onSome: (service) => service.setAuthoritative(environmentId, snapshot),
+    });
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
     snapshot: OrchestrationShellSnapshot,
@@ -95,6 +106,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   );
 
   const setDisconnected = Ref.set(awaitingCompletion, false).pipe(
+    Effect.andThen(setMembershipUnknown),
     Effect.andThen(
       SubscriptionRef.update(state, (current) => ({
         ...current,
@@ -106,18 +118,22 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     ...current,
     status: "synchronizing" as const,
     error: Option.none(),
-  }));
-  const setReady = SubscriptionRef.update(state, (current) =>
-    current.status === "live"
-      ? current
-      : {
-          ...current,
-          status: "synchronizing" as const,
-          error: Option.none(),
-        },
-  );
+  })).pipe(Effect.andThen(setMembershipUnknown));
+  const setReady = Effect.gen(function* () {
+    const current = yield* SubscriptionRef.get(state);
+    if (current.status === "live") {
+      return;
+    }
+    yield* setMembershipUnknown;
+    yield* SubscriptionRef.set(state, {
+      ...current,
+      status: "synchronizing" as const,
+      error: Option.none(),
+    });
+  });
   const setStreamError = (error: unknown) =>
     Ref.set(awaitingCompletion, false).pipe(
+      Effect.andThen(setMembershipUnknown),
       Effect.andThen(Effect.logWarning("Could not synchronize the environment shell.")),
       Effect.annotateLogs({
         environmentId,
@@ -142,6 +158,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ? { ...current, status: "live" as const, error: Option.none() }
           : current,
       );
+      const current = yield* SubscriptionRef.get(state);
+      if (current.status === "live" && Option.isSome(current.snapshot)) {
+        yield* setMembershipAuthoritative(current.snapshot.value);
+      }
       return;
     }
 
@@ -166,6 +186,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       status: waiting ? "synchronizing" : "live",
       error: Option.none(),
     });
+    if (!waiting) {
+      yield* setMembershipAuthoritative(nextSnapshot);
+    }
     yield* Queue.offer(persistence, nextSnapshot);
   });
 
@@ -232,6 +255,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }),
     Effect.forkScoped,
   );
+
+  yield* Effect.addFinalizer(() => setMembershipUnknown);
 
   return state;
 });
@@ -385,4 +410,5 @@ export * from "./models.ts";
 export * from "./shellCommands.ts";
 export * from "./shellReducer.ts";
 export * from "./shellSnapshotHttp.ts";
+export * from "./shellMembership.ts";
 export * from "./snapshots.ts";

@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   EventId,
   ORCHESTRATION_WS_METHODS,
+  OrchestrationGetSnapshotError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -36,6 +37,7 @@ import {
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
+import { EnvironmentShellMembership, type ShellThreadMembership } from "./shellMembership.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -131,6 +133,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly cached?: OrchestrationThread;
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
   readonly completionMarker?: boolean;
+  readonly shellMembership?: ShellThreadMembership;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -217,10 +220,16 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     saveVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
+  const shellMembership = EnvironmentShellMembership.of({
+    getThreadMembership: () => Effect.succeed(options?.shellMembership ?? "unknown"),
+    setAuthoritative: () => Effect.void,
+    setUnknown: () => Effect.void,
+  });
   const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
+    Effect.provideService(EnvironmentShellMembership, shellMembership),
     Effect.provideService(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
@@ -268,6 +277,19 @@ const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem =>
 });
 
 const synchronized = (): OrchestrationThreadStreamItem => ({ kind: "synchronized" });
+
+const missingThreadError = () =>
+  new OrchestrationGetSnapshotError({
+    message: `Thread ${THREAD_ID} was not found`,
+    cause: THREAD_ID,
+    reason: "not-found",
+  });
+
+const unclassifiedSnapshotError = () =>
+  new OrchestrationGetSnapshotError({
+    message: `Failed to load thread ${THREAD_ID}`,
+    cause: THREAD_ID,
+  });
 
 const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamItem => ({
   kind: "event",
@@ -467,17 +489,61 @@ describe("EnvironmentThreads", () => {
 
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
       yield* Queue.offer(harness.wakeups, "application-active");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
-        yield* Effect.yieldNow;
-      }
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, title: "Stale socket thread" }),
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
 
       const latest = yield* Ref.get(harness.latest);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
       expect(latest.status).toBe("deleted");
       expect(Option.isNone(latest.data)).toBe(true);
     }),
+  );
+
+  it.effect("stops cold hydration when the synchronized shell excludes the thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ shellMembership: "absent" });
+      yield* Queue.offer(harness.inputs, missingThreadError());
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      yield* TestClock.adjust("1 second");
+      for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+    }),
+  );
+
+  it.effect(
+    "removes warm cached data and stops subscribing when the shell excludes the thread",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          cached: BASE_THREAD,
+          shellMembership: "absent",
+        });
+        yield* Queue.offer(harness.inputs, missingThreadError());
+
+        const state = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "deleted",
+        );
+        yield* TestClock.adjust("1 second");
+        for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+
+        expect(Option.isNone(state.data)).toBe(true);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+        expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      }),
   );
 
   it.effect("preserves data after a domain failure and resumes on a replacement session", () =>
@@ -523,13 +589,13 @@ describe("EnvironmentThreads", () => {
 
   it.effect("recovers from a transient domain failure without replacing the session", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* Queue.offer(harness.inputs, new Error("thread not found yet"));
+      const harness = yield* makeHarness({ shellMembership: "present" });
+      yield* Queue.offer(harness.inputs, missingThreadError());
 
       const failed = yield* awaitThreadState(harness.observed, (value) =>
         Option.isSome(value.error),
       );
-      expect(Option.getOrThrow(failed.error)).toBe("thread not found yet");
+      expect(Option.getOrThrow(failed.error)).toContain("was not found");
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
 
       yield* TestClock.adjust("250 millis");
@@ -559,6 +625,68 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.retryCount)).toBe(0);
     }),
+  );
+
+  it.effect("keeps retrying a missing thread while shell membership is unknown", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ shellMembership: "unknown" });
+      yield* Queue.offer(harness.inputs, missingThreadError());
+
+      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+      yield* TestClock.adjust("250 millis");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, title: "Recovered without shell authority" }),
+      );
+
+      const recovered = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Recovered without shell authority",
+      );
+
+      expect(Option.isNone(recovered.error)).toBe(true);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+    }),
+  );
+
+  it.effect(
+    "keeps unclassified snapshot failures retryable when the shell excludes the thread",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ shellMembership: "absent" });
+        yield* Queue.offer(harness.inputs, unclassifiedSnapshotError());
+
+        yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+        yield* TestClock.adjust("250 millis");
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+          yield* Effect.yieldNow;
+        }
+        yield* Queue.offer(
+          harness.inputs,
+          snapshot({ ...BASE_THREAD, title: "Recovered from unclassified failure" }),
+        );
+
+        const recovered = yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" &&
+            Option.isSome(value.data) &&
+            value.data.value.title === "Recovered from unclassified failure",
+        );
+
+        expect(Option.isNone(recovered.error)).toBe(true);
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+      }),
   );
 
   it.effect("does not overwrite a live snapshot when the supervisor becomes ready", () =>

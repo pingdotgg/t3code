@@ -23,6 +23,7 @@ import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
+import { EnvironmentShellMembership } from "./shellMembership.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -94,10 +95,22 @@ describe("environment shell synchronization", () => {
       const snapshotLoader = ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.none()),
       });
+      const shellMembership = yield* Ref.make<"unknown" | "authoritative">("unknown");
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(
+          EnvironmentShellMembership,
+          EnvironmentShellMembership.of({
+            getThreadMembership: () =>
+              Ref.get(shellMembership).pipe(
+                Effect.map((status) => (status === "authoritative" ? "absent" : "unknown")),
+              ),
+            setAuthoritative: () => Ref.set(shellMembership, "authoritative"),
+            setUnknown: () => Ref.set(shellMembership, "unknown"),
+          }),
+        ),
       );
 
       yield* SubscriptionRef.set(supervisorState, {
@@ -145,6 +158,7 @@ describe("environment shell synchronization", () => {
       const state = yield* SubscriptionRef.get(shellState);
       expect(state.status).toBe("live");
       expect(Option.getOrThrow(state.snapshot)).toEqual(LIVE_SHELL_SNAPSHOT);
+      expect(yield* Ref.get(shellMembership)).toBe("authoritative");
     }),
   );
 
