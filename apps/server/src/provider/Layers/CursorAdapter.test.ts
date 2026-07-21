@@ -543,6 +543,74 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("settles with the recorded result when the last holder is interrupted", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-interrupt-last-holder-thread");
+
+      // The reserving prompt gets stuck in its delayed model change while the
+      // steered prompt joins, announces the turn, and resolves — recording a
+      // stop reason without settling (two prompts still counted). The stuck
+      // reserver is then fiber-interrupted: the drain must settle with the
+      // recorded result, not skip on the interrupt and leave the announced
+      // turn open forever.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_SET_CONFIG_OPTION_DELAY_MS: "30000" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const stuckReserverFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "first prompt",
+          attachments: [],
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        })
+        .pipe(Effect.forkChild);
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second prompt",
+        attachments: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      // The steered prompt has fully drained; the reserver still holds its
+      // in-flight count inside the delayed configuration step.
+      yield* Fiber.interrupt(stuckReserverFiber);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(steeredTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(steeredTurn.turnId));
+      const completion = turnCompletedEvents[0];
+      if (completion?.type === "turn.completed") {
+        assert.equal(completion.payload.state, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("settles the announced turn as failed when its only prompt fails", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

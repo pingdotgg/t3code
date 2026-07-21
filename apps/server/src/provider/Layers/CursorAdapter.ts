@@ -1101,13 +1101,8 @@ export function makeCursorAdapter(
               if (ctx.activeTurnSettled) {
                 return;
               }
-              // An interrupted drain (session teardown) is not a turn
-              // outcome; leave settling to the session lifecycle events.
-              if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
-                return;
-              }
               // The last prompt drained without the turn settling: either it
-              // failed after another prompt of the merged turn resolved while
+              // exited after another prompt of the merged turn resolved while
               // both were still counted, or every prompt failed after the
               // turn was announced. Settle with the last known result, or as
               // failed when no prompt ever resolved — reporting success there
@@ -1117,8 +1112,16 @@ export function makeCursorAdapter(
               // turn.started already in the queue, so ingestion ends in the
               // error state regardless of how the caller's turn-start failure
               // recovery is interleaved.
-              ctx.activeTurnSettled = true;
               if (ctx.activeTurnLastStopReason === undefined) {
+                // An interrupted drain with no recorded result is session
+                // teardown, not a turn outcome; leave settling to the session
+                // lifecycle events. A recorded sibling result, by contrast,
+                // IS the turn's outcome and is settled below no matter how
+                // this last holder exited.
+                if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
+                  return;
+                }
+                ctx.activeTurnSettled = true;
                 const failureMessage = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
                 const errorMessage =
                   failureMessage instanceof Error && failureMessage.message.trim().length > 0
@@ -1138,6 +1141,7 @@ export function makeCursorAdapter(
                 });
                 return;
               }
+              ctx.activeTurnSettled = true;
               yield* offerRuntimeEvent({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
