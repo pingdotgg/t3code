@@ -535,8 +535,8 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       } catch (cause) {
         if (!(cause instanceof VersionControlCommandInterrupted)) actionError = errorMessage(cause);
       } finally {
-        statusQuery.refresh();
         await refreshSnapshot();
+        statusQuery.refresh();
         if (actionError) setMutationError(actionError);
         setBusyAction(null);
       }

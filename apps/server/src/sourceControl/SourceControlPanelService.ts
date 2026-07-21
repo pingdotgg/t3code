@@ -1034,7 +1034,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         yield* run(
           input.operations.tempIndexIntentToAdd,
           input.cwd,
-          ["add", "-N", "--", ...input.paths],
+          ["--literal-pathspecs", "add", "-N", "--", ...input.paths],
           { env },
         ).pipe(Effect.asVoid);
         return yield* body(env);
@@ -2243,7 +2243,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         const headPaths = yield* run(
           "vcs.panel.discardStagedFiles.listHeadPaths",
           input.cwd,
-          ["ls-tree", "-r", "--name-only", "HEAD", "--", ...paths],
+          ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "HEAD", "--", ...paths],
           { allowNonZeroExit: true },
         ).pipe(Effect.map(parsePathLines));
         const headPathSet = new Set(headPaths);
@@ -2252,6 +2252,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
         if (pathsInHead.length > 0) {
           yield* run("vcs.panel.discardStagedFiles", input.cwd, [
+            "--literal-pathspecs",
             "restore",
             "--staged",
             "--worktree",
@@ -2262,11 +2263,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         }
         if (pathsOutsideHead.length > 0) {
           yield* run("vcs.panel.discardStagedFiles.reset", input.cwd, [
+            "--literal-pathspecs",
             "reset",
             "--",
             ...pathsOutsideHead,
           ]).pipe(Effect.asVoid);
           yield* run("vcs.panel.discardStagedFiles.clean", input.cwd, [
+            "--literal-pathspecs",
             "clean",
             "-fd",
             "--",
@@ -2277,6 +2280,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       }
 
       const trackedPaths = yield* run("vcs.panel.discardUnstagedFiles.listIndexPaths", input.cwd, [
+        "--literal-pathspecs",
         "ls-files",
         "--cached",
         "--",
@@ -2284,15 +2288,20 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       ]).pipe(Effect.map(parsePathLines));
       if (trackedPaths.length > 0) {
         yield* run("vcs.panel.discardUnstagedFiles", input.cwd, [
+          "--literal-pathspecs",
           "restore",
           "--worktree",
           "--",
           ...trackedPaths,
         ]).pipe(Effect.asVoid);
       }
-      yield* run("vcs.panel.cleanUntrackedFiles", input.cwd, ["clean", "-fd", "--", ...paths]).pipe(
-        Effect.asVoid,
-      );
+      yield* run("vcs.panel.cleanUntrackedFiles", input.cwd, [
+        "--literal-pathspecs",
+        "clean",
+        "-fd",
+        "--",
+        ...paths,
+      ]).pipe(Effect.asVoid);
     });
 
   const readFileDiff: SourceControlPanelService["Service"]["readFileDiff"] = Effect.fn(
@@ -2807,6 +2816,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         const message =
           input.message?.trim() || (yield* generatedStashMessage(input.cwd, mode, paths));
         yield* run("vcs.panel.createStash", input.cwd, [
+          ...(paths.length > 0 ? ["--literal-pathspecs"] : []),
           "stash",
           "push",
           ...modeArgs,

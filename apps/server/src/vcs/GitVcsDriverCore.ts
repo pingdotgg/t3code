@@ -2478,16 +2478,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               },
             ).pipe(Effect.map((result) => result.exitCode === 0))
           : false;
+      const availableLocalTrackingBranch =
+        remoteExists && !localTrackingBranch && localTrackedBranchCandidate
+          ? localTrackedBranchTargetExists
+            ? yield* resolveAvailableBranchName(input.cwd, localTrackedBranchCandidate)
+            : localTrackedBranchCandidate
+          : null;
 
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
+        : remoteExists && !localTrackingBranch && availableLocalTrackingBranch
+          ? ["checkout", "--track", "-b", availableLocalTrackingBranch, input.refName]
+          : remoteExists && localTrackingBranch
+            ? ["checkout", localTrackingBranch]
+            : ["checkout", input.refName];
 
       yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, checkoutArgs, {
         timeoutMs: 10_000,

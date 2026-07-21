@@ -539,9 +539,9 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [
-          ["ls-tree", "-r", "--name-only", "HEAD", "--", "new-file.ts"],
-          ["reset", "--", "new-file.ts"],
-          ["clean", "-fd", "--", "new-file.ts"],
+          ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "HEAD", "--", "new-file.ts"],
+          ["--literal-pathspecs", "reset", "--", "new-file.ts"],
+          ["--literal-pathspecs", "clean", "-fd", "--", "new-file.ts"],
         ],
       );
     }).pipe(
@@ -570,9 +570,9 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [
-          ["ls-files", "--cached", "--", "tracked.ts", "new-file.ts"],
-          ["restore", "--worktree", "--", "tracked.ts"],
-          ["clean", "-fd", "--", "tracked.ts", "new-file.ts"],
+          ["--literal-pathspecs", "ls-files", "--cached", "--", "tracked.ts", "new-file.ts"],
+          ["--literal-pathspecs", "restore", "--worktree", "--", "tracked.ts"],
+          ["--literal-pathspecs", "clean", "-fd", "--", "tracked.ts", "new-file.ts"],
         ],
       );
     }).pipe(
@@ -615,9 +615,12 @@ describe("SourceControlPanelService", () => {
         [
           [
             "vcs.panel.discardUnstagedFiles.listIndexPaths",
-            ["ls-files", "--cached", "--", "tracked.ts", "new-file.ts"],
+            ["--literal-pathspecs", "ls-files", "--cached", "--", "tracked.ts", "new-file.ts"],
           ],
-          ["vcs.panel.discardUnstagedFiles", ["restore", "--worktree", "--", "tracked.ts"]],
+          [
+            "vcs.panel.discardUnstagedFiles",
+            ["--literal-pathspecs", "restore", "--worktree", "--", "tracked.ts"],
+          ],
         ],
       );
     }).pipe(
@@ -678,6 +681,45 @@ describe("SourceControlPanelService", () => {
         [
           ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
           ["--literal-pathspecs", "reset", "--", "src/[literal].ts"],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("stashes selected files with literal pathspecs", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.createStash({
+        cwd: "/repo",
+        paths: ["src/[literal].ts"],
+        includeUntracked: true,
+        message: "Save literal file",
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          [
+            "--literal-pathspecs",
+            "stash",
+            "push",
+            "--include-untracked",
+            "-m",
+            "Save literal file",
+            "--",
+            "src/[literal].ts",
+          ],
         ],
       );
     }).pipe(
@@ -1196,7 +1238,7 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.readFileDiff.tempIndexIntentToAdd",
-            args: ["add", "-N", "--", "src/new.ts"],
+            args: ["--literal-pathspecs", "add", "-N", "--", "src/new.ts"],
           },
           {
             operation: "vcs.panel.readFileDiff",
@@ -1456,6 +1498,7 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.find((call) => call.operation === "vcs.panel.tempIndexIntentToAdd")?.args,
         [
+          "--literal-pathspecs",
           "add",
           "-N",
           "--",
