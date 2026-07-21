@@ -3,8 +3,17 @@
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 
 import { previewBridge } from "./previewBridge";
 
@@ -37,6 +46,8 @@ export function PreviewMoreMenu({
   deviceToolbarVisible,
   onToggleDeviceToolbar,
 }: Props) {
+  const disableWebSecurity = useClientSettings((settings) => settings.previewDisableWebSecurity);
+  const updateClientSettings = useUpdateClientSettings();
   if (!previewBridge) return null;
   const bridge = previewBridge;
   const tabDisabled = !tabId || !hasWebContents;
@@ -127,6 +138,27 @@ export function PreviewMoreMenu({
         <MenuItem onClick={() => void bridge.clearCache().catch(() => undefined)}>
           Clear cache
         </MenuItem>
+        <MenuSeparator />
+        <MenuCheckboxItem
+          variant="switch"
+          closeOnClick={false}
+          checked={disableWebSecurity}
+          onCheckedChange={(checked) => {
+            const enabled = Boolean(checked);
+            updateClientSettings({ previewDisableWebSecurity: enabled });
+            toastManager.add(
+              stackedThreadToast({
+                type: "info",
+                title: enabled ? "Browser WebSecurity disabled" : "Browser WebSecurity enabled",
+                description: enabled
+                  ? "CORS is off for preview tabs opened from now on. Reopen this tab to apply."
+                  : "Applies to preview tabs opened from now on. Reopen this tab to apply.",
+              }),
+            );
+          }}
+        >
+          Disable browser WebSecurity
+        </MenuCheckboxItem>
       </MenuPopup>
     </Menu>
   );

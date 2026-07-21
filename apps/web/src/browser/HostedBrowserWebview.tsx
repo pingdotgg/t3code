@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
+import { getClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserRecording";
@@ -43,6 +44,14 @@ export function HostedBrowserWebview(props: {
   const { threadRef, tabId, initialUrl, viewport, zoomFactor } = props;
   const config = usePreviewWebviewConfig(threadRef.environmentId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
+  // Freeze once hydration lands so a startup/session-restore webview reads the
+  // persisted value, not the default `false` snapshot. Electron reads the
+  // attribute only at guest attach, so the value stays frozen afterwards.
+  const settingsHydrated = useClientSettingsHydrated();
+  const [disableWebSecurity, setDisableWebSecurity] = useState<boolean | null>(null);
+  if (disableWebSecurity === null && settingsHydrated) {
+    setDisableWebSecurity(getClientSettings().previewDisableWebSecurity);
+  }
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
@@ -110,7 +119,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
     };
-  }, [config, tabId]);
+  }, [config, tabId, disableWebSecurity]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
@@ -174,7 +183,7 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [tabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!config) return null;
+  if (!config || disableWebSecurity === null) return null;
 
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
@@ -206,6 +215,10 @@ export function HostedBrowserWebview(props: {
           partition={config.partition}
           webpreferences={config.webPreferences}
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+          {...(disableWebSecurity
+            ? // string, not boolean: React omits boolean values on this unknown attribute
+              { disablewebsecurity: "true" as unknown as boolean }
+            : {})}
           data-preview-tab={tabId}
           data-preview-viewport-mode={effectiveViewport._tag}
           data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
