@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { DEFAULT_WORKTREE_BRANCH_PREFIX, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1124,6 +1124,8 @@ export default function GitActionsControl({
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeServerThread?.branch ?? activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
+      worktreeBranchPrefix:
+        serverConfig?.settings.worktreeBranchPrefix ?? DEFAULT_WORKTREE_BRANCH_PREFIX,
     });
     if (!branchUpdate) {
       return;
@@ -1137,6 +1139,7 @@ export default function GitActionsControl({
     isGitActionRunning,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
+    serverConfig?.settings.worktreeBranchPrefix,
   ]);
 
   const isDefaultRef = useMemo(() => {

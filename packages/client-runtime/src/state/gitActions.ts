@@ -3,6 +3,7 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   VcsStatusResult,
+  WorktreeBranchPrefix,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
@@ -412,6 +413,7 @@ export function resolveThreadBranchUpdate(
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
+  worktreeBranchPrefix: WorktreeBranchPrefix;
 }): { branch: string | null } | null {
   if (!input.gitStatus) {
     return null;
@@ -428,8 +430,8 @@ export function resolveLiveThreadBranchUpdate(input: {
   if (
     input.threadBranch !== null &&
     input.gitStatus.refName !== null &&
-    !isTemporaryWorktreeBranch(input.threadBranch) &&
-    isTemporaryWorktreeBranch(input.gitStatus.refName)
+    !isTemporaryWorktreeBranch(input.threadBranch, input.worktreeBranchPrefix) &&
+    isTemporaryWorktreeBranch(input.gitStatus.refName, input.worktreeBranchPrefix)
   ) {
     return null;
   }

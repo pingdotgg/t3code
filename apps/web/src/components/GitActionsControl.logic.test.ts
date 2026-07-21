@@ -1,4 +1,4 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { DEFAULT_WORKTREE_BRANCH_PREFIX, type VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
@@ -1059,6 +1059,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "feature/old-ref",
       gitStatus: status({ refName: "effect-atom" }),
+      worktreeBranchPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
     });
 
     assert.deepEqual(update, {
@@ -1070,6 +1071,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "feature/old-ref",
       gitStatus: null,
+      worktreeBranchPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
     });
 
     assert.equal(update, null);
@@ -1079,6 +1081,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "effect-atom",
       gitStatus: status({ refName: "effect-atom" }),
+      worktreeBranchPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
     });
 
     assert.equal(update, null);
@@ -1088,6 +1091,7 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "effect-atom",
       gitStatus: status({ refName: null }),
+      worktreeBranchPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
     });
 
     assert.equal(update, null);
@@ -1097,6 +1101,17 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "t3code/github-query-rate-limit",
       gitStatus: status({ refName: "t3code/bda76797" }),
+      worktreeBranchPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
+    });
+
+    assert.equal(update, null);
+  });
+
+  it("does not regress a semantic legacy ref after the prefix changes", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: "t3code/github-query-rate-limit",
+      gitStatus: status({ refName: "t3code/bda76797" }),
+      worktreeBranchPrefix: "codex/team",
     });
 
     assert.equal(update, null);
@@ -1106,9 +1121,20 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "t3code/a9628676",
       gitStatus: status({ refName: "feature/diff-panel-toggle" }),
+      worktreeBranchPrefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
     });
 
     assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
+  });
+
+  it("reconciles an eight-hex branch outside the configured worktree prefix", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: "feature/current",
+      gitStatus: status({ refName: "release/20260714" }),
+      worktreeBranchPrefix: "codex/team",
+    });
+
+    assert.deepEqual(update, { branch: "release/20260714" });
   });
 });
 
