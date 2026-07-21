@@ -12,7 +12,11 @@ import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 
-const LAST_EDITOR_KEY = "t3code:last-editor";
+export const LAST_EDITOR_KEY = "t3code:last-editor";
+
+export function readLegacyPreferredEditor(): EditorId | null {
+  return getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+}
 
 export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedErrorClass<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",

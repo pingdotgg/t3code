@@ -7,13 +7,17 @@ import { beforeEach, vi } from "vite-plus/test";
 
 import * as ElectronDialog from "./ElectronDialog.ts";
 
-const { showMessageBoxMock, showOpenDialogMock, showErrorBoxMock } = vi.hoisted(() => ({
-  showMessageBoxMock: vi.fn(),
-  showOpenDialogMock: vi.fn(),
-  showErrorBoxMock: vi.fn(),
-}));
+const { showMessageBoxMock, showOpenDialogMock, showErrorBoxMock, getFileIconMock } = vi.hoisted(
+  () => ({
+    showMessageBoxMock: vi.fn(),
+    showOpenDialogMock: vi.fn(),
+    showErrorBoxMock: vi.fn(),
+    getFileIconMock: vi.fn(),
+  }),
+);
 
 vi.mock("electron", () => ({
+  app: { getFileIcon: getFileIconMock },
   dialog: {
     showMessageBox: showMessageBoxMock,
     showOpenDialog: showOpenDialogMock,
@@ -26,7 +30,62 @@ describe("ElectronDialog", () => {
     showMessageBoxMock.mockReset();
     showOpenDialogMock.mockReset();
     showErrorBoxMock.mockReset();
+    getFileIconMock.mockReset();
   });
+
+  it.effect("selects a macOS application and resolves its system icon", () =>
+    Effect.gen(function* () {
+      const owner = { id: 12 } as BrowserWindow;
+      showOpenDialogMock.mockResolvedValue({
+        canceled: false,
+        filePaths: ["/Applications/Terminal.app"],
+      });
+      getFileIconMock.mockResolvedValue({ toDataURL: () => "data:image/png;base64,icon" });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      const result = yield* dialog.pickApplication({ owner: Option.some(owner) });
+
+      assert.deepEqual(Option.getOrNull(result), {
+        applicationPath: "/Applications/Terminal.app",
+        suggestedName: "Terminal",
+        iconDataUrl: "data:image/png;base64,icon",
+      });
+      assert.deepEqual(showOpenDialogMock.mock.calls[0], [
+        owner,
+        {
+          defaultPath: "/Applications",
+          properties: ["openFile"],
+          filters: [{ name: "Applications", extensions: ["app"] }],
+        },
+      ]);
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("returns none when application selection is cancelled", () =>
+    Effect.gen(function* () {
+      showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+      assert.isTrue(Option.isNone(yield* dialog.pickApplication({ owner: Option.none() })));
+      assert.equal(getFileIconMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("keeps a valid selection when icon extraction fails", () =>
+    Effect.gen(function* () {
+      showOpenDialogMock.mockResolvedValue({
+        canceled: false,
+        filePaths: ["/Users/test/Applications/My Tool.app"],
+      });
+      getFileIconMock.mockRejectedValue(new Error("icon unavailable"));
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      assert.deepEqual(Option.getOrNull(yield* dialog.pickApplication({ owner: Option.none() })), {
+        applicationPath: "/Users/test/Applications/My Tool.app",
+        suggestedName: "My Tool",
+        iconDataUrl: null,
+      });
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
 
   it.effect("returns false without opening a confirm dialog for empty messages", () =>
     Effect.gen(function* () {

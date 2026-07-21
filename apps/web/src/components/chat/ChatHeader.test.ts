@@ -16,24 +16,24 @@ describe("shouldShowOpenInPicker", () => {
     ).toBe(true);
   });
 
-  it("hides the picker when hosted static mode has no primary environment", () => {
+  it("keeps built-in applications visible when hosted static mode has no primary environment", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId: null,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("hides the picker for remote environments", () => {
+  it("keeps built-in applications visible for remote environments", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("hides the picker when there is no active project", () => {

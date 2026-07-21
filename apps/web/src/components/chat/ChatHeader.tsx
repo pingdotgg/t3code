@@ -48,11 +48,7 @@ export function shouldShowOpenInPicker(input: {
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
 }): boolean {
-  return (
-    Boolean(input.activeProjectName) &&
-    input.primaryEnvironmentId !== null &&
-    input.activeThreadEnvironmentId === input.primaryEnvironmentId
-  );
+  return Boolean(input.activeProjectName);
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -82,7 +78,7 @@ export const ChatHeader = memo(function ChatHeader({
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
     activeThreadEnvironmentId,
-    primaryEnvironmentId,
+    primaryEnvironmentId: null,
   });
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">

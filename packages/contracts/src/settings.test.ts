@@ -17,6 +17,12 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 describe("ClientSettings word wrap", () => {
+  it("defaults Open With settings for legacy documents", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.openWithEntries).toEqual([]);
+    expect(settings.preferredOpenWith).toBeNull();
+  });
+
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);
   });

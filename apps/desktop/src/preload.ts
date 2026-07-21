@@ -105,6 +105,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  pickOpenWithApplication: () => ipcRenderer.invoke(IpcChannels.PICK_OPEN_WITH_APPLICATION_CHANNEL),
+  resolveOpenWithPresentations: () =>
+    ipcRenderer.invoke(IpcChannels.RESOLVE_OPEN_WITH_PRESENTATIONS_CHANNEL),
+  openWith: (input) => ipcRenderer.invoke(IpcChannels.OPEN_WITH_CHANNEL, input),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;
