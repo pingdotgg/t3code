@@ -543,7 +543,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("does not fake a completion when the announced turn's only prompt fails", () =>
+  it.effect("settles the announced turn as failed when its only prompt fails", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
@@ -554,9 +554,15 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       );
       yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
+      let completedCount = 0;
       const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
-        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.takeUntil((event) => {
+          if (event.type === "turn.completed") {
+            completedCount += 1;
+          }
+          return completedCount === 2;
+        }),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -569,10 +575,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
       });
 
-      // The turn is announced, then its only prompt fails: the error must
-      // reach the caller (orchestration settles the thread through turn-start
-      // failure recovery) without the drain minting a successful
-      // turn.completed that would race that recovery and mask the error.
+      // The turn is announced, then its only prompt fails. The error must
+      // reach the caller AND the announced turn must settle as failed:
+      // reporting success would mask the error and flip the session to
+      // ready, while emitting nothing would leave the turn.started
+      // unanswered and wedge the thread in "working".
       const failure = yield* adapter
         .sendTurn({
           threadId,
@@ -592,11 +599,25 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
       const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
 
-      // Both turns announce, but only the successful one completes.
       assert.equal(turnStartedEvents.length, 2);
-      assert.equal(turnCompletedEvents.length, 1);
-      assert.equal(String(turnCompletedEvents[0]?.turnId), String(nextTurn.turnId));
-      assert.notEqual(String(turnStartedEvents[0]?.turnId), String(nextTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 2);
+
+      // The failed turn settles as failed — after its turn.started, so
+      // ingestion deterministically ends in the error state.
+      const failedCompletion = turnCompletedEvents[0];
+      assert.equal(String(failedCompletion?.turnId), String(turnStartedEvents[0]?.turnId));
+      assert.notEqual(String(failedCompletion?.turnId), String(nextTurn.turnId));
+      if (failedCompletion?.type === "turn.completed") {
+        assert.equal(failedCompletion.payload.state, "failed");
+        assert.isDefined(failedCompletion.payload.errorMessage);
+      }
+
+      // The follow-up turn is untainted by the failed one.
+      const successCompletion = turnCompletedEvents[1];
+      assert.equal(String(successCompletion?.turnId), String(nextTurn.turnId));
+      if (successCompletion?.type === "turn.completed") {
+        assert.equal(successCompletion.payload.state, "completed");
+      }
 
       yield* adapter.stopSession(threadId);
     }),

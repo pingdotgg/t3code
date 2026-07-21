@@ -21,6 +21,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -1084,7 +1085,7 @@ export function makeCursorAdapter(
             resumeCursor: ctx.session.resumeCursor,
           };
         }).pipe(
-          Effect.ensuring(
+          Effect.onExit((exit) =>
             Effect.gen(function* () {
               ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
               if (ctx.promptsInFlight > 0 || ctx.activeTurnId !== turnId) {
@@ -1097,17 +1098,32 @@ export function makeCursorAdapter(
                 ctx.activeTurnId = undefined;
                 return;
               }
-              // Settle only when some prompt of the merged turn actually
-              // resolved (a stop reason was recorded). If every prompt failed,
-              // emitting turn.completed here would report the failed turn as
-              // successful and race the caller's turn-start failure recovery,
-              // masking the real error.
-              if (!ctx.activeTurnSettled && ctx.activeTurnLastStopReason !== undefined) {
-                // This prompt failed after another prompt of the merged turn
-                // resolved while both were still counted, so neither settled
-                // it on the way out. Settle here with the last known result —
-                // an announced turn that never completes wedges the UI.
-                ctx.activeTurnSettled = true;
+              if (ctx.activeTurnSettled) {
+                return;
+              }
+              // An interrupted drain (session teardown) is not a turn
+              // outcome; leave settling to the session lifecycle events.
+              if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
+                return;
+              }
+              // The last prompt drained without the turn settling: either it
+              // failed after another prompt of the merged turn resolved while
+              // both were still counted, or every prompt failed after the
+              // turn was announced. Settle with the last known result, or as
+              // failed when no prompt ever resolved — reporting success there
+              // would mask the error and flip the session to ready, while
+              // emitting nothing would leave the turn.started unanswered and
+              // wedge the thread in "working". This emission trails the
+              // turn.started already in the queue, so ingestion ends in the
+              // error state regardless of how the caller's turn-start failure
+              // recovery is interleaved.
+              ctx.activeTurnSettled = true;
+              if (ctx.activeTurnLastStopReason === undefined) {
+                const failureMessage = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+                const errorMessage =
+                  failureMessage instanceof Error && failureMessage.message.trim().length > 0
+                    ? failureMessage.message.trim()
+                    : "Cursor turn failed before any prompt resolved.";
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
@@ -1115,11 +1131,24 @@ export function makeCursorAdapter(
                   threadId: input.threadId,
                   turnId,
                   payload: {
-                    state: ctx.activeTurnLastStopReason === "cancelled" ? "cancelled" : "completed",
-                    stopReason: ctx.activeTurnLastStopReason ?? null,
+                    state: "failed",
+                    stopReason: null,
+                    errorMessage,
                   },
                 });
+                return;
               }
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  state: ctx.activeTurnLastStopReason === "cancelled" ? "cancelled" : "completed",
+                  stopReason: ctx.activeTurnLastStopReason ?? null,
+                },
+              });
               // The only failure above is event-stamp id generation
               // (crypto.randomUUIDv4); a finalizer cannot surface it as a
               // typed error, and swallowing it would silently drop the
