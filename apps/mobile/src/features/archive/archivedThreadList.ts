@@ -40,6 +40,20 @@ export interface ArchivedThreadGroup {
 export interface ArchivedThreadActionSummary {
   readonly succeeded: number;
   readonly failed: number;
+  readonly skipped: number;
+}
+
+export type ArchivedThreadActionResult = "succeeded" | "failed" | "skipped";
+
+export function archivedThreadActionSummaryDescription(
+  summary: ArchivedThreadActionSummary,
+): string {
+  const parts = [`${summary.succeeded} succeeded`];
+  if (summary.failed > 0) parts.push(`${summary.failed} failed`);
+  if (summary.skipped > 0) {
+    parts.push(`${summary.skipped} skipped because already in progress`);
+  }
+  return `${parts.length === 2 ? parts.join(" and ") : parts.join(", ").replace(/, ([^,]*)$/u, ", and $1")}.`;
 }
 
 export function archivedThreadActionExceptionDescription(error: unknown): string {
@@ -243,7 +257,7 @@ export function buildArchivedThreadGroups(input: {
 
 export async function runArchivedThreadActions<T>(
   items: ReadonlyArray<T>,
-  action: (item: T) => Promise<boolean>,
+  action: (item: T) => Promise<ArchivedThreadActionResult>,
   options: { readonly concurrency?: number } = {},
 ): Promise<ArchivedThreadActionSummary> {
   const concurrency =
@@ -254,6 +268,7 @@ export async function runArchivedThreadActions<T>(
   let nextItemIndex = 0;
   let succeeded = 0;
   let failed = 0;
+  let skipped = 0;
   let shouldStop = false;
 
   async function worker() {
@@ -263,8 +278,10 @@ export async function runArchivedThreadActions<T>(
       if (itemIndex >= items.length) return;
       nextItemIndex += 1;
       try {
-        if (await action(items[itemIndex]!)) succeeded += 1;
-        else failed += 1;
+        const result = await action(items[itemIndex]!);
+        if (result === "succeeded") succeeded += 1;
+        else if (result === "failed") failed += 1;
+        else skipped += 1;
       } catch (error) {
         thrownErrors.push(error);
         shouldStop = true;
@@ -277,5 +294,5 @@ export async function runArchivedThreadActions<T>(
   if (thrownErrors.length > 0) {
     throw new AggregateError(thrownErrors, "Archived thread action failed");
   }
-  return { succeeded, failed };
+  return { succeeded, failed, skipped };
 }

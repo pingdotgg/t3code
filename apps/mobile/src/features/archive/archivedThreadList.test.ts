@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   archivedThreadActionExceptionDescription,
+  archivedThreadActionSummaryDescription,
   archivedThreadTimestampValue,
   buildArchivedThreadGroups,
   formatArchivedThreadRelativeTime,
@@ -310,13 +311,18 @@ describe("archive list controls", () => {
         maximumActive = Math.max(maximumActive, active);
         await Promise.resolve();
         active -= 1;
-        return value !== 3;
+        if (value === 3) return "failed";
+        if (value === 4) return "skipped";
+        return "succeeded";
       },
       { concurrency: 2 },
     );
 
     expect(maximumActive).toBe(2);
-    expect(summary).toEqual({ succeeded: 4, failed: 1 });
+    expect(summary).toEqual({ succeeded: 3, failed: 1, skipped: 1 });
+    expect(archivedThreadActionSummaryDescription(summary)).toBe(
+      "3 succeeded, 1 failed, and 1 skipped because already in progress.",
+    );
   });
 
   it("surfaces distinct underlying bulk action exceptions", () => {

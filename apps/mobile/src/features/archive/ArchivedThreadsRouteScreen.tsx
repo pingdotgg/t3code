@@ -15,6 +15,7 @@ import {
 } from "./ArchivedThreadsScreen";
 import {
   archivedThreadActionExceptionDescription,
+  archivedThreadActionSummaryDescription,
   buildArchivedThreadGroups,
   parseArchivedThreadSearchInput,
   runArchivedThreadActions,
@@ -156,10 +157,10 @@ export function ArchivedThreadsRouteScreen() {
             ? unarchiveThread(thread, { reportFailure: false })
             : deleteThread(thread, { reportFailure: false }),
         );
-        if (summary.failed > 0) {
+        if (summary.failed > 0 || summary.skipped > 0) {
           Alert.alert(
             `Archived threads not fully ${action === "unarchive" ? "unarchived" : "deleted"}`,
-            `${summary.succeeded} succeeded and ${summary.failed} failed.`,
+            archivedThreadActionSummaryDescription(summary),
           );
         }
       } catch (error) {

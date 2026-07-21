@@ -10,6 +10,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 type ThreadListAction = "archive" | "unarchive" | "delete";
+export type ThreadListActionResult = "succeeded" | "failed" | "skipped";
 
 interface ThreadActionOptions {
   readonly reportFailure?: boolean;
@@ -48,10 +49,10 @@ function useThreadActionExecutor(
       action: ThreadListAction,
       thread: EnvironmentThreadShell,
       options: ThreadActionOptions = {},
-    ): Promise<boolean> => {
+    ): Promise<ThreadListActionResult> => {
       const key = scopedThreadKey(thread.environmentId, thread.id);
       if (inFlightThreadKeys.current.has(key)) {
-        return false;
+        return "skipped";
       }
 
       inFlightThreadKeys.current.add(key);
@@ -71,10 +72,10 @@ function useThreadActionExecutor(
           if (options.reportFailure !== false) {
             Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           }
-          return false;
+          return "failed";
         }
         onCompleted?.(action, thread);
-        return true;
+        return "succeeded";
       } finally {
         inFlightThreadKeys.current.delete(key);
       }
@@ -90,7 +91,7 @@ function useConfirmDeleteThread(
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
     options?: ThreadActionOptions,
-  ) => Promise<boolean>,
+  ) => Promise<ThreadListActionResult>,
 ) {
   return useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -147,11 +148,11 @@ export function useArchivedThreadListActions(
   readonly unarchiveThread: (
     thread: EnvironmentThreadShell,
     options?: ThreadActionOptions,
-  ) => Promise<boolean>;
+  ) => Promise<ThreadListActionResult>;
   readonly deleteThread: (
     thread: EnvironmentThreadShell,
     options?: ThreadActionOptions,
-  ) => Promise<boolean>;
+  ) => Promise<ThreadListActionResult>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
   const handleCompleted = useCallback(
