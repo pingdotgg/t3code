@@ -3,6 +3,11 @@ import type {
   ThreadPendingUserInput,
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  resolveT3McpToolPresentation,
+  type T3McpToolLogo,
+  type T3McpToolPresentation,
+} from "@t3tools/shared/t3McpToolPresentation";
 import type {
   ChatAttachment,
   MessageId,
@@ -47,6 +52,7 @@ export interface ThreadFeedActivity {
     | "warning"
     | "wrench"
     | "zap";
+  readonly logo: T3McpToolLogo | null;
   readonly toolLike: boolean;
   readonly prominent: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
@@ -192,9 +198,19 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
   }
 }
 
-function itemSummary(item: OrchestrationV2TurnItem): string {
+function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentation | null {
+  if (item.type !== "dynamic_tool") {
+    return null;
+  }
+  return resolveT3McpToolPresentation(item.toolName) ?? resolveT3McpToolPresentation(item.title);
+}
+
+function itemSummary(
+  item: OrchestrationV2TurnItem,
+  toolPresentation: T3McpToolPresentation | null = null,
+): string {
   const title = item.title?.trim();
-  if (title) return capitalizePhrase(title);
+  if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
     case "reasoning":
       return "Thinking";
@@ -229,7 +245,7 @@ function itemSummary(item: OrchestrationV2TurnItem): string {
     case "subagent":
       return "Subagent";
     case "dynamic_tool":
-      return item.toolName ?? "Tool call";
+      return toolPresentation?.displayName ?? item.toolName ?? "Tool call";
     case "proposed_plan":
       return "Proposed plan";
     case "todo_list":
@@ -288,7 +304,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
 
 function toFeedActivity(row: OrchestrationV2ProjectedTurnItem): ThreadFeedActivity {
   const item = row.item;
-  const summary = itemSummary(item);
+  const toolPresentation = itemToolPresentation(item);
+  const summary = itemSummary(item, toolPresentation);
   const detail = itemPreview(item);
   const fullDetail = JSON.stringify(
     {
@@ -308,6 +325,7 @@ function toFeedActivity(row: OrchestrationV2ProjectedTurnItem): ThreadFeedActivi
     detail,
     fullDetail,
     icon: itemIcon(item),
+    logo: toolPresentation?.logo ?? null,
     copyText: [summary, detail, fullDetail]
       .filter(
         (value, index, values): value is string =>

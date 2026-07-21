@@ -75,6 +75,10 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
+    "./t3McpToolPresentation": {
+      "types": "./src/t3McpToolPresentation.ts",
+      "import": "./src/t3McpToolPresentation.ts"
+    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"

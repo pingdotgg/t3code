@@ -250,6 +250,7 @@ describe("buildThreadFeed", () => {
       fullDetail: null,
       copyText: id,
       icon: "command",
+      logo: null,
       toolLike: true,
       prominent: false,
       status,
@@ -281,5 +282,22 @@ describe("buildThreadFeed", () => {
         ? presented[0].activities.map((entry) => entry.id)
         : [],
     ).toEqual(["activity-1", "activity-neutral", "activity-2", "activity-3"]);
+  });
+
+  it("pretty prints T3 MCP dynamic tool activities and attaches the product logo", () => {
+    const toolItem: OrchestrationV2TurnItem = {
+      ...base("item-t3-tool", "2026-06-20T00:00:04.000Z", 3),
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__t3_thread_read",
+      input: { threadId: "thread-child" },
+      output: { messages: [] },
+    };
+
+    const feed = buildThreadFeed([projected(toolItem, 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+
+    expect(activity?.summary).toBe("Read a T3 thread");
+    expect(activity?.logo).toBe("t3-code");
+    expect(activity?.copyText.split("\n")[0]).toBe("Read a T3 thread");
   });
 });
