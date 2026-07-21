@@ -1159,6 +1159,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy ||
     isConnecting ||
     projectSelectionRequired ||
+    environmentUnavailable !== null ||
     !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
@@ -1697,7 +1698,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const shouldBlurMobileComposerOnSubmit = useCallback(() => {
     if (!isMobileViewport) return false;
-    if (isSendBusy || isConnecting || phase === "running") return false;
+    if (isSendBusy || isConnecting || environmentUnavailable !== null || phase === "running") {
+      return false;
+    }
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
@@ -1706,6 +1709,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress,
     activePendingResolvedAnswers,
     composerSendState.hasSendableContent,
+    environmentUnavailable,
     isConnecting,
     isMobileViewport,
     isSendBusy,
