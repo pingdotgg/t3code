@@ -4,6 +4,7 @@ import type {
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditorProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
@@ -16,8 +17,10 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isWorkspacePreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -111,6 +114,43 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
+
+function WorkspaceImagePreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly absolutePath: string;
+  readonly alt: string;
+}) {
+  const assetUrl = useAssetUrlState(props.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadRef.threadId,
+    path: props.absolutePath,
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+        Unable to load workspace image.
+      </div>
+    );
+  }
+
+  return assetUrl._tag === "Success" ? (
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+      <img
+        className="max-h-full max-w-full object-contain"
+        src={assetUrl.url}
+        alt={props.alt}
+        onError={() => setFailedUrl(assetUrl.url)}
+      />
+    </div>
+  ) : (
+    <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+      <LoaderCircle className="size-5 animate-spin" />
+    </div>
+  );
+}
 
 function clampFileLine(contents: string, requestedLine: number): number {
   let lineCount = 1;
@@ -248,6 +288,7 @@ interface EditableFileSurfaceProps {
   contents: string;
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
+  wordWrap: boolean;
   onPostRender: FilePostRender;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
@@ -296,6 +337,7 @@ function EditableFileSurface({
   contents,
   resolvedTheme,
   revealRequestId,
+  wordWrap,
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
@@ -516,7 +558,7 @@ function EditableFileSurface({
               onGutterUtilityClick: setSelectedRange,
               onLineSelectionChange: setSelectedRange,
               onLineSelectionEnd: handleLineSelectionEnd,
-              overflow: "scroll",
+              overflow: wordWrap ? "wrap" : "scroll",
               theme: resolveDiffThemeName(resolvedTheme),
               themeType: resolvedTheme,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -557,7 +599,12 @@ function RenderedMarkdownSurface({
   onPendingChange,
 }: Omit<
   EditableFileSurfaceProps,
-  "resolvedTheme" | "composerDraftTarget" | "revealLine" | "revealRequestId" | "onPostRender"
+  | "resolvedTheme"
+  | "composerDraftTarget"
+  | "revealLine"
+  | "revealRequestId"
+  | "wordWrap"
+  | "onPostRender"
 > & {
   threadRef: ScopedThreadRef;
 }) {
@@ -613,6 +660,7 @@ export default function FilePreviewPanel({
   onPendingChange,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
+  const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -621,7 +669,8 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const file = useProjectFileQuery(environmentId, cwd, relativePath);
+  const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
+  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [markdownView, setMarkdownView] = useState<{
     path: string | null;
@@ -809,7 +858,15 @@ export default function FilePreviewPanel({
             relativePath ? "flex" : "hidden",
           )}
         >
-          {relativePath && file.error && file.data === null ? (
+          {relativePath && isImage && absolutePath ? (
+            <WorkspaceImagePreview
+              key={absolutePath}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              alt={relativePath}
+            />
+          ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
               {file.error}
             </div>
@@ -844,7 +901,7 @@ export default function FilePreviewPanel({
                   }}
                   options={{
                     disableFileHeader: true,
-                    overflow: "scroll",
+                    overflow: wordWrap ? "wrap" : "scroll",
                     theme: resolveDiffThemeName(resolvedTheme),
                     themeType: resolvedTheme,
                     unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -863,6 +920,7 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
+                wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
                 onPendingChange={onPendingChange}
               />

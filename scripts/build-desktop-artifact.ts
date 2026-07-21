@@ -10,7 +10,12 @@ import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
-import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
+import {
+  BRAND_ASSET_PATHS,
+  resolveWebAssetBrandForChannel,
+  type WebAssetBrand,
+} from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
@@ -40,6 +45,7 @@ const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
 });
 type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
@@ -47,14 +53,25 @@ const StageWorkspaceConfig = Schema.Struct({
   supportedArchitectures: Schema.Struct({
     os: Schema.Array(Schema.String),
     cpu: Schema.Array(Schema.String),
+    libc: Schema.optional(Schema.Array(Schema.String)),
   }),
+  // pnpm 11 only reads these from pnpm-workspace.yaml (not package.json#pnpm).
+  // Without allowBuilds the staged `vp install --prod` fails with
+  // ERR_PNPM_IGNORED_BUILDS for packages that have lifecycle scripts.
+  allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
+type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
+const decodeNodePtyManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
 const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
@@ -107,6 +124,7 @@ interface BuildCliInput {
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
+  readonly wslPrebuild: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -360,6 +378,29 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClas
   }
 }
 
+export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslNodePtyPrebuildMissingError>()(
+  "WslNodePtyPrebuildMissingError",
+  {
+    prebuildPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `WSL node-pty prebuild not found at ${this.prebuildPath}.`;
+  }
+}
+
+export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNodePtyManifestReadError>()(
+  "WslNodePtyManifestReadError",
+  {
+    manifestPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not read node-pty version from ${this.manifestPath}.`;
+  }
+}
+
 export class LinuxIconResizeError extends Schema.TaggedErrorClass<LinuxIconResizeError>()(
   "LinuxIconResizeError",
   {
@@ -517,6 +558,7 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
+  readonly wslPrebuild: string | undefined;
 }
 
 interface StagePackageJson {
@@ -533,10 +575,6 @@ interface StagePackageJson {
   readonly dependencies: Record<string, unknown>;
   readonly devDependencies: {
     readonly electron: string;
-  };
-  readonly overrides: Record<string, unknown>;
-  readonly pnpm?: {
-    readonly patchedDependencies?: Record<string, string>;
   };
 }
 
@@ -847,31 +885,57 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
   }
 });
 
-export function createStageWorkspaceConfig(
-  platform: typeof BuildPlatform.Type,
-  arch: typeof BuildArch.Type,
-): typeof StageWorkspaceConfig.Type {
+export function createStageWorkspaceConfig(input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly allowBuilds?: Record<string, boolean>;
+  readonly patchedDependencies?: Record<string, string>;
+  readonly overrides?: Record<string, string>;
+}): StageWorkspaceConfig {
+  const { platform, arch, allowBuilds, patchedDependencies, overrides } = input;
+  const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
+  const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
+  // Linux AppImages and Windows WSL backends both execute a Linux/glibc Node
+  // process that loads Linux-native optional deps at runtime (e.g.
+  // @yuuang/ffi-rs-linux-x64-gnu). Keep libc explicit so pnpm includes those
+  // optional packages in the staged production install.
+  const supportedArchitectures =
+    platform === "linux"
+      ? {
+          os: [hostOs],
+          cpu: hostCpu,
+          libc: ["glibc"],
+        }
+      : platform === "win"
+        ? {
+            os: Array.from(new Set([hostOs, "linux"])),
+            cpu: hostCpu,
+            libc: ["glibc"],
+          }
+        : {
+            os: [hostOs],
+            cpu: hostCpu,
+          };
+
   return {
-    supportedArchitectures: {
-      os: [platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux"],
-      cpu: arch === "universal" ? ["arm64", "x64"] : [arch],
-    },
+    supportedArchitectures,
+    ...(allowBuilds && Object.keys(allowBuilds).length > 0 ? { allowBuilds } : {}),
+    ...(patchedDependencies && Object.keys(patchedDependencies).length > 0
+      ? { patchedDependencies }
+      : {}),
+    ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
   };
 }
 
-export function createStagePnpmConfig(
+export function createStagePatchedDependencies(
   patchedDependencies: Record<string, string>,
   dependencies: Record<string, unknown>,
-): StagePackageJson["pnpm"] | undefined {
-  const stagePatchedDependencies = Object.fromEntries(
+): Record<string, string> {
+  return Object.fromEntries(
     Object.entries(patchedDependencies).filter(([patchKey]) =>
       Object.hasOwn(dependencies, getPatchedDependencyPackageName(patchKey)),
     ),
   );
-
-  return Object.keys(stagePatchedDependencies).length > 0
-    ? { patchedDependencies: stagePatchedDependencies }
-    : undefined;
 }
 
 function getPatchedDependencyPackageName(patchKey: string): string {
@@ -905,6 +969,11 @@ const BuildEnvConfig = Config.all({
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  // Path to a prebuilt Linux node-pty binary (pty.node) for the target arch,
+  // produced by the Linux CI job and handed to the Windows packaging job. Placed
+  // into the staged node-pty so the WSL backend ships a ready binary and never
+  // compiles on the user's machine.
+  wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -988,6 +1057,9 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
           ),
         ));
 
+  const wslPrebuild =
+    Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+
   return {
     platform,
     target,
@@ -1000,6 +1072,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     verbose,
     mockUpdates,
     mockUpdateServerPort,
+    wslPrebuild,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -1256,6 +1329,10 @@ export function resolveDesktopUpdateChannel(version: string): "latest" | "nightl
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
+export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
+  return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
+}
+
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
@@ -1274,6 +1351,19 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
 
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
   return `http://localhost:${mockUpdateServerPort ?? 3000}`;
+}
+
+// Electron Builder detects pnpm from npm_config_user_agent, whose value uses
+// user-agent syntax (pnpm/11.10.0) rather than packageManager syntax
+// (pnpm@11.10.0).
+export function resolvePackageManagerUserAgent(packageManager: string): string {
+  const trimmed = packageManager.trim();
+  const versionSeparator = trimmed.lastIndexOf("@");
+  if (versionSeparator <= 0 || versionSeparator === trimmed.length - 1) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
 export function resolveDesktopProductName(version: string): string {
@@ -1300,10 +1390,23 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
-    asarUnpack: [...DESKTOP_ASAR_UNPACK],
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    // The Windows primary backend runs the server bundle through
+    // ELECTRON_RUN_AS_NODE (asar-aware), so it reads bin.mjs straight out of
+    // app.asar. The WSL backend instead launches plain `wsl.exe -- node`, which
+    // cannot read inside an asar archive, so everything it loads must be on the
+    // real filesystem. The server bundle externalizes its runtime dependencies
+    // (effect, @effect/*, node-pty, ...) to node_modules rather than inlining
+    // them, so unpacking just the bundle + node-pty isn't enough — the Linux Node
+    // fails with ERR_MODULE_NOT_FOUND (e.g. "Cannot find package 'effect'") before
+    // it even reaches node-pty. Unpack the server bundle AND the whole
+    // node_modules tree so every import resolves (this also covers the fff native
+    // binaries in DESKTOP_ASAR_UNPACK). The Windows primary keeps reading the same
+    // files through the asar (transparently redirected to the unpacked copy), so
+    // there's no duplication.
+    asarUnpack: [...DESKTOP_ASAR_UNPACK, "apps/server/dist/**", "**/node_modules/**"],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1357,11 +1460,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
+      // Resource editing applies the product metadata and icon independently
+      // of code signing. Disabling it for local unsigned builds leaves the
+      // packaged executable with Electron's stock icon.
+      signAndEditExecutable: true,
     };
     if (signed) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
-    } else {
-      winConfig.signAndEditExecutable = false;
     }
     buildConfig.win = winConfig;
   }
@@ -1390,6 +1495,76 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 });
 
+// Stage the prebuilt Linux node-pty binary into the packaged app so the WSL
+// backend never compiles on the user's machine. node-pty publishes no Linux
+// prebuilt and the WSL Linux Node can't load the Windows/Electron binary, so the
+// Linux CI job builds pty.node and hands it here. We drop it into the staged
+// node-pty's prebuilds/linux-<arch>/ with a t3code marker the WSL preflight
+// checks (arch + node-pty version; the binary is N-API, hence ABI-stable across
+// Node versions). A missing prebuild is a warning, not an error, so local and
+// non-Windows builds still succeed — they just won't ship a working WSL backend.
+const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
+  readonly stageAppDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly prebuildPath: string | undefined;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  if (input.prebuildPath === undefined) {
+    yield* Effect.logWarning(
+      "[desktop-artifact] No WSL node-pty prebuild provided (--wsl-prebuild / T3CODE_DESKTOP_WSL_PREBUILD); the packaged WSL backend will not start until a Linux pty.node is bundled.",
+    );
+    return;
+  }
+
+  // WSL runs the same CPU arch as the Windows host; universal is mac-only.
+  const linuxArch = input.arch === "x64" ? "x64" : input.arch === "arm64" ? "arm64" : undefined;
+  if (linuxArch === undefined) {
+    yield* Effect.logWarning(
+      `[desktop-artifact] No WSL node-pty prebuild mapping for arch "${input.arch}"; skipping WSL backend bundling.`,
+    );
+    return;
+  }
+
+  const prebuildExists = yield* fs
+    .exists(input.prebuildPath)
+    .pipe(Effect.orElseSucceed(() => false));
+  if (!prebuildExists) {
+    return yield* new WslNodePtyPrebuildMissingError({
+      prebuildPath: input.prebuildPath,
+    });
+  }
+
+  // Resolve through the (pnpm) symlink so we write into the stage's own node-pty
+  // copy, never a shared content-addressable store.
+  const nodePtyLink = path.join(input.stageAppDir, "node_modules", "node-pty");
+  const nodePtyDir = yield* fs.realPath(nodePtyLink).pipe(Effect.orElseSucceed(() => nodePtyLink));
+
+  const manifestPath = path.join(nodePtyDir, "package.json");
+  const pkgRaw = yield* fs.readFileString(manifestPath);
+  const manifest = yield* decodeNodePtyManifest(pkgRaw).pipe(
+    Effect.mapError(
+      (cause) =>
+        new WslNodePtyManifestReadError({
+          manifestPath,
+          cause,
+        }),
+    ),
+  );
+  const nodePtyVersion = manifest.version;
+
+  const prebuildDir = path.join(nodePtyDir, "prebuilds", `linux-${linuxArch}`);
+  yield* fs.makeDirectory(prebuildDir, { recursive: true });
+  yield* fs.copyFile(input.prebuildPath, path.join(prebuildDir, "pty.node"));
+  const markerJson = yield* encodeJsonString({ arch: linuxArch, nodePtyVersion });
+  yield* fs.writeFileString(path.join(prebuildDir, "t3code-wsl-node-pty.json"), `${markerJson}\n`);
+
+  yield* Effect.log(
+    `[desktop-artifact] Staged WSL node-pty prebuild (linux-${linuxArch}, node-pty ${nodePtyVersion}).`,
+  );
+});
+
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -1401,6 +1576,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const workspaceCatalog = workspaceConfig.catalog ?? {};
   const workspaceOverrides = workspaceConfig.overrides ?? {};
   const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
+  const workspaceAllowBuilds = workspaceConfig.allowBuilds ?? {};
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -1498,6 +1674,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
+  const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
+  yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
+  yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
@@ -1558,8 +1737,22 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.arch,
       serverPackageJson.dependencies["@ff-labs/fff-node"],
     ),
+    // Windows artifacts also bundle the same-architecture WSL Linux backend, which loads the
+    // fff native binary through ffi-rs. The platform fff binary above is the
+    // host's (win32), so promote the matching Linux fff binaries too; without
+    // them file-finding in WSL fails to load its Linux native package.
+    ...(options.platform === "win"
+      ? resolveFffNativeDependencies(
+          "linux",
+          options.arch,
+          serverPackageJson.dependencies["@ff-labs/fff-node"],
+        )
+      : {}),
   };
-  const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
+  const stagePatchedDependencies = createStagePatchedDependencies(
+    workspacePatchedDependencies,
+    stageDependencies,
+  );
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
@@ -1588,20 +1781,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     devDependencies: {
       electron: electronVersion,
     },
-    overrides: resolvedOverrides,
-    ...(stagePnpmConfig ? { pnpm: stagePnpmConfig } : {}),
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
-  const stageWorkspaceConfig = createStageWorkspaceConfig(options.platform, options.arch);
+  const stageWorkspaceConfig = createStageWorkspaceConfig({
+    platform: options.platform,
+    arch: options.arch,
+    allowBuilds: workspaceAllowBuilds,
+    patchedDependencies: stagePatchedDependencies,
+    overrides: resolvedOverrides,
+  });
   const stageWorkspaceConfigString = yield* encodeStageWorkspaceConfig(stageWorkspaceConfig);
   yield* fs.writeFileString(
     path.join(stageAppDir, "pnpm-workspace.yaml"),
     stageWorkspaceConfigString,
   );
 
-  if (Object.keys(workspacePatchedDependencies).length > 0) {
+  if (Object.keys(stagePatchedDependencies).length > 0) {
     yield* fs.copy(path.join(repoRoot, "patches"), path.join(stageAppDir, "patches"));
   }
 
@@ -1616,12 +1813,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
 
+  // WSL is Windows-only, so only the Windows artifact carries the Linux backend
+  // binary; other platforms ignore the prebuild input.
+  if (options.platform === "win") {
+    yield* stageWslNodePtyPrebuild({
+      stageAppDir,
+      arch: options.arch,
+      prebuildPath: options.wslPrebuild,
+    });
+  }
+
   // electron-builder treats several set-but-empty variables (e.g. CSC_LINK="")
   // as enabled, so copy the host env and scrub empty values instead of relying
   // on `extendEnv` merging.
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
   };
+  buildEnv.npm_config_user_agent = resolvePackageManagerUserAgent(rootPackageJson.packageManager);
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
       delete buildEnv[key];
@@ -1767,6 +1975,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   mockUpdateServerPort: Flag.integer("mock-update-server-port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
+    Flag.optional,
+  ),
+  wslPrebuild: Flag.string("wsl-prebuild").pipe(
+    Flag.withDescription(
+      "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
+    ),
     Flag.optional,
   ),
 }).pipe(

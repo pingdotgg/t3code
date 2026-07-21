@@ -33,6 +33,7 @@ import {
   readPrimaryCloudLinkState,
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
+  updatePrimaryCloudPreferences,
 } from "./linkEnvironment";
 
 const TARGET: CloudLinkTarget = {
@@ -203,6 +204,7 @@ describe("web cloud link environment client", () => {
           cloudUserId: "user-1",
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
+          managedTunnelActive: true,
           publishAgentActivity: false,
         }),
       );
@@ -216,6 +218,7 @@ describe("web cloud link environment client", () => {
           cloudUserId: "user-1",
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
+          managedTunnelActive: true,
           publishAgentActivity: false,
         }),
       );
@@ -233,6 +236,7 @@ describe("web cloud link environment client", () => {
           cloudUserId: "user-1",
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
+          managedTunnelActive: true,
           publishAgentActivity: false,
         }),
       );
@@ -249,6 +253,39 @@ describe("web cloud link environment client", () => {
       const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
       expect(request.credentials).not.toBe("include");
       expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+    }),
+  );
+
+  it.effect("updates agent activity publishing for the explicit primary target", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(
+        Response.json({
+          linked: true,
+          cloudUserId: "user-1",
+          relayUrl: "https://relay.example.test",
+          relayIssuer: "https://relay.example.test",
+          managedTunnelActive: true,
+          publishAgentActivity: true,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const state = yield* withServices(
+        updatePrimaryCloudPreferences({
+          target: TARGET,
+          publishAgentActivity: true,
+        }),
+      );
+
+      expect(state.publishAgentActivity).toBe(true);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        "http://127.0.0.1:3000/api/connect/preferences",
+      );
+      expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+        publishAgentActivity: true,
+      });
     }),
   );
 
@@ -302,6 +339,57 @@ describe("web cloud link environment client", () => {
           httpBaseUrl: TARGET.httpBaseUrl,
           wsBaseUrl: TARGET.wsBaseUrl,
         },
+      });
+    }),
+  );
+
+  it.effect("links publish-only without a managed tunnel", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            challenge: "challenge",
+            expiresAt: "2026-06-06T00:05:00.000Z",
+          }),
+        )
+        .mockResolvedValueOnce(Response.json("signed-proof"))
+        .mockResolvedValueOnce(
+          Response.json({
+            ok: true,
+            environmentId: TARGET.environmentId,
+            endpoint: {
+              httpBaseUrl: TARGET.httpBaseUrl,
+              wsBaseUrl: TARGET.wsBaseUrl,
+              providerKind: "manual",
+            },
+            endpointRuntime: null,
+            relayIssuer: "https://relay.example.test",
+            cloudUserId: "user-1",
+            environmentCredential: "environment-credential",
+            cloudMintPublicKey: "public-key",
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ ok: true, endpointRuntimeStatus: { status: "disabled" } }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+          mode: "publish_only",
+        }),
+      );
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        managedTunnelsEnabled: false,
+      });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+        endpoint: { providerKind: "manual" },
       });
     }),
   );
