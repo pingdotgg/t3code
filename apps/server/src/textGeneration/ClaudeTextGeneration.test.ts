@@ -232,7 +232,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           },
         }),
         argsMustContain:
-          "--permission-mode dontAsk --disallowedTools Agent,Bash,Edit,Glob,Grep,Monitor,NotebookEdit,PowerShell,Read,Skill,WebFetch,WebSearch,Workflow,Write --strict-mcp-config --tools",
+          "--permission-mode dontAsk --disallowedTools Agent,Artifact,AskUserQuestion,Bash,CronCreate,CronDelete,CronList,Edit,EndConversation,EnterPlanMode,EnterWorktree,ExitPlanMode,ExitWorktree,Glob,Grep,ListMcpResources,ListMcpResourcesTool,LSP,Monitor,NotebookEdit,PowerShell,PushNotification,Read,ReadMcpResource,ReadMcpResourceTool,RemoteTrigger,REPL,ReportFindings,ScheduleWakeup,SendMessage,SendUserFile,ShareOnboardingGuide,Skill,Task,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,TodoWrite,ToolSearch,WaitForMcpServers,WebFetch,WebSearch,Workflow,Write --strict-mcp-config --tools",
         argsMustNotContain: "--dangerously-skip-permissions",
         requireEmptyTools: true,
       },
