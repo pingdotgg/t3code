@@ -224,7 +224,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const shellMembership = EnvironmentShellMembership.of({
     getThreadMembership: () => Effect.succeed(options?.shellMembership ?? "unknown"),
     setAuthoritative: () => Effect.void,
-    setUnknown: () => Effect.void,
+    setUnknown: () => Effect.succeed(0),
   });
   const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),

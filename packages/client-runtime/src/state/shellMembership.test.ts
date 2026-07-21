@@ -48,14 +48,23 @@ describe("EnvironmentShellMembership", () => {
       const membership = yield* EnvironmentShellMembership;
 
       expect(yield* membership.getThreadMembership(ENVIRONMENT_ID, THREAD_ID)).toBe("unknown");
-      yield* membership.setAuthoritative(ENVIRONMENT_ID, SNAPSHOT);
+      const firstRevision = yield* membership.setUnknown(ENVIRONMENT_ID);
+      yield* membership.setAuthoritative(ENVIRONMENT_ID, SNAPSHOT, firstRevision);
       expect(yield* membership.getThreadMembership(ENVIRONMENT_ID, THREAD_ID)).toBe("present");
       expect(
         yield* membership.getThreadMembership(ENVIRONMENT_ID, ThreadId.make("missing-thread")),
       ).toBe("absent");
 
-      yield* membership.setUnknown(ENVIRONMENT_ID);
+      const currentRevision = yield* membership.setUnknown(ENVIRONMENT_ID);
       expect(yield* membership.getThreadMembership(ENVIRONMENT_ID, THREAD_ID)).toBe("unknown");
+
+      // Simulate a snapshot write that was paused before a disconnect invalidated
+      // its subscription revision. Resuming it cannot restore stale authority.
+      yield* membership.setAuthoritative(ENVIRONMENT_ID, SNAPSHOT, firstRevision);
+      expect(yield* membership.getThreadMembership(ENVIRONMENT_ID, THREAD_ID)).toBe("unknown");
+
+      yield* membership.setAuthoritative(ENVIRONMENT_ID, SNAPSHOT, currentRevision);
+      expect(yield* membership.getThreadMembership(ENVIRONMENT_ID, THREAD_ID)).toBe("present");
     }).pipe(Effect.provide(environmentShellMembershipLayer)),
   );
 });

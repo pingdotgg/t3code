@@ -23,7 +23,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
-import { EnvironmentShellMembership } from "./shellMembership.ts";
+import { EnvironmentShellMembership, type ShellMembershipRevision } from "./shellMembership.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -74,14 +74,18 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   });
   const awaitingCompletion = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
-  const setMembershipUnknown = Option.match(shellMembership, {
-    onNone: () => Effect.void,
+  const activeMembershipRevision = yield* Ref.make<ShellMembershipRevision>(0);
+  const invalidateMembership = Option.match(shellMembership, {
+    onNone: () => Effect.succeed<ShellMembershipRevision>(0),
     onSome: (service) => service.setUnknown(environmentId),
   });
   const setMembershipAuthoritative = (snapshot: OrchestrationShellSnapshot) =>
     Option.match(shellMembership, {
       onNone: () => Effect.void,
-      onSome: (service) => service.setAuthoritative(environmentId, snapshot),
+      onSome: (service) =>
+        Ref.get(activeMembershipRevision).pipe(
+          Effect.flatMap((revision) => service.setAuthoritative(environmentId, snapshot, revision)),
+        ),
     });
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
@@ -106,7 +110,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   );
 
   const setDisconnected = Ref.set(awaitingCompletion, false).pipe(
-    Effect.andThen(setMembershipUnknown),
+    Effect.andThen(invalidateMembership),
     Effect.andThen(
       SubscriptionRef.update(state, (current) => ({
         ...current,
@@ -114,17 +118,18 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       })),
     ),
   );
-  const setSynchronizing = SubscriptionRef.update(state, (current) => ({
+  const setSynchronizingState = SubscriptionRef.update(state, (current) => ({
     ...current,
     status: "synchronizing" as const,
     error: Option.none(),
-  })).pipe(Effect.andThen(setMembershipUnknown));
+  }));
+  const setSynchronizing = invalidateMembership.pipe(Effect.andThen(setSynchronizingState));
   const setReady = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(state);
     if (current.status === "live") {
       return;
     }
-    yield* setMembershipUnknown;
+    yield* invalidateMembership;
     yield* SubscriptionRef.set(state, {
       ...current,
       status: "synchronizing" as const,
@@ -133,7 +138,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   });
   const setStreamError = (error: unknown) =>
     Ref.set(awaitingCompletion, false).pipe(
-      Effect.andThen(setMembershipUnknown),
+      Effect.andThen(invalidateMembership),
       Effect.andThen(Effect.logWarning("Could not synchronize the environment shell.")),
       Effect.annotateLogs({
         environmentId,
@@ -208,7 +213,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           Effect.orElseSucceed(() => false),
         );
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
-        yield* setSynchronizing;
+        const membershipRevision = yield* invalidateMembership;
+        yield* Ref.set(activeMembershipRevision, membershipRevision);
+        yield* setSynchronizingState;
 
         const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
           Effect.flatMap(
@@ -256,7 +263,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     Effect.forkScoped,
   );
 
-  yield* Effect.addFinalizer(() => setMembershipUnknown);
+  yield* Effect.addFinalizer(() => invalidateMembership);
 
   return state;
 });

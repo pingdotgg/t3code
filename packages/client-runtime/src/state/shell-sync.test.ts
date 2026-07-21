@@ -108,7 +108,7 @@ describe("environment shell synchronization", () => {
                 Effect.map((status) => (status === "authoritative" ? "absent" : "unknown")),
               ),
             setAuthoritative: () => Ref.set(shellMembership, "authoritative"),
-            setUnknown: () => Ref.set(shellMembership, "unknown"),
+            setUnknown: () => Ref.set(shellMembership, "unknown").pipe(Effect.as(1)),
           }),
         ),
       );
