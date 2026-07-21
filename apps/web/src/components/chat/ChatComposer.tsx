@@ -107,10 +107,15 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
+import {
+  getProviderAutoRuntimeModeSupport,
+  getProviderDisplayName,
+  getProviderInteractionModeToggle,
+} from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -147,6 +152,11 @@ const runtimeModeConfig: Record<
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
     icon: PenLineIcon,
+  },
+  auto: {
+    label: "Auto",
+    description: "Run without prompts; a safety classifier reviews actions in the background.",
+    icon: SparklesIcon,
   },
   "full-access": {
     label: "Full access",
@@ -200,6 +210,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  runtimeModeOptions: ReadonlyArray<RuntimeMode>;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
@@ -275,7 +286,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <SelectValue>{runtimeModeOption.label}</SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false}>
-            {runtimeModeOptions.map((mode) => {
+            {props.runtimeModeOptions.map((mode) => {
               const option = runtimeModeConfig[mode];
               const OptionIcon = option.icon;
               const isSelected = props.runtimeMode === mode;
@@ -836,8 +847,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         providerStatuses,
         selectedProvider,
       ),
+      supportsAutoRuntimeMode: getProviderAutoRuntimeModeSupport(providerStatuses, selectedProvider),
     }),
     [providerStatuses, selectedProvider],
+  );
+  const runtimeModeOptionsForProvider = useMemo(
+    () =>
+      composerProviderControls.supportsAutoRuntimeMode
+        ? runtimeModeOptions
+        : runtimeModeOptions.filter((mode) => mode !== "auto"),
+    [composerProviderControls.supportsAutoRuntimeMode],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -2588,6 +2607,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     planSidebarLabel={planSidebarLabel}
                     planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
+                    runtimeModeOptions={runtimeModeOptionsForProvider}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                     traitsMenuContent={providerTraitsMenuContent}
                     onToggleInteractionMode={toggleInteractionMode}
@@ -2606,6 +2626,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
+                      runtimeModeOptions={runtimeModeOptionsForProvider}
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
