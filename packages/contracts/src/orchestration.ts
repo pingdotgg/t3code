@@ -1292,9 +1292,19 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<Orche
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
-    reason: Schema.optional(Schema.Literal("not-found")),
   },
 ) {}
+
+export class OrchestrationThreadNotFoundError extends Schema.TaggedErrorClass<OrchestrationThreadNotFoundError>()(
+  "OrchestrationThreadNotFoundError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} was not found`;
+  }
+}
 
 export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",

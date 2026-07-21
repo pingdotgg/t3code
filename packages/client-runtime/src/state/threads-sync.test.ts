@@ -3,6 +3,7 @@ import {
   EventId,
   ORCHESTRATION_WS_METHODS,
   OrchestrationGetSnapshotError,
+  OrchestrationThreadNotFoundError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -279,10 +280,8 @@ const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem =>
 const synchronized = (): OrchestrationThreadStreamItem => ({ kind: "synchronized" });
 
 const missingThreadError = () =>
-  new OrchestrationGetSnapshotError({
-    message: `Thread ${THREAD_ID} was not found`,
-    cause: THREAD_ID,
-    reason: "not-found",
+  new OrchestrationThreadNotFoundError({
+    threadId: THREAD_ID,
   });
 
 const unclassifiedSnapshotError = () =>

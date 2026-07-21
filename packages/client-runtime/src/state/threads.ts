@@ -1,6 +1,6 @@
 import {
   ORCHESTRATION_WS_METHODS,
-  OrchestrationGetSnapshotError,
+  OrchestrationThreadNotFoundError,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
@@ -47,14 +47,11 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : "Could not synchronize the thread.";
 }
 
-const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
+const isOrchestrationThreadNotFoundError = Schema.is(OrchestrationThreadNotFoundError);
 
 function isMissingThreadFailure(cause: Cause.Cause<unknown>): boolean {
   return cause.reasons.some(
-    (reason) =>
-      reason._tag === "Fail" &&
-      isOrchestrationGetSnapshotError(reason.error) &&
-      reason.error.reason === "not-found",
+    (reason) => reason._tag === "Fail" && isOrchestrationThreadNotFoundError(reason.error),
   );
 }
 
