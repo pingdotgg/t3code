@@ -1555,6 +1555,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     threadExpandedOverrides,
     pinnedThreadKeys,
     projectThreads,
+    threadExpandedOverrides,
     threadLastVisitedAts,
     threadSortOrder,
   ]);
