@@ -11,7 +11,6 @@ import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import {
   ActivityIcon,
-  CornerUpLeftIcon,
   DiffIcon,
   FileDownIcon,
   GlobeIcon,
@@ -38,7 +37,6 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
-  parentThread?: { readonly id: ThreadId; readonly title: string } | null;
   activeProjectName: string | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
@@ -60,7 +58,6 @@ interface ChatHeaderProps {
   workflowRuns: ReadonlyArray<WorkflowRunPresentation>;
   onRunProjectScript: (script: ProjectScript) => void;
   onRunWorkflow: (request: AgentWorkflowRunRequest) => void;
-  onNavigateToParentThread?: (threadId: ThreadId) => void;
   onNavigateThread: (threadId: ThreadId) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -78,7 +75,6 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
-  parentThread = null,
   activeProjectName,
   isGitRepo,
   openInCwd,
@@ -100,7 +96,6 @@ export const ChatHeader = memo(function ChatHeader({
   workflowRuns,
   onRunProjectScript,
   onRunWorkflow,
-  onNavigateToParentThread,
   onNavigateThread,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -127,19 +122,6 @@ export const ChatHeader = memo(function ChatHeader({
         >
           {activeThreadTitle}
         </h2>
-        {parentThread && onNavigateToParentThread ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            className="hidden min-w-0 shrink sm:inline-flex"
-            title={`Open parent thread: ${parentThread.title}`}
-            onClick={() => onNavigateToParentThread(parentThread.id)}
-          >
-            <CornerUpLeftIcon className="size-3 shrink-0" aria-hidden="true" />
-            <span className="max-w-40 truncate">Parent: {parentThread.title}</span>
-          </Button>
-        ) : null}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git

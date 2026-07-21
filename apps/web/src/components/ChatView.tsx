@@ -663,16 +663,6 @@ function ChatViewBody(
       [routeKind, routeThreadRef],
     ),
   );
-  const parentThreadRef = useMemo(
-    () =>
-      routeKind === "server" && serverThread?.parentThreadId
-        ? scopeThreadRef(environmentId, serverThread.parentThreadId)
-        : null,
-    [environmentId, routeKind, serverThread?.parentThreadId],
-  );
-  const parentThread = useStore(
-    useMemo(() => createThreadSelectorByRef(parentThreadRef), [parentThreadRef]),
-  );
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
@@ -747,7 +737,6 @@ function ChatViewBody(
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
-  const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [isExportingThread, setIsExportingThread] = useState(false);
   const [startingWorkflowId, setStartingWorkflowId] = useState<string | null>(null);
@@ -1160,6 +1149,7 @@ function ChatViewBody(
     : rawPhase === "running"
       ? "ready"
       : rawPhase;
+  const isConnecting = phase === "connecting";
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
@@ -2322,7 +2312,7 @@ function ChatViewBody(
       setPlanSidebarOpen(false);
     }
     planSidebarDismissedForTurnRef.current = null;
-  }, [activeThread?.id]);
+  }, [routeThreadKey]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -2347,7 +2337,7 @@ function ChatViewBody(
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
-  }, [activeThread?.id]);
+  }, [routeThreadKey]);
 
   useEffect(() => {
     if (!activeThread?.id || terminalState.terminalOpen) return;
@@ -2357,7 +2347,7 @@ function ChatViewBody(
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalState.terminalOpen]);
+  }, [focusComposer, routeThreadKey, terminalState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -2385,7 +2375,7 @@ function ChatViewBody(
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
+  }, [activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages, routeThreadKey]);
 
   useEffect(() => {
     setOptimisticUserMessages((existing) => {
@@ -2396,24 +2386,52 @@ function ChatViewBody(
     });
     resetLocalDispatch();
     setExpandedImage(null);
-  }, [draftId, resetLocalDispatch, threadId]);
+  }, [draftId, resetLocalDispatch, routeThreadKey]);
 
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
   }, []);
 
   const activeWorktreePath = activeThread?.worktreePath ?? null;
+  const observedThreadWorkspaceRef = useRef<{
+    readonly threadKey: string;
+    readonly worktreePath: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!activeThread) {
+      observedThreadWorkspaceRef.current = null;
+      return;
+    }
+
+    const previous = observedThreadWorkspaceRef.current;
+    observedThreadWorkspaceRef.current = {
+      threadKey: routeThreadKey,
+      worktreePath: activeThread.worktreePath,
+    };
+    if (
+      previous === null ||
+      previous.threadKey !== routeThreadKey ||
+      previous.worktreePath !== null ||
+      activeThread.worktreePath === null
+    ) {
+      return;
+    }
+
+    toastManager.add(
+      stackedThreadToast({
+        type: "success",
+        title: "Worktree assigned",
+        description: `Future work in this chat will run on ${activeThread.branch ?? "the new branch"}.`,
+      }),
+    );
+  }, [activeThread, routeThreadKey]);
   const derivedEnvMode: DraftThreadEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
     hasServerThread: isServerThread,
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
   });
   const canOverrideServerThreadEnvMode = Boolean(
-    isServerThread &&
-    activeThread &&
-    activeThread.messages.length === 0 &&
-    activeThread.worktreePath === null &&
-    !envLocked,
+    isServerThread && activeThread && activeThread.worktreePath === null,
   );
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
@@ -2430,7 +2448,7 @@ function ChatViewBody(
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
-  }, [activeThread?.id]);
+  }, [routeThreadKey]);
 
   useEffect(() => {
     if (canOverrideServerThreadEnvMode) {
@@ -2898,14 +2916,11 @@ function ChatViewBody(
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
+      sendEnvMode === "worktree" && !activeThread.worktreePath ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+    const shouldCreateWorktree = sendEnvMode === "worktree" && !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
@@ -4061,7 +4076,6 @@ function ChatViewBody(
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
-          parentThread={parentThread ? { id: parentThread.id, title: parentThread.title } : null}
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
@@ -4085,7 +4099,6 @@ function ChatViewBody(
           workflowRuns={workflowRuns}
           onRunProjectScript={runProjectScript}
           onRunWorkflow={onRunWorkflow}
-          onNavigateToParentThread={navigateToThread}
           onNavigateThread={navigateToThread}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
