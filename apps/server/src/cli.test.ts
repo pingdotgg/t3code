@@ -690,21 +690,6 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             "--base-dir",
             baseDir,
           ]);
-          const newChatOutput = yield* captureStdout(
-            runCli([
-              "chat",
-              "new",
-              "--project",
-              workspaceRoot,
-              "--title",
-              "New Turn Chat",
-              "first-prompt",
-              "--base-dir",
-              baseDir,
-            ]),
-          );
-          const newChat = JSON.parse(newChatOutput.output) as { readonly threadId: string };
-
           const createdOutput = yield* captureStdout(
             runCli([
               "chat",
@@ -718,6 +703,23 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             ]),
           );
           const created = JSON.parse(createdOutput.output) as { readonly threadId: string };
+
+          const newChatOutput = yield* captureStdout(
+            runCli([
+              "chat",
+              "new",
+              "--project",
+              workspaceRoot,
+              "--parent",
+              created.threadId,
+              "--title",
+              "New Turn Chat",
+              "first-prompt",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const newChat = JSON.parse(newChatOutput.output) as { readonly threadId: string };
 
           yield* runCliWithRuntime([
             "chat",
@@ -815,6 +817,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           assert.equal(newThread?.modelSelection.instanceId, "codex");
           assert.equal(newThread?.modelSelection.model, "gpt-5.4");
           assert.equal(newThread?.modelSelection.options, undefined);
+          assert.equal(newThread?.parentThreadId, created.threadId);
           assert.isTrue(newThread?.messages.some((message) => message.text === "first-prompt"));
           assert.equal(sentThread?.modelSelection.instanceId, "codex");
           assert.equal(sentThread?.modelSelection.model, "gpt-5.4");

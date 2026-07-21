@@ -48,6 +48,41 @@ export interface UiThreadState {
 
 export interface UiState extends UiProjectState, UiThreadState {}
 
+export function createThreadExpandedOverridesSelector(
+  threadKeys: readonly string[],
+): (state: UiState) => ReadonlyMap<string, boolean> {
+  let initialized = false;
+  const previousOverrides: Array<boolean | undefined> = [];
+  let previousSelection: ReadonlyMap<string, boolean> = new Map();
+
+  return (state) => {
+    let changed = !initialized;
+    for (let index = 0; index < threadKeys.length; index += 1) {
+      if (state.threadExpandedById[threadKeys[index]!] !== previousOverrides[index]) {
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      return previousSelection;
+    }
+
+    const nextSelection = new Map<string, boolean>();
+    previousOverrides.length = threadKeys.length;
+    for (let index = 0; index < threadKeys.length; index += 1) {
+      const threadKey = threadKeys[index]!;
+      const override = state.threadExpandedById[threadKey];
+      previousOverrides[index] = override;
+      if (typeof override === "boolean") {
+        nextSelection.set(threadKey, override);
+      }
+    }
+    previousSelection = nextSelection;
+    initialized = true;
+    return previousSelection;
+  };
+}
+
 export interface SyncProjectInput {
   /** Physical project key (env + cwd). Used for manual sort order. */
   key: string;
@@ -129,8 +164,8 @@ function readPersistedState(): UiState {
 
     const nextState: Record<string, boolean> = {};
     for (const [threadId, expanded] of Object.entries(value)) {
-      if (threadId && expanded === false) {
-        nextState[threadId] = false;
+      if (threadId && typeof expanded === "boolean") {
+        nextState[threadId] = expanded;
       }
     }
     return nextState;
@@ -265,7 +300,9 @@ export function persistState(state: UiState): void {
       ),
     );
     const threadExpandedById = Object.fromEntries(
-      Object.entries(state.threadExpandedById).filter(([, expanded]) => expanded === false),
+      Object.entries(state.threadExpandedById).filter(
+        ([, expanded]) => typeof expanded === "boolean",
+      ),
     );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
@@ -637,25 +674,15 @@ export function clearThreadUi(state: UiState, threadId: string): UiState {
 }
 
 export function setThreadExpanded(state: UiState, threadId: string, expanded: boolean): UiState {
-  const currentExpanded = state.threadExpandedById[threadId] ?? true;
-  if (currentExpanded === expanded) {
+  if (state.threadExpandedById[threadId] === expanded) {
     return state;
-  }
-
-  if (expanded) {
-    const nextState = { ...state.threadExpandedById };
-    delete nextState[threadId];
-    return {
-      ...state,
-      threadExpandedById: nextState,
-    };
   }
 
   return {
     ...state,
     threadExpandedById: {
       ...state.threadExpandedById,
-      [threadId]: false,
+      [threadId]: expanded,
     },
   };
 }

@@ -66,7 +66,7 @@ describe("buildSidebarThreadRows", () => {
     const result = buildSidebarThreadRows({
       threads,
       pinnedThreadKeys: [],
-      collapsedThreadKeys: new Set(),
+      expandedOverrideByThreadKey: new Map([[key(parent.id), true]]),
       sortOrder: "created_at",
       resolveThreadStatus: () => null,
     });
@@ -117,7 +117,10 @@ describe("buildSidebarThreadRows", () => {
     const result = buildSidebarThreadRows({
       threads: [grandchild, child, parent],
       pinnedThreadKeys: [],
-      collapsedThreadKeys: new Set(),
+      expandedOverrideByThreadKey: new Map([
+        [key(parent.id), true],
+        [key(child.id), true],
+      ]),
       sortOrder: "created_at",
       resolveThreadStatus: () => null,
     });
@@ -130,6 +133,27 @@ describe("buildSidebarThreadRows", () => {
     expect(result.orderedThreadKeys).toEqual([key(parent.id), key(child.id), key(grandchild.id)]);
   });
 
+  it("keeps the active settled child and its ancestors visible", () => {
+    const parent = thread("thread-1");
+    const child = thread("thread-2", { parentThreadId: parent.id });
+    const grandchild = thread("thread-3", { parentThreadId: child.id });
+
+    const result = buildSidebarThreadRows({
+      threads: [parent, child, grandchild],
+      pinnedThreadKeys: [],
+      activeThreadKey: key(grandchild.id),
+      expandedOverrideByThreadKey: new Map(),
+      sortOrder: "created_at",
+      resolveThreadStatus: () => null,
+    });
+
+    expect(result.rowViews.map((row) => row.thread.id)).toEqual([
+      parent.id,
+      child.id,
+      grandchild.id,
+    ]);
+  });
+
   it("omits collapsed descendants while rolling up their status", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });
@@ -137,7 +161,7 @@ describe("buildSidebarThreadRows", () => {
     const result = buildSidebarThreadRows({
       threads: [parent, child],
       pinnedThreadKeys: [],
-      collapsedThreadKeys: new Set([key(parent.id)]),
+      expandedOverrideByThreadKey: new Map([[key(parent.id), false]]),
       sortOrder: "created_at",
       resolveThreadStatus: (candidate) => (candidate.id === child.id ? workingStatus : null),
     });
@@ -154,7 +178,7 @@ describe("buildSidebarThreadRows", () => {
     const result = buildSidebarThreadRows({
       threads: [orphan],
       pinnedThreadKeys: [],
-      collapsedThreadKeys: new Set(),
+      expandedOverrideByThreadKey: new Map(),
       sortOrder: "created_at",
       resolveThreadStatus: () => null,
     });
@@ -169,7 +193,10 @@ describe("buildSidebarThreadRows", () => {
     const result = buildSidebarThreadRows({
       threads: [first, second],
       pinnedThreadKeys: [],
-      collapsedThreadKeys: new Set(),
+      expandedOverrideByThreadKey: new Map([
+        [key(first.id), true],
+        [key(second.id), true],
+      ]),
       sortOrder: "created_at",
       resolveThreadStatus: () => null,
     });
@@ -187,7 +214,7 @@ describe("buildSidebarThreadRows", () => {
     const result = buildSidebarThreadRows({
       threads: [root1, child, root2],
       pinnedThreadKeys: [key(root2.id), key(child.id)],
-      collapsedThreadKeys: new Set(),
+      expandedOverrideByThreadKey: new Map([[key(root1.id), true]]),
       sortOrder: "created_at",
       resolveThreadStatus: () => null,
     });

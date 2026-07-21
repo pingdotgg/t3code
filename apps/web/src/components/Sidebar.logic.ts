@@ -406,6 +406,10 @@ export function resolveThreadStatusPill(input: {
   return null;
 }
 
+export function isActiveThreadStatus(status: ThreadStatusPill | null): boolean {
+  return status !== null && status.label !== "Completed";
+}
+
 export function resolveProjectStatusIndicator(
   statuses: ReadonlyArray<ThreadStatusPill | null>,
 ): ThreadStatusPill | null {
