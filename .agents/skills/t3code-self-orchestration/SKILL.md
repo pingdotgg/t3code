@@ -19,7 +19,6 @@ t3 chat new \
   --reasoning <low|medium|high|xhigh> \
   --title "<delegated task>" \
   "<complete prompt>"
-t3 chat stream <thread-id>
 t3 chat show <thread-id> --messages
 ```
 
@@ -30,8 +29,10 @@ t3 chat show <thread-id> --messages
 3. Create a nested helper thread with `t3 chat new --project <project> --parent "$T3_MCP_THREAD_ID" --provider copilot --model <model> --reasoning <level> --title "<short task>" "<full prompt>"`.
 4. Capture the returned `threadId`.
 5. Monitor only when needed:
-   - `t3 chat stream <threadId>` for live progress.
-   - `t3 chat show <threadId> --messages` for a point-in-time result.
+   - Use `t3 chat show <threadId> --messages` for a point-in-time result and to confirm
+     the latest turn state.
+   - `t3 chat stream <threadId>` is a persistent subscription. Never run it as an
+     attached command to wait for completion; it does not exit when a turn completes.
 6. If blocked, use approval/input skills only under the user’s authorization.
 7. Summarize findings back in the current chat with thread IDs and decisive outcomes.
 
