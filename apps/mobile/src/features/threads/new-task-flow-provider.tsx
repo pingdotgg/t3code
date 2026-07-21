@@ -350,8 +350,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? "local";
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
+  // Keep the user's explicit choice separate from the resolved display value:
+  // only the explicit flag is ever written back to the draft, so the resolved
+  // value keeps tracking the server setting when the config loads late.
+  const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
-    selectedProjectDraft.workspaceSelection?.startFromOrigin ??
+    draftStartFromOrigin ??
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
@@ -550,11 +554,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           mode,
           branch: selectedBranchName,
           worktreePath: selectedWorktreePath,
-          startFromOrigin,
+          ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });
     },
-    [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath, startFromOrigin],
+    [draftStartFromOrigin, selectedBranchName, selectedProjectDraftKey, selectedWorktreePath],
   );
 
   const selectBranch = useCallback(
@@ -567,11 +571,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           mode: workspaceMode,
           branch: branch.name,
           worktreePath: normalizeSelectedWorktreePath(selectedProject, branch),
-          startFromOrigin,
+          ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });
     },
-    [selectedProject, selectedProjectDraftKey, startFromOrigin, workspaceMode],
+    [draftStartFromOrigin, selectedProject, selectedProjectDraftKey, workspaceMode],
   );
 
   const setStartFromOrigin = useCallback(
