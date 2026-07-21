@@ -16,6 +16,8 @@ import {
   EnvironmentOperationForbiddenError,
   EnvironmentRequestInvalidError,
   type EnvironmentRequestInvalidReason,
+  EnvironmentResourceNotFoundError,
+  type EnvironmentResourceNotFoundReason,
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -133,6 +135,14 @@ function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_a
           traceId,
         }),
       ),
+    ),
+  );
+}
+
+export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReason) {
+  return currentEnvironmentTraceId.pipe(
+    Effect.flatMap((traceId) =>
+      Effect.fail(new EnvironmentResourceNotFoundError({ code: "not_found", reason, traceId })),
     ),
   );
 }
