@@ -1264,52 +1264,6 @@ function sdkNativeMethod(message: SDKMessage): string {
   return `claude/${message.type}`;
 }
 
-// Discriminator/identity keys carry no human-readable content; everything else
-// on an unmodeled SDK message is potentially worth surfacing in the work log.
-const SDK_MESSAGE_NOISE_KEYS = new Set([
-  "type",
-  "subtype",
-  "uuid",
-  "parent_uuid",
-  "session_id",
-  "parent_tool_use_id",
-  "request_id",
-]);
-
-// Pull the salient scalar content out of a message the adapter doesn't model
-// yet, so the work-log row shows what actually arrived (e.g. a notification's
-// text) instead of an opaque "unhandled subtype" placeholder. Nested structures
-// are left to the full payload retained in the event's `detail`.
-function previewUnknownSdkContent(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") {
-    return undefined;
-  }
-  const parts: string[] = [];
-  for (const [key, value] of Object.entries(message as Record<string, unknown>)) {
-    if (SDK_MESSAGE_NOISE_KEYS.has(key)) {
-      continue;
-    }
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (trimmed.length > 0) {
-        parts.push(`${key}: ${trimmed}`);
-      }
-    } else if (typeof value === "number" || typeof value === "boolean") {
-      parts.push(`${key}: ${String(value)}`);
-    }
-  }
-  if (parts.length === 0) {
-    return undefined;
-  }
-  const joined = parts.join(" · ");
-  return joined.length > 280 ? `${joined.slice(0, 279)}…` : joined;
-}
-
-function describeUnknownSdkMessage(kind: string, message: unknown): string {
-  const preview = previewUnknownSdkContent(message);
-  return preview ? `${kind} — ${preview}` : `${kind} (no displayable text content)`;
-}
-
 function sdkNativeItemId(message: SDKMessage): string | undefined {
   if (message.type === "assistant") {
     const maybeId = (message.message as { id?: unknown }).id;
@@ -1707,28 +1661,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         message,
         class: "provider_error",
         ...(cause !== undefined ? { detail: cause } : {}),
-      },
-      providerRefs: nativeProviderRefs(context),
-    });
-  });
-
-  const emitRuntimeWarning = Effect.fn("emitRuntimeWarning")(function* (
-    context: ClaudeSessionContext,
-    message: string,
-    detail?: unknown,
-  ) {
-    const turnState = context.turnState;
-    const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
-      type: "runtime.warning",
-      eventId: stamp.eventId,
-      provider: PROVIDER,
-      createdAt: stamp.createdAt,
-      threadId: context.session.threadId,
-      ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
-      payload: {
-        message,
-        ...(detail !== undefined ? { detail } : {}),
       },
       providerRefs: nativeProviderRefs(context),
     });
@@ -2766,11 +2698,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         return;
       default:
-        yield* emitRuntimeWarning(
-          context,
-          describeUnknownSdkMessage(`Claude system message '${message.subtype}'`, message),
-          message,
-        );
+        // Newer Claude CLI releases emit system subtypes this build does not
+        // know (97 distinct subtypes in CLI 2.1.211 vs the handful handled
+        // above). Unknown members degrade gracefully: no user-visible work-log
+        // row, just a debug log for diagnostics.
+        yield* Effect.logDebug("claude.sdk.system.unknown", {
+          subtype: message.subtype,
+          threadId: context.session.threadId,
+        });
         return;
     }
   });
@@ -2880,11 +2815,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* handleSdkTelemetryMessage(context, message);
         return;
       default:
-        yield* emitRuntimeWarning(
-          context,
-          describeUnknownSdkMessage(`Claude SDK message '${message.type}'`, message),
-          message,
-        );
+        // Same forward-compat posture as unknown system subtypes: newer CLIs
+        // add top-level message types (command_lifecycle, audit_event, ...);
+        // absorb them silently instead of alarming the work log.
+        yield* Effect.logDebug("claude.sdk.message.unknown", {
+          messageType: (message as { type: string }).type,
+          threadId: context.session.threadId,
+        });
         return;
     }
   });

@@ -931,6 +931,103 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "absorbs unknown SDK message types and system subtypes without work-log warnings",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        // Top-level SDK message type this build does not model (emitted by
+        // Claude CLI >= ~2.1.2xx). Must be absorbed silently.
+        harness.query.emit({
+          type: "command_lifecycle",
+          command_uuid: "d5375ed5-741a-4371-83c4-ed59ad75ced3",
+          state: "running",
+          session_id: "sdk-session-1",
+          uuid: "lifecycle-1",
+        } as unknown as SDKMessage);
+
+        // System message subtypes this build does not model. Same posture.
+        harness.query.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          session_id: "sdk-session-1",
+          uuid: "system-unknown-1",
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "system",
+          subtype: "commands_changed",
+          session_id: "sdk-session-1",
+          uuid: "system-unknown-2",
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-1",
+          uuid: "assistant-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-1",
+            content: [{ type: "text", text: "Hi" }],
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-1",
+          uuid: "result-1",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        // The unknown messages contribute no events at all — in particular no
+        // "runtime.warning" work-log rows — and the turn still completes.
+        assert.deepEqual(
+          runtimeEvents.map((event) => event.type),
+          [
+            "session.started",
+            "session.configured",
+            "session.state.changed",
+            "turn.started",
+            "thread.started",
+            "content.delta",
+            "item.completed",
+            "turn.completed",
+          ],
+        );
+        const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
+        assert.equal(turnCompleted?.type, "turn.completed");
+        if (turnCompleted?.type === "turn.completed") {
+          assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+          assert.equal(turnCompleted.payload.state, "completed");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
