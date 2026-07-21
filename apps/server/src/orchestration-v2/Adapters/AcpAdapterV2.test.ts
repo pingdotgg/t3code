@@ -4571,6 +4571,2166 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect(
+    "settle-without-report held turn with mid-hold ext completion does not open a wake after the injected report",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const triggerDir = yield* fileSystem.makeTempDirectoryScoped();
+        const triggerPath = path.join(triggerDir, "report-trigger");
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        const capturedMutation: {
+          current:
+            | ((mutation: {
+                readonly sessionId: string;
+                readonly taskId: string;
+                readonly status: "running" | "completed" | "failed";
+              }) => Effect.Effect<void>)
+            | null;
+        } = { current: null };
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            deferFinalizeForBackgroundWork: true,
+            enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-monitor-1" ? "task-monitor-1" : undefined,
+            extractBackgroundToolMutation: (text) =>
+              text.includes('Monitor "task-monitor-1" ended')
+                ? [{ taskId: "task-monitor-1", status: "completed", appendOutput: "" }]
+                : [],
+            extractBackgroundTaskCompletion: (toolCall) =>
+              toolCall.toolCallId === "tool-call-fetch-1"
+                ? [
+                    {
+                      taskId: "task-monitor-1",
+                      status: toolCall.status === "completed" ? "completed" : "running",
+                      appendOutput: toolCall.status === "completed" ? "MONITOR_LISTING_TOKEN" : "",
+                    },
+                  ]
+                : [],
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                capturedMutation.current = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: {
+                T3_ACP_EMIT_POST_SETTLE_MONITOR_FLOW: "1",
+                T3_ACP_INJECTED_REPORT_TRIGGER_PATH: triggerPath,
+              },
+              protocolEvents,
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-settle-hold-ext-complete-no-wake");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-settle-hold-ext-complete-no-wake",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+        );
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+
+        let reportSeen = false;
+        const trackReport = (event: ProviderAdapterV2Event): void => {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text.includes("MONITOR_REPORT_TOKEN")
+          ) {
+            reportSeen = true;
+          }
+        };
+        let hydrated = false;
+        while (!hydrated) {
+          const event = yield* Queue.take(events);
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "completed" &&
+            (event.turnItem.output ?? "").includes("MONITOR_LISTING_TOKEN")
+          ) {
+            hydrated = true;
+          }
+        }
+        // Settled-held window: prompt returned, deferred finalize is holding for
+        // the injected report. An x.ai/task_completed ext mutation must not arm
+        // midTurnUnreported and open a wake after the report streams.
+        const applyMutation = capturedMutation.current;
+        if (applyMutation === null) {
+          return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+        }
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-1",
+          status: "completed",
+        });
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "ext completion during the settled-held window must not offer mid-hold",
+        );
+
+        yield* TestClock.adjust("3 seconds");
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        let drained = yield* Queue.poll(events);
+        while (Option.isSome(drained)) {
+          trackReport(drained.value);
+          assert.notEqual(
+            drained.value.type,
+            "turn.terminal",
+            "deferred finalize must hold while the injected-turn report is owed",
+          );
+          drained = yield* Queue.poll(events);
+        }
+
+        yield* fileSystem.writeFileString(triggerPath, "go");
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) =>
+              event.direction === "incoming" &&
+              event.stage === "raw" &&
+              typeof event.payload === "string" &&
+              event.payload.includes("MONITOR_REPORT_TOKEN"),
+          ),
+          Stream.runHead,
+        );
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+
+        let terminalStatus: string | null = null;
+        while (terminalStatus === null) {
+          const event = yield* Queue.take(events);
+          trackReport(event);
+          if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+            terminalStatus = event.status;
+          }
+        }
+        assert.equal(terminalStatus, "completed");
+        assert.isTrue(
+          reportSeen,
+          "the injected-turn report must project before the turn finalizes",
+        );
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "settle-without-report with mid-hold ext completion must not open a wake after the report streams",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
+    "pre-settle ext completion arm is cleared when the injected report streams into the held turn",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const capturedMutation: {
+          current:
+            | ((mutation: {
+                readonly sessionId: string;
+                readonly taskId: string;
+                readonly status: "running" | "completed" | "failed";
+              }) => Effect.Effect<void>)
+            | null;
+        } = { current: null };
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            deferFinalizeForBackgroundWork: true,
+            enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-monitor-1" ? "task-monitor-1" : undefined,
+            extractBackgroundToolMutation: (text) =>
+              text.includes('Monitor "task-monitor-1" ended')
+                ? [{ taskId: "task-monitor-1", status: "completed", appendOutput: "" }]
+                : [],
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                capturedMutation.current = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () => Deferred.await(promptGate),
+              }),
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-pre-settle-arm-cleared-by-report");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-pre-settle-arm-cleared-by-report",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.isDefined(sessionUpdateHandler);
+        const applyMutation = capturedMutation.current;
+        if (applyMutation === null) {
+          return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+        }
+
+        // Start a monitor mid-turn; leave it unhandled (no get_command).
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-monitor-1",
+            title: "Monitor: pre-settle complete",
+            kind: "execute",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-monitor-1",
+            status: "in_progress",
+          },
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-1",
+          status: "running",
+        });
+        // Completion ext PRE-settle: arms midTurnUnreportedCompletedTaskIds.
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-1",
+          status: "completed",
+        });
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "pre-settle unhandled completion must not offer while the turn is active",
+        );
+
+        // Settle without reporting. Tool stays in_progress so deferred finalize
+        // holds the turn open for the injected report.
+        yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "settle must hold for deferred background work; midTurn alone must not offer mid-hold",
+        );
+
+        // Injected-turn end notice arms pendingInjectedReport on the held turn.
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: {
+              type: "text",
+              text: 'Monitor "task-monitor-1" ended: [monitor ended: exit 0]',
+            },
+          },
+        });
+        // Injected report streams into the held turn; must clear the pre-settle
+        // midTurn arm so finalize does not open a duplicate wake.
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Monitor finished. MONITOR_REPORT_TOKEN" },
+          },
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        let reportSeen = false;
+        const trackReport = (event: ProviderAdapterV2Event): void => {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text.includes("MONITOR_REPORT_TOKEN")
+          ) {
+            reportSeen = true;
+          }
+          if (
+            event.type === "message.updated" &&
+            event.message.text.includes("MONITOR_REPORT_TOKEN")
+          ) {
+            reportSeen = true;
+          }
+        };
+        let drained = yield* Queue.poll(events);
+        while (Option.isSome(drained)) {
+          trackReport(drained.value);
+          assert.notEqual(
+            drained.value.type,
+            "turn.terminal",
+            "turn must stay open while hydration hold / quiet window remain",
+          );
+          drained = yield* Queue.poll(events);
+        }
+        assert.isTrue(reportSeen, "injected report must project into the held turn");
+
+        // Hydration safety (60s) force-completes the monitor tool, then the 3s
+        // quiet window finalizes. No TaskOutput path: that would also clear
+        // midTurn and hide the agent_message_chunk consumption site under test.
+        yield* TestClock.adjust("60 seconds");
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        let terminalStatus: string | null = null;
+        while (terminalStatus === null) {
+          const event = yield* Queue.take(events);
+          trackReport(event);
+          if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+            terminalStatus = event.status;
+          }
+        }
+        assert.equal(terminalStatus, "completed");
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "pre-settle arm must be cleared when the injected report streams; no duplicate wake",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
+    "staggered pre-settle completion keeps midTurn marks until last background task ends post-finalize",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const capturedMutation: {
+          current:
+            | ((mutation: {
+                readonly sessionId: string;
+                readonly taskId: string;
+                readonly status: "running" | "completed" | "failed";
+              }) => Effect.Effect<void>)
+            | null;
+        } = { current: null };
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (toolCall) => {
+              if (toolCall.toolCallId === "tool-call-monitor-a") return "task-monitor-a";
+              if (toolCall.toolCallId === "tool-call-monitor-b") return "task-monitor-b";
+              return undefined;
+            },
+            extractBackgroundToolMutation: (text) => {
+              if (text.includes('Monitor "task-monitor-a" ended')) {
+                return [{ taskId: "task-monitor-a", status: "completed", appendOutput: "" }];
+              }
+              if (text.includes('Monitor "task-monitor-b" ended')) {
+                return [{ taskId: "task-monitor-b", status: "completed", appendOutput: "" }];
+              }
+              return [];
+            },
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                capturedMutation.current = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () => Deferred.await(promptGate),
+              }),
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-staggered-midturn-keep-until-last");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-staggered-midturn-keep-until-last",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.isDefined(sessionUpdateHandler);
+        const applyMutation = capturedMutation.current;
+        if (applyMutation === null) {
+          return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+        }
+
+        // Register monitors A and B in-turn; leave both unhandled.
+        for (const [toolCallId, title] of [
+          ["tool-call-monitor-a", "Monitor: staggered A"],
+          ["tool-call-monitor-b", "Monitor: staggered B"],
+        ] as const) {
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId,
+              title,
+              kind: "execute",
+              status: "pending",
+              rawInput: {},
+            },
+          });
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "in_progress",
+            },
+          });
+        }
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-a",
+          status: "running",
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-b",
+          status: "running",
+        });
+        // A completes pre-settle while unhandled: arms midTurnUnreportedCompletedTaskIds.
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-a",
+          status: "completed",
+        });
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "pre-settle unhandled completion must not offer while the turn is active",
+        );
+
+        // Turn settles and finalizes with B still running: no offer at finalize
+        // (running set non-empty), but marks must be kept for the later end.
+        yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        let terminalStatus: string | null = null;
+        while (terminalStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+            terminalStatus = event.status;
+          }
+        }
+        assert.equal(terminalStatus, "completed");
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "finalize must not offer while B is still running",
+        );
+
+        // B ends post-finalize via mutation-only end-notice (fails
+        // acpPostSettleWakeEvidence: extractBackgroundToolMutation matches).
+        // Without kept midTurn marks this path would neither buffer nor offer.
+        const bEndNotice = {
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "user_message_chunk" as const,
+            content: {
+              type: "text" as const,
+              text: 'Monitor "task-monitor-b" ended: [monitor ended: exit 0]',
+            },
+          },
+        };
+        assert.isFalse(
+          acpPostSettleWakeEvidence(bEndNotice, {
+            extractBackgroundToolMutation: (text) =>
+              text.includes('Monitor "task-monitor-b" ended')
+                ? [{ taskId: "task-monitor-b", status: "completed", appendOutput: "" }]
+                : [],
+          }),
+          "mutation-only end-notice must not count as post-settle wake evidence",
+        );
+        yield* sessionUpdateHandler!(bEndNotice);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.lengthOf(
+          continuationRequests,
+          1,
+          "exactly one continuation when the last running task ends post-finalize with kept midTurn marks",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
+    "staggered pre-settle completion does not keep midTurn marks when the turn is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const capturedMutation: {
+          current:
+            | ((mutation: {
+                readonly sessionId: string;
+                readonly taskId: string;
+                readonly status: "running" | "completed" | "failed";
+              }) => Effect.Effect<void>)
+            | null;
+        } = { current: null };
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            // Hold finalize after prompt settle while monitor tools stay open so
+            // interrupt lands on the settled-soft path (cancel need not race the
+            // hang prompt).
+            deferFinalizeForBackgroundWork: true,
+            enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (toolCall) => {
+              if (toolCall.toolCallId === "tool-call-monitor-a") return "task-monitor-a";
+              if (toolCall.toolCallId === "tool-call-monitor-b") return "task-monitor-b";
+              return undefined;
+            },
+            extractBackgroundToolMutation: (text) => {
+              if (text.includes('Monitor "task-monitor-a" ended')) {
+                return [{ taskId: "task-monitor-a", status: "completed", appendOutput: "" }];
+              }
+              if (text.includes('Monitor "task-monitor-b" ended')) {
+                return [{ taskId: "task-monitor-b", status: "completed", appendOutput: "" }];
+              }
+              return [];
+            },
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                capturedMutation.current = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () => Deferred.await(promptGate),
+              }),
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-staggered-midturn-clear-on-interrupt");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-staggered-midturn-clear-on-interrupt",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.isDefined(sessionUpdateHandler);
+        const applyMutation = capturedMutation.current;
+        if (applyMutation === null) {
+          return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+        }
+
+        for (const [toolCallId, title] of [
+          ["tool-call-monitor-a", "Monitor: staggered interrupt A"],
+          ["tool-call-monitor-b", "Monitor: staggered interrupt B"],
+        ] as const) {
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId,
+              title,
+              kind: "execute",
+              status: "pending",
+              rawInput: {},
+            },
+          });
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "in_progress",
+            },
+          });
+        }
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-a",
+          status: "running",
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-b",
+          status: "running",
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-a",
+          status: "completed",
+        });
+        assert.lengthOf(continuationRequests, 0);
+
+        // Settle while B's tool row still open: deferred finalize holds the
+        // turn. Interrupt then takes the settled-soft path.
+        yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "settle must hold for deferred background tools; no mid-hold offer",
+        );
+
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        yield* runtime.interruptTurn({ providerThread, providerTurnId });
+
+        let terminalStatus: string | null = null;
+        while (terminalStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+            terminalStatus = event.status;
+          }
+        }
+        assert.equal(terminalStatus, "interrupted");
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "interrupted finalize must not offer a continuation",
+        );
+
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: {
+              type: "text",
+              text: 'Monitor "task-monitor-b" ended: [monitor ended: exit 0]',
+            },
+          },
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "interrupted turns must clear midTurn marks; B ending post-finalize must not offer",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
+    "two-turn in-turn monitors never open a wake run or retain turn-1 injected-turn ack chatter",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const promptGates: Array<Deferred.Deferred<EffectAcpSchema.PromptResponse, never>> = [];
+        const capturedMutation: {
+          current:
+            | ((mutation: {
+                readonly sessionId: string;
+                readonly taskId: string;
+                readonly status: "running" | "completed" | "failed";
+              }) => Effect.Effect<void>)
+            | null;
+        } = { current: null };
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (toolCall) => {
+              if (toolCall.toolCallId === "tool-call-monitor-1") return "task-monitor-1";
+              if (toolCall.toolCallId === "tool-call-monitor-2") return "task-monitor-2";
+              return undefined;
+            },
+            extractBackgroundToolMutation: (text) => {
+              if (text.includes('Monitor "task-monitor-1" ended')) {
+                return [{ taskId: "task-monitor-1", status: "completed", appendOutput: "" }];
+              }
+              if (text.includes('Monitor "task-monitor-2" ended')) {
+                return [{ taskId: "task-monitor-2", status: "completed", appendOutput: "" }];
+              }
+              return [];
+            },
+            extractBackgroundTaskCompletion: (toolCall) => {
+              if (toolCall.toolCallId === "tool-call-fetch-1") {
+                return [
+                  {
+                    taskId: "task-monitor-1",
+                    status: toolCall.status === "completed" ? "completed" : "running",
+                    appendOutput: toolCall.status === "completed" ? "MONITOR_LISTING_TOKEN" : "",
+                  },
+                ];
+              }
+              if (toolCall.toolCallId === "tool-call-fetch-2") {
+                return [
+                  {
+                    taskId: "task-monitor-2",
+                    status: toolCall.status === "completed" ? "completed" : "running",
+                    appendOutput: toolCall.status === "completed" ? "MONITOR_LISTING_TOKEN_2" : "",
+                  },
+                ];
+              }
+              return [];
+            },
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                capturedMutation.current = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    const gate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+                    promptGates.push(gate);
+                    return yield* Deferred.await(gate);
+                  }),
+              }),
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-multiturn-in-turn-monitor-no-wake");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-multiturn-in-turn-monitor-no-wake",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        if (runtime.hasPendingBackgroundWork === undefined) {
+          return yield* Effect.die(
+            "ACP runtime must expose hasPendingBackgroundWork when post-settle continuation is enabled.",
+          );
+        }
+        const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+          )
+          .pipe(Effect.forkScoped);
+        while (promptGates.length < 1) {
+          yield* Effect.yieldNow;
+        }
+        assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
+        const applyMutation = capturedMutation.current;
+        if (applyMutation === null) {
+          return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+        }
+
+        // Turn 1: in-turn monitor + get_command hydrate + report.
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-monitor-1",
+            title: "Monitor: first turn",
+            kind: "execute",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-monitor-1",
+            status: "in_progress",
+          },
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-1",
+          status: "running",
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-fetch-1",
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "pending",
+            rawInput: { task_id: "task-monitor-1" },
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-fetch-1",
+            status: "completed",
+            rawOutput: { output: "MONITOR_LISTING_TOKEN" },
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Monitor listing ready in-turn." },
+          },
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-1",
+          status: "completed",
+        });
+        assert.lengthOf(continuationRequests, 0);
+
+        yield* Deferred.succeed(promptGates[0]!, { stopReason: "end_turn" });
+        const firstProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        let firstTerminal: string | null = null;
+        while (firstTerminal === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) {
+            firstTerminal = event.status;
+          }
+        }
+        assert.equal(firstTerminal, "completed");
+
+        // Post-finalize injected monitor-event + ack chatter (live Grok CLI path).
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: {
+              type: "text",
+              text: '<monitor-event taskId="task-monitor-1">Monitor "task-monitor-1" ended</monitor-event>',
+            },
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: {
+              type: "text",
+              text: "That monitor event is the same run I already summarized.",
+            },
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "That monitor event is the same run I already summarized above.",
+            },
+          },
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "turn-1 injected-turn acks must not open a continuation",
+        );
+        assert.isFalse(
+          yield* hasPendingBackgroundWork,
+          "turn-1 injected-turn ack chatter must not remain as wake buffer evidence",
+        );
+
+        // Turn 2: second in-turn monitor; mid-turn lifecycle must not wake.
+        yield* runtime
+          .startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 2,
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        while (promptGates.length < 2) {
+          yield* Effect.yieldNow;
+        }
+        if (sessionUpdateHandler === undefined || capturedMutation.current === null) {
+          return yield* Effect.die("extensions and session handler must be wired for turn 2");
+        }
+
+        yield* sessionUpdateHandler({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-monitor-2",
+            title: "Monitor: second turn",
+            kind: "execute",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* sessionUpdateHandler({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-monitor-2",
+            status: "in_progress",
+          },
+        });
+        yield* capturedMutation.current({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-2",
+          status: "running",
+        });
+        yield* sessionUpdateHandler({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-fetch-2",
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "pending",
+            rawInput: { task_id: "task-monitor-2" },
+          },
+        });
+        yield* sessionUpdateHandler({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-fetch-2",
+            status: "completed",
+            rawOutput: { output: "MONITOR_LISTING_TOKEN_2" },
+          },
+        });
+        yield* sessionUpdateHandler({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Second monitor listing ready in-turn." },
+          },
+        });
+        yield* capturedMutation.current({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-2",
+          status: "completed",
+        });
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "mid-turn task_completed for an in-turn-handled monitor must not open a wake run",
+        );
+
+        yield* Deferred.succeed(promptGates[1]!, { stopReason: "end_turn" });
+        const secondProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:2",
+        });
+        let secondTerminal: string | null = null;
+        while (secondTerminal === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === secondProviderTurnId) {
+            secondTerminal = event.status;
+          }
+        }
+        assert.equal(secondTerminal, "completed");
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "no continuation must be offered across the multiturn in-turn monitor sequence",
+        );
+        assert.isFalse(
+          yield* hasPendingBackgroundWork,
+          "wake buffer must not retain turn-1 or turn-2 in-turn-handled ack residue",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("mid-turn completed mutation defers offer until finalize only when unhandled", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const continuationRequests: Array<ProviderContinuationRequest> = [];
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptGates: Array<Deferred.Deferred<EffectAcpSchema.PromptResponse, never>> = [];
+      const capturedMutation: {
+        current:
+          | ((mutation: {
+              readonly sessionId: string;
+              readonly taskId: string;
+              readonly status: "running" | "completed" | "failed";
+            }) => Effect.Effect<void>)
+          | null;
+      } = { current: null };
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          extractBackgroundTaskId: (toolCall) =>
+            toolCall.toolCallId === "tool-call-monitor-unhandled"
+              ? "task-monitor-unhandled"
+              : toolCall.toolCallId === "tool-call-monitor-handled"
+                ? "task-monitor-handled"
+                : undefined,
+          extractBackgroundTaskCompletion: (toolCall) =>
+            toolCall.toolCallId === "tool-call-fetch-handled"
+              ? [
+                  {
+                    taskId: "task-monitor-handled",
+                    status: toolCall.status === "completed" ? "completed" : "running",
+                    appendOutput: toolCall.status === "completed" ? "HANDLED_LISTING" : "",
+                  },
+                ]
+              : [],
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              capturedMutation.current = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const gate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+                  promptGates.push(gate);
+                  return yield* Deferred.await(gate);
+                }),
+            }),
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              continuationRequests.push(request);
+            }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-mid-turn-dirty-wake-buffer");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-acp-mid-turn-dirty-wake-buffer",
+        ),
+        modelSelection,
+        runtimePolicy,
+      });
+      if (runtime.hasPendingBackgroundWork === undefined) {
+        return yield* Effect.die(
+          "ACP runtime must expose hasPendingBackgroundWork when post-settle continuation is enabled.",
+        );
+      }
+      const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      // Seed turn: complete promptly, then dirty the wake buffer with a
+      // thought-only frame (buffers, no offer).
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      while (promptGates.length < 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* Deferred.succeed(promptGates[0]!, { stopReason: "end_turn" });
+      const firstProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:1",
+      });
+      let firstTerminal: string | null = null;
+      while (firstTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) {
+          firstTerminal = event.status;
+        }
+      }
+      assert.equal(firstTerminal, "completed");
+      assert.isDefined(sessionUpdateHandler);
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "stale wake residue from prior turn" },
+        },
+      });
+      assert.isTrue(yield* hasPendingBackgroundWork, "thought residue must dirty the wake buffer");
+      assert.lengthOf(continuationRequests, 0);
+
+      // Active un-finalized turn 2: user-turn start clears prior residue.
+      yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      while (promptGates.length < 2) {
+        yield* Effect.yieldNow;
+      }
+      assert.isFalse(
+        yield* hasPendingBackgroundWork,
+        "user-turn start must drop prior-turn wake residue",
+      );
+      const applyMutation = capturedMutation.current;
+      if (applyMutation === null || sessionUpdateHandler === undefined) {
+        return yield* Effect.die("extensions and session handler must be wired for turn 2");
+      }
+
+      // Unhandled monitor: mid-turn complete must not offer while active.
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-monitor-unhandled",
+          title: "Monitor: unhandled",
+          kind: "execute",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-monitor-unhandled",
+          status: "in_progress",
+        },
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-unhandled",
+        status: "running",
+      });
+      // Re-seed dirty wakeBuffer while the turn is still active by routing a
+      // post-settle-style frame is impossible (active context). Defect B is
+      // covered by the mid-turn unreported set: completion lands mid-turn
+      // with empty buffer and must still not offer until finalize.
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-unhandled",
+        status: "completed",
+      });
+      assert.lengthOf(
+        continuationRequests,
+        0,
+        "mid-turn completed mutation must not offer while the root turn is active",
+      );
+
+      yield* Deferred.succeed(promptGates[1]!, { stopReason: "end_turn" });
+      const secondProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:2",
+      });
+      let secondTerminal: string | null = null;
+      while (secondTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === secondProviderTurnId) {
+          secondTerminal = event.status;
+        }
+      }
+      assert.equal(secondTerminal, "completed");
+      assert.lengthOf(
+        continuationRequests,
+        1,
+        "post-finalize must offer when mid-turn completion was never handled in-turn",
+      );
+
+      // Third turn: hydrate in-turn before lifecycle complete; no offer.
+      const firstOffer = continuationRequests[0]!;
+      if (firstOffer.clearIfCurrent !== undefined) {
+        yield* firstOffer.clearIfCurrent();
+      }
+      continuationRequests.length = 0;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 3,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      while (promptGates.length < 3) {
+        yield* Effect.yieldNow;
+      }
+      if (sessionUpdateHandler === undefined || capturedMutation.current === null) {
+        return yield* Effect.die("handler must remain wired for turn 3");
+      }
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-monitor-handled",
+          title: "Monitor: handled",
+          kind: "execute",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-monitor-handled",
+          status: "in_progress",
+        },
+      });
+      yield* capturedMutation.current({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-handled",
+        status: "running",
+      });
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-fetch-handled",
+          title: "get_command_or_subagent_output",
+          kind: "other",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-fetch-handled",
+          status: "completed",
+          rawOutput: { output: "HANDLED_LISTING" },
+        },
+      });
+      yield* capturedMutation.current({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-handled",
+        status: "completed",
+      });
+      assert.lengthOf(continuationRequests, 0, "handled mid-turn completion must not offer");
+      yield* Deferred.succeed(promptGates[2]!, { stopReason: "end_turn" });
+      const thirdProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:3",
+      });
+      let thirdTerminal: string | null = null;
+      while (thirdTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === thirdProviderTurnId) {
+          thirdTerminal = event.status;
+        }
+      }
+      assert.equal(thirdTerminal, "completed");
+      assert.lengthOf(
+        continuationRequests,
+        0,
+        "post-finalize must not offer when the mid-turn completion was handled in-turn",
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
+    "mid-turn unhandled background completion still offers exactly one continuation after finalize",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const capturedMutation: {
+          current:
+            | ((mutation: {
+                readonly sessionId: string;
+                readonly taskId: string;
+                readonly status: "running" | "completed" | "failed";
+              }) => Effect.Effect<void>)
+            | null;
+        } = { current: null };
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-monitor-late" ? "task-monitor-late" : undefined,
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                capturedMutation.current = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+              protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () => Deferred.await(promptGate),
+              }),
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-mid-turn-unhandled-offers-after-finalize");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-mid-turn-unhandled-offers-after-finalize",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+          )
+          .pipe(Effect.forkScoped);
+        // Wait until the wrapped prompt is awaiting the gate.
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        assert.isDefined(sessionUpdateHandler);
+        const applyMutation = capturedMutation.current;
+        if (applyMutation === null) {
+          return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+        }
+
+        // Start a monitor mid-turn; do not hydrate via get_command (unhandled).
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-monitor-late",
+            title: "Monitor: late complete",
+            kind: "execute",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-monitor-late",
+            status: "in_progress",
+          },
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-late",
+          status: "running",
+        });
+        yield* applyMutation({
+          sessionId: "mock-session-1",
+          taskId: "task-monitor-late",
+          status: "completed",
+        });
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "mid-turn unhandled completion must not offer while the turn is active",
+        );
+
+        yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        let terminalStatus: string | null = null;
+        while (terminalStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+            terminalStatus = event.status;
+          }
+        }
+        assert.equal(terminalStatus, "completed");
+        assert.lengthOf(
+          continuationRequests,
+          1,
+          "exactly one continuation must be offered after finalize for mid-turn unhandled completion",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("empty-drain continuation turn waits the quiet window so late frames can attach", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const continuationRequests: Array<ProviderContinuationRequest> = [];
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const capturedMutation: {
+        current:
+          | ((mutation: {
+              readonly sessionId: string;
+              readonly taskId: string;
+              readonly status: "running" | "completed" | "failed";
+            }) => Effect.Effect<void>)
+          | null;
+      } = { current: null };
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          // Quiet window on empty-drain continuation; persistent so the root
+          // monitor does not pin deferred finalize after mid-turn complete.
+          deferFinalizeForBackgroundWork: true,
+          enablePostSettleContinuation: true,
+          extractBackgroundTaskId: (toolCall) =>
+            toolCall.toolCallId === "tool-call-monitor-late" ? "task-monitor-late" : undefined,
+          isPersistentBackgroundTool: () => true,
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              capturedMutation.current = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () => Deferred.await(promptGate),
+            }),
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              continuationRequests.push(request);
+            }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-empty-drain-continuation-quiet");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-acp-empty-drain-continuation-quiet",
+        ),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.isDefined(sessionUpdateHandler);
+      const applyMutation = capturedMutation.current;
+      if (applyMutation === null) {
+        return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+      }
+
+      // Mid-turn unhandled completion arms midTurn and offers after finalize
+      // with an empty wakeBuffer (midTurn-only offer).
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-monitor-late",
+          title: "Monitor: late complete",
+          kind: "execute",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-monitor-late",
+          status: "in_progress",
+        },
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-late",
+        status: "running",
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-late",
+        status: "completed",
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      const rootProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:1",
+      });
+      let rootTerminal: string | null = null;
+      while (rootTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === rootProviderTurnId) {
+          rootTerminal = event.status;
+        }
+      }
+      assert.equal(rootTerminal, "completed");
+      assert.lengthOf(continuationRequests, 1, "midTurn-only evidence must offer one continuation");
+
+      // Continuation attach with empty wakeBuffer: must schedule the quiet
+      // window rather than finalizing immediately blank.
+      const rootInput = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        ordinal: 2,
+      });
+      yield* runtime
+        .startTurn({
+          ...rootInput,
+          message: {
+            ...rootInput.message,
+            createdBy: "agent",
+            creationSource: "provider",
+            text: "Background task completed.",
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const continuationProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:2",
+      });
+      // Still open: no terminal yet (quiet window).
+      let polled = yield* Queue.poll(events);
+      while (Option.isSome(polled)) {
+        assert.notEqual(
+          polled.value.type === "turn.terminal" &&
+            polled.value.providerTurnId === continuationProviderTurnId
+            ? "turn.terminal"
+            : "",
+          "turn.terminal",
+          "empty-drain continuation must not finalize immediately",
+        );
+        polled = yield* Queue.poll(events);
+      }
+
+      // Late wake frame during the quiet window attaches to this run.
+      assert.isDefined(sessionUpdateHandler);
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "LATE_WAKE_FRAME_TOKEN" },
+        },
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      // Partial advance keeps the window open; full 3s after rearm finalizes.
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+      polled = yield* Queue.poll(events);
+      let lateFrameSeen = false;
+      while (Option.isSome(polled)) {
+        if (
+          polled.value.type === "turn_item.updated" &&
+          polled.value.turnItem.type === "assistant_message" &&
+          polled.value.turnItem.text.includes("LATE_WAKE_FRAME_TOKEN")
+        ) {
+          lateFrameSeen = true;
+        }
+        if (
+          polled.value.type === "turn.terminal" &&
+          polled.value.providerTurnId === continuationProviderTurnId
+        ) {
+          assert.fail("continuation must not finalize before the quiet window elapses");
+        }
+        polled = yield* Queue.poll(events);
+      }
+      assert.isTrue(lateFrameSeen, "late wake frame must attach to the continuation run");
+
+      yield* TestClock.adjust("3 seconds");
+      let continuationTerminal: string | null = null;
+      while (continuationTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === continuationProviderTurnId) {
+          continuationTerminal = event.status;
+        }
+      }
+      assert.equal(continuationTerminal, "completed");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("empty-drain continuation turn finalizes after the quiet window with no frames", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const continuationRequests: Array<ProviderContinuationRequest> = [];
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const capturedMutation: {
+        current:
+          | ((mutation: {
+              readonly sessionId: string;
+              readonly taskId: string;
+              readonly status: "running" | "completed" | "failed";
+            }) => Effect.Effect<void>)
+          | null;
+      } = { current: null };
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          deferFinalizeForBackgroundWork: true,
+          enablePostSettleContinuation: true,
+          extractBackgroundTaskId: (toolCall) =>
+            toolCall.toolCallId === "tool-call-monitor-late" ? "task-monitor-late" : undefined,
+          isPersistentBackgroundTool: () => true,
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              capturedMutation.current = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () => Deferred.await(promptGate),
+            }),
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              continuationRequests.push(request);
+            }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-empty-drain-continuation-no-wedge");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-acp-empty-drain-continuation-no-wedge",
+        ),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.isDefined(sessionUpdateHandler);
+      const applyMutation = capturedMutation.current;
+      if (applyMutation === null) {
+        return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
+      }
+
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-call-monitor-late",
+          title: "Monitor: late complete",
+          kind: "execute",
+          status: "pending",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-call-monitor-late",
+          status: "in_progress",
+        },
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-late",
+        status: "running",
+      });
+      yield* applyMutation({
+        sessionId: "mock-session-1",
+        taskId: "task-monitor-late",
+        status: "completed",
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      const rootProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:1",
+      });
+      let rootTerminal: string | null = null;
+      while (rootTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === rootProviderTurnId) {
+          rootTerminal = event.status;
+        }
+      }
+      assert.equal(rootTerminal, "completed");
+      assert.lengthOf(continuationRequests, 1);
+
+      const rootInput = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        ordinal: 2,
+      });
+      yield* runtime
+        .startTurn({
+          ...rootInput,
+          message: {
+            ...rootInput.message,
+            createdBy: "agent",
+            creationSource: "provider",
+            text: "Background task completed.",
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const continuationProviderTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: "mock-session-1:turn:2",
+      });
+      // No frames: quiet window must still finalize (no wedge).
+      yield* TestClock.adjust("3 seconds");
+      let continuationTerminal: string | null = null;
+      while (continuationTerminal === null) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal" && event.providerTurnId === continuationProviderTurnId) {
+          continuationTerminal = event.status;
+        }
+      }
+      assert.equal(continuationTerminal, "completed");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("restarts the ACP child process before the next prompt after interrupt", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
