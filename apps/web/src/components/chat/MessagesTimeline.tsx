@@ -2395,6 +2395,7 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
 }
 
 function T3CodeToolLogo({ className }: { className?: string }) {
+  const logoUrl = `${import.meta.env.BASE_URL}apple-touch-icon.png`;
   return (
     <span
       className={cn(
@@ -2403,7 +2404,7 @@ function T3CodeToolLogo({ className }: { className?: string }) {
       )}
       title="T3 Code MCP tool"
     >
-      <img alt="" aria-hidden="true" className="size-4 object-cover" src="/apple-touch-icon.png" />
+      <img alt="" aria-hidden="true" className="size-4 object-cover" src={logoUrl} />
     </span>
   );
 }
