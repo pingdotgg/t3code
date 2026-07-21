@@ -83,9 +83,9 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
-    "./favicon": {
-      "types": "./src/favicon.ts",
-      "import": "./src/favicon.ts"
+    "./t3McpToolPresentation": {
+      "types": "./src/t3McpToolPresentation.ts",
+      "import": "./src/t3McpToolPresentation.ts"
     },
     "./Struct": {
       "types": "./src/Struct.ts",
@@ -259,10 +259,6 @@
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
     },
-    "./usageLimits": {
-      "types": "./src/usageLimits.ts",
-      "import": "./src/usageLimits.ts"
-    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
@@ -270,14 +266,6 @@
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
-    },
-    "./nodeSqliteClient": {
-      "types": "./src/nodeSqliteClient.ts",
-      "import": "./src/nodeSqliteClient.ts"
-    },
-    "./hostClassification": {
-      "types": "./src/hostClassification.ts",
-      "import": "./src/hostClassification.ts"
     }
   },
   "scripts": {
