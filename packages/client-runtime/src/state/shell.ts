@@ -124,18 +124,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   }));
   const setSynchronizing = invalidateMembership.pipe(Effect.andThen(setSynchronizingState));
-  const setReady = Effect.gen(function* () {
-    const current = yield* SubscriptionRef.get(state);
-    if (current.status === "live") {
-      return;
-    }
-    yield* invalidateMembership;
-    yield* SubscriptionRef.set(state, {
-      ...current,
-      status: "synchronizing" as const,
-      error: Option.none(),
-    });
-  });
+  const setReady = SubscriptionRef.update(state, (current) =>
+    current.status === "live"
+      ? current
+      : {
+          ...current,
+          status: "synchronizing" as const,
+          error: Option.none(),
+        },
+  );
   const setStreamError = (error: unknown) =>
     Ref.set(awaitingCompletion, false).pipe(
       Effect.andThen(invalidateMembership),
