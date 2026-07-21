@@ -1122,14 +1122,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     uuid: "00000000-0000-4000-8000-000000000101",
     session_id: WAKE_NATIVE_SESSION,
   });
-  const makeResultFrame = (input: { readonly uuid: string; readonly result: string }) =>
+  const makeResultFrame = (input: {
+    readonly uuid: string;
+    readonly result: string;
+    readonly numTurns?: number;
+    readonly origin?: { readonly kind: "task-notification" };
+  }) =>
     claudeSdkFrame({
       type: "result",
       subtype: "success",
       duration_ms: 10,
       duration_api_ms: 10,
       is_error: false,
-      num_turns: 1,
+      num_turns: input.numTurns ?? 1,
       result: input.result,
       stop_reason: "end_turn",
       total_cost_usd: 0,
@@ -1143,6 +1148,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       permission_denials: [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
     });
   const turnOneResult = makeResultFrame({
     uuid: "00000000-0000-4000-8000-000000000102",
@@ -1161,6 +1167,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const wakeResult = makeResultFrame({
     uuid: "00000000-0000-4000-8000-000000000104",
     result: WAKE_RESULT_TEXT,
+    origin: { kind: "task-notification" },
+  });
+  const STALE_TASK_NOTIFICATION_RESULT_TEXT =
+    "Stale task-notification origin text that must not appear.";
+  const staleTaskNotificationResult = makeResultFrame({
+    uuid: "00000000-0000-4000-8000-000000000106",
+    result: STALE_TASK_NOTIFICATION_RESULT_TEXT,
+    numTurns: 0,
+    origin: { kind: "task-notification" },
   });
 
   const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
@@ -1435,6 +1450,150 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.isFalse(
           harness.events.some((event) => JSON.stringify(event).includes(WAKE_TASK_ID)),
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("ignores a live task-notification origin result during a normal user turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const probeAssistantText = "Probe after stale task-notification result.";
+        const recoveryAssistantText = "Recovered after the interrupt; continuing.";
+        const staleResultText = STALE_TASK_NOTIFICATION_RESULT_TEXT;
+        const hasMessageText = (text: string) =>
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.text === text,
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-stale-notif-1"),
+            text: "Continue after interrupt.",
+            attachments: [],
+          }),
+        );
+        yield* awaitUntil(() => harness.offeredMessages.length === 1, "recovery prompt offered");
+
+        // Live interleaving seen after interrupt recovery: a stale stopped
+        // task_notification and its task-notification-origin result arrive
+        // before the real root assistant stream.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "task-stale-stopped",
+            status: "stopped",
+            output_file: "/tmp/task-stale-stopped.log",
+            summary: "",
+            uuid: "00000000-0000-4000-8000-000000000107",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, staleTaskNotificationResult);
+        // Queue-ordered probe: once this assistant text is emitted, the stale
+        // origin result ahead of it has been consumed.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: probeAssistantText }],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-00000000010a",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        yield* awaitUntil(
+          () => hasMessageText(probeAssistantText),
+          "probe assistant after stale task-notification result",
+        );
+        assert.lengthOf(harness.terminalEvents(), 0);
+        assert.isFalse(hasMessageText(staleResultText));
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: recoveryAssistantText }],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000108",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000109",
+            result: recoveryAssistantText,
+          }),
+        );
+
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "user turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.isTrue(hasMessageText(recoveryAssistantText));
+        assert.isFalse(hasMessageText(staleResultText));
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("terminalizes a continuation turn from a task-notification origin wake result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-notif-origin-2a"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-notif-origin-2b"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        assert.lengthOf(harness.offeredMessages, 1);
+        assert.isTrue(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
+          ),
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
