@@ -3,13 +3,7 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type {
-  DiffFile,
-  DiffSnapshot,
-  ReviewFinding,
-  TurnDiffScope,
-  TurnId,
-} from "@t3tools/contracts";
+import type { DiffFile, DiffSnapshot, ReviewFinding, TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -46,7 +40,6 @@ import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { reviewFindingAnnotation, reviewFindingSelectedLines } from "./reviewDiffAnnotations";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
-import { DiffScopeToggle } from "./chat/DiffScopeToggle";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Badge } from "./ui/badge";
 
@@ -378,10 +371,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
+  const readyTurnDiffSummaries = useMemo(
+    () => orderedTurnDiffSummaries.filter((summary) => summary.status === "ready"),
+    [orderedTurnDiffSummaries],
+  );
 
-  const selectedTurnId = diffSearch.diffTurnId ?? null;
   const reviewSnapshot =
     activeThread?.reviewSnapshot ?? activeThread?.reviewResult?.snapshot ?? null;
+  const selectedView = diffSearch.reviewFinding ? "uncommitted" : diffSearch.diffView;
+  const selectedTurnId =
+    selectedView === undefined
+      ? (diffSearch.diffTurnId ?? readyTurnDiffSummaries[0]?.turnId ?? null)
+      : null;
+  const showReviewSnapshot = selectedView === "uncommitted";
+  const reviewSnapshotLabel =
+    reviewSnapshot?.scope.kind === "uncommitted" ? "All uncommitted" : "All branch changes";
   const reviewResult =
     activeThread?.reviewResult?.status === "parsed" ? activeThread.reviewResult : null;
   const selectedReviewFinding =
@@ -430,7 +434,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [selectedCheckpointTurnCount],
   );
   const conversationCheckpointTurnCount = useMemo(() => {
-    const turnCounts = orderedTurnDiffSummaries
+    const turnCounts = readyTurnDiffSummaries
       .map(
         (summary) =>
           summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
@@ -441,7 +445,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     const latest = Math.max(...turnCounts);
     return latest > 0 ? latest : undefined;
-  }, [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries]);
+  }, [inferredCheckpointTurnCountByTurnId, readyTurnDiffSummaries]);
   const conversationCheckpointRange = useMemo(
     () =>
       !selectedTurn && typeof conversationCheckpointTurnCount === "number"
@@ -455,13 +459,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const activeCheckpointRange = selectedTurn
     ? selectedCheckpointRange
     : conversationCheckpointRange;
-  const selectedScope = selectedTurn ? (diffSearch.diffScope ?? "snapshot") : "snapshot";
+  const selectedScope = selectedTurn ? "turn" : "snapshot";
   const conversationCacheScope = useMemo(() => {
-    if (selectedTurn || orderedTurnDiffSummaries.length === 0) {
+    if (selectedTurn || readyTurnDiffSummaries.length === 0) {
       return null;
     }
-    return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
-  }, [orderedTurnDiffSummaries, selectedTurn]);
+    return `conversation:${readyTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
+  }, [readyTurnDiffSummaries, selectedTurn]);
   const activeDiffCacheScope = selectedTurn
     ? `turn:${selectedTurn.turnId}:${selectedScope}`
     : conversationCacheScope;
@@ -475,7 +479,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       scope: selectedScope,
       cacheScope: activeDiffCacheScope,
       enabled:
-        reviewSnapshot === null &&
+        !showReviewSnapshot &&
         isGitRepo &&
         !selectedTurnRequestedButMissing &&
         !selectedTurnRangeMissing,
@@ -554,7 +558,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         : null);
 
   const selectedPatch =
-    reviewSnapshot?.diff ??
+    (showReviewSnapshot ? reviewSnapshot?.diff : undefined) ??
     (selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff);
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
@@ -767,21 +771,19 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
+        return { ...rest, diff: "1", diffView: "chat" };
       },
     });
   };
-  const setSelectedScope = (scope: TurnDiffScope) => {
-    if (!activeThread || !selectedTurnId) return;
+  const selectUncommittedChanges = () => {
+    if (!activeThread || !reviewSnapshot) return;
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
       search: (previous) => ({
         ...stripDiffSearchParams(previous),
         diff: "1",
-        diffTurnId: selectedTurnId,
-        ...(diffSearch.diffFilePath ? { diffFilePath: diffSearch.diffFilePath } : {}),
-        diffScope: scope,
+        diffView: "uncommitted",
       }),
     });
   };
@@ -893,19 +895,38 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             type="button"
             className="shrink-0 rounded-md"
             onClick={selectWholeConversation}
-            data-turn-chip-selected={selectedTurnId === null}
+            data-turn-chip-selected={selectedView === "chat"}
           >
             <div
               className={cn(
                 "rounded-md border px-2 py-1 text-left transition-colors",
-                selectedTurnId === null
+                selectedView === "chat"
                   ? "border-border bg-accent text-accent-foreground"
                   : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
               )}
             >
-              <div className="leading-tight font-medium">All turns</div>
+              <div className="leading-tight font-medium">All chat</div>
             </div>
           </button>
+          {reviewSnapshot ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-md"
+              onClick={selectUncommittedChanges}
+              data-turn-chip-selected={selectedView === "uncommitted"}
+            >
+              <div
+                className={cn(
+                  "rounded-md border px-2 py-1 text-left transition-colors",
+                  selectedView === "uncommitted"
+                    ? "border-border bg-accent text-accent-foreground"
+                    : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+                )}
+              >
+                <div className="leading-tight font-medium">{reviewSnapshotLabel}</div>
+              </div>
+            </button>
+          ) : null}
           {orderedTurnDiffSummaries.map((summary) => (
             <button
               key={summary.turnId}
@@ -940,9 +961,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 text-[length:var(--app-code-font-size)] [-webkit-app-region:no-drag]">
-        {selectedTurn && (
-          <DiffScopeToggle value={selectedScope} onChange={setSelectedScope} className="shrink-0" />
-        )}
         <ToggleGroup
           className="shrink-0"
           variant="outline"
@@ -1013,7 +1031,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
-      ) : orderedTurnDiffSummaries.length === 0 && !reviewSnapshot ? (
+      ) : readyTurnDiffSummaries.length === 0 && !showReviewSnapshot ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           No completed turns yet.
         </div>
@@ -1075,8 +1093,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     filePath !== selectedFilePath && collapsedDiffFileKeys.has(fileKey);
                   const safety = diffSafetyByPath.get(filePath);
                   const safetyLabel = diffFileSafetyLabel(safety);
-                  const lineAnnotations =
-                    reviewAnnotationsByPath.get(filePath) ?? EMPTY_REVIEW_ANNOTATIONS;
+                  const lineAnnotations = showReviewSnapshot
+                    ? (reviewAnnotationsByPath.get(filePath) ?? EMPTY_REVIEW_ANNOTATIONS)
+                    : EMPTY_REVIEW_ANNOTATIONS;
                   const selectedLines =
                     selectedReviewFinding?.location.path === filePath ? selectedReviewLines : null;
                   if (safety?.size === "unrenderable") {

@@ -46,7 +46,6 @@ import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
-import { DiffScopeToggle } from "./DiffScopeToggle";
 import { DiffStatLabel } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
@@ -67,7 +66,6 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 
@@ -768,12 +766,8 @@ function AssistantChangedFilesSectionInner({
   workspaceRoot: string | undefined;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const preferredScope = useUiStateStore((store) => store.changedFilesDiffScope);
-  const setPreferredScope = useUiStateStore((store) => store.setChangedFilesDiffScope);
-  const snapshotFiles = turnSummary.files;
   const turnFiles = turnSummary.turnFiles ?? [];
-  const selectedScope = preferredScope;
-  const visibleFiles = selectedScope === "turn" ? turnFiles : snapshotFiles;
+  const visibleFiles = turnFiles;
   const summaryStat = summarizeTurnDiffStats(visibleFiles);
   if (summaryStat.additions === 0 && summaryStat.deletions === 0) return null;
 
@@ -794,14 +788,13 @@ function AssistantChangedFilesSectionInner({
           />
         </div>
         <div className="flex items-center gap-1">
-          <DiffScopeToggle value={selectedScope} onChange={setPreferredScope} />
           <Button
             type="button"
             size="xs"
             variant="outline"
             className="size-[1.5em] p-0 text-[inherit] sm:h-[1.5em] sm:text-[inherit]"
             disabled={visibleFiles.length === 0}
-            onClick={() => onOpenTurnDiff(turnSummary.turnId, visibleFiles[0]?.path, selectedScope)}
+            onClick={() => onOpenTurnDiff(turnSummary.turnId, visibleFiles[0]?.path, "turn")}
             aria-label="View diff"
           >
             <DiffIcon className="size-[0.85em]" />
@@ -830,7 +823,7 @@ function AssistantChangedFilesSectionInner({
             files={visibleFiles}
             allDirectoriesExpanded
             resolvedTheme={resolvedTheme}
-            diffScope={selectedScope}
+            diffScope="turn"
             onOpenTurnDiff={onOpenTurnDiff}
             workspaceRoot={workspaceRoot}
           />

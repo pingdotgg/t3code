@@ -41,6 +41,28 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
+  it("parses explicit aggregate views and drops turn selection", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffView: "chat",
+        diffTurnId: "turn-1",
+        diffFilePath: "src/app.ts",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffView: "chat",
+    });
+  });
+
+  it("routes review findings to the uncommitted snapshot", () => {
+    expect(parseDiffRouteSearch({ diff: "1", reviewFinding: "finding-1" })).toEqual({
+      diff: "1",
+      diffView: "uncommitted",
+      reviewFinding: "finding-1",
+    });
+  });
+
   it("treats numeric and boolean diff toggles as open", () => {
     expect(
       parseDiffRouteSearch({
@@ -104,6 +126,8 @@ describe("buildClosedDiffRouteSearch", () => {
       diffTurnId: undefined,
       diffFilePath: undefined,
       diffScope: undefined,
+      diffView: undefined,
+      reviewFinding: undefined,
     });
   });
 });

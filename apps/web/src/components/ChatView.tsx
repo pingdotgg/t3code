@@ -3732,7 +3732,7 @@ function ChatViewBody(
     setExpandedImage(preview);
   }, []);
   const onOpenTurnDiff = useCallback(
-    (turnId: TurnId, filePath?: string, scope: TurnDiffScope = "snapshot") => {
+    (turnId: TurnId, filePath?: string, scope: TurnDiffScope = "turn") => {
       if (!isServerThread) {
         return;
       }
@@ -3749,7 +3749,7 @@ function ChatViewBody(
     (findingId: string) => {
       if (!isServerThread) return;
       onDiffPanelOpen?.();
-      updateDiffSearch({ diff: "1", reviewFinding: findingId });
+      updateDiffSearch({ diff: "1", diffView: "uncommitted", reviewFinding: findingId });
     },
     [isServerThread, onDiffPanelOpen, updateDiffSearch],
   );
