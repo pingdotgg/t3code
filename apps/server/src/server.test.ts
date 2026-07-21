@@ -5714,6 +5714,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("keeps an archived resumed thread subscription alive", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () => Effect.succeed(Option.none()),
+            getArchivedShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 7,
+                projects: [],
+                threads: [
+                  makeDefaultOrchestrationThreadShell({
+                    id: defaultThreadId,
+                    archivedAt: "2026-01-01T00:00:00.000Z",
+                  }),
+                ],
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              }),
+            getThreadDetailSnapshot: () => Effect.die("unused for resumed subscriptions"),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const firstItem = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 7,
+            requestCompletionMarker: true,
+          }).pipe(Stream.runHead),
+        ),
+      );
+
+      assert.deepEqual(Option.getOrThrow(firstItem), { kind: "synchronized" });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("buffers shell events published while the fallback snapshot loads", () =>
     Effect.gen(function* () {
       const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
