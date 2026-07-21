@@ -11,8 +11,8 @@ export interface ComposerDockContext {
 }
 
 /**
- * Align the prompt with the conversation column while the terminal continues to
- * span the full application width. This mirrors the web layout: a bounded,
+ * Align the prompt with the conversation column inside the main workspace. This
+ * mirrors the web layout: a full-height project sidebar beside a bounded,
  * centered composer with lightweight checkout context directly beneath it.
  */
 export function ComposerDock({
@@ -31,9 +31,9 @@ export function ComposerDock({
   readonly children: React.ReactNode;
 }): React.ReactNode {
   const palette = usePalette();
-  const contextRoom = Math.max(8, Math.floor(surfaceWidth / 2) - 2);
+  const contextRoom = Math.max(1, Math.floor((surfaceWidth - 1) / 2));
   return (
-    <box flexDirection="row" flexShrink={0}>
+    <box flexDirection="row" flexShrink={0} overflow="hidden">
       <box width={leftWidth} flexShrink={0} />
       <box width={mainWidth} flexDirection="column" alignItems="center" flexShrink={0}>
         <box width={surfaceWidth} flexShrink={0}>

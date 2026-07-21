@@ -129,6 +129,7 @@ export const Sidebar = React.memo(function Sidebar({
       borderColor={palette.dim}
       paddingLeft={1}
       paddingRight={1}
+      overflow="hidden"
     >
       <text>
         <strong>T3</strong>

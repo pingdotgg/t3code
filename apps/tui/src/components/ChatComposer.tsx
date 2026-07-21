@@ -322,6 +322,7 @@ export const ChatComposer = React.memo(function ChatComposer({
       <ComposerFooter
         controls={controls}
         compact={width < 64}
+        width={Math.max(1, width - 2)}
         working={working}
         answering={answering}
         hasText={reply.length > 0 || attachments.length > 0}

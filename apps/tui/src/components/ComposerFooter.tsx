@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { type ComposerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";
+import { clip } from "../format.ts";
 import { ansi, usePalette } from "../theme.ts";
 
 // The composer footer (mirrors apps/web ChatComposer): a model picker + mode
@@ -148,6 +149,7 @@ function ComposerFooterPrimaryActions({
 export const ComposerFooter = React.memo(function ComposerFooter({
   controls,
   compact = false,
+  width,
   working,
   answering,
   hasText,
@@ -161,6 +163,7 @@ export const ComposerFooter = React.memo(function ComposerFooter({
 }: {
   readonly controls: ComposerControls;
   readonly compact?: boolean;
+  readonly width: number;
   readonly working: boolean;
   /** A pending question is awaiting an answer (primary action becomes Submit). */
   readonly answering: boolean;
@@ -174,6 +177,7 @@ export const ComposerFooter = React.memo(function ComposerFooter({
   readonly onSend: () => void;
   readonly onSubmitAnswer: () => void;
 }): React.ReactNode {
+  const palette = usePalette();
   // Order mirrors the web composer footer: model → effort → access → mode on
   // the left, the primary action pushed to the right.
   const controlsRow = (
@@ -199,9 +203,25 @@ export const ComposerFooter = React.memo(function ComposerFooter({
     />
   );
   if (compact) {
+    const showOptionsHint = width >= 24;
+    const modelLabel = clip(controls.model ?? "—", Math.max(1, width - (showOptionsHint ? 18 : 8)));
     return (
       <box flexDirection="column" marginTop={1} flexShrink={0}>
-        {controlsRow}
+        <box flexDirection="row" width={width} overflow="hidden">
+          <box onMouseDown={onOpenModel} flexShrink={0}>
+            <text>
+              <span fg={palette.dim}>model </span>
+              <span fg={controls.model ? palette.text : palette.dim}>{modelLabel}</span>
+              <span fg={palette.dim}>{" ▾"}</span>
+            </text>
+          </box>
+          {showOptionsHint ? (
+            <>
+              <box flexGrow={1} />
+              <text fg={palette.dim}>^K options</text>
+            </>
+          ) : null}
+        </box>
         <box flexDirection="row" justifyContent="flex-end">
           {primary}
         </box>

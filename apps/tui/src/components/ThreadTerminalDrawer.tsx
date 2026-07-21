@@ -6,6 +6,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as React from "react";
 
 import type { TuiClient } from "../connection.ts";
+import { clip } from "../format.ts";
 import {
   encodeTerminalPaste,
   readTerminalFrame,
@@ -351,6 +352,13 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
 }): React.ReactNode {
   const palette = usePalette();
   const safeRows = Math.max(2, rows);
+  const headerHint = focused
+    ? " · ^P prompt · ^E close · ^↑/^↓ resize · ^O copy · paste ✓"
+    : " · ^P focus · ^E close";
+  const headerLabel = `Terminal · ${info.title}`;
+  const visibleHeaderLabel = clip(headerLabel, Math.max(1, cols));
+  const hintRoom = Math.max(0, cols - Bun.stringWidth(visibleHeaderLabel));
+  const visibleHint = clip(headerHint, hintRoom);
   return (
     <box
       flexDirection="column"
@@ -361,18 +369,15 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
       borderColor={focused ? palette.accent : palette.dim}
       paddingLeft={1}
       paddingRight={1}
+      overflow="hidden"
     >
       <text>
-        <span fg={focused ? palette.accent : ansi("yellow")}>{`Terminal · ${info.title}`}</span>
-        <span fg={palette.dim}>
-          {focused
-            ? "  ·  ^P prompt · ^E close · ^↑/^↓ resize · ^O copy · paste ✓"
-            : "  ·  ^P focus · ^E close"}
-        </span>
+        <span fg={focused ? palette.accent : ansi("yellow")}>{visibleHeaderLabel}</span>
+        <span fg={palette.dim}>{visibleHint}</span>
       </text>
       {/* Terminal tabs (the TUI's terminal groups): click a number to switch, ✕
           to close the active one, + to open another shell on this thread. */}
-      <box flexDirection="row" flexShrink={0}>
+      <box flexDirection="row" flexShrink={0} width={cols} overflow="hidden">
         {tabIds.map((id, index) => {
           const active = id === activeTabId;
           return (

@@ -195,6 +195,10 @@
       "types": "./src/chatList.ts",
       "import": "./src/chatList.ts"
     },
+    "./chatMessages": {
+      "types": "./src/chatMessages.ts",
+      "import": "./src/chatMessages.ts"
+    },
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"

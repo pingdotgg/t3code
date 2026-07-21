@@ -213,6 +213,87 @@ async function selectThread(
   );
 }
 
+describe("ChatView responsive shell", () => {
+  it("Given the desktop layout, the projects sidebar spans the full terminal height", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+    const lines = setup.captureCharFrame().split("\n");
+    expect(lines[27]?.[0]).toBe("╰");
+    expect(lines[27]?.[33]).toBe("╯");
+    setup.renderer.destroy();
+  });
+
+  it("Given an empty prompt, the composer presents a multiline writing surface", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+    const lines = setup.captureCharFrame().split("\n");
+    const promptRow = lines.findIndex((line) => line.includes("Ask anything"));
+    const footerRow = lines.findIndex((line) => line.includes("model gpt-5"));
+    expect(promptRow).toBeGreaterThanOrEqual(0);
+    expect(footerRow - promptRow).toBeGreaterThanOrEqual(4);
+    setup.renderer.destroy();
+  });
+
+  it("Given a narrow terminal, the sidebar auto-collapses and Find opens it off-canvas", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 72,
+      height: 24,
+    });
+    await React.act(async () => {
+      await setup.renderOnce();
+      fake.connect();
+      await setup.renderOnce();
+      await setup.flush();
+    });
+    expect(setup.captureCharFrame()).not.toContain("Projects");
+    await React.act(async () => {
+      setup.mockInput.pressKey("f", { ctrl: true });
+      await setup.renderOnce();
+    });
+    const sidebarFrame = await setup.waitForFrame((frame) => frame.includes("Search projects"));
+    expect(sidebarFrame).toContain("Projects");
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => !frame.includes("Projects"));
+    setup.renderer.destroy();
+  });
+
+  it("Given a large wrapped prompt and an open terminal, the terminal keeps a usable viewport", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      await setup.mockInput.typeText("word ".repeat(120));
+      setup.mockInput.pressKey("e", { ctrl: true });
+      await setup.renderOnce();
+    });
+    const frame = await setup.waitForFrame((current) => current.includes("Terminal · Thread one"));
+    const lines = frame.split("\n");
+    const terminalTop = lines.findIndex((line) => line.includes("Terminal · Thread one"));
+    const terminalBottom = lines.findIndex(
+      (line, index) => index > terminalTop && line.slice(34).includes("└"),
+    );
+    expect(terminalTop).toBeGreaterThanOrEqual(0);
+    expect(terminalBottom - terminalTop).toBeGreaterThanOrEqual(5);
+    expect(terminalBottom).toBeLessThan(27);
+    setup.renderer.destroy();
+  });
+});
+
 describe("ChatView source-control panel", () => {
   it("Given a narrow terminal, when the user opens the panel and presses Enter, then it replaces the main pane and runs the selected action", async () => {
     const pulls: string[] = [];
@@ -626,7 +707,9 @@ describe("ChatView acknowledged submissions", () => {
     expect(restart?.terminalId).toBe(terminalId);
     expect(restart?.cwd).toBe("/workspace/project-one");
     expect(restart?.worktreePath).toBeNull();
-    expect(restart?.cols).toBe(106);
+    // The web-like full-height sidebar owns its column, so the terminal is
+    // correctly sized to the remaining main surface rather than the whole app.
+    expect(restart?.cols).toBe(72);
     expect(restart?.rows).toBe(7);
     setup.renderer.destroy();
   });

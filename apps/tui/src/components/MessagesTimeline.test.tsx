@@ -652,7 +652,32 @@ describe("MessagesTimeline body", () => {
     // The bubble is right-aligned: its text sits well to the right of the timeline.
     const userLine = frame.split("\n").find((line) => line.includes("ship it please")) ?? "";
     expect(userLine.indexOf("ship it please")).toBeGreaterThan(60);
+    const bubbleTop =
+      frame.split("\n").find((line) => line.indexOf("╭", 40) >= 0 && line.lastIndexOf("╮") > 40) ??
+      "";
+    expect(bubbleTop).not.toBe("");
+    expect(bubbleTop.lastIndexOf("╮")).toBeLessThan(91);
     t.renderer.destroy();
+  });
+
+  it("Given a user message beyond the web UI line limit, then it starts collapsed", async () => {
+    const frame = await bodyFrame({
+      messages: [
+        {
+          id: "u-long",
+          role: "user",
+          text: Array.from({ length: 10 }, (_, index) =>
+            index === 9 ? "TAIL MUST STAY HIDDEN" : `prompt line ${index + 1}`,
+          ).join("\n"),
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [],
+        },
+      ] as never,
+    });
+    expect(frame).toContain("Show full message");
+    expect(frame).not.toContain("TAIL MUST STAY HIDDEN");
   });
 
   it("Given a settled turn, then its tool work folds behind a 'Worked for' row", async () => {

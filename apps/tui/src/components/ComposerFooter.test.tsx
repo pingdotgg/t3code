@@ -8,6 +8,7 @@ import { ComposerFooter } from "./ComposerFooter.tsx";
 const noop = () => {};
 
 const base = {
+  width: 88,
   working: false,
   answering: false,
   hasText: false,
@@ -49,6 +50,15 @@ describe("ComposerFooter", () => {
   it("Given the default state, then the primary action is Send", async () => {
     const t = await render(<ComposerFooter {...base} controls={controls} />);
     expect(t.captureCharFrame()).toContain("Send");
+    t.renderer.destroy();
+  });
+
+  it("Given a compact composer, then secondary controls collapse behind the command menu", async () => {
+    const t = await render(<ComposerFooter {...base} controls={controls} compact width={30} />);
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("model gpt-5");
+    expect(frame).toContain("^K options");
+    expect(frame).not.toContain("effort high");
     t.renderer.destroy();
   });
 
