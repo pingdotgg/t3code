@@ -11,7 +11,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
@@ -23,6 +22,12 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
+import {
+  cachedThreadGeneration,
+  evictCachedThread,
+  persistCachedThread,
+  reviveCachedThread,
+} from "./threadCache.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -81,8 +86,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence }),
   );
   const awaitingCompletion = yield* Ref.make(false);
-  const cacheGeneration = yield* Ref.make(0);
-  const cacheLock = yield* Semaphore.make(1);
   const persistence = yield* Queue.sliding<{
     readonly generation: number;
     readonly snapshot: OrchestrationThreadDetailSnapshot;
@@ -92,23 +95,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     readonly generation: number;
     readonly snapshot: OrchestrationThreadDetailSnapshot;
   }) {
-    yield* cacheLock.withPermit(
-      Effect.gen(function* () {
-        const currentGeneration = yield* Ref.get(cacheGeneration);
-        if (currentGeneration !== pending.generation) return;
-        yield* cache.saveThread(environmentId, pending.snapshot).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not persist the thread cache.").pipe(
-              Effect.annotateLogs({
-                environmentId,
-                threadId,
-                error: error.message,
-              }),
-            ),
-          ),
-        );
-      }),
-    );
+    yield* persistCachedThread(cache, environmentId, pending.snapshot, pending.generation);
   });
 
   yield* Stream.fromQueue(persistence).pipe(
@@ -118,20 +105,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
 
   const removeCachedThread = Effect.fn("EnvironmentThreadState.removeCachedThread")(function* () {
-    yield* Ref.update(cacheGeneration, (generation) => generation + 1);
-    yield* cacheLock.withPermit(
-      cache.removeThread(environmentId, threadId).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not remove the cached thread.").pipe(
-            Effect.annotateLogs({
-              environmentId,
-              threadId,
-              error: error.message,
-            }),
-          ),
-        ),
-      ),
-    );
+    yield* evictCachedThread(cache, environmentId, threadId);
   });
 
   const setSynchronizing = SubscriptionRef.update(state, (current) =>
@@ -185,7 +159,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // persist once it settles so cache encoding stays off the streaming path.
     if (shouldPersistThread(thread)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
-      const generation = yield* Ref.get(cacheGeneration);
+      const generation = cachedThreadGeneration(cache, environmentId, threadId);
       yield* Queue.offer(persistence, {
         generation,
         snapshot: { snapshotSequence, thread },
@@ -237,6 +211,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
     const result = applyThreadDetailEvent(current.data.value, item.event);
     if (result.kind === "updated") {
+      if (item.event.type === "thread.unarchived") {
+        yield* reviveCachedThread(cache, environmentId, threadId);
+      }
       yield* setThread(result.thread);
       if (item.event.type === "thread.archived") {
         yield* removeCachedThread();
@@ -332,11 +309,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           onNone: () => Effect.void,
           onSome: (thread) =>
             shouldPersistThread(thread)
-              ? Ref.get(cacheGeneration).pipe(
-                  Effect.flatMap((generation) =>
-                    persist({ generation, snapshot: { snapshotSequence, thread } }),
-                  ),
-                )
+              ? persist({
+                  generation: cachedThreadGeneration(cache, environmentId, threadId),
+                  snapshot: { snapshotSequence, thread },
+                })
               : Effect.void,
         }),
       ),

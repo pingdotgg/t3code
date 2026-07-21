@@ -24,7 +24,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
-import { evictCachedThread } from "./threadCache.ts";
+import { evictCachedThread, reviveCachedThread } from "./threadCache.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -171,6 +171,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           .filter((threadId) => !nextThreadIds.has(threadId));
       },
     });
+    const addedThreadIds = Option.match(current.snapshot, {
+      onNone: () => nextSnapshot.threads.map((thread) => thread.id),
+      onSome: (snapshot) => {
+        const currentThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
+        return nextSnapshot.threads
+          .map((thread) => thread.id)
+          .filter((threadId) => !currentThreadIds.has(threadId));
+      },
+    });
 
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
@@ -182,6 +191,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     yield* Effect.forEach(
       removedThreadIds,
       (threadId) => evictCachedThread(cache, environmentId, threadId),
+      { discard: true },
+    );
+    yield* Effect.forEach(
+      addedThreadIds,
+      (threadId) => reviveCachedThread(cache, environmentId, threadId),
       { discard: true },
     );
   });

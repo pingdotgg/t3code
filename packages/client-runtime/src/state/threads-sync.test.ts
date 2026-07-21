@@ -36,6 +36,7 @@ import {
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
+import { evictCachedThread } from "./threadCache.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -246,6 +247,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     supervisorSession,
     savedThreads,
     removedThreads,
+    cache,
     wakeups,
     replaceSession: SubscriptionRef.set(
       supervisorSession,
@@ -327,6 +329,26 @@ const archived = (): OrchestrationThreadStreamItem => ({
       threadId: THREAD_ID,
       archivedAt: "2026-04-01T02:00:00.000Z",
       updatedAt: "2026-04-01T02:00:00.000Z",
+    },
+  },
+});
+
+const unarchived = (): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make("event-unarchived"),
+    sequence: 4,
+    occurredAt: "2026-04-01T03:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.unarchived",
+    payload: {
+      threadId: THREAD_ID,
+      updatedAt: "2026-04-01T03:00:00.000Z",
     },
   },
 });
@@ -501,6 +523,57 @@ describe("EnvironmentThreads", () => {
       expect((yield* Ref.get(savedThreads)).some((saved) => saved.thread.archivedAt !== null)).toBe(
         false,
       );
+    }),
+  );
+
+  it.effect("does not restore an out-of-band cache eviction from queued or teardown writes", () =>
+    Effect.gen(function* () {
+      const savedThreads = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ cached: BASE_THREAD });
+          yield* Queue.offer(
+            harness.inputs,
+            titleUpdated("Stale pending title", CACHED_SNAPSHOT_SEQUENCE + 1),
+          );
+          yield* awaitThreadState(
+            harness.observed,
+            (value) =>
+              Option.isSome(value.data) && value.data.value.title === "Stale pending title",
+          );
+
+          yield* evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+          yield* TestClock.adjust("500 millis");
+          yield* Effect.yieldNow;
+
+          expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+          expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+          return harness.savedThreads;
+        }),
+      );
+
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("persists thread detail again after an authoritative unarchive event", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, archived());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+
+      yield* Queue.offer(harness.inputs, unarchived());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt === null,
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.thread.archivedAt).toBeNull();
     }),
   );
 
