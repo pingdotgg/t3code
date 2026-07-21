@@ -1204,7 +1204,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.equal(proposedPlans.length, 1);
       assert.equal(
         proposedPlans[0]?.payload.planMarkdown,
-        "# Plan\n\n- Add the endpoint\n- Add the test",
+        "# Plan v1\n\n- Add the endpoint\n- Add the test",
       );
       assert.equal(proposedPlans[0]?.raw?.method, "_x.ai/exit_plan_mode");
 
@@ -1242,7 +1242,73 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
-    }),
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("captures a plan re-presented within the capturing turn instead of approving it", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-xai-exit-plan-same-turn");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-plan-repeat-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_XAI_EXIT_PLAN_MODE: "1",
+          T3_ACP_XAI_EXIT_PLAN_REPEAT: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const proposedPlans: Array<
+        Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }>
+      > = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (
+          String(event.threadId) === String(threadId) &&
+          event.type === "turn.proposed.completed"
+        ) {
+          proposedPlans.push(event);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      // Both presentations happen inside this single default-mode turn, so
+      // neither may be auto-approved on the user's behalf.
+      yield* adapter.sendTurn({
+        threadId,
+        input: "make a plan",
+        attachments: [],
+        interactionMode: "default",
+      });
+
+      assert.equal(proposedPlans.length, 2);
+      assert.equal(
+        proposedPlans[1]?.payload.planMarkdown,
+        "# Plan v2\n\n- Add the endpoint\n- Add the test",
+      );
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const planResponses = requests.flatMap((entry) =>
+        !("method" in entry) &&
+        typeof entry.result === "object" &&
+        entry.result !== null &&
+        "outcome" in entry.result &&
+        typeof entry.result.outcome === "string"
+          ? [entry.result.outcome]
+          : [],
+      );
+      assert.deepEqual(planResponses, ["rejected", "rejected"]);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("recovers the Grok plan from the plan file when planContent is empty", () =>
@@ -1293,7 +1359,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
-    }),
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("continues streaming events when native notification logging fails", () =>

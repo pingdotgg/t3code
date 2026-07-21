@@ -117,14 +117,19 @@ interface GrokSessionContext {
   /** Interaction mode of the most recent sendTurn; decides whether a Grok
    * plan-approval request is captured as a proposed plan or auto-approved. */
   activeInteractionMode: ProviderInteractionMode | undefined;
-  /** True once a Grok plan has been captured as a proposed plan and is
-   * awaiting the user's decision on the plan card. */
-  planCaptured: boolean;
+  /** Set once a Grok plan has been captured as a proposed plan and is
+   * awaiting the user's decision on the plan card. Records the turn that
+   * captured it so a re-presentation within the same turn is captured again
+   * instead of auto-approved; only a later non-plan turn approves. */
+  planCapture: { readonly turnId: TurnId | undefined } | undefined;
   /** Grok's current ACP session mode (from current_mode_update), e.g. "plan". */
   currentAcpModeId: string | undefined;
   /** Plan file path reported by enter_plan_mode; used to recover the plan
    * when exit_plan_mode arrives with empty planContent (write/read race). */
   planFilePath: string | undefined;
+  /** Markdown of the most recently captured plan; recovery reads that treat
+   * matching plan-file contents as possibly stale (rewrite in flight). */
+  lastCapturedPlanMarkdown: string | undefined;
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -191,12 +196,18 @@ export function extractGrokPlanFilePath(rawPayload: unknown): string | undefined
   const rawOutput = update.rawOutput;
   if (!isRecord(rawOutput) || rawOutput.type !== "EnterPlanMode") return undefined;
   for (const value of Object.values(rawOutput)) {
+    if (!isRecord(value) || typeof value.plan_file_path !== "string") {
+      continue;
+    }
+    const planFilePath = value.plan_file_path.trim();
+    // The path is agent-supplied: accept only absolute, NUL-free paths so a
+    // malformed value cannot resolve somewhere surprising.
     if (
-      isRecord(value) &&
-      typeof value.plan_file_path === "string" &&
-      value.plan_file_path.trim()
+      planFilePath.length > 0 &&
+      !planFilePath.includes("\0") &&
+      /^(?:[A-Za-z]:[\\/]|[\\/])/.test(planFilePath)
     ) {
-      return value.plan_file_path.trim();
+      return planFilePath;
     }
   }
   return undefined;
@@ -714,11 +725,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       yield* logNative(input.threadId, method, params);
                       const ctx = sessions.get(input.threadId);
                       const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                      // A plan was already captured and the user came back in a
-                      // non-plan turn: that is the implementation turn, so let
-                      // Grok exit plan mode and build.
-                      if (ctx?.planCaptured === true && ctx.activeInteractionMode !== "plan") {
-                        ctx.planCaptured = false;
+                      // A plan was captured on an earlier turn and the user
+                      // came back in a non-plan turn: that is the
+                      // implementation turn, so let Grok exit plan mode and
+                      // build. The captured plan must come from a *previous*
+                      // turn — Grok may re-present a revised plan within the
+                      // capturing turn itself, which must be captured again,
+                      // not approved on the user's behalf.
+                      if (
+                        ctx?.planCapture !== undefined &&
+                        ctx.activeInteractionMode !== "plan" &&
+                        turnId !== undefined &&
+                        turnId !== ctx.planCapture.turnId
+                      ) {
+                        ctx.planCapture = undefined;
                         return makeXAiExitPlanModeApprovedResponse();
                       }
                       let planMarkdown = extractXAiExitPlanModePlan(params);
@@ -727,6 +747,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       // the write and planContent arrives empty. Recover by
                       // reading the plan file the CLI reported on entry.
                       if (planMarkdown === undefined && ctx !== undefined) {
+                        const previousPlanMarkdown = ctx.lastCapturedPlanMarkdown;
+                        let unchangedContents: string | undefined;
                         for (
                           let attempt = 0;
                           attempt < 20 && planMarkdown === undefined;
@@ -735,21 +757,39 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                           // Re-read per attempt: the enter_plan_mode update that
                           // carries the path is processed on a concurrent fiber.
                           const planFilePath = ctx.planFilePath;
-                          if (planFilePath) {
+                          if (planFilePath === undefined) {
+                            // Nothing to read; give the concurrent fiber a
+                            // short grace period, then answer immediately.
+                            if (attempt >= 5) {
+                              break;
+                            }
+                          } else {
                             const contents = yield* fileSystem
                               .readFileString(planFilePath)
                               .pipe(Effect.orElseSucceed(() => ""));
                             const trimmedContents = contents.trim();
-                            if (trimmedContents.length > 0) {
+                            if (
+                              trimmedContents.length > 0 &&
+                              trimmedContents !== previousPlanMarkdown
+                            ) {
                               planMarkdown = trimmedContents;
                               break;
+                            }
+                            if (trimmedContents.length > 0) {
+                              // The file still holds the previously captured
+                              // plan; Grok may be rewriting it, so keep
+                              // polling but fall back to this if nothing new
+                              // shows up.
+                              unchangedContents = trimmedContents;
                             }
                           }
                           yield* Effect.sleep("100 millis");
                         }
+                        planMarkdown ??= unchangedContents;
                       }
                       if (ctx) {
-                        ctx.planCaptured = true;
+                        ctx.planCapture = { turnId };
+                        ctx.lastCapturedPlanMarkdown = planMarkdown;
                       }
                       yield* offerRuntimeEvent({
                         type: "turn.proposed.completed",
@@ -888,9 +928,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             turns: [],
             lastPlanFingerprint: undefined,
             activeInteractionMode: undefined,
-            planCaptured: false,
+            planCapture: undefined,
             currentAcpModeId: undefined,
             planFilePath: undefined,
+            lastCapturedPlanMarkdown: undefined,
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,

@@ -232,10 +232,11 @@ export function extractXAiExitPlanModePlan(params: XAiExitPlanModeRequest): stri
 
 /**
  * Grok interprets the response outcome as: `approved` exits plan mode and
- * tells the agent to implement the plan; `abandoned` keeps plan mode active
- * and tells the agent the user does not want to exit; any other outcome is
- * treated as "revise" — the tool completes with "The user wants to revise the
- * plan." plus the feedback text, and plan mode stays active.
+ * tells the agent to implement the plan; any other outcome is treated as
+ * "revise" — the tool completes with "The user wants to revise the plan."
+ * plus the feedback text, and plan mode stays active. (Grok's protocol also
+ * accepts `abandoned` to quit the plan entirely; T3 Code never sends it, so
+ * this type only models the outcomes T3 Code produces.)
  */
 export interface XAiExitPlanModeResponse {
   readonly outcome: "approved" | "rejected";

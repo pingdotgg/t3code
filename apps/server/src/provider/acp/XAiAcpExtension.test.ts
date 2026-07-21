@@ -55,7 +55,7 @@ describe("XAiAcpExtension", () => {
 
   it("extracts the plan from wrapped _x.ai exit_plan_mode payloads", () => {
     const decoded = decodeXAiExitPlanModeRequest({
-      method: "x.ai/exit_plan_mode",
+      method: "_x.ai/exit_plan_mode",
       params: {
         sessionId: "session-1",
         toolCallId: "tool-call-1",
