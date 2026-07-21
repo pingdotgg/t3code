@@ -638,9 +638,22 @@ public final class AppModel {
                 // reasoning text) and must replace it, not stack.
                 var items = currentItems(threadID)
                 ensureTimelineIndex(threadID, items: items)
+                // Task progress keeps a stable row id and never changes the
+                // grouping shape. Treating every update as structural forced
+                // a full transcript regroup/diff for each Claude progress
+                // event, which could starve LazyVStack layout until the chat
+                // appeared blank. New task rows are still structural.
+                let isExistingTaskUpdate: Bool
+                if case .subagentTask = item {
+                    isExistingTaskUpdate = indexByThread[threadID]?[item.id] != nil
+                } else {
+                    isExistingTaskUpdate = false
+                }
                 items.upsertTimelineItem(item, indexByID: &indexByThread[threadID]!)
                 touched[threadID] = items
-                structuralThreads.insert(threadID)
+                if !isExistingTaskUpdate {
+                    structuralThreads.insert(threadID)
+                }
                 if case .subagentTask(let task) = item {
                     subagentTaskAggregator.upsert(task, for: threadID)
                 }

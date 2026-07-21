@@ -35,13 +35,15 @@ final class SubagentTaskAggregator {
             .sorted { title(for: $0).localizedStandardCompare(title(for: $1)) == .orderedAscending }
             .flatMap { threadID in
                 let title = title(for: threadID)
-                return (tasksByThread[threadID] ?? []).map { task in
-                    Entry(
-                        threadID: threadID,
-                        threadTitle: title,
-                        task: task,
-                        isLive: liveThreadIDs.contains(threadID))
-                }
+                return (tasksByThread[threadID] ?? [])
+                    .filter { $0.entityKind == .subagent }
+                    .map { task in
+                        Entry(
+                            threadID: threadID,
+                            threadTitle: title,
+                            task: task,
+                            isLive: liveThreadIDs.contains(threadID))
+                    }
             }
     }
 
