@@ -273,11 +273,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
 
+      const runningTurnId =
+        sourceThread.latestTurn?.state === "running" ? sourceThread.latestTurn.turnId : null;
       const latestCompletedTurnId = sourceThread.messages
         .toReversed()
         .find(
           (message) =>
-            message.role === "assistant" && message.turnId !== null && !message.streaming,
+            message.role === "assistant" &&
+            message.turnId !== null &&
+            message.turnId !== runningTurnId &&
+            !message.streaming,
         )?.turnId;
       const sourceTurnId = command.sourceTurnId ?? latestCompletedTurnId ?? null;
       if (

@@ -190,6 +190,56 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
     }),
   );
 
+  it.effect("ignores finalized assistant segments from the currently running turn", () =>
+    Effect.gen(function* () {
+      const readModel = seedReadModel();
+      const source = readModel.threads[0]!;
+      const runningTurnId = TurnId.make("turn-3");
+      const event = requireForkEvent(
+        yield* decideOrchestrationCommand({
+          command: forkCommand(),
+          readModel: {
+            ...readModel,
+            threads: [
+              {
+                ...source,
+                latestTurn: {
+                  turnId: runningTurnId,
+                  state: "running",
+                  requestedAt: now,
+                  startedAt: now,
+                  completedAt: null,
+                  assistantMessageId: MessageId.make("assistant-3"),
+                },
+                messages: [
+                  ...source.messages,
+                  {
+                    id: MessageId.make("assistant-3"),
+                    role: "assistant",
+                    text: "I am invoking thread_fork now.",
+                    attachments: [],
+                    turnId: runningTurnId,
+                    streaming: false,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      expect(event.payload.forkedFrom.turnId).toBe(turnTwoId);
+      expect(event.payload.inheritedMessages.map((message) => message.text)).toEqual([
+        "First question",
+        "First answer",
+        "Second question",
+        "Second answer",
+      ]);
+    }),
+  );
+
   it.effect("rejects a fork at a running turn", () =>
     Effect.gen(function* () {
       const readModel = seedReadModel();
