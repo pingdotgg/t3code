@@ -1664,6 +1664,48 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("does not surface Claude task_updated messages as runtime warnings", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-subagent-1",
+        status: "in_progress",
+        session_id: "sdk-session-task-updated",
+        uuid: "task-updated-1",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-subagent-1",
+        description: "Running background teammate",
+        session_id: "sdk-session-task-updated",
+        uuid: "task-progress-after-update-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.isFalse(runtimeEvents.some((event) => event.type === "runtime.warning"));
+      assert.isTrue(runtimeEvents.some((event) => event.type === "task.progress"));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("forwards Claude task progress summaries for subagent updates", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

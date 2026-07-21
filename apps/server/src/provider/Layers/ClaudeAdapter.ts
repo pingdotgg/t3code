@@ -2746,6 +2746,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       case "thinking_tokens":
         return;
+      // Task-state sync patch for the client's local task map. Terminal
+      // statuses arrive separately via task_notification, so there is
+      // nothing to surface; the raw payload stays in the provider log.
+      case "task_updated":
+        return;
       case "permission_denied":
         yield* offerRuntimeEvent({
           ...base,
