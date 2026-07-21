@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -38,6 +41,11 @@ const testLayer = (input: {
   readonly resolveExecutable?: (command: string) => string | undefined;
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
+  readonly editorCommandAvailability?: (
+    command: string,
+    env: NodeJS.ProcessEnv,
+  ) => Effect.Effect<boolean>;
+  readonly editorDiscoveryTimeout?: Duration.Input;
 }) => {
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -53,8 +61,20 @@ const testLayer = (input: {
     ),
   );
 
+  const externalLauncherLayer = Layer.effect(
+    ExternalLauncher.ExternalLauncher,
+    ExternalLauncher.makeWithOptions({
+      ...(input.editorCommandAvailability === undefined
+        ? {}
+        : { editorCommandAvailability: input.editorCommandAvailability }),
+      ...(input.editorDiscoveryTimeout === undefined
+        ? {}
+        : { editorDiscoveryTimeout: input.editorDiscoveryTimeout }),
+    }),
+  );
+
   return Layer.mergeAll(
-    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
+    externalLauncherLayer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
     Layer.succeed(HostProcessPlatform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,
@@ -154,6 +174,39 @@ it.effect("discovers editors through the service API", () =>
     assert.equal(editors.includes("file-manager"), true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("bounds slow editor probes concurrently and keeps partial results", () => {
+  const discoveryTimeout = Duration.seconds(3);
+
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const discoveryFiber = yield* launcher.resolveAvailableEditors().pipe(Effect.forkScoped);
+
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(discoveryTimeout);
+
+    const editors = yield* Fiber.join(discoveryFiber);
+    assert.deepEqual(editors, ["cursor", "vscode"]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.merge(
+        TestClock.layer(),
+        testLayer({
+          platform: "win32",
+          env: { PATH: "C:\\bin", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          editorDiscoveryTimeout: discoveryTimeout,
+          editorCommandAvailability: (command) => {
+            if (command === "cursor") {
+              return Effect.sleep(Duration.seconds(1)).pipe(Effect.as(true));
+            }
+            return command === "code" ? Effect.succeed(true) : Effect.never;
+          },
+        }),
+      ),
+    ),
+  );
+});
 
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
