@@ -219,6 +219,44 @@ describe("buildArchivedThreadGroups", () => {
     ]);
   });
 
+  it("preserves search ranking tiers for matches late in long titles", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const latePhrase = makeThread({
+      id: ThreadId.make("thread-late-phrase"),
+      projectId: project.id,
+      title: `${"x".repeat(600)} archive settings`,
+    });
+    const earlyAllTokens = makeThread({
+      id: ThreadId.make("thread-early-all"),
+      projectId: project.id,
+      title: "Archive tools Settings",
+    });
+    const lateAllTokens = makeThread({
+      id: ThreadId.make("thread-late-all"),
+      projectId: project.id,
+      title: `Archive ${"x".repeat(3_000)} Settings`,
+    });
+    const earlyPartial = makeThread({
+      id: ThreadId.make("thread-early-partial"),
+      projectId: project.id,
+      title: "Archive only",
+    });
+
+    const result = buildGroups({
+      snapshots: [
+        makeSnapshot([project], [earlyPartial, lateAllTokens, earlyAllTokens, latePhrase]),
+      ],
+      query: "archive settings",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-late-phrase",
+      "thread-early-all",
+      "thread-late-all",
+      "thread-early-partial",
+    ]);
+  });
+
   it("filters archived title matches by environment", () => {
     const secondEnvironmentId = EnvironmentId.make("environment-2");
     const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });

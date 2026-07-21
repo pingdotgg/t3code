@@ -24,6 +24,9 @@ import {
 
 const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
 const ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET = 5_000;
+const ARCHIVED_THREAD_PHRASE_SCORE_MAX = ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET - 1;
+const ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX =
+  ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET - ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET - 1;
 const DEFAULT_ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY = 4;
 
 export type ArchivedThreadSortField = "archivedAt" | "createdAt";
@@ -146,7 +149,7 @@ export function archivedThreadSearchScore(input: {
     includesBase: 3,
   });
   if (phraseScore !== null) {
-    return phraseScore;
+    return Math.min(phraseScore, ARCHIVED_THREAD_PHRASE_SCORE_MAX);
   }
 
   let matchedTokenCount = 0;
@@ -174,7 +177,10 @@ export function archivedThreadSearchScore(input: {
   }
 
   if (matchedTokenCount === input.tokens.length) {
-    return ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET + tokenScore;
+    return (
+      ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET +
+      Math.min(tokenScore, ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX)
+    );
   }
 
   return (

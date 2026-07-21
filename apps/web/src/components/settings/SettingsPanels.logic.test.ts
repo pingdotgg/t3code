@@ -176,6 +176,20 @@ describe("archivedThreadSearchScore", () => {
     expect(allTokenMatch!).toBeLessThan(partialTokenMatch!);
   });
 
+  it("preserves search ranking tiers for matches late in long titles", () => {
+    const latePhraseMatch = scoreArchivedTitle(`${"x".repeat(600)} alpha beta`, "alpha beta");
+    const earlyAllTokenMatch = scoreArchivedTitle("Alpha cleanup Beta", "alpha beta");
+    const lateAllTokenMatch = scoreArchivedTitle(`Alpha ${"x".repeat(3_000)} Beta`, "alpha beta");
+    const earlyPartialTokenMatch = scoreArchivedTitle("Alpha cleanup", "alpha beta");
+
+    expect(latePhraseMatch).not.toBeNull();
+    expect(earlyAllTokenMatch).not.toBeNull();
+    expect(lateAllTokenMatch).not.toBeNull();
+    expect(earlyPartialTokenMatch).not.toBeNull();
+    expect(latePhraseMatch!).toBeLessThan(earlyAllTokenMatch!);
+    expect(lateAllTokenMatch!).toBeLessThan(earlyPartialTokenMatch!);
+  });
+
   it("matches titles case-insensitively and rejects unrelated titles", () => {
     expect(scoreArchivedTitle("Release Candidate Notes", "candidate")).not.toBeNull();
     expect(scoreArchivedTitle("Release Candidate Notes", "missing")).toBeNull();
