@@ -615,6 +615,29 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("rejects a write captured while the cache is evicted after revival", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+
+      yield* evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      const evictedGeneration = cachedThreadGeneration(
+        harness.cache,
+        TARGET.environmentId,
+        THREAD_ID,
+      );
+
+      yield* reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        evictedGeneration,
+      );
+
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+    }),
+  );
+
   it.effect("persists thread detail again after an authoritative unarchive event", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });

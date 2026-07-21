@@ -194,6 +194,9 @@ export const reviveCachedThread = Effect.fn("EnvironmentThreadCache.revive")(fun
     state.lock.withPermit(
       Effect.sync(() => {
         if (state.evicted) {
+          // Invalidate writes that captured the eviction generation while the
+          // tombstone was active before making the cache writable again.
+          state.generation += 1;
           state.evicted = false;
         }
       }),
