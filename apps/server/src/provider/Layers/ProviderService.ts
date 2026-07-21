@@ -308,11 +308,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const now = yield* Clock.currentTimeMillis;
       const previous = lastSeenTouchByThread.get(threadId);
       if (previous !== undefined && now - previous < lastSeenTouchMs) return;
-      lastSeenTouchByThread.set(threadId, now);
-      // Best-effort: a failed touch must never break event processing. The row
-      // may be absent/stopped (touch is a no-op) or the write may transiently
-      // fail; the next event refreshes it.
-      yield* directory.touchLastSeen(threadId).pipe(Effect.catchCause(() => Effect.void));
+      // Best-effort: a failed touch must never break event processing (the row
+      // may be absent/stopped, where the touch is a no-op, or the write may
+      // transiently fail). Arm the throttle window only *after* a successful
+      // write, so a failed touch doesn't suppress the next refresh and leave
+      // `last_seen_at` stale (which could lead to premature reaping). `catch`
+      // handles only the error channel, so fiber interrupts still propagate.
+      yield* directory.touchLastSeen(threadId).pipe(
+        Effect.tap(() => Effect.sync(() => lastSeenTouchByThread.set(threadId, now))),
+        Effect.catch(() => Effect.void),
+      );
     });
 
   const processRuntimeEvent = (

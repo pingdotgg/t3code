@@ -38,6 +38,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionDirectoryPersistenceError,
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
@@ -715,6 +716,94 @@ it.effect("ProviderServiceLive touches lastSeenAt on background runtime activity
       assert.deepEqual(touched, [threadId, threadId]);
     }).pipe(Effect.provide(providerLayer));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive retries lastSeenAt touch after a failed write (throttle not armed on failure)",
+  () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [ProviderDriverKind.make("codex")]: codex.adapter,
+      });
+
+      // Directory whose first touch fails, then succeeds. A failed touch must not
+      // arm the throttle window — otherwise a stale last_seen_at would persist and
+      // the reaper could reap a live session.
+      const attempts: string[] = [];
+      let shouldFail = true;
+      const flakyDirectoryLayer = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+        upsert: () => Effect.void,
+        getProvider: () => Effect.die(new Error("getProvider unused in test")),
+        getBinding: () => Effect.succeed(Option.none()),
+        listThreadIds: () => Effect.succeed([]),
+        listBindings: () => Effect.succeed([]),
+        touchLastSeen: (threadId) =>
+          Effect.suspend(() => {
+            attempts.push(threadId);
+            if (shouldFail) {
+              shouldFail = false;
+              return Effect.fail(
+                new ProviderSessionDirectoryPersistenceError({
+                  operation: "test.touchLastSeen",
+                  detail: "simulated transient touch failure",
+                }),
+              );
+            }
+            return Effect.void;
+          }),
+      });
+
+      const threadId = asThreadId("thread-touch-retry");
+
+      const providerLayer = makeProviderServiceLive({
+        runtimeActivityTouchThrottleMs: 1_000,
+      }).pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(flakyDirectoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      const emitTaskProgress = (id: string) =>
+        codex.emit({
+          eventId: asEventId(id),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:05:00.000Z",
+          type: "task.progress",
+          payload: {},
+        });
+
+      yield* Effect.gen(function* () {
+        yield* ProviderService.ProviderService;
+        yield* advanceTestClock(10);
+
+        // First event: touch attempted, but the write fails (swallowed).
+        emitTaskProgress("evt-retry-1");
+        yield* advanceTestClock(20);
+        assert.deepEqual(attempts, [threadId]);
+
+        // Second event *within the throttle window*: because the prior touch
+        // failed, the window was never armed, so this event retries the touch
+        // instead of being throttled away.
+        emitTaskProgress("evt-retry-2");
+        yield* advanceTestClock(20);
+        assert.deepEqual(attempts, [threadId, threadId]);
+
+        // That retry succeeded and armed the window, so a third rapid event is
+        // now correctly throttled.
+        emitTaskProgress("evt-retry-3");
+        yield* advanceTestClock(20);
+        assert.deepEqual(attempts, [threadId, threadId]);
+      }).pipe(Effect.provide(providerLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
