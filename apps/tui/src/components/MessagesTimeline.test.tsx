@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { CliRenderEvents, getLinkId, SyntaxStyle } from "@opentui/core";
+import { CliRenderEvents, getLinkId, type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
 import { MockTreeSitterClient, setRendererCapabilities } from "@opentui/core/testing";
 import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
@@ -678,6 +678,99 @@ describe("MessagesTimeline body", () => {
     });
     expect(frame).toContain("Show full message");
     expect(frame).not.toContain("TAIL MUST STAY HIDDEN");
+  });
+
+  it("Given mixed wide messages, when the timeline is scrolled, then assistant text keeps its left edge", async () => {
+    const mock = new MockTreeSitterClient({ autoResolveTimeout: 0 });
+    mock.setMockResult({ highlights: [] });
+    const ref = React.createRef<ScrollBoxRenderable>();
+    const full = {
+      ...detail("default"),
+      messages: [
+        {
+          id: "u-wide",
+          role: "user",
+          text: [
+            "Investigate this payload:",
+            "{",
+            '  "active": true,',
+            '  "run_id": "1d2439d5f501471da80c60f576a9f7ed",',
+            '  "merchant_id": "019c87a7-84f2-7073-81c7-6fbb7663c2df",',
+            '  "location_id": "019c87a7-84f2-7073-81c8-22041002adbd",',
+            '  "padding": true,',
+            '  "more_padding": true,',
+            '  "still_more_padding": true',
+            "}",
+          ].join("\n"),
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [],
+        },
+        {
+          id: "a-left-edge",
+          role: "assistant",
+          text: "LEFT EDGE MUST STAY VISIBLE, and the pending translation keeps the aggregate run active. I am tracing why the jobs remain running after the timeout.",
+          createdAt: "2026-06-19T00:00:01.000Z",
+          updatedAt: "2026-06-19T00:00:01.000Z",
+          streaming: false,
+          attachments: [],
+        },
+        {
+          id: "u-short",
+          role: "user",
+          text: "Kill it and let's fix it in code",
+          createdAt: "2026-06-19T00:00:02.000Z",
+          updatedAt: "2026-06-19T00:00:02.000Z",
+          streaming: false,
+          attachments: [],
+        },
+        {
+          id: "a-tail",
+          role: "assistant",
+          text: "TAIL LEFT EDGE also remains visible after the later right-aligned prompt.",
+          createdAt: "2026-06-19T00:00:03.000Z",
+          updatedAt: "2026-06-19T00:00:03.000Z",
+          streaming: false,
+          attachments: [],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={60}
+        height={30}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref}
+        treeSitterClient={mock}
+      />,
+      { width: 60, height: 30 },
+    );
+    for (let i = 0; i < 8; i += 1) {
+      await t.renderOnce();
+      try {
+        mock.resolveAllHighlightOnce();
+      } catch {
+        // no pending highlight this pass
+      }
+      await t.flush();
+    }
+    ref.current?.scrollTo({ x: 20, y: 7 });
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    const userRow = ref.current?.getRenderable("timeline-row-u-wide");
+    const assistantRow = ref.current?.getRenderable("timeline-row-a-left-edge");
+    const viewportRight = (ref.current?.viewport.x ?? 0) + (ref.current?.viewport.width ?? 0);
+    expect(ref.current?.scrollLeft).toBe(0);
+    expect((userRow?.x ?? 0) + (userRow?.width ?? 0)).toBeLessThanOrEqual(viewportRight);
+    expect(assistantRow?.x).toBe(ref.current?.viewport.x);
+    expect(assistantRow?.width).toBe(ref.current?.viewport.width);
+    expect(frame).toContain("LEFT EDGE MUST STAY VISIBLE");
+    t.renderer.destroy();
   });
 
   it("Given a settled turn, then its tool work folds behind a 'Worked for' row", async () => {
