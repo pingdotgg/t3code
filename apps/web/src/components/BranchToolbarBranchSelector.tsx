@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type RefObject,
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
@@ -71,6 +72,116 @@ interface BranchToolbarBranchSelectorProps {
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+}
+
+const TOP_BRANCH_SCROLL_FADE_CLASS = "mask-t-from-[calc(100%-var(--fade-size))]";
+const BOTTOM_BRANCH_SCROLL_FADE_CLASS = "mask-b-from-[calc(100%-var(--fade-size))]";
+
+interface BranchListScrollBehaviorOptions {
+  branchListRef: RefObject<LegendListRef | null>;
+  branchListScrollElementRef: RefObject<HTMLElement | null>;
+  deferredQuery: string;
+  filteredItemCount: number;
+  isOpen: boolean;
+  maybeFetchNextPage: () => void;
+  refsLength: number;
+}
+
+function useBranchListScrollBehavior({
+  branchListRef,
+  branchListScrollElementRef,
+  deferredQuery,
+  filteredItemCount,
+  isOpen,
+  maybeFetchNextPage,
+  refsLength,
+}: BranchListScrollBehaviorOptions): () => void {
+  const updateScrollFades = useCallback(() => {
+    const scrollElement = branchListRef.current?.getScrollableNode?.();
+    if (!(scrollElement instanceof HTMLElement)) {
+      return;
+    }
+
+    branchListScrollElementRef.current = scrollElement;
+    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+    scrollElement.classList.toggle(TOP_BRANCH_SCROLL_FADE_CLASS, scrollElement.scrollTop > 1);
+    scrollElement.classList.toggle(
+      BOTTOM_BRANCH_SCROLL_FADE_CLASS,
+      maxScrollOffset - scrollElement.scrollTop > 1,
+    );
+  }, [branchListRef, branchListScrollElementRef]);
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const scrollElement = branchListRef.current?.getScrollableNode?.();
+    if (scrollElement instanceof HTMLElement) {
+      branchListScrollElementRef.current = scrollElement;
+      scrollElement.classList.remove(TOP_BRANCH_SCROLL_FADE_CLASS);
+      scrollElement.classList.toggle(BOTTOM_BRANCH_SCROLL_FADE_CLASS, filteredItemCount > 8);
+    }
+
+    let nestedFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      updateScrollFades();
+      nestedFrame = requestAnimationFrame(updateScrollFades);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(nestedFrame);
+    };
+  }, [
+    branchListRef,
+    branchListScrollElementRef,
+    deferredQuery,
+    filteredItemCount,
+    isOpen,
+    updateScrollFades,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+  }, [branchListRef, deferredQuery, isOpen]);
+
+  useEffect(() => {
+    maybeFetchNextPage();
+  }, [maybeFetchNextPage, refsLength]);
+
+  return updateScrollFades;
+}
+
+interface InitialWorktreeBranchOptions {
+  activeThreadBranch: string | null;
+  activeWorktreePath: string | null;
+  currentGitBranch: string | null;
+  effectiveEnvMode: "local" | "worktree";
+  setThreadBranch: (branch: string | null, worktreePath: string | null) => void;
+}
+
+function useInitialWorktreeBranch({
+  activeThreadBranch,
+  activeWorktreePath,
+  currentGitBranch,
+  effectiveEnvMode,
+  setThreadBranch,
+}: InitialWorktreeBranchOptions): void {
+  useEffect(() => {
+    if (
+      effectiveEnvMode !== "worktree" ||
+      activeWorktreePath ||
+      activeThreadBranch ||
+      !currentGitBranch
+    ) {
+      return;
+    }
+    setThreadBranch(currentGitBranch, null);
+  }, [activeThreadBranch, activeWorktreePath, currentGitBranch, effectiveEnvMode, setThreadBranch]);
 }
 
 function toBranchActionErrorMessage(error: unknown): string {
@@ -422,17 +533,13 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  useEffect(() => {
-    if (
-      effectiveEnvMode !== "worktree" ||
-      activeWorktreePath ||
-      activeThreadBranch ||
-      !currentGitBranch
-    ) {
-      return;
-    }
-    setThreadBranch(currentGitBranch, null);
-  }, [activeThreadBranch, activeWorktreePath, currentGitBranch, effectiveEnvMode, setThreadBranch]);
+  useInitialWorktreeBranch({
+    activeThreadBranch,
+    activeWorktreePath,
+    currentGitBranch,
+    effectiveEnvMode,
+    setThreadBranch,
+  });
 
   // ---------------------------------------------------------------------------
   // Combobox / list plumbing
@@ -450,8 +557,6 @@ export function BranchToolbarBranchSelector({
   );
 
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
-  const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
-  const [showBottomBranchScrollFade, setShowBottomBranchScrollFade] = useState(false);
   const fetchNextBranchPage = useCallback(() => {
     if (!hasNextPage || isFetchingNextPage) {
       return;
@@ -479,51 +584,15 @@ export function BranchToolbarBranchSelector({
   }, [fetchNextBranchPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
 
   const branchListRef = useRef<LegendListRef | null>(null);
-  const updateBranchListScrollFades = useCallback(() => {
-    const scrollElement = branchListRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    branchListScrollElementRef.current = scrollElement;
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopBranchScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!isBranchMenuOpen) {
-      return;
-    }
-
-    setShowTopBranchScrollFade(false);
-    setShowBottomBranchScrollFade(filteredBranchPickerItems.length > 8);
-    let nestedFrame = 0;
-    const frame = requestAnimationFrame(() => {
-      updateBranchListScrollFades();
-      nestedFrame = requestAnimationFrame(updateBranchListScrollFades);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(nestedFrame);
-    };
-  }, [
-    deferredTrimmedBranchQuery,
-    filteredBranchPickerItems.length,
-    isBranchMenuOpen,
-    updateBranchListScrollFades,
-  ]);
-
-  useEffect(() => {
-    if (!isBranchMenuOpen) {
-      return;
-    }
-
-    void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
-
-  useEffect(() => {
-    maybeFetchNextBranchPage();
-  }, [refs.length, maybeFetchNextBranchPage]);
+  const updateBranchListScrollFades = useBranchListScrollBehavior({
+    branchListRef,
+    branchListScrollElementRef,
+    deferredQuery: deferredTrimmedBranchQuery,
+    filteredItemCount: filteredBranchPickerItems.length,
+    isOpen: isBranchMenuOpen,
+    maybeFetchNextPage: maybeFetchNextBranchPage,
+    refsLength: refs.length,
+  });
 
   const triggerLabel = getBranchTriggerLabel({
     activeWorktreePath,
@@ -719,11 +788,7 @@ export function BranchToolbarBranchSelector({
                   updateBranchListScrollFades();
                   maybeFetchNextBranchPage();
                 }}
-                className={cn(
-                  "scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1 [--fade-size:1.5rem]",
-                  showTopBranchScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
-                  showBottomBranchScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
-                )}
+                className="scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1 [--fade-size:1.5rem]"
                 style={{ maxHeight: "14rem" }}
               />
             </ComboboxListVirtualized>
