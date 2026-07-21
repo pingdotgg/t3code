@@ -252,8 +252,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           operationPath: currentAncestor,
           operation: "realpath-target",
         });
-        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
-        expect((error.cause as NodeJS.ErrnoException).path).toBe(currentAncestor);
+        expect("cause" in error).toBe(false);
       }),
     );
 

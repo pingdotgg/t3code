@@ -37,21 +37,12 @@ const nextAncestorPath = Effect.fn("WorkspaceFileSystem.nextAncestorPath")(funct
 }) {
   const parentAncestor = input.path.dirname(input.currentAncestor);
   if (parentAncestor === input.currentAncestor) {
-    const cause = Object.assign(
-      new Error(`No existing ancestor found for '${input.resolvedPath}'.`),
-      {
-        code: "ENOENT",
-        path: input.currentAncestor,
-        syscall: "realpath",
-      },
-    );
     return yield* new WorkspaceFileSystemOperationError({
       workspaceRoot: input.workspaceRoot,
       relativePath: input.relativePath,
       resolvedPath: input.resolvedPath,
       operationPath: input.currentAncestor,
       operation: "realpath-target",
-      cause,
     });
   }
   return parentAncestor;
@@ -74,7 +65,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
       "make-directory",
       "write-file",
     ]),
-    cause: Schema.Defect(),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
