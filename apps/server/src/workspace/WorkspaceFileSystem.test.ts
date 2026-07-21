@@ -1,9 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type { TestContext } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -51,6 +57,30 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
+const createFileSymlinkOrSkip = Effect.fn("createFileSymlinkOrSkip")(function* (
+  context: TestContext,
+  targetPath: string,
+  linkPath: string,
+) {
+  const cause = yield* Effect.promise(async () => {
+    try {
+      await NodeFSP.symlink(targetPath, linkPath, "file");
+      return null;
+    } catch (cause) {
+      return cause;
+    }
+  });
+  if (cause === null) {
+    return true;
+  }
+  const code = (cause as NodeJS.ErrnoException).code;
+  if (code === "EPERM" || code === "EACCES" || code === "ENOSYS" || code === "ENOTSUP") {
+    context.skip(`File symlinks are unavailable in this environment (${code})`);
+    return false;
+  }
+  return yield* Effect.die(cause);
+});
+
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
@@ -88,7 +118,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects symlinks that resolve outside the workspace root", () =>
+    it.effect("rejects symlinks that resolve outside the workspace root", (context) =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -96,10 +126,15 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         const outsideDir = yield* makeTempDir;
         yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
-        yield* fileSystem.symlink(
-          path.join(outsideDir, "secret.txt"),
-          path.join(cwd, "linked-secret.txt"),
-        );
+        if (
+          !(yield* createFileSymlinkOrSkip(
+            context,
+            path.join(outsideDir, "secret.txt"),
+            path.join(cwd, "linked-secret.txt"),
+          ))
+        ) {
+          return;
+        }
 
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "linked-secret.txt" })
@@ -192,6 +227,36 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect("terminates ancestor discovery at a filesystem root", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const currentAncestor = NodePath.parse(cwd).root;
+        const resolvedPath = path.join(cwd, "missing", "file.txt");
+
+        const error = yield* WorkspaceFileSystem.__testing
+          .nextAncestorPath({
+            path,
+            workspaceRoot: cwd,
+            relativePath: "missing/file.txt",
+            resolvedPath,
+            currentAncestor,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "missing/file.txt",
+          resolvedPath,
+          operationPath: currentAncestor,
+          operation: "realpath-target",
+        });
+        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+        expect((error.cause as NodeJS.ErrnoException).path).toBe(currentAncestor);
+      }),
+    );
+
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -209,6 +274,26 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(result).toEqual({ relativePath: "plans/effect-rpc.md" });
         expect(saved).toBe("# Plan\n");
+      }),
+    );
+
+    it.effect("overwrites existing files within the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "plans/existing.md", "before\n");
+
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "plans/existing.md",
+          contents: "after\n",
+        });
+        const saved = yield* fileSystem.readFileString(path.join(cwd, "plans/existing.md"));
+
+        expect(result).toEqual({ relativePath: "plans/existing.md" });
+        expect(saved).toBe("after\n");
       }),
     );
 
@@ -262,6 +347,165 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("rejects writes through file symlinks outside the workspace root", (context) =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        const outsidePath = path.join(outsideDir, "outside.txt");
+        yield* fileSystem.writeFileString(outsidePath, "outside\n");
+        if (!(yield* createFileSymlinkOrSkip(context, outsidePath, path.join(cwd, "linked.txt")))) {
+          return;
+        }
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "linked.txt", contents: "overwritten\n" })
+          .pipe(Effect.flip);
+        const saved = yield* fileSystem.readFileString(outsidePath);
+        const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
+        const resolvedPath = yield* fileSystem.realPath(outsidePath);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "linked.txt",
+          resolvedWorkspaceRoot,
+          resolvedPath,
+        });
+        expect(saved).toBe("outside\n");
+      }),
+    );
+
+    it.effect("rejects writes through dangling file symlinks", (context) =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        const outsidePath = path.join(outsideDir, "missing.txt");
+        if (!(yield* createFileSymlinkOrSkip(context, outsidePath, path.join(cwd, "linked.txt")))) {
+          return;
+        }
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "linked.txt", contents: "outside\n" })
+          .pipe(Effect.flip);
+        const escapedStat = yield* fileSystem
+          .stat(outsidePath)
+          .pipe(Effect.orElseSucceed(() => null));
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "linked.txt",
+          resolvedPath: path.join(cwd, "linked.txt"),
+          operationPath: path.join(cwd, "linked.txt"),
+          operation: "realpath-target",
+        });
+        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+        expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("writes through file symlinks that stay within the workspace root", (context) =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "actual.txt", "before\n");
+        const linkPath = path.join(cwd, "linked.txt");
+        if (!(yield* createFileSymlinkOrSkip(context, path.join(cwd, "actual.txt"), linkPath))) {
+          return;
+        }
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "linked.txt",
+          contents: "after\n",
+        });
+        const saved = yield* fileSystem.readFileString(path.join(cwd, "actual.txt"));
+        const linkStat = yield* Effect.tryPromise(() => NodeFSP.lstat(linkPath)).pipe(Effect.orDie);
+
+        expect(saved).toBe("after\n");
+        expect(linkStat.isSymbolicLink()).toBe(true);
+      }),
+    );
+
+    it.effect("rejects writes through directory symlinks outside the workspace root", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcessPlatform;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        const outsidePath = path.join(outsideDir, "nested", "created.txt");
+        yield* Effect.tryPromise(() =>
+          NodeFSP.symlink(
+            outsideDir,
+            path.join(cwd, "linked-dir"),
+            platform === "win32" ? "junction" : "dir",
+          ),
+        ).pipe(Effect.orDie);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "linked-dir/nested/created.txt",
+            contents: "outside\n",
+          })
+          .pipe(Effect.flip);
+        const escapedStat = yield* fileSystem
+          .stat(outsidePath)
+          .pipe(Effect.orElseSucceed(() => null));
+        const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
+        const resolvedPath = yield* fileSystem.realPath(outsideDir);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "linked-dir/nested/created.txt",
+          resolvedWorkspaceRoot,
+          resolvedPath,
+        });
+        expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("writes through directory symlinks that stay within the workspace root", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcessPlatform;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const actualDir = path.join(cwd, "actual-dir");
+        yield* fileSystem.makeDirectory(actualDir);
+        yield* Effect.tryPromise(() =>
+          NodeFSP.symlink(
+            actualDir,
+            path.join(cwd, "linked-dir"),
+            platform === "win32" ? "junction" : "dir",
+          ),
+        ).pipe(Effect.orDie);
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "linked-dir/nested/created.txt",
+          contents: "inside\n",
+        });
+        const saved = yield* fileSystem.readFileString(
+          path.join(actualDir, "nested", "created.txt"),
+        );
+
+        expect(saved).toBe("inside\n");
       }),
     );
   });
