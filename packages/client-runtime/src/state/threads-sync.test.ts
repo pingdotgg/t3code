@@ -36,7 +36,12 @@ import {
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
-import { evictCachedThread } from "./threadCache.ts";
+import {
+  cachedThreadGeneration,
+  evictCachedThread,
+  persistCachedThread,
+  reviveCachedThread,
+} from "./threadCache.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -552,6 +557,61 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(yield* Ref.get(savedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps an active cache write valid when revival is already satisfied", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      const generation = cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID);
+
+      yield* reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        generation,
+      );
+
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+      ]);
+    }),
+  );
+
+  it.effect("rejects a pre-eviction write after cache revival", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      const staleGeneration = cachedThreadGeneration(
+        harness.cache,
+        TARGET.environmentId,
+        THREAD_ID,
+      );
+
+      yield* evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        staleGeneration,
+      );
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+
+      const revivedGeneration = cachedThreadGeneration(
+        harness.cache,
+        TARGET.environmentId,
+        THREAD_ID,
+      );
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        revivedGeneration,
+      );
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+      ]);
     }),
   );
 

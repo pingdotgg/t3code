@@ -26,6 +26,7 @@ import {
   cachedThreadGeneration,
   evictCachedThread,
   persistCachedThread,
+  retainCachedThread,
   reviveCachedThread,
 } from "./threadCache.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
@@ -62,6 +63,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const snapshotLoader = yield* ThreadSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
+  // Keep the cross-surface cache generation alive until this detail state's
+  // persistence worker and teardown write have both finalized.
+  yield* retainCachedThread(cache, environmentId, threadId);
   const cached = yield* cache.loadThread(environmentId, threadId).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Could not load cached thread.").pipe(

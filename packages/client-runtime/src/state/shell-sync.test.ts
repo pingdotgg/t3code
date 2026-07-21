@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
+  ThreadId,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
 } from "@t3tools/contracts";
@@ -23,6 +24,12 @@ import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
+import {
+  cachedThreadGeneration,
+  evictCachedThread,
+  persistCachedThread,
+  retainCachedThread,
+} from "./threadCache.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -169,6 +176,8 @@ describe("environment shell synchronization", () => {
       } | null>(null);
       const loaderCalls = yield* SubscriptionRef.make(0);
       const removedThreads = yield* Ref.make<string[]>([]);
+      const savedThreads = yield* Ref.make<string[]>([]);
+      const addedThreadId = ThreadId.make("archived-after-http-snapshot");
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
           readonly afterSequence?: number;
@@ -195,7 +204,8 @@ describe("environment shell synchronization", () => {
         loadShell: () => Effect.succeed(Option.some(cachedSnapshot)),
         saveShell: () => Effect.void,
         loadThread: () => Effect.succeed(Option.none()),
-        saveThread: () => Effect.void,
+        saveThread: (_environmentId, snapshot) =>
+          Ref.update(savedThreads, (threadIds) => [...threadIds, snapshot.thread.id]),
         removeThread: (_environmentId, threadId) =>
           Ref.update(removedThreads, (threadIds) => [...threadIds, threadId]),
         loadServerConfig: () => Effect.succeed(Option.none()),
@@ -204,6 +214,10 @@ describe("environment shell synchronization", () => {
         saveVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
+      yield* retainCachedThread(cache, TARGET.environmentId, addedThreadId);
+      const staleGeneration = cachedThreadGeneration(cache, TARGET.environmentId, addedThreadId);
+      yield* evictCachedThread(cache, TARGET.environmentId, addedThreadId);
+      yield* Ref.set(removedThreads, []);
       const snapshotLoader = ShellSnapshotLoader.of({
         load: () =>
           SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(
@@ -230,6 +244,20 @@ describe("environment shell synchronization", () => {
       expect(synchronizing.status).toBe("synchronizing");
       expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(httpSnapshot);
       expect(yield* Ref.get(removedThreads)).toEqual(["stale-thread"]);
+      yield* persistCachedThread(
+        cache,
+        TARGET.environmentId,
+        { snapshotSequence: 9, thread: { id: addedThreadId } as never },
+        staleGeneration,
+      );
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
+      yield* persistCachedThread(
+        cache,
+        TARGET.environmentId,
+        { snapshotSequence: 9, thread: { id: addedThreadId } as never },
+        cachedThreadGeneration(cache, TARGET.environmentId, addedThreadId),
+      );
+      expect(yield* Ref.get(savedThreads)).toEqual([addedThreadId]);
 
       yield* Queue.offer(events, {
         kind: "snapshot",

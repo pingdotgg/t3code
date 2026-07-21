@@ -60,6 +60,8 @@ export const archiveThreadAndEvictCache = Effect.fn(
       const result = yield* restore(archiveThread(input));
       const supervisor = yield* EnvironmentSupervisor;
       const cache = yield* EnvironmentCacheStore;
+      // The shell/detail event paths also evict. This acknowledgement-side
+      // eviction closes the route-teardown race when those events arrive late.
       yield* evictCachedThread(cache, supervisor.target.environmentId, input.threadId);
       return result;
     }),

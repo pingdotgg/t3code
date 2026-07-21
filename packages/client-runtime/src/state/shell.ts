@@ -162,32 +162,28 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       return;
     }
 
+    const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+    const currentThreadIds = Option.match(current.snapshot, {
+      onNone: () => new Set<ThreadId>(),
+      onSome: (snapshot) => new Set(snapshot.threads.map((thread) => thread.id)),
+    });
     const removedThreadIds = Option.match(current.snapshot, {
       onNone: () => [] as ReadonlyArray<ThreadId>,
-      onSome: (snapshot) => {
-        const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
-        return snapshot.threads
-          .map((thread) => thread.id)
-          .filter((threadId) => !nextThreadIds.has(threadId));
-      },
+      onSome: (snapshot) =>
+        snapshot.threads
+          .filter((thread) => !nextThreadIds.has(thread.id))
+          .map((thread) => thread.id),
     });
     const addedThreadIds = Option.match(current.snapshot, {
-      onNone: () => nextSnapshot.threads.map((thread) => thread.id),
-      onSome: (snapshot) => {
-        const currentThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
-        return nextSnapshot.threads
-          .map((thread) => thread.id)
-          .filter((threadId) => !currentThreadIds.has(threadId));
-      },
+      onNone: () => [] as ReadonlyArray<ThreadId>,
+      onSome: () =>
+        nextSnapshot.threads
+          .filter((thread) => !currentThreadIds.has(thread.id))
+          .map((thread) => thread.id),
     });
 
-    const waiting = yield* Ref.get(awaitingCompletion);
-    yield* SubscriptionRef.set(state, {
-      snapshot: Option.some(nextSnapshot),
-      status: waiting ? "synchronizing" : "live",
-      error: Option.none(),
-    });
-    yield* Queue.offer(persistence, nextSnapshot);
+    // Advance cache tombstones before publishing the new shell so detail
+    // observers cannot enqueue an obsolete write in the transition window.
     yield* Effect.forEach(
       removedThreadIds,
       (threadId) => evictCachedThread(cache, environmentId, threadId),
@@ -198,6 +194,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       (threadId) => reviveCachedThread(cache, environmentId, threadId),
       { discard: true },
     );
+
+    const waiting = yield* Ref.get(awaitingCompletion);
+    yield* SubscriptionRef.set(state, {
+      snapshot: Option.some(nextSnapshot),
+      status: waiting ? "synchronizing" : "live",
+      error: Option.none(),
+    });
+    yield* Queue.offer(persistence, nextSnapshot);
   });
 
   const foregroundResubscriptions = Option.match(wakeups, {
