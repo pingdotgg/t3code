@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
+import { CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -429,6 +430,22 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds = flushBoundsPersist;
 
     yield* previewManager.setMainWindow(window);
+    // Electron's macOS Close Window accelerator otherwise wins before the renderer
+    // can apply focus-aware keybindings.
+    window.webContents.on("before-input-event", (event, input) => {
+      if (
+        environment.platform !== "darwin" ||
+        PreviewManager.resolveForwardedPreviewShortcutKey(input, environment.platform) !== "w"
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (window.webContents.isLoadingMainFrame()) {
+        window.close();
+      } else {
+        window.webContents.send(MENU_ACTION_CHANNEL, CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION);
+      }
+    });
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||

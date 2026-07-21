@@ -7,6 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  effectiveShortcutsForCommand,
   formatShortcutLabel,
   isChatNewShortcut,
   isChatNewLocalShortcut,
@@ -106,7 +107,12 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("w"),
     command: "terminal.close",
-    whenAst: whenIdentifier("terminalFocus"),
+    whenAst: whenAnd(whenIdentifier("terminalFocus"), whenNot(whenIdentifier("rightPanelFocus"))),
+  },
+  {
+    shortcut: modShortcut("w"),
+    command: "rightPanel.closeActiveSurface",
+    whenAst: whenIdentifier("rightPanelFocus"),
   },
   {
     shortcut: modShortcut("d"),
@@ -285,6 +291,77 @@ describe("split/new/close terminal shortcuts", () => {
       isTerminalNewShortcut(event({ key: "m", ctrlKey: true }), keybindings, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("right panel close shortcut", () => {
+  it("matches Cmd+W only while the right panel owns focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { rightPanelFocus: true },
+      }),
+      "rightPanel.closeActiveSurface",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { rightPanelFocus: false },
+      }),
+    );
+  });
+
+  it("closes the right-panel surface when its terminal owns focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { rightPanelFocus: true, terminalFocus: true },
+      }),
+      "rightPanel.closeActiveSurface",
+    );
+  });
+
+  it("supports Shift-only custom close bindings", () => {
+    const bindings = compile([
+      {
+        shortcut: modShortcut("x", { modKey: false, shiftKey: true }),
+        command: "rightPanel.closeActiveSurface",
+        whenAst: whenIdentifier("rightPanelFocus"),
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "X", shiftKey: true }), bindings, {
+        platform: "MacIntel",
+        context: { rightPanelFocus: true },
+      }),
+      "rightPanel.closeActiveSurface",
+    );
+  });
+
+  it("exposes every effective close binding for embedded Browser forwarding", () => {
+    const first = modShortcut("p");
+    const second = modShortcut("x", { shiftKey: true });
+    const bindings = compile([
+      {
+        shortcut: first,
+        command: "rightPanel.closeActiveSurface",
+        whenAst: whenIdentifier("rightPanelFocus"),
+      },
+      {
+        shortcut: second,
+        command: "rightPanel.closeActiveSurface",
+        whenAst: whenIdentifier("previewFocus"),
+      },
+    ]);
+
+    assert.deepEqual(
+      effectiveShortcutsForCommand(bindings, "rightPanel.closeActiveSurface", {
+        platform: "MacIntel",
+        context: { previewFocus: true, rightPanelFocus: true },
+      }),
+      [second, first],
     );
   });
 });

@@ -203,6 +203,11 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("terminal.splitVertical"), "mod+shift+d");
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
+      assert.equal(
+        Keybindings.DEFAULT_KEYBINDINGS.find((binding) => binding.command === "terminal.close")
+          ?.when,
+        "terminalFocus && !rightPanelFocus",
+      );
     }),
   );
 

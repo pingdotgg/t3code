@@ -7,6 +7,7 @@ import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { useRightPanelFocusScope } from "../rightPanelFocusScope";
 
 const ComboboxContext = React.createContext<{
   chipsRef: React.RefObject<Element | null> | null;
@@ -155,6 +156,7 @@ function ComboboxPopup({
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
 }) {
   const { chipsRef } = React.use(ComboboxContext);
+  const inRightPanelFocusScope = useRightPanelFocusScope();
   const anchor = anchorProp ?? chipsRef;
 
   return (
@@ -177,6 +179,7 @@ function ComboboxPopup({
           <ComboboxPrimitive.Popup
             className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
             data-slot="combobox-popup"
+            data-right-panel-control={inRightPanelFocusScope ? "" : undefined}
             {...props}
           >
             {children}

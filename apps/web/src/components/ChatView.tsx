@@ -48,6 +48,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -135,7 +136,11 @@ import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  effectiveShortcutsForCommand,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
@@ -156,6 +161,12 @@ import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { createCloseFocusTracker } from "../lib/closeFocus";
+import {
+  CLOSE_FOCUSED_REGION_EVENT,
+  resolveCloseRequestTarget,
+  shouldHandleCloseRequest,
+} from "../lib/rightPanelCloseRequest";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -168,6 +179,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -271,6 +283,14 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 
+const NATIVE_CLOSE_SHORTCUT = {
+  code: "KeyW",
+  key: "w",
+  metaKey: true,
+  ctrlKey: false,
+  shiftKey: false,
+  altKey: false,
+} as const;
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
@@ -1476,6 +1496,13 @@ function ChatViewContent(props: ChatViewProps) {
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
 
   useEffect(() => {
+    if (rightPanelOpen) return;
+    setMaximizedRightPanelThreadKey((threadKey) =>
+      threadKey === routeThreadKey ? null : threadKey,
+    );
+  }, [rightPanelOpen, routeThreadKey]);
+
+  useEffect(() => {
     if (!activeThreadRef) return;
     useRightPanelStore
       .getState()
@@ -2306,6 +2333,24 @@ function ChatViewContent(props: ChatViewProps) {
         }),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const previewCloseShortcuts = useMemo(
+    () =>
+      effectiveShortcutsForCommand(keybindings, "rightPanel.closeActiveSurface", {
+        context: {
+          previewFocus: true,
+          previewOpen: true,
+          rightPanelFocus: true,
+          terminalFocus: false,
+          terminalOpen: Boolean(terminalUiState.terminalOpen),
+        },
+      }),
+    [keybindings, terminalUiState.terminalOpen],
+  );
+  useEffect(() => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+    void preview.setRightPanelCloseShortcuts(previewCloseShortcuts).catch(() => undefined);
+  }, [previewCloseShortcuts]);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
@@ -3201,6 +3246,118 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
   );
+  const rightPanelPreviewTabIds = rightPanelState.surfaces.flatMap((surface) =>
+    surface.kind === "preview" && surface.resourceId !== null ? [surface.resourceId] : [],
+  );
+  const closeFocusTrackerRef = useRef<ReturnType<typeof createCloseFocusTracker> | null>(null);
+  if (closeFocusTrackerRef.current === null) {
+    closeFocusTrackerRef.current = createCloseFocusTracker();
+  }
+  const closeFocusTracker = closeFocusTrackerRef.current;
+  const closeFocusContextRef = useRef({
+    rightPanelOpen,
+    rightPanelPreviewTabIds,
+    rightPanelScopeKey: routeThreadKey,
+  });
+  closeFocusContextRef.current = {
+    rightPanelOpen,
+    rightPanelPreviewTabIds,
+    rightPanelScopeKey: routeThreadKey,
+  };
+  const readShortcutFocus = useCallback(() => {
+    const closeFocusOwner = closeFocusTracker.current(closeFocusContextRef.current);
+    const terminalFocusOwner = getTerminalFocusOwner();
+    const previewOpen = activeRightPanelSurface?.kind === "preview";
+    const closeRequestTarget = resolveCloseRequestTarget({
+      focusOwner: closeFocusOwner,
+      drawerTerminalOpen: terminalUiState.terminalOpen,
+      rightPanelOpen,
+      rightPanelSurfaceKind: activeRightPanelSurface?.kind ?? null,
+    });
+    return {
+      closeRequestTarget,
+      terminalFocusOwner,
+      context: {
+        terminalFocus: terminalFocusOwner !== null || closeFocusOwner === "drawer-terminal",
+        terminalOpen: Boolean(terminalUiState.terminalOpen),
+        modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        previewFocus: previewOpen && closeFocusOwner === "right-panel",
+        previewOpen,
+        rightPanelFocus: closeFocusOwner === "right-panel",
+      },
+    };
+  }, [
+    activeRightPanelSurface?.kind,
+    closeFocusTracker,
+    composerRef,
+    rightPanelOpen,
+    terminalUiState.terminalOpen,
+  ]);
+  const closeActiveRightPanelTarget = useCallback(() => {
+    if (!rightPanelOpen || !activeThreadRef) return false;
+    if (activeRightPanelSurface) {
+      closeRightPanelSurface(activeRightPanelSurface);
+    } else {
+      setMaximizedRightPanelThreadKey(null);
+      useRightPanelStore.getState().close(activeThreadRef);
+    }
+    return true;
+  }, [activeRightPanelSurface, activeThreadRef, closeRightPanelSurface, rightPanelOpen]);
+  const handleCloseRequest = useEffectEvent((event: Event) => {
+    if (event.defaultPrevented) return;
+    const { closeRequestTarget: target, context } = readShortcutFocus();
+    if (target === null) return;
+    const command = resolveShortcutCommand(NATIVE_CLOSE_SHORTCUT, keybindings, { context });
+    if (!shouldHandleCloseRequest(target, command)) return;
+    if (target === "drawer-terminal") {
+      closeTerminal(terminalUiState.activeTerminalId);
+    } else {
+      if (!closeActiveRightPanelTarget()) return;
+    }
+    event.preventDefault();
+  });
+  useEffect(() => {
+    const listener = (event: Event) => handleCloseRequest(event);
+
+    window.addEventListener(CLOSE_FOCUSED_REGION_EVENT, listener);
+    return () => {
+      window.removeEventListener(CLOSE_FOCUSED_REGION_EVENT, listener);
+    };
+  }, []);
+  useEffect(() => {
+    const recordFocus = (event: FocusEvent) => {
+      closeFocusTracker.recordFocus(event.target, closeFocusContextRef.current);
+    };
+    const recordPointer = (event: MouseEvent) => {
+      closeFocusTracker.recordPointer(event.target, closeFocusContextRef.current);
+    };
+    const recordFocusOut = (event: FocusEvent) => {
+      closeFocusTracker.recordFocusOut(
+        event.relatedTarget,
+        document.hasFocus(),
+        closeFocusContextRef.current,
+      );
+    };
+
+    closeFocusTracker.recordFocus(document.activeElement, closeFocusContextRef.current);
+    window.addEventListener("focusin", recordFocus, true);
+    window.addEventListener("focusout", recordFocusOut, true);
+    window.addEventListener("pointerdown", recordPointer, true);
+    return () => {
+      window.removeEventListener("focusin", recordFocus, true);
+      window.removeEventListener("focusout", recordFocusOut, true);
+      window.removeEventListener("pointerdown", recordPointer, true);
+      closeFocusTracker.clear();
+    };
+  }, [closeFocusTracker, routeThreadKey]);
+  useEffect(() => {
+    if (!terminalUiState.terminalOpen) closeFocusTracker.clear("drawer-terminal");
+    if (rightPanelOpen) {
+      closeFocusTracker.recordFocus(document.activeElement, closeFocusContextRef.current);
+    } else {
+      closeFocusTracker.clear("right-panel");
+    }
+  }, [closeFocusTracker, rightPanelOpen, terminalUiState.terminalOpen]);
   const closeOtherRightPanelSurfaces = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
@@ -4053,17 +4210,20 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
-      const terminalFocusOwner = getTerminalFocusOwner();
+      const {
+        closeRequestTarget,
+        context: shortcutContext,
+        terminalFocusOwner,
+      } = readShortcutFocus();
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
       }
-      const shortcutContext = {
-        terminalFocus: terminalFocusOwner !== null,
-        terminalOpen: Boolean(terminalUiState.terminalOpen),
-        modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
-      };
 
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: shortcutContext,
+      });
       if (
+        command === null &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -4075,9 +4235,6 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: shortcutContext,
-      });
       if (!command) return;
 
       if (command === "terminal.toggle") {
@@ -4091,6 +4248,13 @@ function ChatViewContent(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleRightPanel();
+        return;
+      }
+
+      if (command === "rightPanel.closeActiveSurface") {
+        if (!closeActiveRightPanelTarget()) return;
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
 
@@ -4125,8 +4289,12 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "terminal.close") {
         event.preventDefault();
         event.stopPropagation();
-        if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
-          closePanelTerminal(activeRightPanelSurface.activeTerminalId);
+        if (
+          closeRequestTarget !== null &&
+          closeRequestTarget !== "drawer-terminal" &&
+          shouldHandleCloseRequest(closeRequestTarget, command)
+        ) {
+          closeActiveRightPanelTarget();
           return;
         }
         if (!terminalUiState.terminalOpen) return;
@@ -4180,7 +4348,7 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiState.activeTerminalId,
     activeThreadId,
     closeTerminal,
-    closePanelTerminal,
+    closeActiveRightPanelTarget,
     createNewTerminal,
     setTerminalOpen,
     runProjectScript,
@@ -4188,6 +4356,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
+    readShortcutFocus,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -5335,6 +5504,9 @@ function ChatViewContent(props: ChatViewProps) {
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
+      onCloseRightPanel={
+        rightPanelOpen && !shouldUsePlanSidebarSheet ? toggleRightPanel : undefined
+      }
     />
   );
   const panelLayoutControls = (
@@ -5375,7 +5547,6 @@ function ChatViewContent(props: ChatViewProps) {
         splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
         splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-        closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
     ) : activeRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>

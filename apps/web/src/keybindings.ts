@@ -8,30 +8,25 @@ import {
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
+import {
+  type KeybindingInputLike,
+  type KeybindingModifierStateLike,
+  matchesKeybindingShortcut,
+  matchesKeybindingShortcutModifiers,
+  normalizeKeybindingEventKey,
+  resolveKeybindingShortcutModifiers,
+} from "@t3tools/shared/keybindings";
 import { isMacPlatform } from "./lib/utils";
 
-export interface ShortcutEventLike {
-  type?: string;
-  code?: string;
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-}
-
-export interface ShortcutModifierStateLike {
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-}
+export type ShortcutEventLike = KeybindingInputLike & { readonly type?: string };
+export type ShortcutModifierStateLike = KeybindingModifierStateLike;
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
   terminalOpen: boolean;
   previewFocus: boolean;
   previewOpen: boolean;
+  rightPanelFocus: boolean;
   [key: string]: boolean;
 }
 
@@ -49,66 +44,6 @@ const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
 const TERMINAL_DELETE_TO_LINE_START = "\u0015";
-const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  BracketLeft: ["["],
-  BracketRight: ["]"],
-  Digit0: ["0"],
-  Digit1: ["1"],
-  Digit2: ["2"],
-  Digit3: ["3"],
-  Digit4: ["4"],
-  Digit5: ["5"],
-  Digit6: ["6"],
-  Digit7: ["7"],
-  Digit8: ["8"],
-  Digit9: ["9"],
-};
-
-function normalizeEventKey(key: string): string {
-  const normalized = key.toLowerCase();
-  if (normalized === "esc") return "escape";
-  return normalized;
-}
-
-function resolveEventKeys(event: ShortcutEventLike): Set<string> {
-  const keys = new Set([normalizeEventKey(event.key)]);
-  const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
-  if (letterCode) {
-    keys.add(letterCode.toLowerCase());
-  }
-  const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
-  if (!aliases) return keys;
-
-  for (const alias of aliases) {
-    keys.add(alias);
-  }
-  return keys;
-}
-
-function matchesShortcutModifiers(
-  event: ShortcutModifierStateLike,
-  shortcut: KeybindingShortcut,
-  platform = navigator.platform,
-): boolean {
-  const useMetaForMod = isMacPlatform(platform);
-  const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  return (
-    event.metaKey === expectedMeta &&
-    event.ctrlKey === expectedCtrl &&
-    event.shiftKey === shortcut.shiftKey &&
-    event.altKey === shortcut.altKey
-  );
-}
-
-function matchesShortcut(
-  event: ShortcutEventLike,
-  shortcut: KeybindingShortcut,
-  platform = navigator.platform,
-): boolean {
-  if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
-  return resolveEventKeys(event).has(shortcut.key);
-}
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
   return options?.platform ?? navigator.platform;
@@ -120,6 +55,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
+    rightPanelFocus: false,
     ...options?.context,
   };
 }
@@ -148,9 +84,7 @@ function matchesWhenClause(
 }
 
 function shortcutConflictKey(shortcut: KeybindingShortcut, platform = navigator.platform): string {
-  const useMetaForMod = isMacPlatform(platform);
-  const metaKey = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const ctrlKey = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
+  const { metaKey, ctrlKey } = resolveKeybindingShortcutModifiers(shortcut, platform);
 
   return [
     shortcut.key,
@@ -161,14 +95,15 @@ function shortcutConflictKey(shortcut: KeybindingShortcut, platform = navigator.
   ].join("|");
 }
 
-function findEffectiveShortcutForCommand(
+export function effectiveShortcutsForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
-): KeybindingShortcut | null {
+): ReadonlyArray<KeybindingShortcut> {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
   const claimedShortcuts = new Set<string>();
+  const matches: KeybindingShortcut[] = [];
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
@@ -182,11 +117,19 @@ function findEffectiveShortcutForCommand(
 
     claimedShortcuts.add(conflictKey);
     if (binding.command === command) {
-      return binding.shortcut;
+      matches.push(binding.shortcut);
     }
   }
 
-  return null;
+  return matches;
+}
+
+function findEffectiveShortcutForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): KeybindingShortcut | null {
+  return effectiveShortcutsForCommand(keybindings, command, options)[0] ?? null;
 }
 
 function matchesCommandShortcut(
@@ -210,7 +153,7 @@ export function resolveShortcutCommand(
     const binding = keybindings[index];
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesShortcut(event, binding.shortcut, platform)) continue;
+    if (!matchesKeybindingShortcut(event, binding.shortcut, platform)) continue;
     return binding.command;
   }
   return null;
@@ -300,7 +243,7 @@ export function shouldShowThreadJumpHintsForModifiers(
   for (const command of THREAD_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+    if (matchesKeybindingShortcutModifiers(modifiers, shortcut, platform)) {
       return true;
     }
   }
@@ -339,7 +282,7 @@ export function shouldShowModelPickerJumpHintsForModifiers(
   for (const command of MODEL_PICKER_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+    if (matchesKeybindingShortcutModifiers(modifiers, shortcut, platform)) {
       return true;
     }
   }
@@ -479,7 +422,7 @@ export function terminalDeleteShortcutData(
     return null;
   }
 
-  const key = normalizeEventKey(event.key);
+  const key = normalizeKeybindingEventKey(event.key);
   if (key !== "backspace") {
     return null;
   }
@@ -499,7 +442,7 @@ export function terminalNavigationShortcutData(
 
   if (event.shiftKey) return null;
 
-  const key = normalizeEventKey(event.key);
+  const key = normalizeKeybindingEventKey(event.key);
   if (key !== "arrowleft" && key !== "arrowright") {
     return null;
   }

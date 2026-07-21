@@ -3,6 +3,7 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
+import { useRightPanelFocusScope } from "../rightPanelFocusScope";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
@@ -36,6 +37,7 @@ function PopoverPopup({
   tooltipStyle?: boolean;
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
 }) {
+  const inRightPanelFocusScope = useRightPanelFocusScope();
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Positioner
@@ -55,6 +57,7 @@ function PopoverPopup({
             className,
           )}
           data-slot="popover-popup"
+          data-right-panel-control={inRightPanelFocusScope ? "" : undefined}
           {...props}
         >
           <PopoverPrimitive.Viewport

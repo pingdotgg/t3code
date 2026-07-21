@@ -102,6 +102,7 @@ import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } fr
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { KeybindingShortcut, MAX_KEYBINDINGS_COUNT } from "./keybindings.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
   SourceControlCloneRepositoryInput,
@@ -903,6 +904,10 @@ export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 
+export const DesktopPreviewRightPanelCloseShortcutsInputSchema = Schema.Struct({
+  shortcuts: Schema.Array(KeybindingShortcut).check(Schema.isMaxLength(MAX_KEYBINDINGS_COUNT)),
+});
+
 export const DesktopPreviewNavigateInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   url: Schema.String,
@@ -955,6 +960,8 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   input: PreviewAutomationWaitForInput,
 });
+
+export const CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION = "close-window-or-focused-region";
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -1025,6 +1032,7 @@ export interface DesktopPreviewBridge {
   createTab: (tabId: string) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
+  setRightPanelCloseShortcuts: (shortcuts: ReadonlyArray<KeybindingShortcut>) => Promise<void>;
   navigate: (tabId: string, url: string) => Promise<void>;
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;
