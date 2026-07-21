@@ -126,6 +126,15 @@ describe("resolveArchivedProjectEnvironmentLabel", () => {
     ).toBe("Build box");
   });
 
+  it("shows a remote environment label when multiple environments exist", () => {
+    expect(
+      resolveArchivedProjectEnvironmentLabel({
+        environment: remoteEnvironment,
+        hasMultipleEnvironments: true,
+      }),
+    ).toBe("Build box");
+  });
+
   it("hides a sole primary environment label", () => {
     expect(
       resolveArchivedProjectEnvironmentLabel({
