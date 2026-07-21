@@ -55,6 +55,10 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
 import { ProjectLaunchEnv } from "../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
+import type {
+  ProjectLaunchEnvProjectLookupError,
+  ProjectLaunchEnvThreadLookupError,
+} from "../projectLaunchEnv/Services/ProjectLaunchEnvErrors.ts";
 import { isManagedRuntimeEnvKey } from "../projectLaunchEnv/projectLaunchEnvUtils.ts";
 import {
   increment,
@@ -1207,32 +1211,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ...(input.env !== undefined ? { extraEnv: input.env } : {}),
   });
 
+  const mapProjectLaunchEnvError = (
+    error: ProjectLaunchEnvProjectLookupError | ProjectLaunchEnvThreadLookupError,
+  ) => {
+    if (error._tag === "ProjectLaunchEnvThreadLookupError") {
+      return new TerminalSessionLookupError({
+        threadId: error.threadId,
+        terminalId: error.terminalId ?? "",
+      });
+    }
+
+    if (error._tag === "ProjectLaunchEnvProjectNotFoundError") {
+      return new TerminalCwdNotFoundError({ cwd: error.projectId });
+    }
+
+    return new TerminalCwdStatError({
+      cwd: error.projectId,
+      cause: error.cause,
+    });
+  };
+
   const applyProjectLaunchEnv = <T extends TerminalOpenInput | TerminalRestartInput>(input: T) =>
     projectLaunchEnv.resolveForThread(toProjectLaunchEnvInput(input)).pipe(
-      Effect.catchTags({
-        ProjectLaunchEnvProjectNotFoundError: (error) =>
-          Effect.fail(
-            new TerminalCwdError({
-              cwd: error.projectId,
-              reason: "notFound",
-            }),
-          ),
-        ProjectLaunchEnvProjectStatError: (error) =>
-          Effect.fail(
-            new TerminalCwdError({
-              cwd: error.projectId,
-              reason: "statFailed",
-              cause: error.cause,
-            }),
-          ),
-        ProjectLaunchEnvThreadLookupError: (error) =>
-          Effect.fail(
-            new TerminalSessionLookupError({
-              threadId: error.threadId,
-              terminalId: error.terminalId ?? "",
-            }),
-          ),
-      }),
+      Effect.mapError(mapProjectLaunchEnvError),
       Effect.map((resolved) => ({
         ...input,
         ...(resolved.worktreePath !== undefined ? { worktreePath: resolved.worktreePath } : {}),
@@ -1242,30 +1243,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const applyProjectLaunchEnvForAttach = (input: TerminalAttachInput) =>
     projectLaunchEnv.resolveForThread(toProjectLaunchEnvInput(input)).pipe(
-      Effect.catchTags({
-        ProjectLaunchEnvProjectNotFoundError: (error) =>
-          Effect.fail(
-            new TerminalCwdError({
-              cwd: error.projectId,
-              reason: "notFound",
-            }),
-          ),
-        ProjectLaunchEnvProjectStatError: (error) =>
-          Effect.fail(
-            new TerminalCwdError({
-              cwd: error.projectId,
-              reason: "statFailed",
-              cause: error.cause,
-            }),
-          ),
-        ProjectLaunchEnvThreadLookupError: (error) =>
-          Effect.fail(
-            new TerminalSessionLookupError({
-              threadId: error.threadId,
-              terminalId: error.terminalId ?? "",
-            }),
-          ),
-      }),
+      Effect.mapError(mapProjectLaunchEnvError),
       Effect.map(
         (resolved) =>
           ({
