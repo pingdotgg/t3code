@@ -4,7 +4,7 @@ import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
-  getDefaultCloneRemoteUrl,
+  getCloneSourceInput,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -36,12 +36,24 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   };
 }
 
-it("uses HTTPS for automatic repository clones", () => {
+it("uses provider-based automatic selection for looked-up repositories", () => {
   expect(
-    getDefaultCloneRemoteUrl({
-      url: "https://github.com/octocat/t3code",
+    getCloneSourceInput({
+      repository: {
+        provider: "github",
+        nameWithOwner: "octocat/t3code",
+        url: "https://github.com/octocat/t3code",
+        sshUrl: "git@github.com:octocat/t3code.git",
+      },
+      remoteUrl: "https://github.com/octocat/t3code",
     }),
-  ).toBe("https://github.com/octocat/t3code");
+  ).toEqual({ provider: "github", repository: "octocat/t3code", protocol: "auto" });
+});
+
+it("passes explicit clone URLs through unchanged", () => {
+  expect(
+    getCloneSourceInput({ repository: null, remoteUrl: "git@example.com:org/repo.git" }),
+  ).toEqual({ remoteUrl: "git@example.com:org/repo.git" });
 });
 
 describe("buildThreadActionItems", () => {

@@ -210,18 +210,20 @@ describe("GitHubCli.layer", () => {
 
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              nameWithOwner: "octocat/codething-mvp",
-              url: "https://github.com/octocat/codething-mvp",
-              sshUrl: "git@github.com:octocat/codething-mvp.git",
-            }),
+      mockRun
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                nameWithOwner: "octocat/codething-mvp",
+                url: "https://github.com/octocat/codething-mvp",
+                sshUrl: "git@github.com:octocat/codething-mvp.git",
+              }),
+            ),
           ),
-        ),
-      );
+        )
+        .mockReturnValueOnce(Effect.succeed(processOutput("https\n")));
 
       const gh = yield* GitHubCli.GitHubCli;
       const result = yield* gh.getRepositoryCloneUrls({
@@ -233,6 +235,14 @@ describe("GitHubCli.layer", () => {
         nameWithOwner: "octocat/codething-mvp",
         url: "https://github.com/octocat/codething-mvp",
         sshUrl: "git@github.com:octocat/codething-mvp.git",
+        preferredProtocol: "https",
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["config", "get", "git_protocol", "--host", "github.com"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
       });
     }).pipe(Effect.provide(layer)),
   );

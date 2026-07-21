@@ -1,6 +1,7 @@
 import {
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type SourceControlCloneRepositoryInput,
   type SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -58,10 +59,19 @@ export interface CommandPaletteView {
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
-export function getDefaultCloneRemoteUrl(
-  repository: Pick<SourceControlRepositoryInfo, "url">,
-): string {
-  return repository.url;
+export function getCloneSourceInput(input: {
+  repository: SourceControlRepositoryInfo | null;
+  remoteUrl: string;
+}): Pick<SourceControlCloneRepositoryInput, "provider" | "repository" | "remoteUrl" | "protocol"> {
+  if (input.repository) {
+    return {
+      provider: input.repository.provider,
+      repository: input.repository.nameWithOwner,
+      protocol: "auto",
+    };
+  }
+
+  return { remoteUrl: input.remoteUrl };
 }
 
 export function filterBrowseEntries(input: {

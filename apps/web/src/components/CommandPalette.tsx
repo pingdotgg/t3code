@@ -102,7 +102,7 @@ import {
   filterBrowseEntries,
   filterCommandPaletteGroups,
   getCommandPaletteInputPlaceholder,
-  getDefaultCloneRemoteUrl,
+  getCloneSourceInput,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
@@ -1283,7 +1283,7 @@ function OpenCommandPaletteDialog(props: {
         source: addProjectCloneFlow.source,
         repositoryInput: rawRepository,
         repository,
-        remoteUrl: getDefaultCloneRemoteUrl(repository),
+        remoteUrl: repository.url,
       });
       setHighlightedItemValue(null);
       setQuery(destinationPath);
@@ -1330,7 +1330,7 @@ function OpenCommandPaletteDialog(props: {
     const cloneResult = await cloneRepository({
       environmentId: addProjectCloneFlow.environmentId,
       input: {
-        remoteUrl: addProjectCloneFlow.remoteUrl,
+        ...getCloneSourceInput(addProjectCloneFlow),
         destinationPath,
       },
     });

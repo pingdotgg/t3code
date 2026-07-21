@@ -194,6 +194,7 @@ export interface GitHubRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
   readonly sshUrl: string;
+  readonly preferredProtocol?: "ssh" | "https";
 }
 
 export class GitHubCli extends Context.Service<
@@ -264,6 +265,22 @@ function normalizeRepositoryCloneUrls(
     url: raw.url,
     sshUrl: raw.sshUrl,
   };
+}
+
+function repositoryHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "github.com";
+  }
+}
+
+function parseConfiguredGitProtocol(stdout: string): "ssh" | "https" | undefined {
+  const protocol = stdout.trim().toLowerCase();
+  if (protocol === "ssh" || protocol === "https") {
+    return protocol;
+  }
+  return undefined;
 }
 
 /**
@@ -409,6 +426,20 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+        Effect.flatMap((urls) =>
+          execute({
+            cwd: input.cwd,
+            args: ["config", "get", "git_protocol", "--host", repositoryHost(urls.url)],
+          }).pipe(
+            Effect.map((result) => parseConfiguredGitProtocol(result.stdout)),
+            Effect.map((preferredProtocol) =>
+              preferredProtocol === undefined ? urls : { ...urls, preferredProtocol },
+            ),
+            // Repository lookup should still work when older `gh` versions or
+            // incomplete host configuration cannot report a preference.
+            Effect.orElseSucceed(() => urls),
+          ),
+        ),
       ),
     createRepository: (input) =>
       execute({

@@ -150,7 +150,60 @@ it.effect("preserves provider failures without deriving the repository message f
   }).pipe(Effect.provide(makeLayer({ provider })));
 });
 
-it.effect("clones a looked-up repository over HTTPS by default", () =>
+it.effect("clones a looked-up repository using the provider's HTTPS preference", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-parent-",
+    });
+    const destinationPath = `${parent}/t3code`;
+    const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
+    const provider = makeProvider({
+      getRepositoryCloneUrls: () =>
+        Effect.succeed({ ...CLONE_URLS, preferredProtocol: "https" as const }),
+    });
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const result = yield* service.cloneRepository({
+        provider: "github",
+        repository: "octocat/t3code",
+        destinationPath,
+      });
+
+      assert.deepStrictEqual(result, {
+        cwd: destinationPath,
+        remoteUrl: CLONE_URLS.url,
+        repository: {
+          provider: "github",
+          ...CLONE_URLS,
+          preferredProtocol: "https",
+        },
+      });
+      assert.deepStrictEqual(cloneCalls, [
+        {
+          cwd: parent,
+          args: ["clone", CLONE_URLS.url, "t3code"],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          provider,
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                cloneCalls.push({ cwd: input.cwd, args: input.args });
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps SSH as the automatic fallback without a provider preference", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const parent = yield* fs.makeTempDirectoryScoped({
@@ -167,15 +220,11 @@ it.effect("clones a looked-up repository over HTTPS by default", () =>
         destinationPath,
       });
 
-      assert.deepStrictEqual(result, {
-        cwd: destinationPath,
-        remoteUrl: CLONE_URLS.url,
-        repository: { provider: "github", ...CLONE_URLS },
-      });
+      assert.strictEqual(result.remoteUrl, CLONE_URLS.sshUrl);
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", CLONE_URLS.url, "t3code"],
+          args: ["clone", CLONE_URLS.sshUrl, "t3code"],
         },
       ]);
     }).pipe(
