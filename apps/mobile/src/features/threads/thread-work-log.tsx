@@ -1,11 +1,12 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView, type SFSymbol } from "expo-symbols";
+import { Image } from "expo-image";
+import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "expo-router";
 import { LayoutAnimation, Pressable, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
+import { T3_CODE_BRAND_MARK_SOURCE } from "../../components/brandAssets";
 import { cn } from "../../lib/cn";
 import { buildThreadRoutePath } from "../../lib/routes";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
@@ -72,6 +73,36 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
     case "zap":
       return { ios: "bolt", android: "bolt" };
   }
+}
+
+function WorkRowIcon(props: {
+  readonly row: ThreadFeedActivity;
+  readonly iconSubtleColor: import("react-native").ColorValue;
+}) {
+  const iconIsDestructive = props.row.icon === "alert" || props.row.icon === "warning";
+  if (props.row.logo === "t3-code") {
+    return (
+      <Image
+        source={T3_CODE_BRAND_MARK_SOURCE}
+        accessibilityIgnoresInvertColors
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+        }}
+      />
+    );
+  }
+
+  return (
+    <SymbolView
+      name={workRowSymbolName(props.row.icon)}
+      size={14}
+      weight="medium"
+      tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
+      type="monochrome"
+    />
+  );
 }
 
 function ThreadActivityThreadLink(props: {
@@ -163,7 +194,7 @@ export function ThreadWorkLog(props: {
           const canExpand = row.fullDetail !== null;
           const detail = compactActivityDetail(row.detail);
           const displayText = detail ? `${row.summary} ${detail}` : row.summary;
-          const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
+          const textIsDestructive = row.icon === "alert" || row.icon === "warning";
 
           return (
             <View
@@ -195,22 +226,16 @@ export function ThreadWorkLog(props: {
                 })}
                 className="rounded-md px-0.5 py-0"
               >
-                <View className="min-h-8 flex-row items-center gap-1.5">
-                  <View className="h-[18px] w-5 shrink-0 items-center justify-center">
-                    <SymbolView
-                      name={workRowSymbolName(row.icon)}
-                      size={13}
-                      weight="medium"
-                      tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
-                      type="monochrome"
-                    />
+                <View className="min-h-9 flex-row items-center gap-1.5">
+                  <View className="h-5 w-5 shrink-0 items-center justify-center">
+                    <WorkRowIcon row={row} iconSubtleColor={props.iconSubtleColor} />
                   </View>
 
                   <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
                     <Text
                       className={cn(
                         "font-t3-medium text-foreground",
-                        iconIsDestructive && "text-rose-600 dark:text-rose-400",
+                        textIsDestructive && "text-rose-600 dark:text-rose-400",
                       )}
                     >
                       {row.summary}
