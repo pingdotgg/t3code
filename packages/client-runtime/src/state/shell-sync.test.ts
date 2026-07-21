@@ -1,10 +1,12 @@
 import {
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
+  ThreadId,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -23,7 +25,7 @@ import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
-import { EnvironmentShellMembership } from "./shellMembership.ts";
+import { EnvironmentShellMembership, environmentShellMembershipLayer } from "./shellMembership.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -62,8 +64,14 @@ describe("environment shell synchronization", () => {
   it.effect("publishes live state before persistence and preserves it when ready", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const subscriptionStarted = yield* Deferred.make<void>();
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: () =>
+          Stream.unwrap(
+            Deferred.succeed(subscriptionStarted, undefined).pipe(
+              Effect.as(Stream.fromQueue(events)),
+            ),
+          ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
       const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
@@ -95,24 +103,14 @@ describe("environment shell synchronization", () => {
       const snapshotLoader = ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.none()),
       });
-      const shellMembership = yield* Ref.make<"unknown" | "authoritative">("unknown");
+      const shellMembership = yield* EnvironmentShellMembership;
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader, snapshotLoader),
-        Effect.provideService(
-          EnvironmentShellMembership,
-          EnvironmentShellMembership.of({
-            getThreadMembership: () =>
-              Ref.get(shellMembership).pipe(
-                Effect.map((status) => (status === "authoritative" ? "absent" : "unknown")),
-              ),
-            setAuthoritative: () => Ref.set(shellMembership, "authoritative"),
-            setUnknown: () => Ref.set(shellMembership, "unknown").pipe(Effect.as(1)),
-          }),
-        ),
       );
 
+      yield* Deferred.await(subscriptionStarted);
       yield* SubscriptionRef.set(supervisorState, {
         desired: true,
         network: "online",
@@ -158,8 +156,13 @@ describe("environment shell synchronization", () => {
       const state = yield* SubscriptionRef.get(shellState);
       expect(state.status).toBe("live");
       expect(Option.getOrThrow(state.snapshot)).toEqual(LIVE_SHELL_SNAPSHOT);
-      expect(yield* Ref.get(shellMembership)).toBe("authoritative");
-    }),
+      expect(
+        yield* shellMembership.getThreadMembership(
+          TARGET.environmentId,
+          ThreadId.make("missing-thread"),
+        ),
+      ).toBe("absent");
+    }).pipe(Effect.provide(environmentShellMembershipLayer)),
   );
 
   it.effect("replaces a warm shell cache with an authoritative HTTP snapshot", () =>

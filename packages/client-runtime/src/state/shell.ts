@@ -20,7 +20,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { subscribeDynamic } from "../rpc/client.ts";
+import { subscribeDynamicWithContext } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { EnvironmentShellMembership, type ShellMembershipRevision } from "./shellMembership.ts";
@@ -74,18 +74,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   });
   const awaitingCompletion = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
-  const activeMembershipRevision = yield* Ref.make<ShellMembershipRevision>(0);
   const invalidateMembership = Option.match(shellMembership, {
     onNone: () => Effect.succeed<ShellMembershipRevision>(0),
     onSome: (service) => service.setUnknown(environmentId),
   });
-  const setMembershipAuthoritative = (snapshot: OrchestrationShellSnapshot) =>
+  const setMembershipAuthoritative = (
+    snapshot: OrchestrationShellSnapshot,
+    revision: ShellMembershipRevision,
+  ) =>
     Option.match(shellMembership, {
       onNone: () => Effect.void,
-      onSome: (service) =>
-        Ref.get(activeMembershipRevision).pipe(
-          Effect.flatMap((revision) => service.setAuthoritative(environmentId, snapshot, revision)),
-        ),
+      onSome: (service) => service.setAuthoritative(environmentId, snapshot, revision),
     });
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
@@ -123,7 +122,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: "synchronizing" as const,
     error: Option.none(),
   }));
-  const setSynchronizing = invalidateMembership.pipe(Effect.andThen(setSynchronizingState));
+  const setSynchronizing = setSynchronizingState;
   const setReady = SubscriptionRef.update(state, (current) =>
     current.status === "live"
       ? current
@@ -152,6 +151,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   const applyItem = Effect.fn("EnvironmentShellState.applyItem")(function* (
     item: OrchestrationShellStreamItem,
+    membershipRevision: ShellMembershipRevision,
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
@@ -162,7 +162,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       );
       const current = yield* SubscriptionRef.get(state);
       if (current.status === "live" && Option.isSome(current.snapshot)) {
-        yield* setMembershipAuthoritative(current.snapshot.value);
+        yield* setMembershipAuthoritative(current.snapshot.value, membershipRevision);
       }
       return;
     }
@@ -189,7 +189,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       error: Option.none(),
     });
     if (!waiting) {
-      yield* setMembershipAuthoritative(nextSnapshot);
+      yield* setMembershipAuthoritative(nextSnapshot, membershipRevision);
     }
     yield* Queue.offer(persistence, nextSnapshot);
   });
@@ -200,9 +200,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       service.changes.pipe(Stream.filter((reason) => reason === "application-active")),
   });
 
+  yield* invalidateMembership;
   yield* setSynchronizing;
   yield* Effect.forkScoped(
-    subscribeDynamic(
+    subscribeDynamicWithContext(
       ORCHESTRATION_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
@@ -211,7 +212,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         );
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         const membershipRevision = yield* invalidateMembership;
-        yield* Ref.set(activeMembershipRevision, membershipRevision);
         yield* setSynchronizingState;
 
         const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
@@ -230,21 +230,27 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         );
         const httpSnapshot = yield* snapshotLoader.load(prepared);
         if (Option.isSome(httpSnapshot)) {
-          yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
-          return {
-            afterSequence: httpSnapshot.value.snapshotSequence,
-            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
-          };
+          yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value }, membershipRevision);
+          return [
+            {
+              afterSequence: httpSnapshot.value.snapshotSequence,
+              ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+            },
+            membershipRevision,
+          ] as const;
         }
 
-        return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
+        return [
+          supportsCompletionMarker ? { requestCompletionMarker: true as const } : {},
+          membershipRevision,
+        ] as const;
       }),
       {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEach(applyItem)),
+    ).pipe(Stream.runForEach(([item, membershipRevision]) => applyItem(item, membershipRevision))),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {

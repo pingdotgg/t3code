@@ -1388,6 +1388,23 @@ const makeWsRpcLayer = (
               // snapshot sequence) and the per-thread filter runs after reading,
               // so a global cap could otherwise omit this thread's events.
               if (input.afterSequence !== undefined) {
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadShellById(input.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to load thread ${input.threadId}`,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (Option.isNone(thread)) {
+                  return yield* new OrchestrationThreadNotFoundError({
+                    threadId: input.threadId,
+                  });
+                }
+
                 const afterSequence = input.afterSequence;
                 const catchUpStream = orchestrationEngine
                   .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
