@@ -203,7 +203,7 @@ it.effect("clones a looked-up repository using the provider's HTTPS preference",
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("keeps SSH as the automatic fallback without a provider preference", () =>
+it.effect("uses HTTPS as the automatic fallback without a provider preference", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const parent = yield* fs.makeTempDirectoryScoped({
@@ -220,11 +220,11 @@ it.effect("keeps SSH as the automatic fallback without a provider preference", (
         destinationPath,
       });
 
-      assert.strictEqual(result.remoteUrl, CLONE_URLS.sshUrl);
+      assert.strictEqual(result.remoteUrl, CLONE_URLS.url);
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", CLONE_URLS.sshUrl, "t3code"],
+          args: ["clone", CLONE_URLS.url, "t3code"],
         },
       ]);
     }).pipe(

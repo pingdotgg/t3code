@@ -73,7 +73,7 @@ function selectRemoteUrl(
     case "https":
       return urls.url;
     case "auto":
-      return urls.preferredProtocol === "https" ? urls.url : urls.sshUrl;
+      return urls.preferredProtocol === "ssh" ? urls.sshUrl : urls.url;
     case "ssh":
       return urls.sshUrl;
   }
