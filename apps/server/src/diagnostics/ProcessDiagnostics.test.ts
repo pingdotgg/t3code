@@ -1,10 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -16,10 +19,11 @@ function mockHandle(result: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly code?: number;
+  readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
 }) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
+    exitCode: result.exitCode ?? Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
@@ -208,6 +212,7 @@ describe("ProcessDiagnostics", () => {
       const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((pd) => pd.read),
         Effect.provide(layer),
+        Effect.provideService(HostProcessPlatform, "linux"),
       );
 
       expect(diagnostics.processes.map((process) => process.pid)).toEqual([4242]);
@@ -217,6 +222,140 @@ describe("ProcessDiagnostics", () => {
           args: ["-axo", "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command="],
         },
       ]);
+    }),
+  );
+
+  it.effect("builds two bulk Windows CIM queries and parses their joined output", () =>
+    Effect.gen(function* () {
+      const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+        [];
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const childProcess = command as unknown as {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+          };
+          commands.push({ command: childProcess.command, args: childProcess.args });
+          return Effect.succeed(
+            mockHandle({
+              stdout: JSON.stringify([
+                {
+                  ProcessId: 4242,
+                  ParentProcessId: process.pid,
+                  Name: "agent.exe",
+                  CommandLine: "agent.exe run",
+                  Status: null,
+                  WorkingSetSize: 4096,
+                  PercentProcessorTime: 12,
+                },
+              ]),
+            }),
+          );
+        }),
+      );
+
+      const rows = yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      expect(rows).toEqual([
+        {
+          pid: 4242,
+          ppid: process.pid,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 12,
+          rssBytes: 4096,
+          elapsed: "",
+          command: "agent.exe run",
+        },
+      ]);
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.command).toBe("powershell.exe");
+      expect(commands[0]?.args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
+      const powershellCommand = commands[0]?.args[3] ?? "";
+      expect(
+        powershellCommand.match(/Get-CimInstance Win32_PerfFormattedData_PerfProc_Process/g),
+      ).toHaveLength(1);
+      expect(powershellCommand.match(/Get-CimInstance Win32_Process\s+\|/g)).toHaveLength(1);
+      expect(powershellCommand).toContain(
+        "$perfByPid[[uint32]$_.IDProcess] = $_.PercentProcessorTime",
+      );
+      expect(powershellCommand).toContain("$perfByPid.ContainsKey([uint32]$_.ProcessId)");
+      expect(powershellCommand).toContain("$perfByPid[[uint32]$_.ProcessId]");
+      expect(powershellCommand).toContain("else { 0 }");
+      expect(powershellCommand).not.toContain("-Filter");
+    }),
+  );
+
+  it.effect("runs scoped child cleanup when the Windows deadline interrupts the query", () =>
+    Effect.gen(function* () {
+      let cleanupCalls = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.acquireRelease(
+            Effect.succeed(
+              mockHandle({
+                exitCode: Effect.never,
+              }),
+            ),
+            () => Effect.sync(() => cleanupCalls++),
+          ),
+        ),
+      );
+      const errorFiber = yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.flip,
+        Effect.forkScoped,
+      );
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(1));
+      const error = yield* Fiber.join(errorFiber);
+
+      expect(error).toMatchObject({
+        _tag: "ProcessDiagnosticsQueryTimeoutError",
+        command: "powershell.exe",
+        argCount: 4,
+        cwd: process.cwd(),
+        timeoutMillis: 1_000,
+      });
+      expect(cleanupCalls).toBe(1);
+    }),
+  );
+
+  it.effect("returns a bounded diagnostics result after a Windows query timeout", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            mockHandle({
+              exitCode: Effect.never,
+            }),
+          ),
+        ),
+      );
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
+      const resultFiber = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+        Effect.flatMap((pd) => pd.read),
+        Effect.provide(layer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.forkScoped,
+      );
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(1));
+      const result = yield* Fiber.join(resultFiber);
+
+      expect(result.processes).toEqual([]);
+      expect(Option.getOrThrow(result.error).message).toBe(
+        `Process diagnostics query 'powershell.exe' timed out after 1000ms in '${process.cwd()}'.`,
+      );
     }),
   );
 
@@ -278,6 +417,7 @@ describe("ProcessDiagnostics", () => {
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((pd) => pd.signal({ pid: 4242, signal: "SIGINT" })),
         Effect.provide(layer),
+        Effect.provideService(HostProcessPlatform, "linux"),
       );
 
       expect(result).toEqual({
