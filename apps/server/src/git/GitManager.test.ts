@@ -3757,6 +3757,63 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("does not attribute ambiguous output to the wrong commit hook", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "multi-hook.txt"), "multi hook\n");
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
+        '#!/bin/sh\necho "output from pre-commit" >&2\n',
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "commit-msg"),
+        '#!/bin/sh\necho "output from commit-msg" >&2\n',
+        { mode: 0o755 },
+      );
+
+      const { manager } = yield* makeManager();
+      const events: GitActionProgressEvent[] = [];
+
+      const result = yield* runStackedAction(
+        manager,
+        {
+          cwd: repoDir,
+          action: "commit",
+          commitMessage: "test: preserve hook output attribution",
+        },
+        {
+          actionId: "action-multi-hook",
+          progressReporter: {
+            publish: (event) =>
+              Effect.sync(() => {
+                events.push(event);
+              }),
+          },
+        },
+      );
+
+      expect(result.commit.status).toBe("created");
+      const hookOutput = events.filter((event) => event.kind === "hook_output");
+      const preCommitOutput = hookOutput.find((event) =>
+        event.text.includes("output from pre-commit"),
+      );
+      const commitMsgOutput = hookOutput.find((event) =>
+        event.text.includes("output from commit-msg"),
+      );
+      const gitOutput = hookOutput.find((event) =>
+        event.text.includes("test: preserve hook output attribution"),
+      );
+
+      expect(preCommitOutput).toBeDefined();
+      expect([null, "pre-commit"]).toContain(preCommitOutput?.hookName);
+      expect(commitMsgOutput).toBeDefined();
+      expect([null, "commit-msg"]).toContain(commitMsgOutput?.hookName);
+      expect(gitOutput).toMatchObject({ hookName: null });
+    }),
+  );
+
   it.effect("emits action_failed when a commit hook rejects", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -1420,9 +1420,10 @@ export const make = Effect.gen(function* () {
     });
 
     let currentHookName: string | null = null;
-    let pendingHookOutput: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
+    let sawCommitHook = false;
+    let pendingUnattributedOutput: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
     const emitHookOutput = (
-      hookName: string,
+      hookName: string | null,
       { stream, text }: { stream: "stdout" | "stderr"; text: string },
     ) => {
       const sanitized = sanitizeProgressText(text);
@@ -1436,32 +1437,33 @@ export const make = Effect.gen(function* () {
         text: sanitized,
       });
     };
+    const finalizeUnattributedOutput = (shouldEmit: boolean) =>
+      Effect.suspend(() => {
+        const pending = pendingUnattributedOutput;
+        pendingUnattributedOutput = [];
+        return shouldEmit
+          ? Effect.forEach(pending, (output) => emitHookOutput(null, output), { discard: true })
+          : Effect.void;
+      });
     const commitProgress =
       progressReporter && actionId
         ? {
             onOutputLine: (output: { stream: "stdout" | "stderr"; text: string }) =>
               Effect.suspend(() => {
                 if (currentHookName === null) {
-                  pendingHookOutput.push(output);
+                  pendingUnattributedOutput.push(output);
                   return Effect.void;
                 }
                 return emitHookOutput(currentHookName, output);
               }),
             onHookStarted: (hookName: string) =>
               Effect.suspend(() => {
+                sawCommitHook = true;
                 currentHookName = hookName;
-                const bufferedOutput = pendingHookOutput;
-                pendingHookOutput = [];
                 return emit({
                   kind: "hook_started",
                   hookName,
-                }).pipe(
-                  Effect.flatMap(() =>
-                    Effect.forEach(bufferedOutput, (output) => emitHookOutput(hookName, output), {
-                      discard: true,
-                    }),
-                  ),
-                );
+                });
               }),
             onHookFinished: ({
               hookName,
@@ -1484,11 +1486,19 @@ export const make = Effect.gen(function* () {
             },
           }
         : null;
-    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
-      ...(disableSigning ? { disableSigning: true } : {}),
-      ...(commitProgress ? { progress: commitProgress } : {}),
-    });
+    const { commitSha } = yield* gitCore
+      .commit(cwd, suggestion.subject, suggestion.body, {
+        timeoutMs: COMMIT_TIMEOUT_MS,
+        ...(disableSigning ? { disableSigning: true } : {}),
+        ...(commitProgress ? { progress: commitProgress } : {}),
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          finalizeUnattributedOutput(
+            sawCommitHook && error.failureKind !== "commit_signing_failed",
+          ),
+        ),
+      );
     if (currentHookName !== null) {
       yield* emit({
         kind: "hook_finished",
@@ -1498,7 +1508,7 @@ export const make = Effect.gen(function* () {
       });
       currentHookName = null;
     }
-    pendingHookOutput = [];
+    yield* finalizeUnattributedOutput(sawCommitHook);
     return {
       status: "created" as const,
       commitSha,
