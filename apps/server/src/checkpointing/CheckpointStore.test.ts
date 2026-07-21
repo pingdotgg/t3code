@@ -93,6 +93,27 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(TestLayer)("CheckpointStore.layer", (it) => {
+  describe("isGitRepository", () => {
+    it.effect("returns false when no Git repository is detected", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+      }),
+    );
+
+    it.effect("returns true when a Git repository is detected", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

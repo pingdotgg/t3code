@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
@@ -21,6 +22,28 @@ export interface ElectronMenuContextInput {
 export interface ElectronMenuTemplateInput {
   readonly window: Electron.BrowserWindow;
   readonly template: readonly Electron.MenuItemConstructorOptions[];
+}
+
+const ElectronMenuOperation = Schema.Literals([
+  "set-application-menu",
+  "popup-template",
+  "show-context-menu",
+]);
+
+export class ElectronMenuOperationError extends Schema.TaggedErrorClass<ElectronMenuOperationError>()(
+  "ElectronMenuOperationError",
+  {
+    operation: ElectronMenuOperation,
+    platform: Schema.String,
+    windowId: Schema.NullOr(Schema.Number),
+    itemCount: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const window = this.windowId === null ? "" : ` for window ${this.windowId}`;
+    return `Electron menu operation ${JSON.stringify(this.operation)} failed${window} with ${this.itemCount} items on ${this.platform}.`;
+  }
 }
 
 export class ElectronMenu extends Context.Service<
@@ -71,13 +94,20 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
   return normalizedItems;
 }
 
+// Renderer positions arrive in CSS pixels; popup() expects window points, so
+// page zoom must be factored in or menus drift proportionally to their
+// distance from the window origin.
 const normalizePosition = (
   position: Option.Option<ElectronMenuPosition>,
+  zoomFactor: number,
 ): Option.Option<ElectronMenuPosition> =>
   Option.filter(
     position,
-    ({ x, y }) => Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0,
-  ).pipe(Option.map(({ x, y }) => ({ x: Math.floor(x), y: Math.floor(y) })));
+    ({ x, y }) =>
+      Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && Number.isFinite(zoomFactor),
+  ).pipe(
+    Option.map(({ x, y }) => ({ x: Math.floor(x * zoomFactor), y: Math.floor(y * zoomFactor) })),
+  );
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
@@ -142,16 +172,36 @@ export const make = Effect.gen(function* () {
 
   return ElectronMenu.of({
     setApplicationMenu: (template) =>
-      Effect.sync(() => {
-        Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
-      }),
+      Effect.try({
+        try: () => {
+          Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
+        },
+        catch: (cause) =>
+          new ElectronMenuOperationError({
+            operation: "set-application-menu",
+            platform,
+            windowId: null,
+            itemCount: template.length,
+            cause,
+          }),
+      }).pipe(Effect.orDie),
     popupTemplate: (input) =>
-      Effect.sync(() => {
-        if (input.template.length === 0) {
-          return;
-        }
-        Electron.Menu.buildFromTemplate([...input.template]).popup({ window: input.window });
-      }),
+      input.template.length === 0
+        ? Effect.void
+        : Effect.try({
+            try: () =>
+              Electron.Menu.buildFromTemplate([...input.template]).popup({
+                window: input.window,
+              }),
+            catch: (cause) =>
+              new ElectronMenuOperationError({
+                operation: "popup-template",
+                platform,
+                windowId: input.window.id,
+                itemCount: input.template.length,
+                cause,
+              }),
+          }).pipe(Effect.orDie),
     showContextMenu: (input) =>
       Effect.callback<Option.Option<string>>((resume) => {
         const normalizedItems = normalizeContextMenuItems(input.items);
@@ -169,21 +219,42 @@ export const make = Effect.gen(function* () {
           resume(Effect.succeed(selectedItemId));
         };
 
-        const menu = Electron.Menu.buildFromTemplate(buildTemplate(normalizedItems, complete));
-        const popupPosition = normalizePosition(input.position);
-        const popupOptions = Option.match(popupPosition, {
-          onNone: (): Electron.PopupOptions => ({
-            window: input.window,
-            callback: () => complete(Option.none()),
-          }),
-          onSome: (position): Electron.PopupOptions => ({
-            window: input.window,
-            x: position.x,
-            y: position.y,
-            callback: () => complete(Option.none()),
-          }),
-        });
-        menu.popup(popupOptions);
+        try {
+          const menu = Electron.Menu.buildFromTemplate(buildTemplate(normalizedItems, complete));
+          const popupPosition = normalizePosition(
+            input.position,
+            input.window.webContents.getZoomFactor(),
+          );
+          const popupOptions = Option.match(popupPosition, {
+            onNone: (): Electron.PopupOptions => ({
+              window: input.window,
+              callback: () => complete(Option.none()),
+            }),
+            onSome: (position): Electron.PopupOptions => ({
+              window: input.window,
+              x: position.x,
+              y: position.y,
+              callback: () => complete(Option.none()),
+            }),
+          });
+          menu.popup(popupOptions);
+        } catch (cause) {
+          if (completed) {
+            return;
+          }
+          completed = true;
+          resume(
+            Effect.die(
+              new ElectronMenuOperationError({
+                operation: "show-context-menu",
+                platform,
+                windowId: input.window.id,
+                itemCount: normalizedItems.length,
+                cause,
+              }),
+            ),
+          );
+        }
       }),
   });
 });

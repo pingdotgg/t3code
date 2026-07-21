@@ -554,7 +554,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           onItemHighlighted={(modelKey, eventDetails) => {
             highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
             if (eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
-              modelListRef.current?.scrollIndexIntoView?.({
+              void modelListRef.current?.scrollIndexIntoView?.({
                 index: eventDetails.index,
                 animated: false,
               });

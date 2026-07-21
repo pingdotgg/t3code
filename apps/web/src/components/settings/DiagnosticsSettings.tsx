@@ -23,7 +23,7 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
-import { formatRelativeTime } from "../../timestampFormat";
+import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   primaryServerAvailableEditorsAtom,
@@ -32,6 +32,7 @@ import {
 } from "../../state/server";
 import { shellEnvironment } from "../../state/shell";
 import { usePrimaryEnvironment } from "../../state/environments";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -64,8 +65,7 @@ function formatBytes(value: number): string {
 
 function formatRelative(value: DateTime.Utc | null): string {
   if (!value) return "No trace records";
-  const relative = formatRelativeTime(DateTime.formatIso(value));
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+  return formatRelativeTimeLabel(DateTime.formatIso(value));
 }
 
 function formatRelativeNoWrap(value: DateTime.Utc | null): string {
@@ -246,16 +246,10 @@ function DiagnosticsTable({
 }
 
 function TraceIdCell({ traceId }: { traceId: string }) {
-  const [copied, setCopied] = useState(false);
-  const copyTraceId = useCallback(() => {
-    void navigator.clipboard
-      ?.writeText(traceId)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1_200);
-      })
-      .catch(() => undefined);
-  }, [traceId]);
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
+    target: "trace ID",
+    timeout: 1_200,
+  });
 
   return (
     <div className="flex w-full min-w-0 max-w-full items-center gap-2">
@@ -281,7 +275,7 @@ function TraceIdCell({ traceId }: { traceId: string }) {
               type="button"
               className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
-              onClick={copyTraceId}
+              onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
             </button>
@@ -760,10 +754,14 @@ function ProcessResourceHistoryTable({
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
   useRelativeTimeTick();
-  const relative = checkedAt ? formatRelativeTime(DateTime.formatIso(checkedAt)) : null;
+  const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
-  if (!relative) {
+  if (relative.status === "missing") {
     return <span className="text-[11px] text-muted-foreground/50">Checking</span>;
+  }
+
+  if (relative.status === "invalid") {
+    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
   }
 
   return (

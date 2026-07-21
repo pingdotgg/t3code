@@ -62,6 +62,7 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -268,8 +269,14 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
   }
 }
 
-function itemDetail(item: CodexLifecycleItem): string | undefined {
+function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
+  const itemRecord = item as Record<string, unknown>;
+  const action = itemRecord.action as Record<string, unknown> | undefined;
+  const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
+    ...(itemType === "web_search"
+      ? [itemRecord.query, action?.query, ...actionQueries, action?.pattern, action?.url]
+      : []),
     "command" in item ? item.command : undefined,
     "title" in item ? item.title : undefined,
     "summary" in item ? item.summary : undefined,
@@ -277,6 +284,7 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
     "path" in item ? item.path : undefined,
     "prompt" in item ? item.prompt : undefined,
   ];
+
   for (const candidate of candidates) {
     const trimmed = typeof candidate === "string" ? trimText(candidate) : undefined;
     if (!trimmed) continue;
@@ -466,7 +474,7 @@ function mapItemLifecycle(
     return undefined;
   }
 
-  const detail = itemDetail(item);
+  const detail = itemDetail(itemType, item);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -840,7 +848,7 @@ function mapToRuntimeEvents(
     }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
-      const detail = itemDetail(item);
+      const detail = itemDetail(itemType, item);
       if (!detail) {
         return [];
       }
@@ -1394,6 +1402,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
+          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           environment,
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)

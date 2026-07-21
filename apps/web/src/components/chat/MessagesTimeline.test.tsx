@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -13,16 +13,92 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
+    anchoredEndSpace?: {
+      anchorIndex: number;
+      anchorMaxSize?: number;
+      anchorOffset?: number;
+      onReady?: (info: { anchorIndex: number }) => void;
+      onSizeChanged?: (size: number) => void;
+    };
+    contentInsetEndAdjustment?: number;
+    className?: string;
+    maintainScrollAtEnd?:
+      | boolean
+      | {
+          animated?: boolean;
+          on?: {
+            dataChange?: boolean;
+            itemLayout?: boolean;
+            layout?: boolean;
+          };
+        };
+    maintainVisibleContentPosition?:
+      | boolean
+      | {
+          data?: boolean;
+          size?: boolean;
+          shouldRestorePosition?: (item: { id: string }) => boolean;
+        };
     ref?: Ref<LegendListRef>;
-  }) => (
-    <div data-testid={legendListTestId}>
-      {props.ListHeaderComponent}
-      {props.data.map((item) => (
-        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-      ))}
-      {props.ListFooterComponent}
-    </div>
-  );
+  }) => {
+    if (props.anchoredEndSpace) {
+      props.anchoredEndSpace.onSizeChanged?.(240);
+      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+    }
+    return (
+      <div
+        data-testid={legendListTestId}
+        data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
+        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
+        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
+        data-content-inset-end={props.contentInsetEndAdjustment}
+        data-class-name={props.className}
+        data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
+        data-maintain-scroll-at-end-animated={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.animated
+            : undefined
+        }
+        data-maintain-scroll-at-end-data-change={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.dataChange
+            : undefined
+        }
+        data-maintain-scroll-at-end-item-layout={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.itemLayout
+            : undefined
+        }
+        data-maintain-scroll-at-end-layout={
+          typeof props.maintainScrollAtEnd === "object"
+            ? props.maintainScrollAtEnd.on?.layout
+            : undefined
+        }
+        data-maintain-visible-content-position={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? "object"
+            : props.maintainVisibleContentPosition
+        }
+        data-maintain-visible-content-position-data={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.data
+            : undefined
+        }
+        data-maintain-visible-content-position-size={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+      >
+        {props.ListHeaderComponent}
+        {props.data.map((item) => (
+          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+        ))}
+        {props.ListFooterComponent}
+      </div>
+    );
+  };
 
   return { LegendList };
 });
@@ -97,6 +173,7 @@ function buildProps() {
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
+    runningTurnId: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
@@ -109,7 +186,12 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
+    anchorMessageId: null,
+    onAnchorReady: () => {},
+    onAnchorSizeChanged: () => {},
+    contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
+    onManualNavigation: () => {},
   };
 }
 
@@ -137,6 +219,168 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("keeps assistant changed-files headers sticky below the thread header", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const assistantMessageId = MessageId.make("message-assistant-with-files");
+    const turnId = TurnId.make("turn-with-files");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-with-files",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Updated the fixture.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId,
+                checkpointTurnCount: 1,
+                checkpointRef: CheckpointRef.make("checkpoint-with-files"),
+                status: "ready",
+                files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+                assistantMessageId,
+                completedAt: MESSAGE_CREATED_AT,
+              },
+            ],
+          ])
+        }
+      />,
+    );
+
+    expect(markup).toContain('class="sticky top-2 z-10');
+    expect(markup).not.toContain("self-start");
+    expect(markup).toContain("whitespace-nowrap");
+    expect(markup).toContain("!size-[22px]");
+    expect(markup).toContain("size-3");
+    expect(markup).toContain('aria-label="Collapse all"');
+    expect(markup).toContain('aria-label="View diff"');
+    expect(markup).toContain("1 changed file");
+  });
+
+  it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
+    const {
+      resolveTimelineIsAtEnd,
+      resolveTimelineMinimapHasPersistentGutter,
+      resolveTimelineMinimapHeightStyle,
+      resolveTimelineMinimapHitStripWidth,
+      resolveTimelineMinimapIndexFromPointer,
+      resolveTimelineMinimapInteractiveWidth,
+      resolveTimelineMinimapTopPercent,
+    } = await import("./MessagesTimeline.logic");
+
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
+    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
+    expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+
+    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+    expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
+    expect(
+      resolveTimelineMinimapIndexFromPointer({
+        itemCount: 101,
+        railTop: 100,
+        railHeight: 500,
+        pointerY: 350,
+      }),
+    ).toBe(50);
+    expect(
+      resolveTimelineMinimapIndexFromPointer({
+        itemCount: 101,
+        railTop: 100,
+        railHeight: 500,
+        pointerY: 999,
+      }),
+    ).toBe(100);
+    expect(resolveTimelineMinimapHasPersistentGutter(832)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(863)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
+
+    // No usable gutter (zoomed in / narrow pane): the strip must go inert
+    // instead of overlaying the centered content column.
+    expect(resolveTimelineMinimapHitStripWidth(768)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(792)).toBe(0);
+    // Partial gutter: strip shrinks to what fits between the viewport edge
+    // and the content column.
+    expect(resolveTimelineMinimapHitStripWidth(820)).toBe(14);
+    // Full gutter: unchanged 40px-wide strip.
+    expect(resolveTimelineMinimapHitStripWidth(872)).toBe(40);
+    expect(resolveTimelineMinimapHitStripWidth(1400)).toBe(40);
+    expect(resolveTimelineMinimapHitStripWidth(0)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(Number.NaN)).toBe(0);
+
+    // The collapsed target stays narrow, but an open preview keeps its full
+    // 20rem width plus the 2rem offset from the minimap rail interactive.
+    expect(resolveTimelineMinimapInteractiveWidth(0, false)).toBe(0);
+    expect(resolveTimelineMinimapInteractiveWidth(14, false)).toBe(14);
+    expect(resolveTimelineMinimapInteractiveWidth(40, false)).toBe(40);
+    expect(resolveTimelineMinimapInteractiveWidth(0, true)).toBe("22rem");
+    expect(resolveTimelineMinimapInteractiveWidth(14, true)).toBe("22rem");
+    expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
+  });
+
+  it("anchors a sent attachment message using its measured height", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const onAnchorReady = vi.fn();
+    const onAnchorSizeChanged = vi.fn();
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={secondEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        onAnchorSizeChanged={onAnchorSizeChanged}
+        contentInsetEndAdjustment={144}
+        timelineEntries={[firstEntry, secondEntry]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="1"');
+    expect(markup).toContain('data-anchor-offset="16"');
+    expect(markup).toContain('data-anchor-on-ready="true"');
+    expect(markup).not.toContain("data-anchor-max-size=");
+    expect(markup).toContain('data-content-inset-end="144"');
+    expect(markup).toContain("[overflow-anchor:none]");
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-visible-content-position="object"');
+    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+    expect(onAnchorReady).toHaveBeenCalledOnce();
+    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
+  });
+
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -147,6 +391,11 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
+    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
@@ -192,6 +441,33 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('<span aria-hidden="true"> </span>');
     expect(markup).toContain("Show full message");
   }, 20_000);
+
+  it("renders chips for standalone element-pick context messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "<element_context>",
+              "- <SubmitButton> (Button.tsx:12):",
+              "  url: https://example.com/dashboard",
+              "  selector: button.submit",
+              "  source: /repo/src/Button.tsx:12:5",
+              "  html:",
+              '  <button class="submit">Save</button>',
+              "</element_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("SubmitButton");
+    expect(markup).not.toContain("&lt;element_context");
+    expect(markup).not.toContain("<element_context");
+  });
 
   it("keeps the copy button for collapsed long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");

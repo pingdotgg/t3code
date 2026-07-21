@@ -3,8 +3,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as References from "effect/References";
 
 import * as TraceDiagnostics from "./TraceDiagnostics.ts";
 
@@ -187,18 +189,17 @@ describe("TraceDiagnostics", () => {
   it.effect("keeps loaded trace data when one rotated trace file fails to read", () =>
     Effect.gen(function* () {
       const traceFilePath = "/tmp/server.trace.ndjson";
+      const readFailure = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFileString",
+        description: "permission denied",
+        pathOrDescriptor: `${traceFilePath}.1`,
+      });
       const fileSystemLayer = FileSystem.layerNoop({
         readFileString: (path) =>
           path === `${traceFilePath}.1`
-            ? Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "readFileString",
-                  description: "permission denied",
-                  pathOrDescriptor: path,
-                }),
-              )
+            ? Effect.fail(readFailure)
             : Effect.succeed(
                 record({
                   name: "server.getConfig",
@@ -209,20 +210,44 @@ describe("TraceDiagnostics", () => {
                 }),
               ),
       });
+      const logAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make<unknown, void>((options) => {
+        logAnnotations.push({ ...options.fiber.getRef(References.CurrentLogAnnotations) });
+      });
 
       const diagnostics = yield* TraceDiagnostics.readTraceDiagnostics({
         traceFilePath,
         maxFiles: 1,
         readAt: DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"),
-      }).pipe(Effect.provide(TraceDiagnostics.layer.pipe(Layer.provide(fileSystemLayer))));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TraceDiagnostics.layer.pipe(Layer.provide(fileSystemLayer)),
+            Logger.layer([logger], { mergeWithExisting: false }),
+          ),
+        ),
+      );
 
       assert.equal(diagnostics.recordCount, 1);
       assert.equal(
         Option.getOrElse(diagnostics.partialFailure, () => false),
         true,
       );
-      assert.equal(Option.getOrUndefined(diagnostics.error)?.kind, "trace-file-read-failed");
+      assert.deepStrictEqual(Option.getOrUndefined(diagnostics.error), {
+        kind: "trace-file-read-failed",
+        message: `Failed to read local trace file '${traceFilePath}.1'.`,
+      });
       assert.deepStrictEqual(diagnostics.scannedFilePaths, [`${traceFilePath}.1`, traceFilePath]);
+
+      const failureLog = logAnnotations.find(
+        (annotations) => annotations.traceFilePath === `${traceFilePath}.1`,
+      );
+      assert.exists(failureLog);
+      assert.deepStrictEqual(failureLog, {
+        traceFilePath: `${traceFilePath}.1`,
+        errorTag: "TraceFileReadError",
+        causeTag: "PermissionDenied",
+      });
     }),
   );
 

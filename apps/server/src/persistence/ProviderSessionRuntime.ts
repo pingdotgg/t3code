@@ -1,7 +1,9 @@
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -16,9 +18,10 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  PersistenceDecodeError,
+  type PersistenceErrorCorrelation,
+  PersistenceSqlError,
   type ProviderSessionRuntimeRepositoryError,
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
 } from "./Errors.ts";
 
 /**
@@ -106,7 +109,19 @@ const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
   }),
 );
 
-const decodeRuntime = Schema.decodeUnknownEffect(ProviderSessionRuntime);
+const ProviderSessionRuntimeRawDbRowSchema = Schema.Struct({
+  threadId: Schema.String,
+  providerName: Schema.Unknown,
+  providerInstanceId: Schema.Unknown,
+  adapterKey: Schema.Unknown,
+  runtimeMode: Schema.Unknown,
+  status: Schema.Unknown,
+  lastSeenAt: Schema.Unknown,
+  resumeCursor: Schema.Unknown,
+  runtimePayload: Schema.Unknown,
+});
+
+const decodeRuntimeRow = Schema.decodeUnknownEffect(ProviderSessionRuntimeDbRowSchema);
 
 const GetRuntimeRequestSchema = Schema.Struct({
   threadId: ThreadId,
@@ -114,11 +129,19 @@ const GetRuntimeRequestSchema = Schema.Struct({
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 
-function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+function toPersistenceSqlOrDecodeError(
+  sqlOperation: string,
+  decodeOperation: string,
+  correlation?: PersistenceErrorCorrelation,
+) {
   return (cause: unknown): ProviderSessionRuntimeRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause, correlation)
+      : new PersistenceSqlError({
+          operation: sqlOperation,
+          ...(correlation === undefined ? {} : { correlation }),
+          cause,
+        });
 }
 
 export const make = Effect.gen(function* () {
@@ -165,7 +188,7 @@ export const make = Effect.gen(function* () {
 
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
-    Result: ProviderSessionRuntimeDbRowSchema,
+    Result: ProviderSessionRuntimeRawDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -185,7 +208,7 @@ export const make = Effect.gen(function* () {
 
   const listRuntimeRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProviderSessionRuntimeDbRowSchema,
+    Result: ProviderSessionRuntimeRawDbRowSchema,
     execute: () =>
       sql`
         SELECT
@@ -218,6 +241,7 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",
           "ProviderSessionRuntimeRepository.upsert:encodeRequest",
+          { threadId: runtime.threadId },
         ),
       ),
     );
@@ -228,16 +252,19 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.getByThreadId:query",
           "ProviderSessionRuntimeRepository.getByThreadId:decodeRow",
+          { threadId: input.threadId },
         ),
       ),
       Effect.flatMap((runtimeRowOption) =>
         Option.match(runtimeRowOption, {
           onNone: () => Effect.succeed(Option.none()),
           onSome: (row) =>
-            decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError(
-                  "ProviderSessionRuntimeRepository.getByThreadId:rowToRuntime",
+            decodeRuntimeRow(row).pipe(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "ProviderSessionRuntimeRepository.getByThreadId:decodeRow",
+                  cause,
+                  { threadId: input.threadId },
                 ),
               ),
               Effect.map((runtime) => Option.some(runtime)),
@@ -255,15 +282,28 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rows) =>
-        Effect.forEach(
-          rows,
-          (row) =>
-            decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError("ProviderSessionRuntimeRepository.list:rowToRuntime"),
-              ),
+        // Skip rows that no longer decode (e.g. written by an older build)
+        // instead of failing the whole list — one stale row must not disable
+        // every consumer that enumerates sessions, such as the reaper.
+        Effect.forEach(rows, (row) =>
+          decodeRuntimeRow(row).pipe(
+            Effect.map(Option.some),
+            Effect.catch((cause) =>
+              Effect.logWarning("provider.session.runtime.row-skipped", {
+                threadId: row.threadId,
+                error: PersistenceDecodeError.fromSchemaError(
+                  "ProviderSessionRuntimeRepository.list:decodeRows",
+                  cause,
+                  { threadId: row.threadId },
+                ).message,
+              }).pipe(Effect.as(Option.none<ProviderSessionRuntime>())),
             ),
-          { concurrency: "unbounded" },
+          ),
+        ),
+      ),
+      Effect.map((decoded) =>
+        Arr.filterMap(decoded, (row) =>
+          Option.isSome(row) ? Result.succeed(row.value) : Result.failVoid,
         ),
       ),
     );
@@ -273,7 +313,12 @@ export const make = Effect.gen(function* () {
   ) =>
     deleteRuntimeByThreadId(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProviderSessionRuntimeRepository.deleteByThreadId:query"),
+        (cause) =>
+          new PersistenceSqlError({
+            operation: "ProviderSessionRuntimeRepository.deleteByThreadId:query",
+            correlation: { threadId: input.threadId },
+            cause,
+          }),
       ),
     );
 

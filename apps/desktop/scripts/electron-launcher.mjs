@@ -20,7 +20,7 @@ export const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 12;
+const LAUNCHER_VERSION = 14;
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
@@ -100,25 +100,41 @@ function shellSingleQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
-  const mainEntryPath = NodePath.join(desktopDir, "dist-electron", "main.cjs");
+export function makeDevelopmentLauncherScript({
+  electronBinaryPath,
+  mainEntryPath,
+  desktopRoot,
+  environment,
+}) {
   const envEntries = [
-    ["VITE_DEV_SERVER_URL", process.env.VITE_DEV_SERVER_URL],
-    ["T3CODE_PORT", process.env.T3CODE_PORT],
-    ["T3CODE_HOME", process.env.T3CODE_HOME],
-    ["T3CODE_COMMIT_HASH", process.env.T3CODE_COMMIT_HASH],
-    ["T3CODE_OTLP_TRACES_URL", process.env.T3CODE_OTLP_TRACES_URL],
-    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", process.env.T3CODE_OTLP_EXPORT_INTERVAL_MS],
+    ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
+    ["T3CODE_PORT", environment.T3CODE_PORT],
+    ["T3CODE_HOME", environment.T3CODE_HOME],
+    ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],
+    ["T3CODE_OTLP_TRACES_URL", environment.T3CODE_OTLP_TRACES_URL],
+    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
     ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
+  return [
+    "#!/bin/sh",
+    ...envEntries.map(
+      ([name, value]) =>
+        `if [ -z "\${${name}:-}" ]; then export ${name}=${shellSingleQuote(value)}; fi`,
+    ),
+    `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopRoot)} ${shellSingleQuote(mainEntryPath)} "$@"`,
+    "",
+  ].join("\n");
+}
+
+function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
   NodeFS.writeFileSync(
     targetBinaryPath,
-    [
-      "#!/bin/sh",
-      ...envEntries.map(([name, value]) => `export ${name}=${shellSingleQuote(value)}`),
-      `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopDir)} ${shellSingleQuote(mainEntryPath)} "$@"`,
-      "",
-    ].join("\n"),
+    makeDevelopmentLauncherScript({
+      electronBinaryPath,
+      mainEntryPath: NodePath.join(desktopDir, "dist-electron", "main.cjs"),
+      desktopRoot: desktopDir,
+      environment: process.env,
+    }),
   );
   NodeFS.chmodSync(targetBinaryPath, 0o755);
 }
@@ -204,11 +220,12 @@ function ensureDevelopmentIconIcns(runtimeDir) {
   }
 }
 
-function patchMainBundleInfoPlist(appBundlePath, iconPath) {
+function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
   const infoPlistPath = NodePath.join(appBundlePath, "Contents", "Info.plist");
   setPlistString(infoPlistPath, "CFBundleDisplayName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleIdentifier", APP_BUNDLE_ID);
+  setPlistString(infoPlistPath, "CFBundleExecutable", executableName);
   setPlistString(infoPlistPath, "CFBundleIconFile", "icon.icns");
   setPlistJson(infoPlistPath, "CFBundleURLTypes", [
     {
@@ -261,11 +278,25 @@ function readJson(path) {
   }
 }
 
+export function resolveMacLauncherPaths(appBundlePath, displayName = APP_DISPLAY_NAME) {
+  const executableDir = NodePath.join(appBundlePath, "Contents", "MacOS");
+  const launcherExecutableName = `${displayName} Launcher`;
+  return {
+    launcherExecutableName,
+    launcherBinaryPath: NodePath.join(executableDir, launcherExecutableName),
+    runtimeElectronBinaryPath: NodePath.join(executableDir, "Electron"),
+  };
+}
+
 function buildMacLauncher(electronBinaryPath) {
   const sourceAppBundlePath = NodePath.resolve(NodePath.dirname(electronBinaryPath), "../..");
   const runtimeDir = NodePath.join(desktopDir, ".electron-runtime");
   const targetAppBundlePath = NodePath.join(runtimeDir, `${APP_DISPLAY_NAME}.app`);
-  const targetBinaryPath = NodePath.join(targetAppBundlePath, "Contents", "MacOS", "Electron");
+  const developmentPaths = resolveMacLauncherPaths(targetAppBundlePath);
+  const runtimeElectronBinaryPath = developmentPaths.runtimeElectronBinaryPath;
+  const launcherBinaryPath = isDevelopment
+    ? developmentPaths.launcherBinaryPath
+    : runtimeElectronBinaryPath;
   const iconPath = isDevelopment ? ensureDevelopmentIconIcns(runtimeDir) : defaultIconPath;
   const metadataPath = NodePath.join(runtimeDir, "metadata.json");
 
@@ -282,12 +313,19 @@ function buildMacLauncher(electronBinaryPath) {
 
   const currentMetadata = readJson(metadataPath);
   if (
-    NodeFS.existsSync(targetBinaryPath) &&
+    NodeFS.existsSync(launcherBinaryPath) &&
+    (!isDevelopment || NodeFS.existsSync(runtimeElectronBinaryPath)) &&
     currentMetadata &&
     JSON.stringify(currentMetadata) === JSON.stringify(expectedMetadata)
   ) {
+    if (isDevelopment) {
+      // The launcher also handles protocol activations outside the dev runner,
+      // so refresh its fallback environment on every launch. Never let a value
+      // captured by an older parent app override the live dev-runner environment.
+      writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
+    }
     registerMacLauncherBundle(targetAppBundlePath);
-    return targetBinaryPath;
+    return launcherBinaryPath;
   }
 
   NodeFS.rmSync(targetAppBundlePath, { recursive: true, force: true });
@@ -299,15 +337,24 @@ function buildMacLauncher(electronBinaryPath) {
     recursive: true,
     verbatimSymlinks: true,
   });
-  patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
+  patchMainBundleInfoPlist(
+    targetAppBundlePath,
+    iconPath,
+    isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
+  );
   patchHelperBundleInfoPlists(targetAppBundlePath);
   if (isDevelopment) {
-    writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath);
+    // Keep Electron's native executable inside the branded bundle. Launching the
+    // node_modules copy makes macOS associate the process (and Dock label) with
+    // Electron.app even though this bundle's Info.plist has the T3 Code name.
+    // Its conventional executable name also keeps Electron's default-app runtime
+    // in development mode instead of making app.isPackaged report true.
+    writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
   }
   NodeFS.writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
   registerMacLauncherBundle(targetAppBundlePath);
 
-  return targetBinaryPath;
+  return launcherBinaryPath;
 }
 
 function isLinuxSetuidSandboxConfigured(electronBinaryPath) {
@@ -336,10 +383,7 @@ function resolveLinuxSandboxArgs(electronBinaryPath) {
 }
 
 export function resolveElectronPath() {
-  ensureElectronRuntime();
-
-  const require = NodeModule.createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const electronBinaryPath = resolveElectronBinaryPath();
 
   if (hostPlatform !== "darwin") {
     return electronBinaryPath;
@@ -356,13 +400,23 @@ export function resolveElectronLaunchCommand(args = []) {
   };
 }
 
+export function resolveElectronBinaryPath({
+  ensureRuntime = ensureElectronRuntime,
+  createRequire = NodeModule.createRequire,
+  moduleUrl = import.meta.url,
+} = {}) {
+  ensureRuntime();
+
+  const require = createRequire(moduleUrl);
+  return require("electron");
+}
+
 export function resolveDevProtocolClient() {
   if (hostPlatform !== "darwin" || !isDevelopment) {
     return null;
   }
 
-  const require = NodeModule.createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const electronBinaryPath = resolveElectronBinaryPath();
   const launcherBinaryPath = buildMacLauncher(electronBinaryPath);
   return {
     appBundlePath: NodePath.resolve(launcherBinaryPath, "..", "..", ".."),

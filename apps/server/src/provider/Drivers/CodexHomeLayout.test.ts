@@ -3,11 +3,13 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
-  CodexShadowHomeError,
+  CodexShadowHomeEntryConflictError,
+  CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -112,6 +114,9 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         const sessionsTarget = yield* fileSystem.readLink(path.join(shadowHome, "sessions"));
         const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
+        const mcpOauthLocksTarget = yield* fileSystem.readLink(
+          path.join(shadowHome, "mcp-oauth-locks"),
+        );
         const modelsCacheExists = yield* fileSystem.exists(
           path.join(shadowHome, "models_cache.json"),
         );
@@ -122,9 +127,42 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         expect(sessionsTarget).toBe(path.join(sharedHome, "sessions"));
         expect(configTarget).toBe(path.join(sharedHome, "config.toml"));
+        expect(mcpOauthLocksTarget).toBe(path.join(sharedHome, "mcp-oauth-locks"));
         expect(modelsCacheExists).toBe(false);
         expect(authLinkResult._tag).toBe("Failure");
         expect(authContents).toContain("shadow");
+      }),
+    );
+
+    it.effect("replaces Codex-created local MCP OAuth locks with the shared lock directory", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const sharedLocks = path.join(sharedHome, "mcp-oauth-locks");
+        const shadowLocks = path.join(shadowHome, "mcp-oauth-locks");
+
+        yield* writeTextFile(path.join(sharedLocks, "file-store.lock"), "");
+        yield* writeTextFile(path.join(shadowLocks, "file-store.lock"), "");
+
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        yield* materializeCodexShadowHome(layout);
+
+        const locksTarget = yield* fileSystem.readLink(shadowLocks);
+        const sharedLockExists = yield* fileSystem.exists(
+          path.join(sharedLocks, "file-store.lock"),
+        );
+
+        expect(locksTarget).toBe(sharedLocks);
+        expect(sharedLockExists).toBe(true);
       }),
     );
 
@@ -184,7 +222,14 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(CodexShadowHomeError);
+        expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
+        expect(error).toMatchObject({
+          sharedHomePath: sharedHome,
+          effectiveHomePath: sharedHome,
+        });
+        expect(error.message).toBe(
+          `Codex shadow home path '${sharedHome}' must be different from the shared home path '${sharedHome}'.`,
+        );
       }),
     );
 
@@ -206,7 +251,52 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
 
-        expect(error.detail).toContain("already exists and is not a symlink");
+        expect(error).toBeInstanceOf(CodexShadowHomeEntryConflictError);
+        expect(error).toMatchObject({
+          sharedHomePath: sharedHome,
+          effectiveHomePath: shadowHome,
+          entryName: "config.toml",
+          linkPath: path.join(shadowHome, "config.toml"),
+          targetPath: path.join(sharedHome, "config.toml"),
+        });
+        expect(error.message).toBe(
+          `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
+        );
+      }),
+    );
+
+    it.effect("preserves filesystem operation, paths, and cause", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const sharedRoot = yield* makeTempDir("t3code-codex-shared-root-");
+        const sharedHome = path.join(sharedRoot, "shared-home");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        yield* writeTextFile(sharedHome, "not a directory\n");
+
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+        expect(error._tag).toBe("CodexShadowHomeFileSystemError");
+        if (error._tag !== "CodexShadowHomeFileSystemError") {
+          return expect.fail("Expected CodexShadowHomeFileSystemError");
+        }
+        expect(error).toMatchObject({
+          operation: "makeDirectory",
+          sharedHomePath: sharedHome,
+          effectiveHomePath: shadowHome,
+        });
+        expect(error.path.startsWith(sharedHome)).toBe(true);
+        expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
+        expect(error.message).toBe(
+          `Codex shadow home filesystem operation 'makeDirectory' failed for '${error.path}'.`,
+        );
       }),
     );
   });

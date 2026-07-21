@@ -2,6 +2,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";
 import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,6 +48,7 @@ import { RelayApnsDeliveryDeadLetterQueue, RelayApnsDeliveryQueue } from "./queu
 import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
+import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
@@ -196,7 +198,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
       Layer.provideMerge(DpopProofs.layer),
       Layer.provideMerge(ApnsDeliveries.layer),
-      Layer.provideMerge(ApnsClient.layer),
+      Layer.provideMerge(ApnsClient.layer.pipe(Layer.provideMerge(ApnsProviderTokens.layer))),
       Layer.provideMerge(
         ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
       ),
@@ -242,7 +244,18 @@ export default class Api extends Cloudflare.Worker<Api>()(
     yield* Cloudflare.cron("*/5 * * * *").subscribe(() =>
       DpopProofs.DpopProofReplay.pipe(
         Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
-        Effect.withSpan("relay.cron.prune_expired_dpop_proofs"),
+        // Terminal thread rows are kept briefly so finished agents show as
+        // Done/Failed in the Live Activity; sweep them once they age out.
+        Effect.andThen(
+          Effect.all([AgentActivityRows.AgentActivityRows, DateTime.now]).pipe(
+            Effect.flatMap(([activityRows, now]) =>
+              activityRows.pruneTerminal({
+                updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
+              }),
+            ),
+          ),
+        ),
+        Effect.withSpan("relay.cron.prune_expired_state"),
         Effect.provide(runtimeLayer),
       ),
     );

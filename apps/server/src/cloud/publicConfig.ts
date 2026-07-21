@@ -1,6 +1,8 @@
+import { CONNECT_OAUTH_SCOPES, DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -14,7 +16,7 @@ declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: string | undefi
 declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefined;
 
 const CLOUD_CLI_OAUTH_REDIRECT_URI = "http://127.0.0.1:34338/callback";
-const CLOUD_CLI_OAUTH_SCOPES = ["openid", "profile", "email"] as const;
+const CLOUD_CLI_OAUTH_SCOPES = CONNECT_OAUTH_SCOPES;
 
 function validateRelayUrl(value: string) {
   const relayUrl = normalizeSecureRelayUrl(value);
@@ -99,6 +101,44 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
 
 export const relayUrlConfig = makeRelayUrlConfig();
 
+/**
+ * Hosted app origin used for out-of-band OAuth on headless
+ * machines. Overridable so staging/nightly builds can point their CLIs at a
+ * matching hosted deployment.
+ */
+export const hostedAppUrlConfig = makePublicValueConfig(
+  "T3CODE_HOSTED_APP_URL",
+  DEFAULT_HOSTED_APP_URL,
+).pipe(Config.mapOrFail(validateHostedAppUrl));
+
+function validateHostedAppUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const isLoopbackHttp =
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+    if (
+      (url.protocol !== "https:" && !isLoopbackHttp) ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== ""
+    ) {
+      throw new Error("invalid hosted app origin");
+    }
+    return Effect.succeed(url.origin);
+  } catch {
+    return Effect.fail(
+      new Config.ConfigError(
+        new Schema.SchemaError(
+          new SchemaIssue.InvalidValue(Option.some(value), {
+            message: "Hosted app URL must be an absolute HTTPS origin (or HTTP loopback origin).",
+          }),
+        ),
+      ),
+    );
+  }
+}
+
 function makePublicValueConfig(name: string, fallback: string) {
   const runtimeConfig = Config.nonEmptyString(name);
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
@@ -131,16 +171,29 @@ export function makeCloudCliOAuthConfig({
       clerkCliOAuthClientIdFallback,
     ),
   }).pipe(
-    Config.map(({ clerkPublishableKey, clientId }) => {
-      const clerkFrontendApiUrl = clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey);
-      return {
-        authorizationEndpoint: `${clerkFrontendApiUrl}/oauth/authorize`,
-        tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
-        clientId,
-        redirectUri: CLOUD_CLI_OAUTH_REDIRECT_URI,
-        scopes: CLOUD_CLI_OAUTH_SCOPES,
-      } satisfies CloudCliOAuthConfig;
-    }),
+    Config.mapOrFail(({ clerkPublishableKey, clientId }) =>
+      Effect.try({
+        try: () => clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey),
+        catch: (cause) =>
+          new Config.ConfigError(
+            new ConfigProvider.SourceError({
+              message: "Failed to derive Clerk Frontend API URL from the publishable key.",
+              cause,
+            }),
+          ),
+      }).pipe(
+        Effect.map(
+          (clerkFrontendApiUrl) =>
+            ({
+              authorizationEndpoint: `${clerkFrontendApiUrl}/oauth/authorize`,
+              tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
+              clientId,
+              redirectUri: CLOUD_CLI_OAUTH_REDIRECT_URI,
+              scopes: CLOUD_CLI_OAUTH_SCOPES,
+            }) satisfies CloudCliOAuthConfig,
+        ),
+      ),
+    ),
   );
 }
 

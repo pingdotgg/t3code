@@ -1,8 +1,8 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
@@ -14,6 +14,18 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+
+export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<DesktopLifecycleRelaunchError>()(
+  "DesktopLifecycleRelaunchError",
+  {
+    reason: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop relaunch failed for reason "${this.reason}".`;
+  }
+}
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
@@ -61,8 +73,14 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
 }
 
 const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdownAndWait")(
-  function* (): Effect.fn.Return<void, never, DesktopShutdown.DesktopShutdown> {
+  function* (): Effect.fn.Return<
+    void,
+    never,
+    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow
+  > {
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.flushMainWindowBounds;
     yield* shutdown.request;
     yield* shutdown.awaitComplete;
   },
@@ -142,11 +160,10 @@ export const make = DesktopLifecycle.of({
       });
       yield* electronApp.exit(0);
     }).pipe(
-      Effect.catchCause((cause) =>
-        logLifecycleError("desktop relaunch failed", {
-          cause: Cause.pretty(cause),
-        }),
-      ),
+      Effect.catchCause((cause) => {
+        const error = new DesktopLifecycleRelaunchError({ reason, cause });
+        return logLifecycleError(error.message, { error });
+      }),
       Effect.forkDetach,
       Effect.asVoid,
     );

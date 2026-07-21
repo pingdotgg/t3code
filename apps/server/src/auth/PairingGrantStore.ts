@@ -88,22 +88,38 @@ export class ActivePairingLinksLoadError extends Schema.TaggedErrorClass<ActiveP
 export class PairingLinkRevokeError extends Schema.TaggedErrorClass<PairingLinkRevokeError>()(
   "PairingLinkRevokeError",
   {
+    pairingLinkId: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Failed to revoke pairing link.";
+    return `Failed to revoke pairing link '${this.pairingLinkId}'.`;
   }
 }
 
 export class PairingCredentialIssueError extends Schema.TaggedErrorClass<PairingCredentialIssueError>()(
   "PairingCredentialIssueError",
   {
+    pairingLinkId: Schema.String,
+    subject: Schema.String,
+    label: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Failed to issue pairing credential.";
+    return `Failed to issue pairing credential '${this.pairingLinkId}' for '${this.subject}'.`;
+  }
+}
+
+export class PairingCredentialRandomGenerationError extends Schema.TaggedErrorClass<PairingCredentialRandomGenerationError>()(
+  "PairingCredentialRandomGenerationError",
+  {
+    operation: Schema.Literals(["generate-id", "generate-token"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to generate pairing credential data during '${this.operation}'.`;
   }
 }
 
@@ -118,11 +134,36 @@ export class BootstrapCredentialConsumeError extends Schema.TaggedErrorClass<Boo
   }
 }
 
+export class BootstrapCredentialConsumeAvailableError extends Schema.TaggedErrorClass<BootstrapCredentialConsumeAvailableError>()(
+  "BootstrapCredentialConsumeAvailableError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to atomically consume an available bootstrap credential.";
+  }
+}
+
+export class BootstrapCredentialLookupError extends Schema.TaggedErrorClass<BootstrapCredentialLookupError>()(
+  "BootstrapCredentialLookupError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to look up bootstrap credential state.";
+  }
+}
+
 export const BootstrapCredentialInternalError = Schema.Union([
   ActivePairingLinksLoadError,
   PairingLinkRevokeError,
   PairingCredentialIssueError,
+  PairingCredentialRandomGenerationError,
   BootstrapCredentialConsumeError,
+  BootstrapCredentialConsumeAvailableError,
+  BootstrapCredentialLookupError,
 ]);
 export type BootstrapCredentialInternalError = typeof BootstrapCredentialInternalError.Type;
 export const isBootstrapCredentialInternalError = Schema.is(BootstrapCredentialInternalError);
@@ -193,6 +234,15 @@ type ConsumeResult =
     };
 
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
+// The desktop-bootstrap grant rides on a trusted IPC channel (fd3 or
+// stdin) at backend launch, so it doesn't have to be short-lived the
+// way a user-facing pairing link does. Letting it live for the
+// lifetime of the backend process (24h is more than long enough for
+// practical desktop use, and well under "forever" in case the seed
+// gets logged anywhere by accident) means a page reload past the 5-min
+// window can still recover by re-bootstrapping rather than locking
+// the user out of the backend.
+const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
@@ -207,7 +257,14 @@ export const make = Effect.gen(function* () {
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
     while (credential.length < PAIRING_TOKEN_LENGTH) {
-      const bytes = yield* crypto.randomBytes(PAIRING_TOKEN_LENGTH);
+      const bytes = yield* crypto
+        .randomBytes(PAIRING_TOKEN_LENGTH)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PairingCredentialRandomGenerationError({ operation: "generate-token", cause }),
+          ),
+        );
       for (const byte of bytes) {
         if (byte >= PAIRING_TOKEN_REJECTION_LIMIT) {
           continue;
@@ -247,9 +304,14 @@ export const make = Effect.gen(function* () {
       scopes: AuthAdministrativeScopes,
       subject: "desktop-bootstrap",
       expiresAt: DateTime.add(now, {
-        milliseconds: Duration.toMillis(DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES),
+        milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),
-      remainingUses: 1,
+      // Unbounded uses so the renderer can re-exchange the seed for a
+      // fresh bearer session after a page reload (or after the prior
+      // bearer expires). The seed itself stays inside the desktop
+      // process and the rendered page, both of which the user already
+      // implicitly trusts.
+      remainingUses: "unbounded",
     });
   }
 
@@ -287,58 +349,73 @@ export const make = Effect.gen(function* () {
   const revoke: PairingGrantStore["Service"]["revoke"] = Effect.fn("PairingGrantStore.revoke")(
     function* (id) {
       const revokedAt = yield* DateTime.now;
-      const revoked = yield* pairingLinks.revoke({
-        id,
-        revokedAt,
-      });
+      const revoked = yield* pairingLinks
+        .revoke({
+          id,
+          revokedAt,
+        })
+        .pipe(Effect.mapError((cause) => new PairingLinkRevokeError({ pairingLinkId: id, cause })));
       if (revoked) {
         yield* emitRemoved(id);
       }
       return revoked;
     },
-    Effect.mapError((cause) => new PairingLinkRevokeError({ cause })),
   );
 
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
-  )(
-    function* (input) {
-      const id = yield* crypto.randomUUIDv4;
-      const credential = yield* generatePairingToken;
-      const ttl = input?.ttl ?? DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES;
-      const now = yield* DateTime.now;
-      const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(ttl) });
-      const issued: IssuedBootstrapCredential = {
-        id,
-        credential,
-        ...(input?.label ? { label: input.label } : {}),
-        ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
-        expiresAt,
-      };
-      yield* pairingLinks.create({
+  )(function* (input) {
+    const id = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError(
+        (cause) => new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
+      ),
+    );
+    const credential = yield* generatePairingToken;
+    const ttl = input?.ttl ?? DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES;
+    const now = yield* DateTime.now;
+    const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(ttl) });
+    const issued: IssuedBootstrapCredential = {
+      id,
+      credential,
+      ...(input?.label ? { label: input.label } : {}),
+      ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
+      expiresAt,
+    };
+    const subject = input?.subject ?? "one-time-token";
+    yield* pairingLinks
+      .create({
         id,
         credential,
         method: "one-time-token",
         scopes: input?.scopes ?? AuthStandardClientScopes,
-        subject: input?.subject ?? "one-time-token",
+        subject,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         createdAt: now,
         expiresAt: expiresAt,
-      });
-      yield* emitUpsert({
-        id,
-        credential,
-        scopes: input?.scopes ?? AuthStandardClientScopes,
-        subject: input?.subject ?? "one-time-token",
-        ...(input?.label ? { label: input.label } : {}),
-        createdAt: now,
-        expiresAt,
-      });
-      return issued;
-    },
-    Effect.mapError((cause) => new PairingCredentialIssueError({ cause })),
-  );
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PairingCredentialIssueError({
+              pairingLinkId: id,
+              subject,
+              ...(input?.label ? { label: input.label } : {}),
+              cause,
+            }),
+        ),
+      );
+    yield* emitUpsert({
+      id,
+      credential,
+      scopes: input?.scopes ?? AuthStandardClientScopes,
+      subject: input?.subject ?? "one-time-token",
+      ...(input?.label ? { label: input.label } : {}),
+      createdAt: now,
+      expiresAt,
+    });
+    return issued;
+  });
 
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
@@ -420,12 +497,14 @@ export const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
-      const consumed = yield* pairingLinks.consumeAvailable({
-        credential,
-        proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
-        consumedAt: now,
-        now,
-      });
+      const consumed = yield* pairingLinks
+        .consumeAvailable({
+          credential,
+          proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
+          consumedAt: now,
+          now,
+        })
+        .pipe(Effect.mapError((cause) => new BootstrapCredentialConsumeAvailableError({ cause })));
 
       if (Option.isSome(consumed)) {
         yield* emitRemoved(consumed.value.id);
@@ -441,7 +520,9 @@ export const make = Effect.gen(function* () {
         } satisfies BootstrapGrant;
       }
 
-      const matching = yield* pairingLinks.getByCredential({ credential });
+      const matching = yield* pairingLinks
+        .getByCredential({ credential })
+        .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
       if (Option.isNone(matching)) {
         return yield* new UnknownBootstrapCredentialError({});
       }
@@ -467,9 +548,6 @@ export const make = Effect.gen(function* () {
 
       return yield* new UnavailableBootstrapCredentialError({});
     },
-    Effect.mapError((cause) =>
-      isBootstrapCredentialError(cause) ? cause : new BootstrapCredentialConsumeError({ cause }),
-    ),
   );
 
   return PairingGrantStore.of({

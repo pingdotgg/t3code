@@ -7,9 +7,12 @@ import {
   PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
+  PreviewAutomationResizeInput,
+  PreviewAutomationResizeResult,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
+  PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
@@ -35,7 +38,8 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 export const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report whether the scoped thread has an automation-capable desktop preview, including its active tab, URL, title, visibility, and loading state.",
+    "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
+  parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
   dependencies,
@@ -48,7 +52,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
 export const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Show and initialize the browser preview for the scoped thread, optionally reusing its current tab and navigating to a URL.",
+      "Show and initialize a collaborative browser tab. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -61,7 +65,7 @@ export const PreviewOpenTool = browserTool(
 export const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
     description:
-      "Navigate the active collaborative browser tab. Pass {url:'https://t3.chat'} for a website, or {target:{kind:'environment-port',port:5173}} for a dev server in the current environment. Exactly one of url or target is required. Defaults to waiting for page loading to stop.",
+      "Navigate a collaborative browser tab. Pass tabId to target a specific tab, plus {url:'https://t3.chat'} for a website or {target:{kind:'environment-port',port:5173}} for a dev server. Exactly one of url or target is required.",
     parameters: PreviewAutomationNavigateInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -69,10 +73,24 @@ export const PreviewNavigateTool = safeBrowserTool(
   }).annotate(Tool.Title, "Navigate browser preview"),
 );
 
+export const PreviewResizeTool = safeBrowserTool(
+  Tool.make("preview_resize", {
+    description:
+      "Resize a collaborative browser tab, optionally selected by tabId. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
+    parameters: PreviewAutomationResizeInput,
+    success: PreviewAutomationResizeResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Resize browser viewport")
+    .annotate(Tool.Idempotent, true),
+);
+
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect the current page before interacting. Returns URL/title/loading state, visible text, semantic interactive elements with reusable selectors and coordinates, accessibility data, recent console/network failures, action history, and a PNG screenshot.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot.",
+    parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
     dependencies,
@@ -82,7 +100,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
 export const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
-      "Click exactly one page target. Prefer locator with a Playwright selector such as role=button[name='Send']; selector accepts legacy CSS; x and y are viewport CSS pixels and must be supplied together. Call preview_snapshot first when the target is unknown.",
+      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together.",
     parameters: PreviewAutomationClickInput,
     success: Schema.Null,
     failure: PreviewAutomationError,
@@ -93,7 +111,7 @@ export const PreviewClickTool = browserTool(
 export const PreviewTypeTool = browserTool(
   Tool.make("preview_type", {
     description:
-      "Insert literal text into one input. Prefer locator with a Playwright role/text selector; selector accepts legacy CSS. If neither is supplied, types into the currently focused element. Set clear=true to replace existing text.",
+      "Insert literal text into one input in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; set clear=true to replace existing text.",
     parameters: PreviewAutomationTypeInput,
     success: Schema.Null,
     failure: PreviewAutomationError,
@@ -104,7 +122,7 @@ export const PreviewTypeTool = browserTool(
 export const PreviewPressTool = browserTool(
   Tool.make("preview_press", {
     description:
-      "Press one keyboard key in the active page, for example {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}. This targets the page's current focus.",
+      "Press one keyboard key in the tab selected by tabId, or this agent session's current tab when omitted. Examples: {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}.",
     parameters: PreviewAutomationPressInput,
     success: Schema.Null,
     failure: PreviewAutomationError,
@@ -115,7 +133,7 @@ export const PreviewPressTool = browserTool(
 export const PreviewScrollTool = safeBrowserTool(
   Tool.make("preview_scroll", {
     description:
-      "Scroll by CSS pixels. Positive deltaY scrolls down and positive deltaX scrolls right. Without locator/selector it scrolls the viewport; otherwise it scrolls that container. At least one delta is required.",
+      "Scroll the tab selected by tabId, or this agent session's current tab when omitted. Positive deltaY scrolls down and positive deltaX scrolls right; a locator/selector targets a container.",
     parameters: PreviewAutomationScrollInput,
     success: Schema.Null,
     failure: PreviewAutomationError,
@@ -126,7 +144,7 @@ export const PreviewScrollTool = safeBrowserTool(
 export const PreviewEvaluateTool = browserTool(
   Tool.make("preview_evaluate", {
     description:
-      "Evaluate a JavaScript expression in the page's main frame and return a serializable result up to 64 KB. Prefer preview_snapshot and semantic click/type/wait tools; use this for inspection or interactions those tools cannot express. The expression may mutate page state.",
+      "Evaluate JavaScript in the tab selected by tabId, or this agent session's current tab when omitted. Returns a serializable result up to 64 KB; the expression may mutate page state.",
     parameters: PreviewAutomationEvaluateInput,
     success: Schema.Unknown,
     failure: PreviewAutomationError,
@@ -137,7 +155,7 @@ export const PreviewEvaluateTool = browserTool(
 export const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
     description:
-      "Wait until all supplied conditions match: a Playwright locator, legacy CSS selector, visible-text substring, and/or URL substring. Provide at least one condition. Defaults to 15 seconds, maximum 60 seconds.",
+      "Wait in the tab selected by tabId, or this agent session's current tab when omitted, until all supplied locator, selector, text, and URL conditions match.",
     parameters: PreviewAutomationWaitForInput,
     success: Schema.Null,
     failure: PreviewAutomationError,
@@ -148,7 +166,8 @@ export const PreviewWaitForTool = readonlyBrowserTool(
 export const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
     description:
-      "Start recording the active collaborative browser tab while keeping it interactive for both agent and human use.",
+      "Start recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted.",
+    parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingStatus,
     failure: PreviewAutomationError,
     dependencies,
@@ -158,6 +177,7 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description: "Stop the active browser recording and save it as a local evidence artifact.",
+    parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,
     dependencies,
@@ -168,6 +188,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
+  PreviewResizeTool,
   PreviewSnapshotTool,
   PreviewClickTool,
   PreviewTypeTool,
@@ -183,6 +204,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
+  PreviewResizeTool,
   PreviewClickTool,
   PreviewTypeTool,
   PreviewPressTool,
