@@ -316,7 +316,18 @@ function parseTrackingBranchByUpstreamRef(stdout: string, upstreamRef: string): 
   return null;
 }
 
-function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
+function deriveLocalBranchNameFromRemoteRef(
+  branchName: string,
+  remoteNames: ReadonlyArray<string>,
+): string | null {
+  const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+    branchName,
+    remoteNames.toSorted((left, right) => right.length - left.length),
+  );
+  if (parsedRemoteRef) {
+    return parsedRemoteRef.branchName;
+  }
+
   const separatorIndex = branchName.indexOf("/");
   if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
     return null;
@@ -2465,7 +2476,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null;
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
+      const remoteNames = remoteExists
+        ? yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []))
+        : [];
+      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(
+        input.refName,
+        remoteNames,
+      );
       const localTrackedBranchTargetExists =
         remoteExists && localTrackedBranchCandidate
           ? yield* executeGit(
