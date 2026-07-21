@@ -774,6 +774,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
+      // Offer in-app re-auth only when the binary is actually present — a
+      // missing CLI can't be re-authenticated, but an installed one that
+      // failed its health check still might be (e.g. expired credentials).
+      ...(isCommandMissingCause(error) ? {} : { reauthentication }),
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -792,6 +796,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
+      reauthentication,
       probe: {
         installed: true,
         version: null,
@@ -816,6 +821,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
+      reauthentication,
       probe: {
         installed: true,
         version: parsedVersion,

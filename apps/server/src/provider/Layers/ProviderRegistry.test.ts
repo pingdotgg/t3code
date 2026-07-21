@@ -1947,6 +1947,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             status.message,
             "Claude Agent CLI (`claude`) is not installed or not on PATH.",
           );
+          // A missing binary cannot be re-authenticated, so no action is offered.
+          assert.strictEqual(status.reauthentication, undefined);
         }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
       );
 
@@ -1961,6 +1963,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
           assert.ok(!(status.message ?? "").includes(secretStderr));
+          // An installed CLI that failed its health check may still be
+          // recoverable (e.g. expired credentials), so re-auth is offered.
+          assert.strictEqual(status.reauthentication?.command, "claude setup-token");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
