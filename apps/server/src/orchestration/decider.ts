@@ -327,6 +327,61 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.settle": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Settling an already-settled thread re-emits with the original
+      // settledAt: the engine rejects zero-event commands, and bulk-settle /
+      // double-click must stay silent no-ops rather than surface errors.
+      const settledAt =
+        thread.settledOverride === "settled" && thread.settledAt !== null
+          ? thread.settledAt
+          : occurredAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.settled",
+        payload: {
+          threadId: command.threadId,
+          settledAt,
+          updatedAt: settledAt,
+        },
+      };
+    }
+
+    case "thread.unsettle": {
+      yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.settle): reducing the event a
+      // second time lands on the same override state.
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,
@@ -479,7 +534,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, turnStartRequestedEvent];
+      if (targetThread.settledOverride !== "settled") {
+        return [userMessageEvent, turnStartRequestedEvent];
+      }
+      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: "activity",
+          updatedAt: command.createdAt,
+        },
+      };
+      return [unsettledEvent, userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {
@@ -600,12 +672,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.set": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -619,6 +691,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      // Only a session coming alive is activity worth waking a settled thread
+      // for — status writes like ready/stopped/error arrive after the fact and
+      // must not fight a user's explicit settle.
+      const isSessionActivity =
+        command.session.status === "starting" || command.session.status === "running";
+      if (thread.settledOverride !== "settled" || !isSessionActivity) {
+        return sessionSetEvent;
+      }
+      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: "activity",
+          updatedAt: command.createdAt,
+        },
+      };
+      return [unsettledEvent, sessionSetEvent];
     }
 
     case "thread.message.assistant.delta": {
@@ -745,7 +840,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.activity.append": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
@@ -758,7 +853,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ? ((command.activity.payload as { requestId: string })
               .requestId as OrchestrationEvent["metadata"]["requestId"])
           : undefined;
-      return {
+      const activityAppendedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -772,6 +867,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           activity: command.activity,
         },
       };
+      // An approval or user-input request is blocked-on-you work — it must
+      // never stay hidden inside a settled slim row.
+      const wakesSettledThread =
+        command.activity.kind === "approval.requested" ||
+        command.activity.kind === "user-input.requested";
+      if (thread.settledOverride !== "settled" || !wakesSettledThread) {
+        return activityAppendedEvent;
+      }
+      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: "activity",
+          updatedAt: command.createdAt,
+        },
+      };
+      return [unsettledEvent, activityAppendedEvent];
     }
 
     default: {

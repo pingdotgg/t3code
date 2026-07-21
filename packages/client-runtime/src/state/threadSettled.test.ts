@@ -48,6 +48,8 @@ function makeShell(input: {
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: NOW,
     archivedAt: input.archivedAt,
+    settledOverride: null,
+    settledAt: null,
     session:
       input.sessionStatus === undefined
         ? null
