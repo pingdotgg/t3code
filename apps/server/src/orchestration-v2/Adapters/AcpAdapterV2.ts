@@ -1456,6 +1456,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
+        // Background tasks that reached a genuine terminal mutation while a root
+        // turn was still streaming and were not yet marked handled in-turn. The
+        // mid-turn offer is suppressed (active turn owns the work); on finalize
+        // these ids re-arm a single continuation when the agent never hydrated
+        // or reported them before settle (regression: mid-turn complete + no
+        // get_command must still wake after finalize).
+        const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         // A monitor-event can arrive after its task and the user-facing provider
         // turn already completed. Grok starts another internal prompt for that
         // stale notification; suppress its agent output until a genuine terminal
@@ -2283,6 +2290,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             // continuation (live: grok-post-settle-continuation-poll).
             // Terminal statuses only after normalizeToolCall (start ACKs stay
             // inProgress/running).
+            //
+            // Tradeoff: a pre-settle false "completed" normalization (Bash-
+            // shaped re-report with exit_code 0, or the hydration safety
+            // force-complete firing pre-settle) would permanently mark the task
+            // handled and suppress its injected report chatter. The deleted
+            // handled-id removal on late monitor-event mutations used to rescue
+            // that case; likelihood is low because mid-turn monitor ends
+            // normally arrive as reminder mutations that force inProgress, and
+            // re-reports are documented post-settle traffic.
             if (
               !context.promptSettled &&
               backgroundStatus !== "pending" &&
@@ -2291,6 +2307,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) =>
                 new Set(current).add(backgroundTaskId),
               );
+              yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+                if (!current.has(backgroundTaskId)) return current;
+                const next = new Set(current);
+                next.delete(backgroundTaskId);
+                return next;
+              });
             }
           }
 
@@ -2309,6 +2331,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) =>
                 new Set(current).add(backgroundCompletion.taskId),
               );
+              yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+                if (!current.has(backgroundCompletion.taskId)) return current;
+                const next = new Set(current);
+                next.delete(backgroundCompletion.taskId);
+                return next;
+              });
             }
             // A still-running fetch must keep the hydration hold (and its
             // safety timer) alive until output actually lands.
@@ -2760,25 +2788,62 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         ) {
           const taskAlreadyEnded = (yield* Ref.get(endedBackgroundTaskIds)).has(mutation.taskId);
           yield* applyBackgroundTaskMutationRunning(mutation);
-          if (taskAlreadyEnded && acpPostSettleMonitorPromptShouldSuppress(mutation)) {
-            yield* Ref.set(suppressPostSettleMonitorPrompt, true);
-          }
-          if (mutation.status !== "running") {
-            yield* Ref.set(suppressPostSettleMonitorPrompt, false);
-            yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) => {
-              if (!current.has(mutation.taskId)) return current;
-              const next = new Set(current);
-              next.delete(mutation.taskId);
-              return next;
-            });
-            if (
-              postSettleContinuationEnabled &&
-              (yield* Ref.get(activeSessionId)) === sessionId &&
-              (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
-              (yield* Ref.get(wakeBuffer)).length > 0
-            ) {
-              yield* offerContinuationRun(sessionId);
+          if (mutation.status === "running") {
+            // Straggler running notice after a genuine end: suppress residual
+            // monitor-prompt agent chatter so it cannot open a synthetic wake.
+            if (taskAlreadyEnded && acpPostSettleMonitorPromptShouldSuppress(mutation)) {
+              yield* Ref.set(suppressPostSettleMonitorPrompt, true);
             }
+            return;
+          }
+          // First genuine terminal: allow subsequent agent output. Re-delivery
+          // of an already-ended terminal must not un-suppress residual ack
+          // chatter from the injected monitor-event turn.
+          if (!taskAlreadyEnded) {
+            yield* Ref.set(suppressPostSettleMonitorPrompt, false);
+          }
+          // Keep handledBackgroundTaskIdsInActiveTurn intact. Erasing the mark
+          // on a late monitor-event mutation defeated the in-turn chatter guard
+          // and let injected-turn acks arm wakeBuffer for a later spurious
+          // "Background task completed." run (multiturn live repro). Monitors
+          // the agent settled without reporting never enter that set, so their
+          // injected report still streams via pendingInjectedReport / hold.
+          const activeContext = yield* Ref.get(activeTurn);
+          // Completions that land while a root turn is still streaming are
+          // owned by in-turn machinery (emitTool handled marks, deferred
+          // finalize, injected-report hold). Do not open a synthetic wake mid-
+          // turn; finalizeTurn re-checks wakeBuffer / midTurnUnreported once
+          // the turn leaves the active slot so legitimate unhandled evidence
+          // still offers after finalize.
+          if (activeContext !== null && !activeContext.finalized) {
+            const handled = yield* Ref.get(handledBackgroundTaskIdsInActiveTurn);
+            // Only arm deferred wake when this turn registered the task (monitor
+            // tool started in-turn) and the root prompt is still open. Completions
+            // that land in the settled-held window (promptSettled, deferred
+            // finalize holding for injected report) fall back to the pre-existing
+            // post-finalize injected-turn path; arming here would spuriously
+            // offer "Background task completed." after the report streams into
+            // the held turn. Residual cancel-backgrounded completions from a
+            // prior interrupt must not open a synthetic continuation.
+            if (
+              !activeContext.promptSettled &&
+              !handled.has(mutation.taskId) &&
+              activeContext.toolCallIdsByBackgroundTaskId.has(mutation.taskId)
+            ) {
+              yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) =>
+                new Set(current).add(mutation.taskId),
+              );
+            }
+            return;
+          }
+          if (
+            postSettleContinuationEnabled &&
+            (yield* Ref.get(activeSessionId)) === sessionId &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            ((yield* Ref.get(wakeBuffer)).length > 0 ||
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+          ) {
+            yield* offerContinuationRun(sessionId);
           }
         });
 
@@ -2833,6 +2898,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }
           }
           const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
+          // Residual Grok agent/thought chatter after in-turn-handled background
+          // work must not be retained as wake evidence. Tool-path alreadyHandled
+          // covers re-reports with a task id; this covers agent_message_chunk /
+          // agent_thought_chunk frames that carry no task id (live:
+          // grok-in-turn-monitor-no-wake, multiturn stale-buffer arm). Check
+          // before buffering so the frames cannot dirty wakeBuffer and later
+          // arm a mid-turn offer when a second monitor completes.
+          const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
+          const isInTurnHandledAgentChatter =
+            handledInTurnCount > 0 &&
+            (update.sessionUpdate === "agent_message_chunk" ||
+              update.sessionUpdate === "agent_thought_chunk");
           // Grok prompts itself for every monitor event after the root turn
           // settles. Its assistant/reasoning replies are progress chatter, not
           // separate wake results. Retaining them would replay the entire burst
@@ -2850,6 +2927,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           // completed." spam).
           if (
             !alreadyHandledToolUpdate &&
+            !isInTurnHandledAgentChatter &&
             acpPostSettleWakeShouldBuffer(notification, backgroundWorkRunning)
           ) {
             yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
@@ -2880,19 +2958,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }
             return true;
           }
-          // Residual Grok agent/thought chatter after in-turn-handled background
-          // work must not open synthetic continuation runs. Tool-path
-          // alreadyHandled covers re-reports with a task id; this covers
-          // agent_message_chunk frames that carry no task id (live:
-          // grok-in-turn-monitor-no-wake). Running work already returned above.
+          // Same in-turn-handled agent chatter: do not open a synthetic wake.
           // Do not clear wakeBuffer here: frames for other still-tracked tasks
           // must remain drainable when a real (tool) completion later offers.
-          const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
-          if (
-            handledInTurnCount > 0 &&
-            (update.sessionUpdate === "agent_message_chunk" ||
-              update.sessionUpdate === "agent_thought_chunk")
-          ) {
+          if (isInTurnHandledAgentChatter) {
             return true;
           }
           yield* offerContinuationRun(notification.sessionId);
@@ -3004,9 +3073,21 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             case "agent_message_chunk":
               if (update.content.type === "text") {
                 // The injected-turn report is streaming; the normal debounce
-                // after the last chunk takes over from here.
+                // after the last chunk takes over from here. Drop matching
+                // mid-turn armed ids so finalize does not open a duplicate
+                // wake after the report already projected into this turn.
                 if (context.pendingInjectedReport.size > 0) {
+                  const reportedTaskIds = [...context.pendingInjectedReport];
                   context.pendingInjectedReport.clear();
+                  yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+                    let next: Set<string> | null = null;
+                    for (const taskId of reportedTaskIds) {
+                      if (!current.has(taskId)) continue;
+                      if (next === null) next = new Set(current);
+                      next.delete(taskId);
+                    }
+                    return next ?? current;
+                  });
                 }
                 yield* appendText(context, "assistant", update.content.text);
               }
@@ -4058,6 +4139,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
+              yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(lastTurnRoute, null);
             }),
@@ -4151,6 +4233,37 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }
           }
           yield* Ref.set(activeTurn, null);
+          // A mid-turn background completion may have deferred its offer while
+          // this root turn was still streaming. Once the turn leaves the active
+          // slot, re-check: empty running set + residual wake evidence (or a
+          // mid-turn unreported completion) means a legitimate unhandled
+          // completion can open exactly one continuation. Sticky
+          // continuationRequested prevents double-offer if a later frame also
+          // races into offerContinuationRun.
+          if (
+            postSettleContinuationEnabled &&
+            settledStatus === "completed" &&
+            !directStopQuarantine &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            ((yield* Ref.get(wakeBuffer)).length > 0 ||
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+          ) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            if (sessionId !== null) {
+              yield* offerContinuationRun(sessionId);
+            }
+          }
+          // Clear mid-turn unreported marks unless a completed turn still has
+          // running background work: keep them so the post-finalize gate can
+          // offer once when the last task ends. Interrupted/failed turns must
+          // not leave marks that open a wake after interrupt (quarantine owns
+          // that path). Non-continuation turn start also clears (~user turn).
+          if (
+            settledStatus !== "completed" ||
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0
+          ) {
+            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+          }
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });
 
@@ -4357,12 +4470,24 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             yield* Ref.set(suppressPostSettleMonitorPrompt, false);
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
+            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
               postSettleContinuationEnabled &&
               turnInput.message.createdBy === "agent" &&
               turnInput.message.creationSource === "provider";
+            // User turns must not inherit prior-turn wake residue. Stale injected-
+            // turn ack chatter buffered for in-turn-handled work can otherwise
+            // arm a mid-turn offer when a later monitor completes (multiturn
+            // live repro). Continuation turns keep the buffer so attach mode can
+            // drain it. Still-running tasks remain in runningBackgroundTaskIds
+            // and re-buffer evidence when they complete; a user message means
+            // this turn owns the conversation, so prior wake frames cannot be
+            // legitimate for a synthetic continuation of the previous turn.
+            if (!isContinuationTurn) {
+              yield* Ref.set(wakeBuffer, []);
+            }
             // Drop a sticky continuation offer when any new turn starts so idle
             // pin and further offers cannot wed on a completed or failed dispatch.
             yield* continuationPermit.withPermit(
@@ -4466,9 +4591,21 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
               if (drained.length === 0) {
-                yield* finalizeTurn(context, "completed", undefined, {
-                  drainTrailingChunks: true,
-                });
+                // Empty wakeBuffer (midTurn-only offer): wait the quiet window
+                // so late CLI frames can attach. scheduleDeferredFinalize
+                // no-ops without deferFinalizeForBackgroundWork; fall back to
+                // immediate finalize so the turn cannot wedge.
+                if (flavor.deferFinalizeForBackgroundWork === true) {
+                  if (hasDeferredBackgroundWork(context)) {
+                    yield* rearmDeferredFinalize(context);
+                  } else {
+                    yield* scheduleDeferredFinalize(context);
+                  }
+                } else {
+                  yield* finalizeTurn(context, "completed", undefined, {
+                    drainTrailingChunks: true,
+                  });
+                }
                 return;
               }
               for (const notification of drained) {
