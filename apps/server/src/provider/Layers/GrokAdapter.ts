@@ -118,10 +118,13 @@ interface GrokSessionContext {
    * plan-approval request is captured as a proposed plan or auto-approved. */
   activeInteractionMode: ProviderInteractionMode | undefined;
   /** Set once a Grok plan has been captured as a proposed plan and is
-   * awaiting the user's decision on the plan card. Records the turn that
-   * captured it so a re-presentation within the same turn is captured again
-   * instead of auto-approved; only a later non-plan turn approves. */
-  planCapture: { readonly turnId: TurnId | undefined } | undefined;
+   * awaiting the user's decision on the plan card. Records the prompt serial
+   * at capture time so a re-presentation without any new user prompt is
+   * captured again instead of auto-approved; only a request preceded by a
+   * fresh non-plan user prompt (a new turn or a steer) approves. */
+  planCapture: { readonly promptSerial: number } | undefined;
+  /** Monotonic count of user prompts sent to this session, including steers. */
+  promptSerial: number;
   /** Grok's current ACP session mode (from current_mode_update), e.g. "plan". */
   currentAcpModeId: string | undefined;
   /** Plan file path reported by enter_plan_mode; used to recover the plan
@@ -179,6 +182,26 @@ function appendPromptResultToTurn(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Decides whether an incoming exit_plan_mode request is the user-driven
+ * implementation of an already-captured plan (approve) or another plan
+ * presentation to capture. Approval requires a plan captured earlier AND at
+ * least one new non-plan user prompt since the capture — a new turn or a
+ * steer into the still-running capturing turn both qualify, while Grok
+ * re-presenting on its own within the same prompt does not.
+ */
+export function shouldAutoApproveGrokPlan(input: {
+  readonly planCapture: { readonly promptSerial: number } | undefined;
+  readonly activeInteractionMode: ProviderInteractionMode | undefined;
+  readonly promptSerial: number;
+}): boolean {
+  return (
+    input.planCapture !== undefined &&
+    input.activeInteractionMode !== "plan" &&
+    input.promptSerial > input.planCapture.promptSerial
+  );
 }
 
 /**
@@ -727,18 +750,21 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       yield* logNative(input.threadId, method, params);
                       const ctx = sessions.get(input.threadId);
                       const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                      // A plan was captured on an earlier turn and the user
-                      // came back in a non-plan turn: that is the
-                      // implementation turn, so let Grok exit plan mode and
-                      // build. The captured plan must come from a *previous*
-                      // turn — Grok may re-present a revised plan within the
-                      // capturing turn itself, which must be captured again,
-                      // not approved on the user's behalf.
+                      // A plan was captured earlier and the user has since
+                      // sent a non-plan prompt (a new turn, or an implement
+                      // click steered into the still-running capturing turn):
+                      // let Grok exit plan mode and build. Without a fresh
+                      // user prompt — e.g. Grok re-presenting a revised plan
+                      // on its own right after the revise feedback — the plan
+                      // is captured again, never approved on the user's
+                      // behalf.
                       if (
-                        ctx?.planCapture !== undefined &&
-                        ctx.activeInteractionMode !== "plan" &&
-                        turnId !== undefined &&
-                        turnId !== ctx.planCapture.turnId
+                        ctx !== undefined &&
+                        shouldAutoApproveGrokPlan({
+                          planCapture: ctx.planCapture,
+                          activeInteractionMode: ctx.activeInteractionMode,
+                          promptSerial: ctx.promptSerial,
+                        })
                       ) {
                         ctx.planCapture = undefined;
                         return makeXAiExitPlanModeApprovedResponse();
@@ -790,7 +816,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         planMarkdown ??= unchangedContents;
                       }
                       if (ctx) {
-                        ctx.planCapture = { turnId };
+                        ctx.planCapture = { promptSerial: ctx.promptSerial };
                         ctx.lastCapturedPlanMarkdown = planMarkdown;
                       }
                       yield* offerRuntimeEvent({
@@ -931,6 +957,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             lastPlanFingerprint: undefined,
             activeInteractionMode: undefined,
             planCapture: undefined,
+            promptSerial: 0,
             currentAcpModeId: undefined,
             planFilePath: undefined,
             lastCapturedPlanMarkdown: undefined,
@@ -1094,6 +1121,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
             ctx.activeInteractionMode = input.interactionMode;
+            ctx.promptSerial += 1;
             ctx.session = {
               ...ctx.session,
               status: steeringTurnId === undefined ? "connecting" : "running",

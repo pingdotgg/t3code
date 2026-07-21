@@ -26,7 +26,11 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
+import {
+  grokPromptSettlementBelongsToContext,
+  makeGrokAdapter,
+  shouldAutoApproveGrokPlan,
+} from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -118,6 +122,49 @@ it("requires a settlement to match the live Grok turn", () => {
       liveActiveTurnId: staleTurnId,
       liveSessionActiveTurnId: staleTurnId,
       turnId: staleTurnId,
+    }),
+  );
+});
+
+it("approves a captured Grok plan only after a fresh non-plan user prompt", () => {
+  // No capture yet: never approve.
+  assert.isFalse(
+    shouldAutoApproveGrokPlan({
+      planCapture: undefined,
+      activeInteractionMode: "default",
+      promptSerial: 3,
+    }),
+  );
+  // Same prompt re-presentation (no new user input): capture again.
+  assert.isFalse(
+    shouldAutoApproveGrokPlan({
+      planCapture: { promptSerial: 3 },
+      activeInteractionMode: "default",
+      promptSerial: 3,
+    }),
+  );
+  // Plan-mode refinement prompt: capture the revised plan, do not approve.
+  assert.isFalse(
+    shouldAutoApproveGrokPlan({
+      planCapture: { promptSerial: 3 },
+      activeInteractionMode: "plan",
+      promptSerial: 4,
+    }),
+  );
+  // Fresh default-mode prompt after capture — a new turn or an implement
+  // click steered into the still-running capturing turn: approve.
+  assert.isTrue(
+    shouldAutoApproveGrokPlan({
+      planCapture: { promptSerial: 3 },
+      activeInteractionMode: "default",
+      promptSerial: 4,
+    }),
+  );
+  assert.isTrue(
+    shouldAutoApproveGrokPlan({
+      planCapture: { promptSerial: 3 },
+      activeInteractionMode: undefined,
+      promptSerial: 4,
     }),
   );
 });
