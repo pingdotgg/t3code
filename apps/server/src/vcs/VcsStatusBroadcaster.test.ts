@@ -706,6 +706,7 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(remoteStarted);
 
       assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.localStatusCalls, 1);
 
       yield* Scope.close(firstScope, Exit.void);
       assert.isTrue(Option.isNone(yield* Deferred.poll(remoteInterrupted)));
@@ -713,6 +714,20 @@ describe("VcsStatusBroadcaster", () => {
       yield* Scope.close(secondScope, Exit.void).pipe(Effect.forkScoped);
       yield* Deferred.await(remoteInterrupted);
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
+
+      const nextSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
+      const nextScope = yield* Scope.make();
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) =>
+        event._tag === "snapshot"
+          ? Deferred.succeed(nextSnapshot, event).pipe(Effect.ignore)
+          : Effect.void,
+      ).pipe(Effect.forkIn(nextScope));
+      yield* Deferred.await(nextSnapshot);
+
+      // Releasing the final poller also evicts its cwd cache entry, so a later
+      // subscription reloads local status instead of retaining state forever.
+      assert.equal(state.localStatusCalls, 2);
+      yield* Scope.close(nextScope, Exit.void);
     }).pipe(Effect.provide(testLayer));
   });
 });

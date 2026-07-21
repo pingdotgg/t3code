@@ -5,11 +5,24 @@ import {
   ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { CommandReadModel } from "./commandReadModel.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
+
+/** Thread list from the map, for assertions that previously used an array. */
+function threadsArray(model: CommandReadModel): ReadonlyArray<OrchestrationThread> {
+  return Array.from(HashMap.values(model.threads));
+}
+
+/** First thread in the map (insertion-order-independent tests use a single thread). */
+function firstThread(model: CommandReadModel): OrchestrationThread | undefined {
+  return threadsArray(model)[0];
+}
 
 function makeEvent(input: {
   sequence: number;
@@ -72,7 +85,7 @@ describe("orchestration projector", () => {
     );
 
     expect(next.snapshotSequence).toBe(1);
-    expect(next.threads).toEqual([
+    expect(threadsArray(next)).toEqual([
       {
         id: "thread-1",
         projectId: "project-1",
@@ -183,7 +196,7 @@ describe("orchestration projector", () => {
         }),
       ),
     );
-    expect(archived.threads[0]?.archivedAt).toBe(later);
+    expect(firstThread(archived)?.archivedAt).toBe(later);
 
     const unarchived = await Effect.runPromise(
       projectEvent(
@@ -202,7 +215,7 @@ describe("orchestration projector", () => {
         }),
       ),
     );
-    expect(unarchived.threads[0]?.archivedAt).toBeNull();
+    expect(firstThread(unarchived)?.archivedAt).toBeNull();
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {
@@ -231,7 +244,7 @@ describe("orchestration projector", () => {
 
     expect(next.snapshotSequence).toBe(7);
     expect(next.updatedAt).toBe("2026-01-01T00:00:00.000Z");
-    expect(next.threads).toEqual([]);
+    expect(threadsArray(next)).toEqual([]);
   });
 
   it("tracks latest turn id from session lifecycle events", async () => {
@@ -327,13 +340,13 @@ describe("orchestration projector", () => {
       ),
     );
 
-    const thread = afterRunning.threads[0];
+    const thread = firstThread(afterRunning);
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
     expect(thread?.session?.status).toBe("running");
 
     // Leaving the "running" session status settles the running turn with the
     // session timestamp as the turn end.
-    const settledThread = afterReady.threads[0];
+    const settledThread = firstThread(afterReady);
     expect(settledThread?.latestTurn?.turnId).toBe("turn-1");
     expect(settledThread?.latestTurn?.state).toBe("completed");
     expect(settledThread?.latestTurn?.completedAt).toBe(settledAt);
@@ -391,8 +404,8 @@ describe("orchestration projector", () => {
       ),
     );
 
-    expect(afterUpdate.threads[0]?.runtimeMode).toBe("approval-required");
-    expect(afterUpdate.threads[0]?.updatedAt).toBe(updatedAt);
+    expect(firstThread(afterUpdate)?.runtimeMode).toBe("approval-required");
+    expect(firstThread(afterUpdate)?.updatedAt).toBe(updatedAt);
   });
 
   it("marks assistant messages completed with non-streaming updates", async () => {
@@ -477,7 +490,7 @@ describe("orchestration projector", () => {
       ),
     );
 
-    const message = afterComplete.threads[0]?.messages[0];
+    const message = firstThread(afterComplete)?.messages[0];
     expect(message?.id).toBe("assistant:msg-1");
     expect(message?.text).toBe("hello");
     expect(message?.streaming).toBe(false);
@@ -685,7 +698,7 @@ describe("orchestration projector", () => {
       Promise.resolve(afterCreate),
     );
 
-    const thread = afterRevert.threads[0];
+    const thread = firstThread(afterRevert);
     expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual(
       [
         { role: "user", text: "First edit" },
@@ -842,7 +855,7 @@ describe("orchestration projector", () => {
       Promise.resolve(afterCreate),
     );
 
-    const thread = afterRevert.threads[0];
+    const thread = firstThread(afterRevert);
     expect(
       thread?.messages.map((message) => ({
         id: message.id,
@@ -944,7 +957,7 @@ describe("orchestration projector", () => {
       Promise.resolve(afterMessages),
     );
 
-    const thread = finalState.threads[0];
+    const thread = firstThread(finalState);
     expect(thread?.messages).toHaveLength(2_000);
     expect(thread?.messages[0]?.id).toBe("msg-100");
     expect(thread?.messages.at(-1)?.id).toBe("msg-2099");

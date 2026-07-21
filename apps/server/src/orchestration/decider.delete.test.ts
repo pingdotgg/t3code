@@ -2,6 +2,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  MessageId,
   ProjectId,
   ThreadId,
   type OrchestrationCommand,
@@ -9,6 +10,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 
@@ -212,6 +214,136 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       }
 
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
+    }),
+  );
+
+  it.effect("rejects commands targeting an already-deleted (evicted) thread", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedReadModel;
+      const now = "2026-01-01T00:00:00.000Z";
+
+      // Delete thread-delete-1; the projector evicts it from the model.
+      const afterDelete = yield* projectEvent(seeded, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-delete-1"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-1"),
+        type: "thread.deleted",
+        occurredAt: now,
+        commandId: asCommandId("cmd-thread-delete-1"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-delete-1"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-1"),
+          deletedAt: now,
+        },
+      });
+
+      // A follow-up command to the deleted thread now fails cleanly.
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: asCommandId("cmd-turn-after-delete"),
+            threadId: asThreadId("thread-delete-1"),
+            message: {
+              messageId: MessageId.make("msg-after-delete"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now,
+          },
+          readModel: afterDelete,
+        }),
+      );
+      expect(error.message).toContain("does not exist");
+
+      // Re-creating a thread with the SAME (deleted) id is rejected: the id is
+      // retained in deletedThreadIds even though the thread body was evicted, so
+      // the "cannot be created twice" invariant still holds and the durable DB
+      // row is not silently overwritten.
+      const recreateSameId = (threadId: ThreadId) =>
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.create",
+            commandId: asCommandId(`cmd-recreate-${threadId}`),
+            threadId,
+            projectId: asProjectId("project-delete"),
+            title: "Recreate",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          },
+          readModel: afterDelete,
+        });
+
+      const recreateError = yield* Effect.flip(recreateSameId(asThreadId("thread-delete-1")));
+      expect(recreateError.message).toContain("cannot be created twice");
+
+      // A fresh thread with a NEW, never-used id can still be created.
+      const created = yield* recreateSameId(asThreadId("thread-delete-3"));
+      const createdEvents = Array.isArray(created) ? created : [created];
+      expect(createdEvents.map((event) => event.type)).toEqual(["thread.created"]);
+    }),
+  );
+
+  it.effect("projector evicts deleted threads but retains archived threads", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedReadModel;
+      const now = "2026-01-01T00:00:00.000Z";
+      expect(HashMap.size(seeded.threads)).toBe(2);
+
+      // Archiving keeps the thread resident (unarchive/other commands need it).
+      const afterArchive = yield* projectEvent(seeded, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-archive-1"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-1"),
+        type: "thread.archived",
+        occurredAt: now,
+        commandId: asCommandId("cmd-thread-archive-1"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-archive-1"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-1"),
+          archivedAt: now,
+          updatedAt: now,
+        },
+      });
+      expect(HashMap.size(afterArchive.threads)).toBe(2);
+      expect(HashMap.has(afterArchive.threads, asThreadId("thread-delete-1"))).toBe(true);
+
+      // Deleting evicts the thread from the in-memory model entirely.
+      const afterDelete = yield* projectEvent(afterArchive, {
+        sequence: 5,
+        eventId: asEventId("evt-thread-delete-2"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-2"),
+        type: "thread.deleted",
+        occurredAt: now,
+        commandId: asCommandId("cmd-thread-delete-2"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-delete-2"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-2"),
+          deletedAt: now,
+        },
+      });
+      expect(HashMap.size(afterDelete.threads)).toBe(1);
+      expect(HashMap.has(afterDelete.threads, asThreadId("thread-delete-2"))).toBe(false);
+      expect(HashMap.has(afterDelete.threads, asThreadId("thread-delete-1"))).toBe(true);
     }),
   );
 });

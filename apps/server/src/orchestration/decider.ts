@@ -1,14 +1,10 @@
-import {
-  EventId,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
-  type OrchestrationReadModel,
-} from "@t3tools/contracts";
+import { EventId, type OrchestrationCommand, type OrchestrationEvent } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
+import type { CommandReadModel } from "./commandReadModel.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
@@ -65,7 +61,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   readModel,
 }: {
   readonly commands: ReadonlyArray<OrchestrationCommand>;
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -99,7 +95,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   readModel,
 }: {
   readonly command: OrchestrationCommand;
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,

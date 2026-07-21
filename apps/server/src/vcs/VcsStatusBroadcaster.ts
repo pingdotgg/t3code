@@ -476,10 +476,10 @@ export const make = Effect.gen(function* () {
   const releaseRemotePoller = Effect.fn("VcsStatusBroadcaster.releaseRemotePoller")(function* (
     cwd: string,
   ) {
-    const pollerToInterrupt = yield* SynchronizedRef.modify(pollersRef, (activePollers) => {
+    const pollerToInterrupt = yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (!existing) {
-        return [null, activePollers] as const;
+        return Effect.succeed([null, activePollers] as const);
       }
 
       if (existing.subscriberCount > 1) {
@@ -488,12 +488,24 @@ export const make = Effect.gen(function* () {
           ...existing,
           subscriberCount: existing.subscriberCount - 1,
         });
-        return [null, nextPollers] as const;
+        return Effect.succeed([null, nextPollers] as const);
       }
 
       const nextPollers = new Map(activePollers);
       nextPollers.delete(cwd);
-      return [existing.fiber, nextPollers] as const;
+      // Drop the cached status for this cwd in the same critical section that
+      // removes the poller, so a concurrent retainRemotePoller (which reloads
+      // the cache and installs a fresh poller) cannot have its new entry wiped
+      // by this release. Otherwise the cache grows one entry per cwd for the
+      // broadcaster's lifetime; a future subscriber re-loads and re-seeds it.
+      return Ref.update(cacheRef, (cache) => {
+        if (!cache.has(cwd)) {
+          return cache;
+        }
+        const nextCache = new Map(cache);
+        nextCache.delete(cwd);
+        return nextCache;
+      }).pipe(Effect.as([existing.fiber, nextPollers] as const));
     });
 
     if (pollerToInterrupt) {

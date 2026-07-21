@@ -1,5 +1,6 @@
 import {
   parseScopedThreadKey,
+  scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
@@ -13,6 +14,10 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useDiffPanelStore } from "../diffPanelStore";
+import { removePreviewThread } from "../previewStateStore";
+import { useRightPanelStore } from "../rightPanelStore";
+import { useUiStateStore } from "../uiStateStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -37,6 +42,23 @@ export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArc
   override get message(): string {
     return "Cannot archive a running thread.";
   }
+}
+
+/**
+ * Prune per-thread client state that would otherwise accumulate forever.
+ *
+ * These stores keep a per-thread entry (preview atom, right-panel surfaces,
+ * diff-panel selection) that is persisted to localStorage and was never cleaned
+ * up on thread deletion/archival — a long-lived tab leaked one entry per thread
+ * ever visited. The cleanup functions already existed but had no callers; this
+ * wires them into the deletion/archival flow.
+ */
+function clearPerThreadClientState(ref: ScopedThreadRef): void {
+  removePreviewThread(ref);
+  useRightPanelStore.getState().removeThread(ref);
+  useDiffPanelStore.getState().removeThread(ref);
+  // uiStateStore is keyed by the scoped thread key (see ChatView.markThreadVisited).
+  useUiStateStore.getState().removeThread(scopedThreadKey(ref));
 }
 
 export function useThreadActions() {
@@ -158,6 +180,9 @@ export function useThreadActions() {
         });
         if (result._tag === "Success") {
           refreshArchivedThreadsForEnvironment(target.environmentId);
+          clearComposerDraftForThread(target);
+          clearTerminalUiState(target);
+          clearPerThreadClientState(target);
         }
         return result;
       }
@@ -247,6 +272,7 @@ export function useThreadActions() {
         threadRef,
       );
       clearTerminalUiState(threadRef);
+      clearPerThreadClientState(threadRef);
 
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {

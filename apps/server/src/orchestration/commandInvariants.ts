@@ -1,15 +1,24 @@
 import type {
   OrchestrationCommand,
   OrchestrationProject,
-  OrchestrationReadModel,
   OrchestrationThread,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
 
+import {
+  findProjectById,
+  findThreadById,
+  isThreadDeleted,
+  listThreadsByProjectId,
+  type CommandReadModel,
+} from "./commandReadModel.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+
+export { findProjectById, findThreadById, listThreadsByProjectId };
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -18,29 +27,8 @@ function invariantError(commandType: string, detail: string): OrchestrationComma
   });
 }
 
-export function findThreadById(
-  readModel: OrchestrationReadModel,
-  threadId: ThreadId,
-): OrchestrationThread | undefined {
-  return readModel.threads.find((thread) => thread.id === threadId);
-}
-
-export function findProjectById(
-  readModel: OrchestrationReadModel,
-  projectId: ProjectId,
-): OrchestrationProject | undefined {
-  return readModel.projects.find((project) => project.id === projectId);
-}
-
-export function listThreadsByProjectId(
-  readModel: OrchestrationReadModel,
-  projectId: ProjectId,
-): ReadonlyArray<OrchestrationThread> {
-  return readModel.threads.filter((thread) => thread.projectId === projectId);
-}
-
 export function requireProject(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly projectId: ProjectId;
 }): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
@@ -57,7 +45,7 @@ export function requireProject(input: {
 }
 
 export function requireProjectAbsent(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly projectId: ProjectId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
@@ -73,18 +61,23 @@ export function requireProjectAbsent(input: {
 }
 
 export function requireActiveProjectWorkspaceRootAbsent(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly workspaceRoot: string;
   readonly exceptProjectId?: ProjectId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
   const normalizedWorkspaceRoot = normalizeProjectPathForComparison(input.workspaceRoot);
-  const existingProject = input.readModel.projects.find(
-    (project) =>
+  let existingProject: OrchestrationProject | undefined;
+  for (const project of HashMap.values(input.readModel.projects)) {
+    if (
       project.deletedAt === null &&
       normalizeProjectPathForComparison(project.workspaceRoot) === normalizedWorkspaceRoot &&
-      project.id !== input.exceptProjectId,
-  );
+      project.id !== input.exceptProjectId
+    ) {
+      existingProject = project;
+      break;
+    }
+  }
   if (existingProject === undefined) {
     return Effect.void;
   }
@@ -97,7 +90,7 @@ export function requireActiveProjectWorkspaceRootAbsent(input: {
 }
 
 export function requireThread(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
@@ -114,7 +107,7 @@ export function requireThread(input: {
 }
 
 export function requireThreadArchived(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
@@ -133,7 +126,7 @@ export function requireThreadArchived(input: {
 }
 
 export function requireThreadNotArchived(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
@@ -152,11 +145,16 @@ export function requireThreadNotArchived(input: {
 }
 
 export function requireThreadAbsent(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
-  if (!findThreadById(input.readModel, input.threadId)) {
+  // A deleted thread is evicted from `threads` but its id is retained in
+  // `deletedThreadIds`, so reject re-using a live OR previously-deleted id.
+  if (
+    !findThreadById(input.readModel, input.threadId) &&
+    !isThreadDeleted(input.readModel, input.threadId)
+  ) {
     return Effect.void;
   }
   return Effect.fail(

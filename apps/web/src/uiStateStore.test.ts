@@ -9,6 +9,7 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  removeThreadUiState,
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
@@ -37,6 +38,27 @@ describe("uiStateStore pure functions", () => {
     expect(visited.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
     expect(markThreadVisited(visited, threadId, "2026-02-25T12:30:00.000Z")).toBe(visited);
     expect(markThreadVisited(visited, threadId, "not-a-date")).toBe(visited);
+  });
+
+  it("removes all per-thread ui state for a deleted thread", () => {
+    const threadId = ThreadId.make("thread-1");
+    const otherId = ThreadId.make("thread-2");
+    const state = makeUiState({
+      threadLastVisitedAtById: {
+        [threadId]: "2026-02-25T12:30:00.000Z",
+        [otherId]: "2026-02-25T12:31:00.000Z",
+      },
+      threadChangedFilesExpandedById: {
+        [threadId]: { "turn-1": false },
+        [otherId]: { "turn-1": false },
+      },
+    });
+
+    const next = removeThreadUiState(state, threadId);
+    expect(next.threadLastVisitedAtById).toEqual({ [otherId]: "2026-02-25T12:31:00.000Z" });
+    expect(next.threadChangedFilesExpandedById).toEqual({ [otherId]: { "turn-1": false } });
+    // No-op (same reference) when the thread has no state.
+    expect(removeThreadUiState(next, threadId)).toBe(next);
   });
 
   it("marks a completed thread unread using the server completion timestamp", () => {

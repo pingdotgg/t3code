@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { fromWireReadModel } from "./commandReadModel.ts";
 import {
   findThreadById,
   listThreadsByProjectId,
@@ -21,7 +22,7 @@ import {
 
 const now = "2026-01-01T00:00:00.000Z";
 
-const readModel: OrchestrationReadModel = {
+const wireReadModel: OrchestrationReadModel = {
   snapshotSequence: 2,
   updatedAt: now,
   projects: [
@@ -101,6 +102,8 @@ const readModel: OrchestrationReadModel = {
     },
   ],
 };
+
+const readModel = fromWireReadModel(wireReadModel, { dropDeletedThreads: false });
 
 const messageSendCommand: OrchestrationCommand = {
   type: "thread.turn.start",
