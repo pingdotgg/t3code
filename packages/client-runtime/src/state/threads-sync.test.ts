@@ -1,4 +1,5 @@
 import {
+  EnvironmentResourceNotFoundError,
   EnvironmentId,
   EventId,
   ORCHESTRATION_WS_METHODS,
@@ -130,6 +131,7 @@ function awaitThreadState(
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationThread;
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
+  readonly httpSnapshotError?: EnvironmentResourceNotFoundError;
   readonly completionMarker?: boolean;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
@@ -179,10 +181,14 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
-          threadId === THREAD_ID
-            ? (options?.httpSnapshot ?? Option.none<OrchestrationThreadDetailSnapshot>())
-            : Option.none<OrchestrationThreadDetailSnapshot>(),
+        Effect.andThen(
+          threadId === THREAD_ID && options?.httpSnapshotError !== undefined
+            ? Effect.fail(options.httpSnapshotError)
+            : Effect.succeed(
+                threadId === THREAD_ID
+                  ? (options?.httpSnapshot ?? Option.none<OrchestrationThreadDetailSnapshot>())
+                  : Option.none<OrchestrationThreadDetailSnapshot>(),
+              ),
         ),
       ),
   });
@@ -413,6 +419,41 @@ describe("EnvironmentThreads", () => {
       // resumed from that snapshot's sequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+    }),
+  );
+
+  it.effect("treats an authoritative HTTP thread_not_found response as terminal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshotError: new EnvironmentResourceNotFoundError({
+          code: "not_found",
+          reason: "thread_not_found",
+          traceId: "trace-thread-not-found",
+        }),
+      });
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      yield* TestClock.adjust("1 second");
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect({
+        status: state.status,
+        hasData: Option.isSome(state.data),
+        loaderCalls: yield* Ref.get(harness.loaderCalls),
+        subscriptionCount: yield* Ref.get(harness.subscriptionCount),
+        removedThreads: yield* Ref.get(harness.removedThreads),
+      }).toEqual({
+        status: "deleted",
+        hasData: false,
+        loaderCalls: 1,
+        subscriptionCount: 0,
+        removedThreads: [THREAD_ID],
+      });
     }),
   );
 

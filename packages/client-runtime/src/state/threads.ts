@@ -267,7 +267,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpSnapshot = yield* snapshotLoader.load(prepared, threadId);
+          const httpSnapshot = yield* snapshotLoader.load(prepared, threadId).pipe(
+            Effect.catch(() =>
+              Effect.gen(function* () {
+                yield* setDeleted();
+                return yield* Effect.interrupt;
+              }),
+            ),
+          );
           if (Option.isSome(httpSnapshot)) {
             yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
             current = yield* SubscriptionRef.get(state);

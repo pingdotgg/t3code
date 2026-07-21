@@ -1,4 +1,8 @@
-import type { OrchestrationThreadDetailSnapshot, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentResourceNotFoundError,
+  OrchestrationThreadDetailSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -60,11 +64,24 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
 
 export type FetchEnvironmentThreadSnapshotError = RemoteEnvironmentRequestError;
 
+function isThreadSnapshotNotFoundError(error: unknown): error is EnvironmentResourceNotFoundError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "EnvironmentResourceNotFoundError" &&
+    "reason" in error &&
+    error.reason === "thread_not_found"
+  );
+}
+
 /**
- * Loads a thread's detail snapshot over HTTP, returning `Option.none()` when it
- * cannot be loaded (so the caller falls back to the socket-embedded snapshot).
- * Decouples the thread state machine from the underlying HTTP + DPoP details and
- * keeps them out of test contexts.
+ * Loads a thread's detail snapshot over HTTP, returning `Option.none()` for
+ * transient failures so the caller can fall back to the socket-embedded
+ * snapshot. An authoritative `thread_not_found` response remains in the error
+ * channel so the thread state machine can terminate the subscription.
+ * Decouples the thread state machine from the underlying HTTP + DPoP details
+ * and keeps them out of test contexts.
  */
 export class ThreadSnapshotLoader extends Context.Service<
   ThreadSnapshotLoader,
@@ -72,7 +89,10 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
-    ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+    ) => Effect.Effect<
+      Option.Option<OrchestrationThreadDetailSnapshot>,
+      EnvironmentResourceNotFoundError
+    >;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
 
@@ -93,27 +113,22 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
         fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
           Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
-          // A genuinely missing thread (404) is expected — the socket
-          // subscription is the source of truth for thread existence and will
-          // surface the deletion — so don't treat it as an error worth warning
-          // about; just defer to the socket path.
-          Effect.catchTags({
-            EnvironmentResourceNotFoundError: () =>
-              Effect.logDebug(
-                "Thread snapshot not found over HTTP; deferring to the socket subscription.",
-              ).pipe(
-                Effect.annotateLogs({ threadId }),
-                Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
-              ),
-          }),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(
+          // Preserve the declared 404 in the error channel. It is authoritative
+          // for this resource and must terminate the thread subscription rather
+          // than fall into its retry loop.
+          Effect.catchCause((cause) => {
+            for (const reason of cause.reasons) {
+              if (reason._tag === "Fail" && isThreadSnapshotNotFoundError(reason.error)) {
+                return Effect.fail(reason.error);
+              }
+            }
+            return Effect.logWarning(
               "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
               Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
-            ),
-          ),
+            );
+          }),
         ),
     });
   }),
