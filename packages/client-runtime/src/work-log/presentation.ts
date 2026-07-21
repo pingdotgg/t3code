@@ -72,6 +72,35 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
         ?.split(/[./]|__/u)
         .at(-1)
         ?.toLowerCase();
+      if (ideToolName === "ide_find_references") {
+        const input = asRecord(item.input);
+        const file = typeof input?.file === "string" ? input.file.trim() : undefined;
+        const line = typeof input?.line === "number" ? input.line : undefined;
+        const column = typeof input?.column === "number" ? input.column : undefined;
+        const location = file
+          ? `${file}${line !== undefined ? `:${line}${column !== undefined ? `:${column}` : ""}` : ""}`
+          : undefined;
+        const output = asRecord(item.output);
+        let result = asRecord(output?.structuredContent);
+        if (result === null && Array.isArray(output?.content)) {
+          for (const block of output.content) {
+            const text = asRecord(block)?.text;
+            if (typeof text !== "string") continue;
+            try {
+              result = asRecord(JSON.parse(text));
+            } catch {
+              continue;
+            }
+            if (result !== null) break;
+          }
+        }
+        const count = typeof result?.totalCount === "number" ? result.totalCount : result?.totalCollected;
+        const usages = typeof count === "number"
+          ? `${count.toLocaleString()} usage${count === 1 ? "" : "s"}`
+          : undefined;
+        const detail = [location, usages].filter(Boolean).join(" - ");
+        return { summary: item.title?.trim() || "IDE find references", ...(detail ? { detail } : {}) };
+      }
       if (ideToolName === "ide_reformat_code") {
         const output = asRecord(item.output);
         let result = asRecord(output?.structuredContent);

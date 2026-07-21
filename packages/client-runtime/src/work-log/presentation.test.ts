@@ -37,6 +37,26 @@ function commandItem(
 }
 
 describe("turnItemToolActivityPresentation", () => {
+  it("summarizes IDE reference locations without output and counts when available", () => {
+    const { type: _type, input: _input, exitCode: _exitCode, ...base } =
+      commandItem() as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "ide_find_references",
+      input: { file: "module/auswertung.php", line: 185, column: 25 },
+    };
+    expect(turnItemToolActivityPresentation(item)?.detail).toBe("module/auswertung.php:185:25");
+    for (const output of [
+      { structuredContent: { totalCount: 1 } },
+      { content: [{ type: "text", text: '{"totalCollected":1}' }] },
+    ]) {
+      expect(turnItemToolActivityPresentation({ ...item, output })).toEqual({
+        summary: "IDE find references",
+        detail: "module/auswertung.php:185:25 - 1 usage",
+      });
+    }
+  });
   it("shows the IDE diagnostics range without fetching output, and counts when available", () => {
     const {
       type: _type,
