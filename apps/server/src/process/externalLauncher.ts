@@ -173,13 +173,20 @@ function resolveEditorArgs(
 const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableCommand")(function* (
   commands: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
-): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
-  for (const command of commands) {
-    if (yield* isCommandAvailable(command, { env })) {
-      return Option.some(command);
-    }
+  commandAvailability: EditorCommandAvailability,
+): Effect.fn.Return<Option.Option<string>> {
+  if (commands.length === 0) {
+    return Option.none();
   }
-  return Option.none();
+
+  return yield* Effect.raceAll(
+    commands.map((command) =>
+      commandAvailability(command, env).pipe(
+        Effect.filterOrFail((available) => available),
+        Effect.as(command),
+      ),
+    ),
+  ).pipe(Effect.option);
 });
 
 function encodeUtf16LeBase64(input: string): string {
@@ -346,6 +353,7 @@ export class ExternalLauncher extends Context.Service<
 
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
+  commandAvailability: EditorCommandAvailability,
 ): Effect.fn.Return<EditorLaunch, ExternalLauncherError, FileSystem.FileSystem | Path.Path> {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
@@ -361,7 +369,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.commands) {
     const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
+      yield* resolveAvailableCommand(editorDef.commands, env, commandAvailability),
       () => editorDef.commands[0],
     );
     return {
@@ -417,13 +425,14 @@ const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
 
 const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
+  commandAvailability: EditorCommandAvailability,
 ): Effect.fn.Return<
   void,
   ExternalLauncherError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const env = yield* readCommandLookupEnv;
-  if (!(yield* isCommandAvailable(launch.command, { env }))) {
+  if (!(yield* commandAvailability(launch.command, env))) {
     return yield* new ExternalLauncherCommandNotFoundError({
       editor: launch.editor,
       command: launch.command,
@@ -484,8 +493,8 @@ export const makeWithOptions = Effect.fn("ExternalLauncher.makeWithOptions")(fun
       ),
     launchEditor: (input) =>
       provideCommandResolutionServices(
-        Effect.flatMap(resolveEditorLaunch(input), (launch) =>
-          launchEditorProcess(launch).pipe(
+        Effect.flatMap(resolveEditorLaunch(input, editorCommandAvailability), (launch) =>
+          launchEditorProcess(launch, editorCommandAvailability).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
         ),

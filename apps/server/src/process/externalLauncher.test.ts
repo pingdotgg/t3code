@@ -150,6 +150,31 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("launches an editor through a responsive fallback alias", () => {
+  let spawned: ChildProcess.StandardCommand | undefined;
+
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" });
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "zeditor");
+    assert.deepEqual(spawned.args, ["/workspace"]);
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        platform: "linux",
+        env: { PATH: "/bin" },
+        editorCommandAvailability: (command) =>
+          command === "zeditor" ? Effect.succeed(true) : Effect.never,
+        onSpawn: (command) => {
+          spawned = command;
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("discovers editors through the service API", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
