@@ -179,6 +179,23 @@ export function timelineMessagesHaveCompleteSkillReference(
   });
 }
 
+export function resolveProviderSkillsCwd(input: {
+  readonly gitCwd: string | null;
+  readonly isLocalDraftThread: boolean;
+  readonly draftThreadEnvMode: DraftThreadEnvMode | undefined;
+  readonly worktreePath: string | null;
+}): string | null {
+  if (
+    input.isLocalDraftThread &&
+    input.draftThreadEnvMode === "worktree" &&
+    input.worktreePath === null
+  ) {
+    return null;
+  }
+
+  return input.gitCwd;
+}
+
 export interface PullRequestDialogState {
   initialReference: string | null;
   key: number;

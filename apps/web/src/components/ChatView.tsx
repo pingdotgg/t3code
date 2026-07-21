@@ -242,6 +242,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveProviderSkillsCwd,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -2259,6 +2260,12 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const providerSkillsCwd = resolveProviderSkillsCwd({
+    gitCwd,
+    isLocalDraftThread,
+    draftThreadEnvMode: draftThread?.envMode,
+    worktreePath: activeThread?.worktreePath ?? null,
+  });
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -2305,7 +2312,7 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProviderWorkspaceSkills = useProviderWorkspaceSkills({
     environmentId,
     instanceId: activeProviderStatus?.instanceId ?? null,
-    cwd: gitCwd,
+    cwd: providerSkillsCwd,
     enabled: timelineHasSkillReference,
     fallbackSkills: activeProviderFallbackSkills,
   });
@@ -5429,6 +5436,7 @@ function ChatViewContent(props: ChatViewProps) {
                         keybindings={keybindings}
                         terminalOpen={Boolean(terminalUiState.terminalOpen)}
                         gitCwd={gitCwd}
+                        providerSkillsCwd={providerSkillsCwd}
                         promptRef={promptRef}
                         composerImagesRef={composerImagesRef}
                         composerTerminalContextsRef={composerTerminalContextsRef}

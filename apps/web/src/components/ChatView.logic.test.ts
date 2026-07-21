@@ -20,6 +20,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveProviderSkillsCwd,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   timelineMessagesHaveCompleteSkillReference,
@@ -136,6 +137,41 @@ describe("timelineMessagesHaveCompleteSkillReference", () => {
     expect(
       timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill?" }]),
     ).toBe(true);
+  });
+});
+
+describe("resolveProviderSkillsCwd", () => {
+  it("uses the selected checkout for local drafts", () => {
+    expect(
+      resolveProviderSkillsCwd({
+        gitCwd: "/repo/worktrees/existing-feature",
+        isLocalDraftThread: true,
+        draftThreadEnvMode: "local",
+        worktreePath: "/repo/worktrees/existing-feature",
+      }),
+    ).toBe("/repo/worktrees/existing-feature");
+  });
+
+  it("uses a materialized worktree for worktree drafts", () => {
+    expect(
+      resolveProviderSkillsCwd({
+        gitCwd: "/repo/worktrees/new-feature",
+        isLocalDraftThread: true,
+        draftThreadEnvMode: "worktree",
+        worktreePath: "/repo/worktrees/new-feature",
+      }),
+    ).toBe("/repo/worktrees/new-feature");
+  });
+
+  it("does not probe the base checkout for a future worktree draft", () => {
+    expect(
+      resolveProviderSkillsCwd({
+        gitCwd: "/repo",
+        isLocalDraftThread: true,
+        draftThreadEnvMode: "worktree",
+        worktreePath: null,
+      }),
+    ).toBeNull();
   });
 });
 

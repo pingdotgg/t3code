@@ -516,6 +516,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  providerSkillsCwd: string | null;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -606,6 +607,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    providerSkillsCwd,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -963,7 +965,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const providerWorkspaceSkills = useProviderWorkspaceSkills({
     environmentId,
     instanceId: selectedProviderStatus?.instanceId ?? null,
-    cwd: gitCwd,
+    cwd: providerSkillsCwd,
     enabled: composerTriggerKind === "skill" || promptHasSkillReference,
     fallbackSkills: selectedProviderFallbackSkills,
   });
