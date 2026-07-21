@@ -359,11 +359,21 @@ it.effect("decodes thread settle and unsettle commands", () =>
       type: "thread.unsettle",
       commandId: "cmd-unsettle-1",
       threadId: "thread-1",
-      reason: "activity",
+      reason: "user",
     });
 
     assert.strictEqual(settle.type, "thread.settle");
     assert.strictEqual(unsettle.type, "thread.unsettle");
+
+    // "activity" is server-owned: it exists on the event, never on the
+    // command, so a client cannot forge the neutral reset.
+    const forged = yield* decodeOrchestrationCommand({
+      type: "thread.unsettle",
+      commandId: "cmd-unsettle-2",
+      threadId: "thread-1",
+      reason: "activity",
+    }).pipe(Effect.flip);
+    assert.ok(forged);
   }),
 );
 
