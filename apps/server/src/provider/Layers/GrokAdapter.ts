@@ -750,6 +750,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       yield* logNative(input.threadId, method, params);
                       const ctx = sessions.get(input.threadId);
                       const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                      // Snapshot before the (possibly slow) capture work: a
+                      // steer that lands while this request is being handled
+                      // must count as arriving *after* the capture, so it can
+                      // still approve the plan.
+                      const requestPromptSerial = ctx?.promptSerial ?? 0;
                       // A plan was captured earlier and the user has since
                       // sent a non-plan prompt (a new turn, or an implement
                       // click steered into the still-running capturing turn):
@@ -816,7 +821,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         planMarkdown ??= unchangedContents;
                       }
                       if (ctx) {
-                        ctx.planCapture = { promptSerial: ctx.promptSerial };
+                        ctx.planCapture = { promptSerial: requestPromptSerial };
                         ctx.lastCapturedPlanMarkdown = planMarkdown;
                       }
                       yield* offerRuntimeEvent({
@@ -1121,7 +1126,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
             ctx.activeInteractionMode = input.interactionMode;
-            ctx.promptSerial += 1;
             ctx.session = {
               ...ctx.session,
               status: steeringTurnId === undefined ? "connecting" : "running",
@@ -1241,6 +1245,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   payload: displayModel ? { model: displayModel } : {},
                 });
               }
+
+              // Count the prompt only once preparation has succeeded and the
+              // RPC is about to dispatch: a prompt that failed or was
+              // interrupted before reaching Grok must not count as the fresh
+              // user prompt that unlocks plan auto-approval.
+              ctx.promptSerial += 1;
 
               return {
                 acp: ctx.acp,
