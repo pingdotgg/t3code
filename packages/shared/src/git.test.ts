@@ -4,11 +4,40 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyGitStatusStreamEvent,
   buildTemporaryWorktreeBranchName,
+  inferGitCloneDirectoryName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
+
+describe("inferGitCloneDirectoryName", () => {
+  it("infers checkout names from common remote URL shapes", () => {
+    expect(inferGitCloneDirectoryName("https://github.com/openai/codex.git")).toBe("codex");
+    expect(inferGitCloneDirectoryName("org-14957082@github.com:openai/codex.git")).toBe("codex");
+    expect(inferGitCloneDirectoryName("ssh://git@gitlab.com/group/nested/project.git")).toBe(
+      "project",
+    );
+    expect(inferGitCloneDirectoryName("https://dev.azure.com/acme/team/_git/platform")).toBe(
+      "platform",
+    );
+  });
+
+  it("handles escaped names and Git's special suffixes", () => {
+    expect(inferGitCloneDirectoryName("https://example.com/acme/my%20project.git?ref=main")).toBe(
+      "my project",
+    );
+    expect(inferGitCloneDirectoryName("/srv/git/project.bundle")).toBe("project");
+    expect(inferGitCloneDirectoryName("https://example.com/acme/project/.git/")).toBe("project");
+  });
+
+  it("returns null when a checkout name cannot be inferred", () => {
+    expect(inferGitCloneDirectoryName("  ")).toBeNull();
+    expect(inferGitCloneDirectoryName("https://github.com")).toBeNull();
+    expect(inferGitCloneDirectoryName("git@github.com:")).toBeNull();
+    expect(inferGitCloneDirectoryName("https://example.com/acme/project%2Fnested.git")).toBeNull();
+  });
+});
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {

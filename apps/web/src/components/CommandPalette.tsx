@@ -1,6 +1,7 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { getCloneDestinationInitialQuery } from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -1221,8 +1222,11 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
-  function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
-    return getAddProjectInitialQueryForEnvironment(environmentId);
+  function getDefaultCloneDestinationPath(environmentId: EnvironmentId, remoteUrl: string): string {
+    return getCloneDestinationInitialQuery(
+      getAddProjectInitialQueryForEnvironment(environmentId),
+      remoteUrl,
+    );
   }
 
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
@@ -1238,7 +1242,10 @@ function OpenCommandPaletteDialog(props: {
 
       const provider = remoteProjectSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
-        const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
+        const destinationPath = getDefaultCloneDestinationPath(
+          addProjectCloneFlow.environmentId,
+          rawRepository,
+        );
         setAddProjectCloneFlow({
           step: "confirm",
           environmentId: addProjectCloneFlow.environmentId,
@@ -1275,7 +1282,10 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const repository = lookupResult.value;
-      const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
+      const destinationPath = getDefaultCloneDestinationPath(
+        addProjectCloneFlow.environmentId,
+        repository.sshUrl,
+      );
       setAddProjectCloneFlow({
         step: "confirm",
         environmentId: addProjectCloneFlow.environmentId,

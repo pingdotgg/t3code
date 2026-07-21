@@ -6,6 +6,7 @@ import {
   buildProjectCreateCommand,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getCloneDestinationInitialQuery,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
@@ -757,15 +758,15 @@ export function AddProjectDestinationScreen(props: {
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const [pathInput, setPathInput] = useState(() =>
-    getAddProjectInitialQuery(environment?.baseDirectory),
+    getCloneDestinationInitialQuery(environment?.baseDirectory, remoteUrl),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!environment) return;
-    setPathInput(getAddProjectInitialQuery(environment.baseDirectory));
-  }, [environment]);
+    setPathInput(getCloneDestinationInitialQuery(environment.baseDirectory, remoteUrl));
+  }, [environment, remoteUrl]);
 
   const submitPath = useCallback(async () => {
     if (!environment || !remoteUrl || isSubmitting) return;

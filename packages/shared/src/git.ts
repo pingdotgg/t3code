@@ -131,6 +131,50 @@ export function normalizeGitRemoteUrl(value: string): string {
 }
 
 /**
+ * Infer the checkout directory Git would normally derive from a clone URL.
+ * Supports URL-shaped, SCP-style, and local-path remotes.
+ */
+export function inferGitCloneDirectoryName(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  let repositoryPath = trimmed;
+  if (/^(?:ssh|https?|git|file):\/\//i.test(trimmed)) {
+    try {
+      repositoryPath = new URL(trimmed).pathname;
+    } catch {
+      return null;
+    }
+  }
+
+  const withoutTrailingSeparators = repositoryPath.replace(/[\\/]+$/g, "");
+  const withoutDotGitDirectory = withoutTrailingSeparators.replace(/[\\/]\.git$/i, "");
+  const lastSeparatorIndex = Math.max(
+    withoutDotGitDirectory.lastIndexOf("/"),
+    withoutDotGitDirectory.lastIndexOf("\\"),
+    withoutDotGitDirectory.lastIndexOf(":"),
+  );
+  const encodedName = withoutDotGitDirectory
+    .slice(lastSeparatorIndex + 1)
+    .replace(/\.(?:git|bundle)$/i, "");
+
+  if (encodedName.length === 0) {
+    return null;
+  }
+
+  let name = encodedName;
+  try {
+    name = decodeURIComponent(encodedName);
+  } catch {
+    // Keep the original segment when the remote contains malformed URL escapes.
+  }
+
+  return name === "." || name === ".." || /[\\/]/.test(name) ? null : name;
+}
+
+/**
  * Best-effort parse of a GitHub `owner/repo` identifier from common remote URL shapes.
  */
 export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
