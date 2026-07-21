@@ -4,6 +4,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
   type ServerConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { evictCachedThread } from "./threadCache.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -160,6 +162,16 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       return;
     }
 
+    const removedThreadIds = Option.match(current.snapshot, {
+      onNone: () => [] as ReadonlyArray<ThreadId>,
+      onSome: (snapshot) => {
+        const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+        return snapshot.threads
+          .map((thread) => thread.id)
+          .filter((threadId) => !nextThreadIds.has(threadId));
+      },
+    });
+
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
       snapshot: Option.some(nextSnapshot),
@@ -167,6 +179,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       error: Option.none(),
     });
     yield* Queue.offer(persistence, nextSnapshot);
+    yield* Effect.forEach(
+      removedThreadIds,
+      (threadId) => evictCachedThread(cache, environmentId, threadId),
+      { discard: true },
+    );
   });
 
   const foregroundResubscriptions = Option.match(wakeups, {

@@ -168,6 +168,7 @@ describe("environment shell synchronization", () => {
         readonly requestCompletionMarker?: boolean;
       } | null>(null);
       const loaderCalls = yield* SubscriptionRef.make(0);
+      const removedThreads = yield* Ref.make<string[]>([]);
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
           readonly afterSequence?: number;
@@ -195,7 +196,8 @@ describe("environment shell synchronization", () => {
         saveShell: () => Effect.void,
         loadThread: () => Effect.succeed(Option.none()),
         saveThread: () => Effect.void,
-        removeThread: () => Effect.void,
+        removeThread: (_environmentId, threadId) =>
+          Ref.update(removedThreads, (threadIds) => [...threadIds, threadId]),
         loadServerConfig: () => Effect.succeed(Option.none()),
         saveServerConfig: () => Effect.void,
         loadVcsRefs: () => Effect.succeed(Option.none()),
@@ -227,6 +229,7 @@ describe("environment shell synchronization", () => {
       const synchronizing = yield* SubscriptionRef.get(shellState);
       expect(synchronizing.status).toBe("synchronizing");
       expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(httpSnapshot);
+      expect(yield* Ref.get(removedThreads)).toEqual(["stale-thread"]);
 
       yield* Queue.offer(events, {
         kind: "snapshot",
@@ -245,6 +248,10 @@ describe("environment shell synchronization", () => {
       expect(Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot).threads).toEqual(
         [],
       );
+      expect(yield* Ref.get(removedThreads)).toEqual([
+        "stale-thread",
+        "archived-after-http-snapshot",
+      ]);
     }),
   );
 
