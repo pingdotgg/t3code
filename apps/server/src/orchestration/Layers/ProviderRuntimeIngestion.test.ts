@@ -427,6 +427,28 @@ describe("ProviderRuntimeIngestion", () => {
     expect(latest?.agents).toHaveLength(1);
     expect(latest?.agents[0]?.status).toBe("stopped");
     expect(latest?.agents[0]?.errorMessage).toBe("orphaned on session exit");
+
+    // The session-exit sweep releases the in-memory roster; a later session on
+    // the same thread re-hydrates from the persisted snapshot instead of the
+    // evicted map (agent-1 stays stopped, not resurrected).
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-agent-restart"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:04.000Z",
+      payload: { taskId: "agent-2", description: "Follow-up", taskType: "local_agent" },
+    });
+    await harness.drain();
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    const rehydrated =
+      thread?.activities.filter((activity) => activity.kind === "agent.snapshot") ?? [];
+    expect(rehydrated).toHaveLength(3);
+    const roster = rehydrated.at(-1)?.payload as { agents: Array<ThreadAgentSnapshot> } | undefined;
+    expect(roster?.agents.map((agent) => [agent.agentId, agent.status])).toEqual([
+      ["agent-1", "stopped"],
+      ["agent-2", "running"],
+    ]);
   });
 
   it("maps turn started/completed events into thread session updates", async () => {

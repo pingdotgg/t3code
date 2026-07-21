@@ -910,6 +910,10 @@ const make = Effect.gen(function* () {
   const serverSettingsService = yield* ServerSettingsService;
   const agentsByThread = new Map<ThreadId, Map<string, ThreadAgentSnapshot>>();
   const hydratedAgentThreads = new Set<ThreadId>();
+  // Threads whose latest roster failed to persist: the in-memory state is
+  // newer than the last agent.snapshot activity, so the next event must
+  // re-dispatch even if it is not material on its own.
+  const pendingRosterRedispatch = new Set<ThreadId>();
   let agentSnapshotDispatchCount = 0;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -1524,6 +1528,12 @@ const make = Effect.gen(function* () {
         });
 
       if (!hydratedAgentThreads.has(thread.id)) {
+        // Hydration source is the 500-capped activities projection — the same
+        // list clients derive from. If the last agent.snapshot has aged past
+        // the cap (500 activities with no material agent transition), both
+        // sides have already lost it and hydrating empty is consistent, not a
+        // regression; the roster only ever contains agents from the era the
+        // timeline still shows.
         const detail = yield* getLoadedThreadDetail();
         const latestSnapshot = detail?.activities.findLast(
           (activity) => activity.kind === THREAD_AGENTS_ACTIVITY_KIND,
@@ -1568,6 +1578,9 @@ const make = Effect.gen(function* () {
           agentRosterMaterial = true;
         }
       }
+      if (pendingRosterRedispatch.has(thread.id) && threadAgents.size > 0) {
+        agentRosterMaterial = true;
+      }
       if (agentRosterMaterial) {
         pruneSettledAgents(threadAgents);
         const roster = Array.from(threadAgents.values());
@@ -1589,32 +1602,36 @@ const make = Effect.gen(function* () {
           payload: { agents: roster },
           turnId: toTurnId(event.turnId) ?? null,
         };
-        // The reducer map was already mutated; if the append fails, drop the
-        // hydration marker so the next event re-hydrates from the last
-        // *persisted* snapshot and re-detects the missed material change —
-        // otherwise the roster silently stays stale until the next transition.
-        yield* orchestrationEngine
-          .dispatch({
-            type: "thread.activity.append",
-            commandId: yield* providerCommandId(event, "agent-snapshot-append"),
-            threadId: thread.id,
-            activity,
-            createdAt: activity.createdAt,
-          })
-          .pipe(
-            Effect.tapError(() =>
-              Effect.sync(() => {
-                hydratedAgentThreads.delete(thread.id);
-                agentsByThread.delete(thread.id);
-              }),
-            ),
-          );
+        // The in-memory roster is authoritative (already folded); if the
+        // append fails, keep it and flag the thread so the NEXT event
+        // re-dispatches the full roster — discarding memory here would lose
+        // transitions newer than the last persisted snapshot.
+        // Armed before the dispatch and cleared only on success: if the append
+        // fails (the error propagates to processInputSafely as usual), the
+        // flag makes the NEXT event re-dispatch the full roster.
+        pendingRosterRedispatch.add(thread.id);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* providerCommandId(event, "agent-snapshot-append"),
+          threadId: thread.id,
+          activity,
+          createdAt: activity.createdAt,
+        });
+        pendingRosterRedispatch.delete(thread.id);
         agentSnapshotDispatchCount += 1;
         yield* Effect.logDebug("provider agent snapshot appended", {
           threadId: thread.id,
           agentCount: roster.length,
           dispatchCount: agentSnapshotDispatchCount,
         });
+      }
+
+      // Sessions are done producing agent events once they exit; release the
+      // per-thread reducer state. A later session re-hydrates from the
+      // persisted snapshot (the exit sweep above just wrote the final roster).
+      if (event.type === "session.exited" && !pendingRosterRedispatch.has(thread.id)) {
+        agentsByThread.delete(thread.id);
+        hydratedAgentThreads.delete(thread.id);
       }
 
       const now = event.createdAt;
