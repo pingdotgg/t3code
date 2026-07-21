@@ -244,6 +244,13 @@ describe("chatSplitLayout — diff route state", () => {
     });
   });
 
+  it("preserves an explicit aggregate diff view", () => {
+    expect(sanitizeDiffRouteState({ diff: "1", diffView: "chat" })).toEqual({
+      diff: "1",
+      diffView: "chat",
+    });
+  });
+
   it("drops reviewFinding when the diff is closed", () => {
     expect(sanitizeDiffRouteState({ reviewFinding: "finding-3" })).toEqual({});
   });

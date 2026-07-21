@@ -14,7 +14,6 @@ t3 chat list
 t3 chat show <thread-id-or-exact-title> --messages
 t3 chat new --project <project-id-or-path> --title "Task" "Prompt text"
 t3 chat send <thread-id-or-title> "Follow-up prompt"
-t3 chat stream <thread-id-or-title>
 ```
 
 ## Targeting rules
@@ -37,13 +36,16 @@ t3 chat stream <thread-id-or-title>
 1. Resolve the project with `t3 project list` if needed.
 2. Run `t3 chat new --project <project> --title "<title>" "<prompt>"` for atomic create-and-send.
 3. Capture the returned `threadId`.
-4. Use `t3 chat stream <threadId>` when the user wants live progress.
+4. Use `t3 chat show <threadId> --messages` to inspect progress and completion.
 
 ### Send work to an existing thread
 
 1. Confirm the target with `t3 chat show <thread>`.
 2. Run `t3 chat send <thread> "<prompt>"`.
-3. If the turn needs monitoring, stream with `t3 chat stream <thread>`.
+3. If the turn needs monitoring, inspect it with `t3 chat show <thread> --messages`.
+
+`t3 chat stream <thread>` is a persistent live subscription. It does not exit when
+the active turn completes, so never use it as an attached completion waiter.
 
 ### Manage lifecycle
 

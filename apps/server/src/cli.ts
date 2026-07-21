@@ -1810,6 +1810,10 @@ const chatCreateCommand = Command.make("create", {
   project: Flag.string("project").pipe(
     Flag.withDescription("Project id, title, or workspace root."),
   ),
+  parent: Flag.string("parent").pipe(
+    Flag.optional,
+    Flag.withDescription("Parent thread id or title."),
+  ),
   title: Flag.string("title").pipe(Flag.withDefault("New chat")),
   runtimeMode: runtimeModeFlag,
   interactionMode: interactionModeFlag,
@@ -1822,6 +1826,14 @@ const chatCreateCommand = Command.make("create", {
       Effect.gen(function* () {
         const snapshot = yield* getSnapshot;
         const project = yield* findProjectForCli(snapshot, flags.project);
+        const parent = Option.isSome(flags.parent)
+          ? yield* findThreadForCli(snapshot, flags.parent.value)
+          : null;
+        if (parent !== null && parent.projectId !== project.id) {
+          return yield* Effect.fail(
+            new Error(`Parent thread '${parent.id}' belongs to a different project.`),
+          );
+        }
         const threadId = ThreadId.make(crypto.randomUUID());
         const modelSelection = yield* resolveModelSelectionWithDefault(
           flags,
@@ -1832,6 +1844,7 @@ const chatCreateCommand = Command.make("create", {
           commandId: CommandId.make(crypto.randomUUID()),
           threadId,
           projectId: project.id,
+          parentThreadId: parent?.id ?? null,
           title: flags.title,
           modelSelection,
           runtimeMode: flags.runtimeMode,
@@ -2091,6 +2104,10 @@ const chatNewCommand = Command.make("new", {
   project: Flag.string("project").pipe(
     Flag.withDescription("Project id, title, or workspace root."),
   ),
+  parent: Flag.string("parent").pipe(
+    Flag.optional,
+    Flag.withDescription("Parent thread id or title."),
+  ),
   title: Flag.string("title").pipe(Flag.withDefault("New chat")),
   runtimeMode: runtimeModeFlag,
   interactionMode: interactionModeFlag,
@@ -2104,6 +2121,14 @@ const chatNewCommand = Command.make("new", {
       Effect.gen(function* () {
         const snapshot = yield* getSnapshot;
         const project = yield* findProjectForCli(snapshot, flags.project);
+        const parent = Option.isSome(flags.parent)
+          ? yield* findThreadForCli(snapshot, flags.parent.value)
+          : null;
+        if (parent !== null && parent.projectId !== project.id) {
+          return yield* Effect.fail(
+            new Error(`Parent thread '${parent.id}' belongs to a different project.`),
+          );
+        }
         const threadId = ThreadId.make(crypto.randomUUID());
         const modelSelection = yield* resolveModelSelectionWithDefault(
           flags,
@@ -2115,6 +2140,7 @@ const chatNewCommand = Command.make("new", {
           commandId: CommandId.make(crypto.randomUUID()),
           threadId,
           projectId: project.id,
+          parentThreadId: parent?.id ?? null,
           title: flags.title,
           modelSelection,
           runtimeMode: flags.runtimeMode,

@@ -332,6 +332,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.parentThreadId !== undefined && command.parentThreadId !== null) {
+        const parentThread = yield* requireThread({
+          readModel,
+          command,
+          threadId: command.parentThreadId,
+        });
+        if (parentThread.deletedAt !== null) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Parent thread '${command.parentThreadId}' is deleted.`,
+          });
+        }
+        if (parentThread.projectId !== command.projectId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Parent thread '${command.parentThreadId}' belongs to a different project.`,
+          });
+        }
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
