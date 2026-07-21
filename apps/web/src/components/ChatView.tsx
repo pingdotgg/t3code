@@ -200,6 +200,7 @@ import {
   useThread,
   useThreadProposedPlans,
   useThreadRefs,
+  useThreadShells,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -423,6 +424,7 @@ type ChatViewProps =
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
+      embedded?: boolean;
       routeKind: "server";
       draftId?: never;
     }
@@ -432,6 +434,7 @@ type ChatViewProps =
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
+      embedded?: boolean;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -1084,6 +1087,7 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
+    embedded = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
@@ -1099,6 +1103,7 @@ function ChatViewContent(props: ChatViewProps) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -1208,6 +1213,7 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [isForkingToSide, setIsForkingToSide] = useState(false);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
   );
@@ -1253,6 +1259,8 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const knownThreadIdsRef = useRef<Set<string>>(new Set());
+  const mountedAtRef = useRef(Date.now());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -1293,6 +1301,7 @@ function ChatViewContent(props: ChatViewProps) {
   const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const serverThreadRefs = useThreadRefs();
+  const threadShells = useThreadShells();
   const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftThreadKeys = useMemo(
@@ -1422,6 +1431,26 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  useEffect(() => {
+    const currentIds = new Set(
+      threadShells.map((thread) => `${thread.environmentId}:${thread.id}`),
+    );
+    if (!embedded && activeThread && activeThreadRef) {
+      for (const thread of threadShells) {
+        const key = `${thread.environmentId}:${thread.id}`;
+        if (
+          !knownThreadIdsRef.current.has(key) &&
+          thread.environmentId === activeThread.environmentId &&
+          thread.projectId === activeThread.projectId &&
+          thread.forkedFrom?.threadId === activeThread.id &&
+          Date.parse(thread.createdAt) >= mountedAtRef.current - 2_000
+        ) {
+          useRightPanelStore.getState().openThread(activeThreadRef, thread.id, thread.title);
+        }
+      }
+    }
+    knownThreadIdsRef.current = currentIds;
+  }, [activeThread, activeThreadRef, embedded, threadShells]);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -1453,7 +1482,7 @@ function ChatViewContent(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const rightPanelOpen = rightPanelState.isOpen;
+  const rightPanelOpen = !embedded && rightPanelState.isOpen;
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
@@ -4758,6 +4787,40 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const onForkToSide = useCallback(async () => {
+    if (!activeThread || !activeThreadRef || !isServerThread || isForkingToSide) return;
+
+    const nextThreadId = newThreadId();
+    const title = truncate(`${activeThread.title} (fork)`);
+    setIsForkingToSide(true);
+    const result = await forkThread({
+      environmentId: activeThread.environmentId,
+      input: {
+        threadId: nextThreadId,
+        sourceThreadId: activeThread.id,
+        title,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    setIsForkingToSide(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not fork side chat",
+            description: error instanceof Error ? error.message : "The thread could not be forked.",
+          }),
+        );
+      }
+      return;
+    }
+
+    useRightPanelStore.getState().openThread(activeThreadRef, nextThreadId, title);
+  }, [activeThread, activeThreadRef, forkThread, isForkingToSide, isServerThread]);
+
   const onImplementPlanInNewThread = useCallback(async () => {
     if (
       !activeThread ||
@@ -5113,7 +5176,15 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    activeRightPanelSurface?.kind === "preview" ? (
+    activeRightPanelSurface?.kind === "thread" ? (
+      <ChatView
+        environmentId={activeThreadRef.environmentId}
+        threadId={activeRightPanelSurface.threadId}
+        routeKind="server"
+        reserveTitleBarControlInset={false}
+        embedded
+      />
+    ) : activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
@@ -5198,43 +5269,46 @@ function ChatViewContent(props: ChatViewProps) {
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
         {/* Top bar */}
-        <header
-          data-chat-header
-          className={cn(
-            "border-b border-border transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
-            isElectron
-              ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
-                  reserveTitleBarControlInset &&
-                    !inlineRightPanelOwnsTitleBar &&
-                    "wco:pr-[var(--workspace-native-controls-inset)]",
-                )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
-        >
-          {!rightPanelOpen ? panelLayoutControls : null}
-          <ChatHeader
-            activeThreadEnvironmentId={activeThread.environmentId}
-            activeThreadId={activeThread.id}
-            {...(routeKind === "draft" && draftId ? { draftId } : {})}
-            activeThreadTitle={activeThread.title}
-            activeProjectName={activeProject?.title}
-            openInCwd={gitCwd}
-            activeProjectScripts={activeProject?.scripts}
-            preferredScriptId={
-              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-            }
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
-            gitCwd={gitCwd}
-            onRunProjectScript={runProjectScript}
-            onAddProjectScript={saveProjectScript}
-            onUpdateProjectScript={updateProjectScript}
-            onDeleteProjectScript={deleteProjectScript}
-          />
-        </header>
+        {!embedded ? (
+          <header
+            data-chat-header
+            className={cn(
+              "border-b border-border transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+              isElectron
+                ? cn(
+                    "workspace-topbar drag-region relative px-3 sm:px-5",
+                    reserveTitleBarControlInset &&
+                      !inlineRightPanelOwnsTitleBar &&
+                      "wco:pr-[var(--workspace-native-controls-inset)]",
+                  )
+                : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            )}
+          >
+            {!rightPanelOpen ? panelLayoutControls : null}
+            <ChatHeader
+              activeThreadEnvironmentId={activeThread.environmentId}
+              activeThreadId={activeThread.id}
+              {...(routeKind === "draft" && draftId ? { draftId } : {})}
+              activeThreadTitle={activeThread.title}
+              activeProjectName={activeProject?.title}
+              openInCwd={gitCwd}
+              activeProjectScripts={activeProject?.scripts}
+              preferredScriptId={
+                activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+              }
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              rightPanelOpen={rightPanelOpen}
+              gitCwd={gitCwd}
+              onRunProjectScript={runProjectScript}
+              onAddProjectScript={saveProjectScript}
+              onUpdateProjectScript={updateProjectScript}
+              onDeleteProjectScript={deleteProjectScript}
+              {...(isServerThread ? { onForkToSide, forkToSideDisabled: isForkingToSide } : {})}
+            />
+          </header>
+        ) : null}
 
         {/* Error banner */}
         <ProviderStatusBanner status={activeProviderStatus} />
@@ -5509,24 +5583,30 @@ function ChatViewContent(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {!embedded
+          ? mountedTerminalThreadRefs.map(
+              ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+                <PersistentThreadTerminalDrawer
+                  key={mountedThreadKey}
+                  threadRef={mountedThreadRef}
+                  threadId={mountedThreadRef.threadId}
+                  visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+                  launchContext={
+                    mountedThreadKey === activeThreadKey
+                      ? (activeTerminalLaunchContext ?? null)
+                      : null
+                  }
+                  focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+                  splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+                  splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+                  newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+                  closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+                  keybindings={keybindings}
+                  onAddTerminalContext={addTerminalContextToDraft}
+                />
+              ),
+            )
+          : null}
       </div>
 
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (

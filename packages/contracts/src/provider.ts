@@ -50,6 +50,13 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
+export const ProviderSessionForkSource = Schema.Struct({
+  threadId: ThreadId,
+  sourceTurnId: Schema.optional(TurnId),
+  resumeCursor: Schema.optional(Schema.Unknown),
+});
+export type ProviderSessionForkSource = typeof ProviderSessionForkSource.Type;
+
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderDriverKind),
@@ -58,6 +65,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   cwd: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  forkFrom: Schema.optional(ProviderSessionForkSource),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,

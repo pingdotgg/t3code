@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { memo } from "react";
+import { GitFork } from "lucide-react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -38,6 +39,8 @@ interface ChatHeaderProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  onForkToSide?: (() => void) | undefined;
+  forkToSideDisabled?: boolean | undefined;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -69,6 +72,8 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onForkToSide,
+  forkToSideDisabled = false,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -100,6 +105,24 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {onForkToSide ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                  aria-label="Fork to side chat"
+                  disabled={forkToSideDisabled}
+                  onClick={onForkToSide}
+                >
+                  <GitFork className="size-4" />
+                </button>
+              }
+            />
+            <TooltipPopup side="bottom">Fork to side chat</TooltipPopup>
+          </Tooltip>
+        ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

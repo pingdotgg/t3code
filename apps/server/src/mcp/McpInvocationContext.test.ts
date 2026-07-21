@@ -37,3 +37,26 @@ it.effect("reports the scoped credential context when preview capability is unav
     expect(error.message).toBe("MCP credential does not grant the preview capability.");
   });
 });
+
+it.effect("reports a missing thread coordination capability", () => {
+  const invocation: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    capabilities: new Set(["preview"]),
+    issuedAt: 1,
+    expiresAt: 2,
+  };
+
+  return Effect.gen(function* () {
+    const error = yield* McpInvocationContext.requireMcpCapability("threads").pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.flip,
+    );
+
+    expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
+    expect(error.capability).toBe("threads");
+    expect(error.message).toBe("MCP credential does not grant the threads capability.");
+  });
+});

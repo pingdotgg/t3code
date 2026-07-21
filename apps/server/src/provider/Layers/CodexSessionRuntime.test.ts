@@ -275,6 +275,9 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /thread_fork/);
+      NodeAssert.match(instructions, /thread_create/);
+      NodeAssert.match(instructions, /side chat/);
     }
   });
 });
@@ -365,12 +368,64 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("forks the native Codex thread at the selected turn", () =>
+    Effect.gen(function* () {
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
+      const forked = makeThreadOpenResponse("forked-provider-thread");
+      const client = {
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(forked as CodexRpc.ClientRequestResponsesByMethod[M]);
+        },
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("t3-fork-thread"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.4",
+        serviceTier: undefined,
+        resumeThreadId: "ignored-target-resume-thread",
+        forkFrom: {
+          providerThreadId: "source-provider-thread",
+          sourceTurnId: "turn-2" as import("@t3tools/contracts").TurnId,
+        },
+      });
+
+      NodeAssert.equal(opened.thread.id, "forked-provider-thread");
+      NodeAssert.deepStrictEqual(calls, [
+        {
+          method: "thread/fork",
+          payload: {
+            threadId: "source-provider-thread",
+            cwd: "/tmp/project",
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+            model: "gpt-5.4",
+            lastTurnId: "turn-2",
+            threadSource: "t3-code",
+          },
+        },
+      ]);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
-      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const calls: Array<{
+        method: "thread/start" | "thread/resume" | "thread/fork";
+        payload: unknown;
+      }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
           method: M,
           payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {
@@ -408,7 +463,7 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
+        request: <M extends "thread/start" | "thread/resume" | "thread/fork">(
           method: M,
           _payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {

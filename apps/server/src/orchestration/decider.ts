@@ -1,5 +1,6 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -254,6 +255,85 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.fork": {
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const latestCompletedTurnId = sourceThread.messages
+        .toReversed()
+        .find(
+          (message) =>
+            message.role === "assistant" && message.turnId !== null && !message.streaming,
+        )?.turnId;
+      const sourceTurnId = command.sourceTurnId ?? latestCompletedTurnId ?? null;
+      if (
+        sourceTurnId !== null &&
+        !sourceThread.messages.some((message) => message.turnId === sourceTurnId)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Turn '${sourceTurnId}' was not found in source thread '${sourceThread.id}'.`,
+        });
+      }
+      if (
+        sourceTurnId !== null &&
+        sourceThread.latestTurn?.turnId === sourceTurnId &&
+        sourceThread.latestTurn.state === "running"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Turn '${sourceTurnId}' is still running and cannot be forked.`,
+        });
+      }
+
+      const cutoffIndex =
+        sourceTurnId === null
+          ? sourceThread.messages.length - 1
+          : sourceThread.messages.findLastIndex((message) => message.turnId === sourceTurnId);
+      const inheritedMessages = sourceThread.messages
+        .slice(0, cutoffIndex + 1)
+        .filter((message) => !message.streaming)
+        .map((message, index) => ({
+          ...message,
+          id: MessageId.make(`${command.threadId}:fork:${index}`),
+        }));
+
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.forked",
+        payload: {
+          threadId: command.threadId,
+          projectId: sourceThread.projectId,
+          title: command.title,
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          forkedFrom: {
+            threadId: sourceThread.id,
+            turnId: sourceTurnId,
+          },
+          inheritedMessages,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
