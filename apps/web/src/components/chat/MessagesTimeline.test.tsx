@@ -968,6 +968,69 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Inherited");
   });
 
+  it("renders T3 MCP dynamic tools with the product logo and pretty name", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const item = {
+      id: "tool-t3-thread-read",
+      threadId: "thread-source",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: {},
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__t3_thread_read",
+      input: { threadId: "thread-child" },
+      output: { messages: [] },
+    } as const;
+    const projectedItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: "thread-source",
+      sourceItemId: item.id,
+      item,
+    } as const;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={
+          [
+            {
+              id: item.id,
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: item.id,
+                createdAt: MESSAGE_CREATED_AT,
+                runId: null,
+                label: item.toolName,
+                tone: "tool",
+                itemType: item.type,
+                toolTitle: item.toolName,
+                toolLifecycleStatus: "completed",
+                toolData: { input: item.input, output: item.output },
+                structuredPayload: item,
+                projectedItem,
+              },
+            },
+          ] as never
+        }
+      />,
+    );
+
+    expect(markup).toContain('data-tool-logo="t3-code"');
+    expect(markup).toContain('src="/apple-touch-icon.png"');
+    expect(markup).toContain("Read a T3 thread");
+    expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+  });
+
   it("formats changed file paths from the workspace root", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

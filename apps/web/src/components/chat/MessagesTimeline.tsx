@@ -73,6 +73,7 @@ import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
+  resolveTimelineToolPresentation,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -2194,6 +2195,20 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
   }
 }
 
+function T3CodeToolLogo({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-[4px] bg-background ring-1 ring-border/65",
+        className,
+      )}
+      title="T3 Code MCP tool"
+    >
+      <img alt="" aria-hidden="true" className="size-4 object-cover" src="/apple-touch-icon.png" />
+    </span>
+  );
+}
+
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   iconName: WorkEntryIconName;
   className: string;
@@ -2355,7 +2370,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = false;
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
+  const toolPresentation = resolveTimelineToolPresentation(workEntry.toolTitle ?? workEntry.label);
+  const heading = toolPresentation?.displayName ?? toolWorkEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
     rawPreview &&
@@ -2410,16 +2426,21 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
+      data-tool-logo={toolPresentation?.logo}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
         <span className={iconWrapperClass}>
-          <WorkEntryIconSvg
-            name={entryIconName}
-            className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
-          />
+          {toolPresentation?.logo === "t3-code" ? (
+            <T3CodeToolLogo />
+          ) : (
+            <WorkEntryIconSvg
+              name={entryIconName}
+              className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
+            />
+          )}
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
