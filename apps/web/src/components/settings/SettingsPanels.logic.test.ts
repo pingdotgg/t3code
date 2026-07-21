@@ -25,6 +25,7 @@ import {
   hasArchivedThreads,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
+  resolveArchivedProjectEnvironmentLabel,
   runArchivedProjectThreadActions,
 } from "./SettingsPanels.logic";
 
@@ -103,6 +104,55 @@ function failureResult(cause: unknown): AtomCommandResult<unknown, unknown> {
 function waitForMacrotask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+describe("resolveArchivedProjectEnvironmentLabel", () => {
+  const primaryEnvironment = {
+    environmentId,
+    label: "Local environment",
+    isPrimary: true,
+  } as const;
+  const remoteEnvironment = {
+    environmentId: EnvironmentId.make("environment-remote"),
+    label: "Build box",
+    isPrimary: false,
+  } as const;
+
+  it("shows a sole remote environment label", () => {
+    expect(
+      resolveArchivedProjectEnvironmentLabel({
+        environment: remoteEnvironment,
+        hasMultipleEnvironments: false,
+      }),
+    ).toBe("Build box");
+  });
+
+  it("hides a sole primary environment label", () => {
+    expect(
+      resolveArchivedProjectEnvironmentLabel({
+        environment: primaryEnvironment,
+        hasMultipleEnvironments: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("shows and normalizes the primary label when multiple environments exist", () => {
+    expect(
+      resolveArchivedProjectEnvironmentLabel({
+        environment: primaryEnvironment,
+        hasMultipleEnvironments: true,
+      }),
+    ).toBe("This device");
+  });
+
+  it("hides the label when the environment is unknown", () => {
+    expect(
+      resolveArchivedProjectEnvironmentLabel({
+        environment: null,
+        hasMultipleEnvironments: true,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("archivedThreadSearchScore", () => {
   it("ranks phrase matches ahead of all-token and partial-token matches", () => {

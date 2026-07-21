@@ -17,6 +17,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
+import {
+  resolveEnvironmentOptionLabel,
+  shouldShowEnvironmentIndicator,
+} from "../BranchToolbar.logic";
 
 const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
 const ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET = 5_000;
@@ -76,6 +80,32 @@ function archivedProjectGroupKey(
   projectId: OrchestrationProjectShell["id"],
 ): string {
   return JSON.stringify([environmentId, projectId]);
+}
+
+export function resolveArchivedProjectEnvironmentLabel(input: {
+  readonly environment: {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly isPrimary: boolean;
+  } | null;
+  readonly hasMultipleEnvironments: boolean;
+}): string | null {
+  if (
+    !shouldShowEnvironmentIndicator({
+      activeEnvironment: input.environment,
+      canPickEnvironment: input.hasMultipleEnvironments,
+    })
+  ) {
+    return null;
+  }
+
+  const environment = input.environment;
+  if (environment === null) return null;
+  return resolveEnvironmentOptionLabel({
+    isPrimary: environment.isPrimary,
+    environmentId: environment.environmentId,
+    runtimeLabel: environment.label,
+  });
 }
 
 export function parseArchivedThreadSearchInput(query: string): ArchivedThreadSearchInput {

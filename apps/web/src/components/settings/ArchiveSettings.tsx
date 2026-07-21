@@ -20,7 +20,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { readLocalApi } from "../../localApi";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -42,6 +42,7 @@ import {
   hasArchivedThreads as archiveHasThreads,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
+  resolveArchivedProjectEnvironmentLabel,
   runArchivedProjectThreadActions,
 } from "./SettingsPanels.logic";
 import {
@@ -117,6 +118,7 @@ function ArchivedIconButton({
 
 export function ArchivedThreadsPanel() {
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { unarchiveThread, deleteThread } = useThreadActions();
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const [expandedProjectKeys, setExpandedProjectKeys] = useState<ReadonlySet<string>>(
@@ -131,6 +133,20 @@ export function ArchivedThreadsPanel() {
   const environmentIds = useMemo(
     () => environments.map((environment) => environment.environmentId),
     [environments],
+  );
+  const archiveEnvironmentsById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [
+          environment.environmentId,
+          {
+            environmentId: environment.environmentId,
+            label: environment.label,
+            isPrimary: environment.environmentId === primaryEnvironmentId,
+          },
+        ]),
+      ),
+    [environments, primaryEnvironmentId],
   );
   const {
     snapshots: archivedSnapshots,
@@ -503,6 +519,10 @@ export function ArchivedThreadsPanel() {
           {archivedGroups.map(({ key: projectKey, project, threads: projectThreads }) => {
             const isExpanded = archiveSearch.isSearching || expandedProjectKeys.has(projectKey);
             const bulkScope = archiveSearch.isSearching ? "matching" : "all";
+            const environmentLabel = resolveArchivedProjectEnvironmentLabel({
+              environment: archiveEnvironmentsById.get(project.environmentId) ?? null,
+              hasMultipleEnvironments: environments.length > 1,
+            });
             return (
               <section
                 key={projectKey}
@@ -543,6 +563,14 @@ export function ArchivedThreadsPanel() {
                     <span className="truncate text-[13px] font-semibold text-foreground group-hover:text-foreground/85">
                       {project.name}
                     </span>
+                    {environmentLabel ? (
+                      <span
+                        className="max-w-[30%] shrink-0 truncate text-[11px] text-muted-foreground/60"
+                        title={environmentLabel}
+                      >
+                        {environmentLabel}
+                      </span>
+                    ) : null}
                     <span className="shrink-0 text-[11px] text-muted-foreground/60">
                       {projectThreads.length}
                     </span>
