@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { afterEach, vi } from "vite-plus/test";
 
-import { makeCatalogBackend, makeCatalogStore } from "./storage";
+import { makeCatalogBackend, makeCatalogStore, upgradeConnectionDatabase } from "./storage";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -74,4 +74,40 @@ describe("makeCatalogBackend", () => {
       expect(setConnectionCatalog).toHaveBeenCalledWith("{}");
     }),
   );
+});
+
+describe("upgradeConnectionDatabase", () => {
+  it("clears existing thread snapshots when upgrading to archive-time cache eviction", () => {
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    upgradeConnectionDatabase(database, transaction, 4);
+
+    expect(transaction.objectStore).toHaveBeenCalledWith("thread");
+    expect(clear).toHaveBeenCalledOnce();
+  });
+
+  it("does not clear thread snapshots after the migration has already run", () => {
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    upgradeConnectionDatabase(database, transaction, 5);
+
+    expect(transaction.objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
 });

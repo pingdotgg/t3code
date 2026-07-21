@@ -310,6 +310,27 @@ const deleted = (): OrchestrationThreadStreamItem => ({
   },
 });
 
+const archived = (): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make("event-archived"),
+    sequence: 3,
+    occurredAt: "2026-04-01T02:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.archived",
+    payload: {
+      threadId: THREAD_ID,
+      archivedAt: "2026-04-01T02:00:00.000Z",
+      updatedAt: "2026-04-01T02:00:00.000Z",
+    },
+  },
+});
+
 describe("EnvironmentThreads", () => {
   it.effect("publishes cached data immediately from a warm cache", () =>
     Effect.gen(function* () {
@@ -448,6 +469,38 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.isNone(state.data)).toBe(true);
       expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+    }),
+  );
+
+  it.effect("removes cached data when the thread is archived and does not persist it again", () =>
+    Effect.gen(function* () {
+      const savedThreads = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ cached: BASE_THREAD });
+          yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+          yield* Queue.offer(harness.inputs, archived());
+
+          const state = yield* awaitThreadState(
+            harness.observed,
+            (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+          );
+          yield* TestClock.adjust("500 millis");
+          yield* Effect.yieldNow;
+
+          expect(Option.getOrThrow(state.data).archivedAt).toBe("2026-04-01T02:00:00.000Z");
+          expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+          expect(
+            (yield* Ref.get(harness.savedThreads)).some(
+              (saved) => saved.thread.archivedAt !== null,
+            ),
+          ).toBe(false);
+          return harness.savedThreads;
+        }),
+      );
+
+      expect((yield* Ref.get(savedThreads)).some((saved) => saved.thread.archivedAt !== null)).toBe(
+        false,
+      );
     }),
   );
 
