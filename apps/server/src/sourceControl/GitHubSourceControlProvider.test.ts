@@ -24,8 +24,8 @@ const processResult = (
   stderrTruncated: false,
 });
 
-function makeProvider(github: Partial<GitHubCli.GitHubCliShape>) {
-  return GitHubSourceControlProvider.make().pipe(
+function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
+  return GitHubSourceControlProvider.make.pipe(
     Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
   );
 }
@@ -139,7 +139,8 @@ it.effect("treats empty non-open change request listing output as no results", (
 
 it.effect("creates GitHub PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<GitHubCli.GitHubCliShape["createPullRequest"]>[0] | null = null;
+    let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
+      null;
     const provider = yield* makeProvider({
       createPullRequest: (input) => {
         createInput = input;

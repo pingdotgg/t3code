@@ -1,4 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,25 +23,30 @@ export interface ElectronMenuTemplateInput {
   readonly template: readonly Electron.MenuItemConstructorOptions[];
 }
 
-export interface ElectronMenuShape {
-  readonly setApplicationMenu: (
-    template: readonly Electron.MenuItemConstructorOptions[],
-  ) => Effect.Effect<void>;
-  readonly showContextMenu: (
-    input: ElectronMenuContextInput,
-  ) => Effect.Effect<Option.Option<string>>;
-  readonly popupTemplate: (input: ElectronMenuTemplateInput) => Effect.Effect<void>;
-}
-
-export class ElectronMenu extends Context.Service<ElectronMenu, ElectronMenuShape>()(
-  "@t3tools/desktop/electron/ElectronMenu",
-) {}
+export class ElectronMenu extends Context.Service<
+  ElectronMenu,
+  {
+    readonly setApplicationMenu: (
+      template: readonly Electron.MenuItemConstructorOptions[],
+    ) => Effect.Effect<void>;
+    readonly showContextMenu: (
+      input: ElectronMenuContextInput,
+    ) => Effect.Effect<Option.Option<string>>;
+    readonly popupTemplate: (input: ElectronMenuTemplateInput) => Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/electron/ElectronMenu") {}
 
 function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
   const normalizedItems: ContextMenuItem[] = [];
 
   for (const sourceItem of source) {
     if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
+      continue;
+    }
+
+    // Header items are decorative section labels for the web fallback only —
+    // Electron's native menu has no equivalent affordance, so we skip them.
+    if (sourceItem.header === true) {
       continue;
     }
 
@@ -73,11 +79,12 @@ const normalizePosition = (
     ({ x, y }) => Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0,
   ).pipe(Option.map(({ x, y }) => ({ x: Math.floor(x), y: Math.floor(y) })));
 
-export const layer = Layer.sync(ElectronMenu, () => {
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
   let destructiveMenuIconCache: Option.Option<Electron.NativeImage> | undefined;
 
   const getDestructiveMenuIcon = (): Option.Option<Electron.NativeImage> => {
-    if (process.platform !== "darwin") {
+    if (platform !== "darwin") {
       return Option.none();
     }
     if (destructiveMenuIconCache !== undefined) {
@@ -89,6 +96,7 @@ export const layer = Layer.sync(ElectronMenu, () => {
         width: 12,
         height: 12,
       });
+      icon.setTemplateImage(true);
       destructiveMenuIconCache = icon.isEmpty() ? Option.none() : Option.some(icon);
     } catch {
       destructiveMenuIconCache = Option.none();
@@ -179,3 +187,5 @@ export const layer = Layer.sync(ElectronMenu, () => {
       }),
   });
 });
+
+export const layer = Layer.effect(ElectronMenu, make);

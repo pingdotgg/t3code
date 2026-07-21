@@ -10,13 +10,11 @@ export function NoActiveThreadState() {
         <header
           className={cn(
             "border-b border-border px-3 sm:px-5",
-            isElectron
-              ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
-              : "py-2 sm:py-3",
+            isElectron ? "workspace-topbar drag-region" : "workspace-topbar",
           )}
         >
           {isElectron ? (
-            <span className="text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+            <span className="text-xs text-muted-foreground/50 wco:pr-[var(--workspace-native-controls-inset)]">
               No active thread
             </span>
           ) : (
@@ -30,7 +28,7 @@ export function NoActiveThreadState() {
         </header>
 
         <Empty className="flex-1">
-          <div className="w-full max-w-lg rounded-3xl border border-border/55 bg-card/20 px-8 py-12 shadow-sm/5">
+          <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
               <EmptyTitle className="text-foreground text-xl">Pick a thread to continue</EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">

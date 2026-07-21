@@ -75,7 +75,7 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
     );
 
     const result: CommandResult = { stdout, stderr, code: exitCode };
-    if (isWindowsCommandNotFound(exitCode, stderr)) {
+    if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
       return yield* new ProviderCommandExecutionError({ message: `spawn ${binaryPath} ENOENT` });
     }
     return result;

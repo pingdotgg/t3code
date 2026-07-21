@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
-function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCliShape>) {
-  return AzureDevOpsSourceControlProvider.make().pipe(
+function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCli["Service"]>) {
+  return AzureDevOpsSourceControlProvider.make.pipe(
     Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)(azure)),
   );
 }
@@ -48,8 +48,9 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
 
 it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["createPullRequest"]>[0] | null =
-      null;
+    let createInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["createPullRequest"]>[0]
+      | null = null;
     const provider = yield* makeProvider({
       createPullRequest: (input) => {
         createInput = input;

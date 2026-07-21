@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -37,7 +37,7 @@ function makeRegistry(input: {
     readonly name: string;
     readonly url: string;
   }>;
-  readonly process?: Partial<VcsProcess.VcsProcessShape>;
+  readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
 }) {
   const driver = {
     listRemotes: () =>
@@ -53,10 +53,10 @@ function makeRegistry(input: {
           expiresAt: Option.none(),
         },
       }),
-  } satisfies Partial<VcsDriver.VcsDriverShape>;
+  } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
 
   const registryLayer = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-    get: () => Effect.succeed(driver as unknown as VcsDriver.VcsDriverShape),
+    get: () => Effect.succeed(driver as unknown as VcsDriver.VcsDriver["Service"]),
     resolve: () =>
       Effect.succeed({
         kind: "git",
@@ -70,7 +70,7 @@ function makeRegistry(input: {
             expiresAt: Option.none(),
           },
         },
-        driver: driver as unknown as VcsDriver.VcsDriverShape,
+        driver: driver as unknown as VcsDriver.VcsDriver["Service"],
       }),
   });
 
@@ -79,7 +79,7 @@ function makeRegistry(input: {
     ...input.process,
   });
 
-  return SourceControlProviderRegistry.make().pipe(
+  return SourceControlProviderRegistry.make.pipe(
     Effect.provide(
       Layer.mergeAll(
         registryLayer,
@@ -88,9 +88,9 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-registry-test-" }).pipe(
-          Layer.provide(NodeServices.layer),
-        ),
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-source-control-registry-test-",
+        }).pipe(Layer.provide(NodeServices.layer)),
       ),
     ),
   );

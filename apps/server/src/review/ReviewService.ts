@@ -13,22 +13,21 @@ import {
   type ReviewDiffPreviewResult,
 } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
-export interface ReviewServiceShape {
-  readonly getDiffPreview: (
-    input: ReviewDiffPreviewInput,
-  ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
-}
+export class ReviewService extends Context.Service<
+  ReviewService,
+  {
+    readonly getDiffPreview: (
+      input: ReviewDiffPreviewInput,
+    ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
+  }
+>()("t3/review/ReviewService") {}
 
-export class ReviewService extends Context.Service<ReviewService, ReviewServiceShape>()(
-  "t3/review/ReviewService",
-) {}
-
-export const make = Effect.fn("makeReviewService")(function* () {
-  const config = yield* ServerConfig;
+export const make = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
@@ -62,7 +61,7 @@ export const make = Effect.fn("makeReviewService")(function* () {
     });
   });
 
-  const getDiffPreview: ReviewServiceShape["getDiffPreview"] = Effect.fn(
+  const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
   )(function* (input) {
     yield* assertWorkspaceBoundCwd(input.cwd);
@@ -96,4 +95,4 @@ export const make = Effect.fn("makeReviewService")(function* () {
   });
 });
 
-export const layer = Layer.effect(ReviewService, make());
+export const layer = Layer.effect(ReviewService, make);

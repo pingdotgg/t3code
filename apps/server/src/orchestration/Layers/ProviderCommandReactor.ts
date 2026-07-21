@@ -13,7 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
-import { LaunchEnv } from "../../launchEnv/Services/LaunchEnv.ts";
+import { ProjectLaunchEnv } from "../../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -142,9 +142,19 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
 function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = findProviderAdapterRequestError(cause);
   if (error) {
-    return error.detail.toLowerCase().includes("unknown pending user-input request");
+    const detail = error.detail.toLowerCase();
+    return (
+      detail.includes("unknown pending user-input request") ||
+      detail.includes("unknown pending user input request") ||
+      detail.includes("unknown pending codex user input request")
+    );
   }
-  return Cause.pretty(cause).toLowerCase().includes("unknown pending user-input request");
+  const message = Cause.pretty(cause).toLowerCase();
+  return (
+    message.includes("unknown pending user-input request") ||
+    message.includes("unknown pending user input request") ||
+    message.includes("unknown pending codex user input request")
+  );
 }
 
 function stalePendingRequestDetail(
@@ -187,7 +197,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
-  const launchEnv = yield* LaunchEnv;
+  const projectLaunchEnv = yield* ProjectLaunchEnv;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -462,9 +472,9 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
-    const providerLaunchEnv =
+    const providerProjectLaunchEnv =
       project !== undefined
-        ? yield* launchEnv.resolve({
+        ? yield* projectLaunchEnv.resolve({
             projectRoot: project.workspaceRoot,
             projectId: project.id,
             threadId,
@@ -481,7 +491,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        ...(providerLaunchEnv ? { env: providerLaunchEnv } : {}),
+        ...(providerProjectLaunchEnv ? { env: providerProjectLaunchEnv } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,

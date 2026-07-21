@@ -7,21 +7,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  DesktopEnvironment,
-  layer as makeDesktopEnvironmentLayer,
-} from "../app/DesktopEnvironment.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
-import type { DesktopNetworkInterfaces } from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const encoder = new TextEncoder();
 
-const emptyNetworkInterfaces: DesktopNetworkInterfaces = {};
-const lanNetworkInterfaces: DesktopNetworkInterfaces = {
+const emptyNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {};
+const lanNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   en0: [
     {
       address: "192.168.1.20",
@@ -31,7 +28,7 @@ const lanNetworkInterfaces: DesktopNetworkInterfaces = {
   ],
 };
 
-const tailnetNetworkInterfaces: DesktopNetworkInterfaces = {
+const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   tailscale0: [
     {
       address: "100.90.1.2",
@@ -72,7 +69,7 @@ function dieOnSpawnLayer() {
 }
 
 function makeEnvironmentLayer(baseDir: string, env: Record<string, string | undefined> = {}) {
-  return makeDesktopEnvironmentLayer({
+  return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -91,13 +88,13 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
 
 function makeLayer(input: {
   readonly baseDir: string;
-  readonly networkInterfaces?: DesktopNetworkInterfaces;
+  readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly env?: Record<string, string | undefined>;
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
   const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
-  const networkLayer = Layer.succeed(DesktopServerExposure.DesktopNetworkInterfacesService, {
+  const networkLayer = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
 
@@ -113,12 +110,12 @@ function makeLayer(input: {
 }
 
 const withHarness = <A, E, R>(
-  networkInterfaces: DesktopNetworkInterfaces,
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
   effect: Effect.Effect<
     A,
     E,
     | R
-    | DesktopEnvironment
+    | DesktopEnvironment.DesktopEnvironment
     | FileSystem.FileSystem
     | DesktopServerExposure.DesktopServerExposure
     | DesktopAppSettings.DesktopAppSettings

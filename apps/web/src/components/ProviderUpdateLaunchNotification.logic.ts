@@ -5,6 +5,10 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import {
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 
 export type ProviderUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
@@ -328,14 +332,14 @@ export function getSingleProviderUpdateProgressToastView(
 
 export function collectUpdatedProviderSnapshots(input: {
   readonly results: ReadonlyArray<
-    PromiseSettledResult<{ readonly providers: ReadonlyArray<ServerProvider> }>
+    AtomCommandResult<{ readonly providers: ReadonlyArray<ServerProvider> }, unknown>
   >;
   readonly providerInstanceIds: ReadonlySet<ProviderInstanceId>;
 }): ServerProvider[] {
   const matchedProviders: ServerProvider[] = [];
 
   for (const result of input.results) {
-    if (result.status !== "fulfilled") {
+    if (result._tag === "Failure") {
       continue;
     }
     for (const provider of result.value.providers) {
@@ -348,14 +352,15 @@ export function collectUpdatedProviderSnapshots(input: {
   return dedupeProvidersByInstanceId(matchedProviders);
 }
 
-export function firstRejectedProviderUpdateMessage(
-  results: ReadonlyArray<PromiseSettledResult<unknown>>,
+export function firstFailedProviderUpdateMessage(
+  results: ReadonlyArray<AtomCommandResult<unknown, unknown>>,
 ): string | null {
-  const rejected = results.find((result) => result.status === "rejected");
-  if (!rejected) {
+  const failed = results.find((result) => result._tag === "Failure");
+  if (!failed || failed._tag !== "Failure") {
     return null;
   }
-  return rejected.reason instanceof Error ? rejected.reason.message : "Provider update failed.";
+  const error = squashAtomCommandFailure(failed);
+  return error instanceof Error ? error.message : "Provider update failed.";
 }
 
 function getUpdateFinishedAt(provider: ServerProvider): string | null {

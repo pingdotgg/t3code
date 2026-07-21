@@ -7,7 +7,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -17,12 +18,14 @@ import type {
   ServerProvider,
   ServerProviderState,
   ModelCapabilities,
+  ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -31,6 +34,8 @@ import {
 import { expandHomePath } from "../../pathExpansion.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
+
+const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -44,7 +49,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
-const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__ReasoningEffort, string> = {
+const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
   low: "Low",
@@ -52,6 +57,12 @@ const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__Reasoning
   high: "High",
   xhigh: "Extra High",
 };
+
+const DEFAULT_SERVICE_TIER_ID = "default";
+
+function reasoningEffortLabel(reasoningEffort: string): string {
+  return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
+}
 
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
@@ -93,46 +104,71 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
-function mapCodexModelCapabilities(
+export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort === model.defaultReasoningEffort
       ? {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
           isDefault: true,
         }
       : {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
-  const supportsFastMode = (model.additionalSpeedTiers ?? []).includes("fast");
+  const serviceTiers =
+    model.serviceTiers && model.serviceTiers.length > 0
+      ? model.serviceTiers
+      : (model.additionalSpeedTiers ?? []).map((id) => ({
+          id,
+          name: id === "fast" ? "Fast" : id,
+          description: "",
+        }));
+  const catalogDefaultServiceTier = serviceTiers.some(
+    (tier) => tier.id === model.defaultServiceTier,
+  )
+    ? model.defaultServiceTier
+    : null;
+  const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
+  const optionDescriptors: ProviderOptionDescriptor[] = [];
+
+  if (reasoningOptions.length > 0) {
+    optionDescriptors.push({
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: reasoningOptions,
+      ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
+    });
+  }
+  if (serviceTiers.length > 0) {
+    optionDescriptors.push({
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [
+        {
+          id: DEFAULT_SERVICE_TIER_ID,
+          label: "Standard",
+          ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
+        },
+        ...serviceTiers.map((tier) => ({
+          id: tier.id,
+          label: tier.name,
+          ...(tier.description ? { description: tier.description } : {}),
+          ...(defaultServiceTier === tier.id ? { isDefault: true } : {}),
+        })),
+      ],
+      currentValue: defaultServiceTier,
+    });
+  }
+
   return createModelCapabilities({
-    optionDescriptors: [
-      ...(reasoningOptions.length > 0
-        ? [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning",
-              type: "select" as const,
-              options: reasoningOptions,
-              ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
-            },
-          ]
-        : []),
-      ...(supportsFastMode
-        ? [
-            {
-              id: "fastMode",
-              label: "Fast Mode",
-              type: "boolean" as const,
-            },
-          ]
-        : []),
-    ],
+    optionDescriptors,
   });
 }
 
@@ -218,7 +254,7 @@ function parseCodexSkillsListResponse(
 }
 
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
-  client: CodexClient.CodexAppServerClientShape,
+  client: CodexClient.CodexAppServerClient["Service"],
 ) {
   const models: ServerProviderModel[] = [];
   let cursor: string | null | undefined = undefined;
@@ -260,17 +296,35 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
-  const clientContext = yield* Layer.build(
-    CodexClient.layerCommand({
-      command: input.binaryPath,
-      args: ["app-server"],
-      cwd: input.cwd,
-      env: {
-        ...(input.environment ?? process.env),
-        ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
-      },
-    }),
-  );
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const environment = {
+    ...input.environment,
+    ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+  };
+  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["app-server"], {
+    env: environment,
+    extendEnv: true,
+  });
+  const child = yield* spawner
+    .spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: input.cwd,
+        env: environment,
+        extendEnv: true,
+        forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
+        shell: spawnCommand.shell,
+      }),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new CodexErrors.CodexAppServerSpawnError({
+            command: `${input.binaryPath} app-server`,
+            cause,
+          }),
+      ),
+    );
+  const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),
   );
@@ -417,12 +471,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     CodexErrors.CodexAppServerError,
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
   ChildProcessSpawner.ChildProcessSpawner
 > {
+  const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
 
@@ -448,7 +503,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     homePath: codexSettings.homePath,
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
-    environment,
+    environment: resolvedEnvironment,
   }).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),

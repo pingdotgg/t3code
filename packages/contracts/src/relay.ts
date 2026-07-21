@@ -1,5 +1,5 @@
-import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
@@ -512,26 +512,22 @@ const RelayAgentActivityPublishErrors = [
   RelayInternalError,
 ] as const;
 
-export interface RelayClientPrincipalShape {
-  readonly userId: string;
-  readonly token: string;
-  readonly proofKeyThumbprint?: string;
-  readonly dpopScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
-}
-
 export class RelayClientPrincipal extends Context.Service<
   RelayClientPrincipal,
-  RelayClientPrincipalShape
+  {
+    readonly userId: string;
+    readonly token: string;
+    readonly proofKeyThumbprint?: string;
+    readonly dpopScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
+  }
 >()("@t3tools/contracts/relay/RelayClientPrincipal") {}
-
-export interface RelayEnvironmentPrincipalShape {
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-}
 
 export class RelayEnvironmentPrincipal extends Context.Service<
   RelayEnvironmentPrincipal,
-  RelayEnvironmentPrincipalShape
+  {
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+  }
 >()("@t3tools/contracts/relay/RelayEnvironmentPrincipal") {}
 
 const RelayClientBearerAuthorization = HttpApiSecurity.http({ scheme: "bearer" }).pipe(
@@ -711,6 +707,7 @@ export const RelayEnvironmentStatusResponse = Schema.Struct({
   checkedAt: TrimmedNonEmptyString,
   descriptor: Schema.optional(ExecutionEnvironmentDescriptor),
   error: Schema.optional(TrimmedNonEmptyString),
+  traceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayEnvironmentStatusResponse = typeof RelayEnvironmentStatusResponse.Type;
 

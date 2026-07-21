@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NFS from "node:fs";
-import * as Net from "node:net";
-import * as readline from "node:readline";
-import type { Readable } from "node:stream";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeReadline from "node:readline";
+import type * as NodeStream from "node:stream";
 
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -11,6 +11,7 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 class BootstrapError extends Data.TaggedError("BootstrapError")<{
   readonly message: string;
@@ -32,7 +33,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
   const timeoutMs = options?.timeoutMs ?? 1000;
 
   return yield* Effect.callback<Option.Option<A>, BootstrapError>((resume) => {
-    const input = readline.createInterface({
+    const input = NodeReadline.createInterface({
       input: stream,
       crlfDelay: Infinity,
     });
@@ -95,7 +96,7 @@ const isUnavailableBootstrapFdError = Predicate.compose(
 
 const isFdReady = (fd: number) =>
   Effect.try({
-    try: () => NFS.fstatSync(fd),
+    try: () => NodeFS.fstatSync(fd),
     catch: (error) =>
       new BootstrapError({
         message: "Failed to stat bootstrap fd.",
@@ -110,47 +111,50 @@ const isFdReady = (fd: number) =>
   );
 
 const makeBootstrapInputStream = (fd: number) =>
-  Effect.try<Readable, BootstrapError>({
-    try: () => {
-      const fdPath = resolveFdPath(fd);
-      if (fdPath === undefined) {
-        return makeDirectBootstrapStream(fd);
-      }
-
-      let streamFd: number | undefined;
-      try {
-        streamFd = NFS.openSync(fdPath, "r");
-        return NFS.createReadStream("", {
-          fd: streamFd,
-          encoding: "utf8",
-          autoClose: true,
-        });
-      } catch (error) {
-        if (isBootstrapFdPathDuplicationError(error)) {
-          if (streamFd !== undefined) {
-            NFS.closeSync(streamFd);
-          }
+  Effect.gen(function* () {
+    const platform = yield* HostProcessPlatform;
+    return yield* Effect.try<NodeStream.Readable, BootstrapError>({
+      try: () => {
+        const fdPath = resolveFdPath(fd, platform);
+        if (fdPath === undefined) {
           return makeDirectBootstrapStream(fd);
         }
-        throw error;
-      }
-    },
-    catch: (error) =>
-      new BootstrapError({
-        message: "Failed to duplicate bootstrap fd.",
-        cause: error,
-      }),
+
+        let streamFd: number | undefined;
+        try {
+          streamFd = NodeFS.openSync(fdPath, "r");
+          return NodeFS.createReadStream("", {
+            fd: streamFd,
+            encoding: "utf8",
+            autoClose: true,
+          });
+        } catch (error) {
+          if (isBootstrapFdPathDuplicationError(error)) {
+            if (streamFd !== undefined) {
+              NodeFS.closeSync(streamFd);
+            }
+            return makeDirectBootstrapStream(fd);
+          }
+          throw error;
+        }
+      },
+      catch: (error) =>
+        new BootstrapError({
+          message: "Failed to duplicate bootstrap fd.",
+          cause: error,
+        }),
+    });
   });
 
-const makeDirectBootstrapStream = (fd: number): Readable => {
+const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   try {
-    return NFS.createReadStream("", {
+    return NodeFS.createReadStream("", {
       fd,
       encoding: "utf8",
       autoClose: true,
     });
   } catch {
-    const stream = new Net.Socket({
+    const stream = new NodeNet.Socket({
       fd,
       readable: true,
       writable: false,
@@ -165,10 +169,7 @@ const isBootstrapFdPathDuplicationError = Predicate.compose(
   (_) => _.code === "ENXIO" || _.code === "EINVAL" || _.code === "EPERM",
 );
 
-export function resolveFdPath(
-  fd: number,
-  platform: NodeJS.Platform = process.platform,
-): string | undefined {
+function resolveFdPath(fd: number, platform: NodeJS.Platform): string | undefined {
   if (platform === "linux") {
     return `/proc/self/fd/${fd}`;
   }

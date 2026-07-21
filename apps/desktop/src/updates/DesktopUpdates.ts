@@ -7,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -60,23 +59,26 @@ const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressIn
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-export class DesktopUpdateActionInProgressError extends Data.TaggedError(
+export class DesktopUpdateActionInProgressError extends Schema.TaggedErrorClass<DesktopUpdateActionInProgressError>()(
   "DesktopUpdateActionInProgressError",
-)<{
-  readonly action: "check" | "download" | "install";
-}> {
-  override get message() {
+  {
+    action: Schema.Literals(["check", "download", "install"]),
+  },
+) {
+  override get message(): string {
     return `Cannot change update tracks while an update ${this.action} action is in progress.`;
   }
 }
 
-export class DesktopUpdatePersistenceError extends Data.TaggedError(
+export class DesktopUpdatePersistenceError extends Schema.TaggedErrorClass<DesktopUpdatePersistenceError>()(
   "DesktopUpdatePersistenceError",
-)<{
-  readonly cause: DesktopAppSettings.DesktopSettingsWriteError;
-}> {
-  override get message() {
-    return "Failed to persist desktop update settings.";
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const detail = this.cause instanceof Error ? this.cause.message : String(this.cause);
+    return `Failed to persist desktop update settings: ${detail}`;
   }
 }
 
@@ -86,22 +88,21 @@ export type DesktopUpdateSetChannelError =
   | DesktopUpdateActionInProgressError
   | DesktopUpdatePersistenceError;
 
-export interface DesktopUpdatesShape {
-  readonly getState: Effect.Effect<DesktopUpdateState>;
-  readonly emitState: Effect.Effect<void>;
-  readonly disabledReason: Effect.Effect<Option.Option<string>>;
-  readonly configure: Effect.Effect<void, DesktopUpdateConfigureError, Scope.Scope>;
-  readonly setChannel: (
-    channel: DesktopUpdateChannel,
-  ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
-  readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
-  readonly download: Effect.Effect<DesktopUpdateActionResult>;
-  readonly install: Effect.Effect<DesktopUpdateActionResult>;
-}
-
-export class DesktopUpdates extends Context.Service<DesktopUpdates, DesktopUpdatesShape>()(
-  "@t3tools/desktop/updates/DesktopUpdates",
-) {}
+export class DesktopUpdates extends Context.Service<
+  DesktopUpdates,
+  {
+    readonly getState: Effect.Effect<DesktopUpdateState>;
+    readonly emitState: Effect.Effect<void>;
+    readonly disabledReason: Effect.Effect<Option.Option<string>>;
+    readonly configure: Effect.Effect<void, DesktopUpdateConfigureError, Scope.Scope>;
+    readonly setChannel: (
+      channel: DesktopUpdateChannel,
+    ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
+    readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
+    readonly download: Effect.Effect<DesktopUpdateActionResult>;
+    readonly install: Effect.Effect<DesktopUpdateActionResult>;
+  }
+>()("@t3tools/desktop/updates/DesktopUpdates") {}
 
 const {
   logInfo: logUpdaterInfo,
@@ -127,7 +128,7 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
-  environment: DesktopEnvironment.DesktopEnvironmentShape,
+  environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): DesktopUpdateState {
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
@@ -185,7 +186,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
   const desktopState = yield* DesktopState.DesktopState;

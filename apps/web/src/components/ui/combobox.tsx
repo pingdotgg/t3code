@@ -60,6 +60,7 @@ function ComboboxInput({
   showClear = false,
   startAddon,
   size,
+  unstyled = false,
   ...props
 }: Omit<ComboboxPrimitive.Input.Props, "size"> & {
   inputClassName?: string;
@@ -67,6 +68,7 @@ function ComboboxInput({
   showClear?: boolean;
   startAddon?: React.ReactNode;
   size?: "sm" | "default" | "lg" | number;
+  unstyled?: boolean;
   ref?: React.Ref<HTMLInputElement>;
 }) {
   const sizeValue = (size ?? "default") as "sm" | "default" | "lg" | number;
@@ -97,6 +99,7 @@ function ComboboxInput({
             className={cn("has-disabled:opacity-100", inputClassName)}
             nativeInput
             size={sizeValue}
+            unstyled={unstyled}
           />
         }
         {...props}

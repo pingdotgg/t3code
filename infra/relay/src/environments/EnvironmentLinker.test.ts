@@ -105,14 +105,14 @@ const makeRequest = Effect.gen(function* () {
 });
 
 function testLayer(input?: {
-  readonly upsert?: EnvironmentLinks.EnvironmentLinksShape["upsert"];
-  readonly consume?: DpopProofs.DpopProofReplayShape["consume"];
+  readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
+  readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
+        RelayConfiguration.layer(config),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume: () => Effect.die("unexpected DPoP proof verification"),
           consume: input?.consume ?? (() => Effect.succeed(true)),

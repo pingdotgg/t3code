@@ -159,26 +159,26 @@ export function ReviewCommentComposerSheet() {
               <SymbolView name="xmark" size={18} tintColor={iconTint} type="monochrome" />
             </Pressable>
 
-            <Text className="text-[18px] font-t3-bold text-foreground">Add Comment</Text>
+            <Text className="text-lg font-t3-bold text-foreground">Add Comment</Text>
 
             <View className="h-12 w-12" />
           </View>
 
           {!target ? (
             <View className="rounded-[22px] border border-border bg-card px-4 py-5">
-              <Text className="text-[15px] font-t3-bold text-foreground">No selection</Text>
-              <Text className="mt-1 text-[13px] leading-[19px] text-foreground-muted">
+              <Text className="text-base font-t3-bold text-foreground">No selection</Text>
+              <Text className="mt-1 text-sm leading-[19px] text-foreground-muted">
                 Select a diff line or range first.
               </Text>
             </View>
           ) : (
             <View className="min-h-0 flex-1 gap-4">
               <View className="gap-1 px-1">
-                <Text className="text-[11px] font-t3-bold uppercase text-foreground-muted">
+                <Text className="text-2xs font-t3-bold uppercase text-foreground-muted">
                   {selectionLabel}
                 </Text>
                 <Text
-                  className="font-mono text-[12px] leading-[17px] text-foreground-muted"
+                  className="font-mono text-xs leading-[17px] text-foreground-muted"
                   ellipsizeMode="middle"
                   numberOfLines={2}
                 >
@@ -215,7 +215,7 @@ export function ReviewCommentComposerSheet() {
                           >
                             <ReviewChangeBar change={line.change} />
                             <Text
-                              className="w-9 py-1 pr-1 text-right text-[11px] font-t3-medium text-foreground-muted"
+                              className="w-9 py-1 pr-1 text-right text-2xs font-t3-medium text-foreground-muted"
                               style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
                             >
                               {lineNumber ?? ""}
@@ -236,7 +236,7 @@ export function ReviewCommentComposerSheet() {
               </View>
 
               <View className="min-h-0 flex-1 gap-2">
-                <Text className="text-[13px] font-t3-bold text-foreground">Comment</Text>
+                <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
                 <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
                   <View className="min-h-0 flex-1 px-4 pt-3.5">
                     <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>
@@ -248,7 +248,7 @@ export function ReviewCommentComposerSheet() {
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
-                        className="h-full flex-1 border-0 bg-transparent px-0 py-0 font-sans text-[15px]"
+                        className="h-full flex-1 border-0 bg-transparent px-0 py-0 font-sans text-base"
                         style={{ flex: 1, minHeight: 0 }}
                       />
                     </TextInputWrapper>

@@ -12,12 +12,11 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
-import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import {
-  refreshSourceControlDiscovery,
-  useSourceControlDiscovery,
-} from "../../lib/sourceControlDiscoveryState";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
+import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -188,7 +187,7 @@ function itemSummary({
     }
 
     if (!item.executable) {
-      return <span>{item.installHint}</span>;
+      return <span>Available. {item.installHint}</span>;
     }
 
     if (auth.status === "unauthenticated") {
@@ -218,8 +217,9 @@ function DiscoveryItemRow({
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
-  const enabled =
-    item.status === "available" && (isProviderDiscoveryItem(item) || item.implemented);
+  const enabled = isProviderDiscoveryItem(item)
+    ? item.status === "available" && item.auth.status === "authenticated"
+    : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
@@ -291,8 +291,10 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const automaticGitFetchInterval = useSettings((settings) => settings.automaticGitFetchInterval);
-  const { updateSettings } = useUpdateSettings();
+  const automaticGitFetchInterval = usePrimarySettings(
+    (settings) => settings.automaticGitFetchInterval,
+  );
+  const updateSettings = useUpdatePrimarySettings();
   const automaticGitFetchIntervalSeconds = durationToSeconds(automaticGitFetchInterval);
   const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
     DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -438,13 +440,21 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const discovery = useSourceControlDiscovery();
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const discovery = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId,
+          input: {},
+        }),
+  );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasDiscoveryItems =
     result.versionControlSystems.length > 0 || result.sourceControlProviders.length > 0;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
   const handleScan = () => {
-    void refreshSourceControlDiscovery();
+    discovery.refresh();
   };
   const scanButton = (
     <Tooltip>

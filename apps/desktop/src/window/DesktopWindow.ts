@@ -1,5 +1,4 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -9,14 +8,15 @@ import type * as Electron from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopObservability from "../app/DesktopObservability.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import * as IpcChannels from "../ipc/channels.ts";
-import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -31,57 +31,40 @@ type WindowTitleBarOptions = Pick<
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
-  | DesktopServerExposure.DesktopServerExposure
   | DesktopState.DesktopState
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
-  | ElectronWindow.ElectronWindow;
-
-export class DesktopWindowDevServerUrlMissingError extends Data.TaggedError(
-  "DesktopWindowDevServerUrlMissingError",
-)<{}> {
-  override get message() {
-    return "VITE_DEV_SERVER_URL is required in desktop development.";
-  }
-}
+  | ElectronWindow.ElectronWindow
+  | PreviewManager.PreviewManager;
 
 export type DesktopWindowError =
-  | DesktopWindowDevServerUrlMissingError
-  | ElectronWindow.ElectronWindowCreateError;
+  | ElectronWindow.ElectronWindowCreateError
+  | PreviewManager.PreviewManagerError;
 
-export interface DesktopWindowShape {
-  readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly activate: Effect.Effect<void, DesktopWindowError>;
-  readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-  readonly syncAppearance: Effect.Effect<void>;
-}
-
-export class DesktopWindow extends Context.Service<DesktopWindow, DesktopWindowShape>()(
-  "@t3tools/desktop/window/DesktopWindow",
-) {}
+export class DesktopWindow extends Context.Service<
+  DesktopWindow,
+  {
+    readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly activate: Effect.Effect<void, DesktopWindowError>;
+    readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    readonly syncAppearance: Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/window/DesktopWindow") {}
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
-  DesktopObservability.makeComponentLogger("desktop-window");
-
-function resolveDesktopDevServerUrl(
-  environment: DesktopEnvironment.DesktopEnvironmentShape,
-): Effect.Effect<string, DesktopWindowDevServerUrlMissingError> {
-  return Option.match(environment.devServerUrl, {
-    onNone: () => Effect.fail(new DesktopWindowDevServerUrlMissingError()),
-    onSome: (url) => Effect.succeed(url.href),
-  });
-}
+  makeComponentLogger("desktop-window");
 
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
+  platform: NodeJS.Platform,
 ): { icon: string } | Record<string, never> {
-  if (process.platform === "darwin") return {}; // macOS uses .icns from app bundle
-  const ext = process.platform === "win32" ? "ico" : "png";
+  if (platform === "darwin") return {}; // macOS uses .icns from app bundle
+  const ext = platform === "win32" ? "ico" : "png";
   return Option.match(iconPaths[ext], {
     onNone: () => ({}),
     onSome: (icon) => ({ icon }),
@@ -103,8 +86,11 @@ export function isSameOriginRendererNavigation(input: {
   }
 }
 
-function getWindowTitleBarOptions(shouldUseDarkColors: boolean): WindowTitleBarOptions {
-  if (process.platform === "darwin") {
+function getWindowTitleBarOptions(
+  shouldUseDarkColors: boolean,
+  platform: NodeJS.Platform,
+): WindowTitleBarOptions {
+  if (platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
       trafficLightPosition: { x: 16, y: 18 },
@@ -124,6 +110,7 @@ function getWindowTitleBarOptions(shouldUseDarkColors: boolean): WindowTitleBarO
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
+  platform: NodeJS.Platform,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (window.isDestroyed()) {
@@ -131,7 +118,7 @@ function syncWindowAppearance(
     }
 
     window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors);
+    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
@@ -155,26 +142,26 @@ function bindFirstRevealTrigger(
   }
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const previewManager = yield* PreviewManager.PreviewManager;
   const state = yield* DesktopState.DesktopState;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    backendHttpUrl: URL,
-  ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
-    const applicationUrl = environment.isDevelopment
-      ? yield* resolveDesktopDevServerUrl(environment)
-      : backendHttpUrl.href;
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
+    Electron.BrowserWindow,
+    DesktopWindowError
+  > {
+    yield* previewManager.getBrowserSession();
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
-    const iconOption = getIconOption(iconPaths);
+    const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const window = yield* electronWindow.create({
       width: 1100,
@@ -183,16 +170,37 @@ const make = Effect.gen(function* () {
       minHeight: 620,
       show: false,
       autoHideMenuBar: true,
+      ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
       backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
       ...iconOption,
       title: environment.displayName,
-      ...getWindowTitleBarOptions(shouldUseDarkColors),
+      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        webviewTag: true,
       },
+    });
+
+    if (environment.platform === "darwin") {
+      window.setAutoHideCursor(false);
+    }
+
+    yield* previewManager.setMainWindow(window);
+    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (
+        typeof params.partition !== "string" ||
+        !previewManager.isBrowserPartition(params.partition)
+      ) {
+        event.preventDefault();
+        return;
+      }
+      webPreferences.sandbox = true;
+      webPreferences.nodeIntegration = false;
+      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.contextIsolation = false;
     });
 
     window.webContents.on("context-menu", (event, params) => {
@@ -297,7 +305,7 @@ const make = Effect.gen(function* () {
     });
 
     const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
-    if (process.platform === "linux") {
+    if (environment.platform === "linux") {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
     bindFirstRevealTrigger(revealSubscribers, () => {
@@ -319,8 +327,7 @@ const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    const window = yield* createWindow();
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -373,7 +380,7 @@ const make = Effect.gen(function* () {
 
       const send = () => {
         if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
+        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
         void runPromise(electronWindow.reveal(targetWindow));
       };
 
@@ -387,7 +394,7 @@ const make = Effect.gen(function* () {
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors),
+        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -29,9 +30,9 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { CLOUD_LINKED_USER_ID, RELAY_URL_SECRET } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
-import { ServerConfig } from "../config.ts";
-import { ServerEnvironmentLive } from "../environment/Layers/ServerEnvironment.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -143,7 +144,7 @@ const reportRelayClientInstallProgress = (event: RelayClientInstallProgressEvent
 
 export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_client_for_link")(
   function* <ConfirmError, ConfirmContext>(
-    relayClient: RelayClient.RelayClientShape,
+    relayClient: RelayClient.RelayClient["Service"],
     confirmInstall: (version: string) => Effect.Effect<boolean, ConfirmError, ConfirmContext>,
     reportProgress: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
   ) {
@@ -162,7 +163,7 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
 );
 
 const withCloudCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuthShape,
+  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
   run: (token: string) => Effect.Effect<A, E, R>,
 ) =>
   Effect.acquireUseRelease(
@@ -181,7 +182,7 @@ type LiveCloudActionResult =
   | { readonly status: "failed"; readonly cause: unknown };
 
 const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
@@ -217,7 +218,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     return { status: "not-authenticated" } satisfies RelayUnlinkResult;
   }
 
-  const environment = yield* ServerEnvironment;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const relayUrl = yield* relayUrlConfig;
   const httpClient = yield* HttpClient.HttpClient;
@@ -228,6 +229,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     httpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
+    withRelayClientTracing,
   );
   return response.ok
     ? ({ status: "revoked" } satisfies RelayUnlinkResult)
@@ -282,8 +284,8 @@ const runCloudCommand = <A, E>(
     | FileSystem.FileSystem
     | HttpClient.HttpClient
     | Prompt.Environment
-    | ServerConfig
-    | ServerEnvironment
+    | ServerConfig.ServerConfig
+    | ServerEnvironment.ServerEnvironment
   >,
   options?: {
     readonly quietLogs?: boolean;
@@ -298,10 +300,11 @@ const runCloudCommand = <A, E>(
       CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
       RelayClient.layerCloudflared({ baseDir: config.baseDir }),
       EnvironmentAuth.runtimeLayer,
-      ServerEnvironmentLive,
+      ServerEnvironment.layer,
+      headlessRelayClientTracingLayer,
     ).pipe(
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provideMerge(Layer.succeed(ServerConfig, config)),
+      Layer.provideMerge(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );
     return yield* run.pipe(Effect.provide(runtimeLayer));
@@ -381,9 +384,9 @@ const connectStatusCommand = Command.make("status", {
         const status: CloudCliStatus = {
           desired,
           authenticated,
-          linked: cloudUserId !== null,
-          cloudUserId: cloudUserId ? bytesToString(cloudUserId) : null,
-          relayUrl: relayUrl ? bytesToString(relayUrl) : null,
+          linked: Option.isSome(cloudUserId),
+          cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
+          relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
           relayClient: executable,
         };
         yield* Console.log(formatCloudStatus(status, { json: flags.json }));

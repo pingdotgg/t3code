@@ -17,22 +17,21 @@ export interface ElectronDialogConfirmInput {
   readonly message: string;
 }
 
-export interface ElectronDialogShape {
-  readonly pickFolder: (
-    input: ElectronDialogPickFolderInput,
-  ) => Effect.Effect<Option.Option<string>>;
-  readonly confirm: (input: ElectronDialogConfirmInput) => Effect.Effect<boolean>;
-  readonly showMessageBox: (
-    options: Electron.MessageBoxOptions,
-  ) => Effect.Effect<Electron.MessageBoxReturnValue>;
-  readonly showErrorBox: (title: string, content: string) => Effect.Effect<void>;
-}
+export class ElectronDialog extends Context.Service<
+  ElectronDialog,
+  {
+    readonly pickFolder: (
+      input: ElectronDialogPickFolderInput,
+    ) => Effect.Effect<Option.Option<string>>;
+    readonly confirm: (input: ElectronDialogConfirmInput) => Effect.Effect<boolean>;
+    readonly showMessageBox: (
+      options: Electron.MessageBoxOptions,
+    ) => Effect.Effect<Electron.MessageBoxReturnValue>;
+    readonly showErrorBox: (title: string, content: string) => Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/electron/ElectronDialog") {}
 
-export class ElectronDialog extends Context.Service<ElectronDialog, ElectronDialogShape>()(
-  "@t3tools/desktop/electron/ElectronDialog",
-) {}
-
-const make = ElectronDialog.of({
+export const make = ElectronDialog.of({
   pickFolder: Effect.fn("desktop.electron.dialog.pickFolder")(function* (input) {
     const openDialogOptions: Electron.OpenDialogOptions = Option.match(input.defaultPath, {
       onNone: () => ({

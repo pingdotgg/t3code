@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import {
+  mergeProviderInstanceEnvironment,
+  mergeProviderSessionEnvironment,
+} from "./ProviderInstanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
   it("strips inherited T3 Code runtime env keys", () => {
@@ -28,6 +31,42 @@ describe("mergeProviderInstanceEnvironment", () => {
       OPENROUTER_API_KEY: "sk-or-test",
       ANTHROPIC_API_KEY: "",
       PATH: "/bin",
+    });
+  });
+});
+
+describe("mergeProviderSessionEnvironment", () => {
+  it("accepts nullable inputs and strips managed runtime env keys from the base env", () => {
+    expect(
+      mergeProviderSessionEnvironment(
+        {
+          T3CODE_PORT: "3773",
+          T3_MCP_BEARER_TOKEN: "client-token",
+          PATH: "/bin",
+        },
+        null,
+      ),
+    ).toEqual({
+      PATH: "/bin",
+    });
+  });
+
+  it("overlays resolved session env after filtering the base env", () => {
+    expect(
+      mergeProviderSessionEnvironment(
+        {
+          T3_MCP_BEARER_TOKEN: "client-token",
+          PATH: "/bin",
+        },
+        {
+          T3_MCP_BEARER_TOKEN: "server-token",
+          CUSTOM_FLAG: "1",
+        },
+      ),
+    ).toEqual({
+      PATH: "/bin",
+      T3_MCP_BEARER_TOKEN: "server-token",
+      CUSTOM_FLAG: "1",
     });
   });
 });

@@ -15,6 +15,7 @@ import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
@@ -149,16 +150,20 @@ const discoverGrokModelsViaAcp = (
 const runGrokVersionCommand = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
-) => {
-  const command = grokSettings.binaryPath || "grok";
-  return spawnAndCollect(
-    command,
-    ChildProcess.make(command, ["--version"], {
+) =>
+  Effect.gen(function* () {
+    const command = grokSettings.binaryPath || "grok";
+    const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
       env: environment,
-      shell: process.platform === "win32",
-    }),
-  );
-};
+    });
+    return yield* spawnAndCollect(
+      command,
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env: environment,
+        shell: spawnCommand.shell,
+      }),
+    );
+  });
 
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
@@ -306,12 +311,15 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 export const enrichGrokSnapshot = (input: {
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
 }): Effect.Effect<void> => {
   const { snapshot, publishSnapshot } = input;
 
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities).pipe(
+  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
+    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
+  }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
     Effect.catchCause((cause) =>

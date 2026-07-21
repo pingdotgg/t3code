@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
@@ -395,7 +395,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.env?.HOME, path.join(os.homedir(), ".claude-work"));
+      assert.equal(createInput?.options.env?.HOME, NodePath.join(NodeOS.homedir(), ".claude-work"));
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -649,7 +649,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("embeds image attachments in Claude user messages", () => {
-    const baseDir = mkdtempSync(path.join(os.tmpdir(), "claude-attachments-"));
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
     const harness = makeHarness({
       cwd: "/tmp/project-claude-attachments",
       baseDir,
@@ -657,7 +657,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
         Effect.sync(() =>
-          rmSync(baseDir, {
+          NodeFS.rmSync(baseDir, {
             recursive: true,
             force: true,
           }),
@@ -674,9 +674,9 @@ describe("ClaudeAdapterLive", () => {
         mimeType: "image/png",
         sizeBytes: 4,
       };
-      const attachmentPath = path.join(attachmentsDir, attachmentRelativePath(attachment));
-      mkdirSync(path.dirname(attachmentPath), { recursive: true });
-      writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
@@ -884,6 +884,73 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(String(turnCompleted.turnId), String(turn.turnId));
         assert.equal(turnCompleted.payload.state, "completed");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run 5 commands",
+        attachments: [],
+      });
+
+      // Steer: a second sendTurn while the turn is still running continues
+      // the same turn — the message is queued into the live agent loop.
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "actually run 15",
+        attachments: [],
+      });
+      assert.equal(String(steeredTurn.turnId), String(turn.turnId));
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-steer",
+        uuid: "assistant-steer-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-steer-1",
+          content: [{ type: "text", text: "Adjusting to 15." }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-steer",
+        uuid: "result-steer-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // One turn boundary for the whole run: the steer produced no
+      // turn.completed/turn.started pair.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(turn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(turn.turnId));
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

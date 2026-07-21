@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -13,6 +13,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
+  hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
@@ -54,7 +55,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
       sandboxPolicy: {
@@ -96,7 +97,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
       sandboxPolicy: {
@@ -133,7 +134,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
       sandboxPolicy: {
@@ -149,9 +150,34 @@ describe("buildTurnStartParams", () => {
   });
 });
 
+describe("T3 browser developer instructions", () => {
+  it("prefers the product-native preview tools in both collaboration modes", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      NodeAssert.match(instructions, /t3-code/);
+      NodeAssert.match(instructions, /preview_status/);
+      NodeAssert.match(instructions, /preview_open/);
+      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+    }
+  });
+});
+
+describe("hasConfiguredMcpServer", () => {
+  it("detects inline Codex MCP configuration arguments", () => {
+    NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
+    NodeAssert.equal(
+      hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+});
+
 describe("isRecoverableThreadResumeError", () => {
   it("matches missing thread errors", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -163,7 +189,7 @@ describe("isRecoverableThreadResumeError", () => {
   });
 
   it("ignores non-recoverable resume errors", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -175,7 +201,7 @@ describe("isRecoverableThreadResumeError", () => {
   });
 
   it("ignores unrelated missing-resource errors that do not mention threads", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -184,7 +210,7 @@ describe("isRecoverableThreadResumeError", () => {
       ),
       false,
     );
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -230,8 +256,8 @@ describe("openCodexThread", () => {
       }),
     );
 
-    assert.equal(opened.thread.id, "fresh-thread");
-    assert.deepStrictEqual(
+    NodeAssert.equal(opened.thread.id, "fresh-thread");
+    NodeAssert.deepStrictEqual(
       calls.map((call) => call.method),
       ["thread/resume", "thread/start"],
     );
@@ -257,7 +283,7 @@ describe("openCodexThread", () => {
       },
     };
 
-    await assert.rejects(
+    await NodeAssert.rejects(
       Effect.runPromise(
         openCodexThread({
           client,

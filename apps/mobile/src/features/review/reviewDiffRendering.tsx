@@ -1,6 +1,7 @@
 import { Platform, Text as NativeText, View } from "react-native";
 
 import { cn } from "../../lib/cn";
+import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import type { ReviewHighlightedToken } from "./shikiReviewHighlighter";
@@ -11,7 +12,7 @@ export const REVIEW_MONO_FONT_FAMILY = Platform.select({
   default: "monospace",
 });
 
-export const REVIEW_DIFF_LINE_HEIGHT = 26;
+export const REVIEW_DIFF_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 const REVIEW_DELETE_STRIPE_COUNT = REVIEW_DIFF_LINE_HEIGHT / 2;
 
 export function renderVisibleWhitespace(value: string): string {
@@ -71,8 +72,12 @@ export function DiffTokenText(props: {
       <NativeText
         numberOfLines={1}
         selectable
-        className={cn("text-[13px] leading-[17px] font-medium text-foreground", props.className)}
-        style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+        className={cn("font-normal text-foreground", props.className)}
+        style={{
+          fontFamily: REVIEW_MONO_FONT_FAMILY,
+          fontSize: MOBILE_CODE_SURFACE.fontSize,
+          lineHeight: MOBILE_CODE_SURFACE.rowHeight,
+        }}
       >
         {renderVisibleWhitespace(props.fallback || " ")}
       </NativeText>
@@ -83,8 +88,12 @@ export function DiffTokenText(props: {
     <NativeText
       numberOfLines={1}
       selectable
-      className={cn("text-[13px] leading-[17px] font-medium text-foreground", props.className)}
-      style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+      className={cn("font-normal text-foreground", props.className)}
+      style={{
+        fontFamily: REVIEW_MONO_FONT_FAMILY,
+        fontSize: MOBILE_CODE_SURFACE.fontSize,
+        lineHeight: MOBILE_CODE_SURFACE.rowHeight,
+      }}
     >
       {(() => {
         let offset = 0;

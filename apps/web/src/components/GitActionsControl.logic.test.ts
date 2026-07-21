@@ -1100,6 +1100,15 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
     assert.equal(update, null);
   });
+
+  it("allows a temporary worktree ref to reconcile to a semantic branch", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: "t3code/a9628676",
+      gitStatus: status({ refName: "feature/diff-panel-toggle" }),
+    });
+
+    assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
+  });
 });
 
 describe("resolveAutoFeatureBranchName", () => {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 
@@ -20,7 +20,7 @@ describe("DeliveryAttempts", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -52,7 +52,7 @@ describe("DeliveryAttempts", () => {
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );
@@ -78,7 +78,7 @@ describe("DeliveryAttempts", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -104,7 +104,7 @@ describe("DeliveryAttempts", () => {
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );
@@ -135,7 +135,7 @@ describe("DeliveryAttempts", () => {
           }),
         }),
       }),
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -154,7 +154,7 @@ describe("DeliveryAttempts", () => {
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );
@@ -185,7 +185,7 @@ describe("DeliveryAttempts", () => {
           }),
         }),
       }),
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -204,7 +204,7 @@ describe("DeliveryAttempts", () => {
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );
@@ -246,7 +246,7 @@ describe("DeliveryAttempts", () => {
           };
         },
       }),
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -266,7 +266,7 @@ describe("DeliveryAttempts", () => {
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );
@@ -290,7 +290,7 @@ describe("DeliveryAttempts", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -315,7 +315,7 @@ describe("DeliveryAttempts", () => {
       Effect.provide(
         DeliveryAttempts.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );

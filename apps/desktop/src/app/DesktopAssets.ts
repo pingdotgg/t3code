@@ -12,14 +12,13 @@ export interface DesktopIconPaths {
   readonly png: Option.Option<string>;
 }
 
-export interface DesktopAssetsShape {
-  readonly iconPaths: Effect.Effect<DesktopIconPaths>;
-  readonly resolveResourcePath: (fileName: string) => Effect.Effect<Option.Option<string>>;
-}
-
-export class DesktopAssets extends Context.Service<DesktopAssets, DesktopAssetsShape>()(
-  "@t3tools/desktop/app/DesktopAssets",
-) {}
+export class DesktopAssets extends Context.Service<
+  DesktopAssets,
+  {
+    readonly iconPaths: Effect.Effect<DesktopIconPaths>;
+    readonly resolveResourcePath: (fileName: string) => Effect.Effect<Option.Option<string>>;
+  }
+>()("@t3tools/desktop/app/DesktopAssets") {}
 
 const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(function* (
   fileName: string,
@@ -49,7 +48,7 @@ const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (environment.isDevelopment && process.platform === "darwin" && ext === "png") {
+  if (environment.isDevelopment && environment.platform === "darwin" && ext === "png") {
     const developmentDockIconPath = environment.developmentDockIconPath;
     const developmentDockIconExists = yield* fileSystem
       .exists(developmentDockIconPath)

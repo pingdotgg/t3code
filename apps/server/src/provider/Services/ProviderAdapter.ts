@@ -24,6 +24,10 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderSessionEnvironment = Readonly<Record<string, string | undefined>>;
+export type ProviderAdapterSessionStartInput = ProviderSessionStartInput & {
+  readonly env?: ProviderSessionEnvironment;
+};
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -53,7 +57,7 @@ export interface ProviderAdapterShape<TError> {
    * Start a provider-backed session.
    */
   readonly startSession: (
-    input: ProviderSessionStartInput,
+    input: ProviderAdapterSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
   /**

@@ -205,7 +205,7 @@ private struct ReviewDiffNativeStyle {
     ReviewDiffNativeStyle(
       rowHeight: metric(payload?.rowHeight, fallback: 24),
       contentWidth: metric(payload?.contentWidth, fallback: 2800),
-      changeBarWidth: metric(payload?.changeBarWidth, fallback: 4),
+      changeBarWidth: nonNegativeMetric(payload?.changeBarWidth, fallback: 4),
       gutterWidth: metric(payload?.gutterWidth, fallback: 50),
       codePadding: metric(payload?.codePadding, fallback: 8),
       textVerticalInset: metric(payload?.textVerticalInset, fallback: 3),
@@ -238,6 +238,13 @@ private struct ReviewDiffNativeStyle {
 
   private static func metric(_ value: Double?, fallback: CGFloat) -> CGFloat {
     guard let value, value.isFinite, value > 0 else {
+      return fallback
+    }
+    return CGFloat(value)
+  }
+
+  private static func nonNegativeMetric(_ value: Double?, fallback: CGFloat) -> CGFloat {
+    guard let value, value.isFinite, value >= 0 else {
       return fallback
     }
     return CGFloat(value)
@@ -316,6 +323,8 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var lastMetricsDebugKey = ""
   private var lastVisibleRangeDebugKey = ""
   private var tokensResetKey = ""
+  private var initialRowIndex: Int?
+  private var hasAppliedInitialRowIndex = false
 
   let onDebug = EventDispatcher()
   let onToggleFile = EventDispatcher()
@@ -394,6 +403,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     do {
       rows = try JSONDecoder().decode([ReviewDiffNativeRow].self, from: data)
       contentView.rows = rows
+      hasAppliedInitialRowIndex = false
       emitDebug("rows-decoded", [
         "rows": rows.count,
         "firstKind": rows.first?.kind ?? "none",
@@ -402,6 +412,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     } catch {
       rows = []
       contentView.rows = []
+      hasAppliedInitialRowIndex = false
       updateContentMetrics()
       emitDebug("rows-decode-failed", [
         "error": error.localizedDescription,
@@ -561,6 +572,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     contentView.verticalOffset = scrollView.contentOffset.y
     contentView.invalidateVisibleViewport()
     contentView.setNeedsDisplay()
+    applyInitialRowIndexIfNeeded()
 
     let debugKey = "\(rows.count):\(Int(bounds.width)):\(Int(bounds.height)):\(Int(height))"
     if debugKey != lastMetricsDebugKey {
@@ -645,6 +657,19 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     applyStyle()
   }
 
+  func setInitialRowIndex(_ initialRowIndex: Double) {
+    let nextIndex: Int? = initialRowIndex.isFinite && initialRowIndex >= 0
+      ? Int(initialRowIndex.rounded(.down))
+      : nil
+    guard nextIndex != self.initialRowIndex else {
+      return
+    }
+
+    self.initialRowIndex = nextIndex
+    hasAppliedInitialRowIndex = false
+    applyInitialRowIndexIfNeeded()
+  }
+
   private func applyStyle() {
     contentView.style = ReviewDiffNativeStyle
       .resolve(stylePayload)
@@ -661,6 +686,22 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     )
     contentView.verticalOffset = scrollView.contentOffset.y
     contentView.invalidateVisibleViewport()
+  }
+
+  private func applyInitialRowIndexIfNeeded() {
+    guard !hasAppliedInitialRowIndex,
+          let initialRowIndex,
+          bounds.height > 0,
+          let rowFrame = contentView.frameForRow(at: initialRowIndex) else {
+      return
+    }
+
+    let targetScreenY = max(0, (bounds.height - rowFrame.height) * 0.3)
+    let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+    let targetOffset = min(max(rowFrame.minY - targetScreenY, 0), maxOffset)
+    hasAppliedInitialRowIndex = true
+    scrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
+    updateViewportFrame()
   }
 }
 
@@ -818,6 +859,19 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return collapsedCommentIds.contains(row.id) ? 44 : 124
     }
     return style.rowHeight
+  }
+
+  func frameForRow(at index: Int) -> CGRect? {
+    guard rows.indices.contains(index), rowOffsets.indices.contains(index) else {
+      return nil
+    }
+
+    return CGRect(
+      x: 0,
+      y: rowOffsets[index],
+      width: max(viewportWidth, 1),
+      height: height(for: rows[index])
+    )
   }
 
   private func rebuildRowLayout() {

@@ -5,7 +5,16 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
-import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+import {
+  combinedAuthOutput,
+  firstSafeAuthLine,
+  matchFirst,
+  parseCliHost,
+  providerAuth,
+  type SourceControlAuthProbeInput,
+  type SourceControlCliDiscoverySpec,
+  type SourceControlUnknownRemoteRefinementInput,
+} from "./SourceControlProviderDiscovery.ts";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
 function providerError(
@@ -42,48 +51,42 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
   };
 }
 
-function parseGitLabAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
-  const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
+function parseGitLabAuth(input: SourceControlAuthProbeInput) {
+  const output = combinedAuthOutput(input);
   const authenticatedHost = findAuthenticatedGitLabHost(parseGitLabAuthStatusHosts(output));
   const account =
     authenticatedHost?.account ??
-    SourceControlProviderDiscovery.matchFirst(output, [
+    matchFirst(output, [
       /Logged in to .* as\s+([^\s(]+)/iu,
       /Logged in to .* account\s+([^\s(]+)/iu,
       /account:\s*([^\s(]+)/iu,
     ]);
-  const host = authenticatedHost?.host ?? SourceControlProviderDiscovery.parseCliHost(output);
+  const host = authenticatedHost?.host ?? parseCliHost(output);
 
   if (account) {
-    return SourceControlProviderDiscovery.providerAuth({ status: "authenticated", account, host });
+    return providerAuth({ status: "authenticated", account, host });
   }
 
   if (input.exitCode !== 0) {
-    return SourceControlProviderDiscovery.providerAuth({
+    return providerAuth({
       status: "unauthenticated",
       host,
-      detail:
-        SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
-        "Run `glab auth login` to authenticate GitLab CLI.",
+      detail: firstSafeAuthLine(output) ?? "Run `glab auth login` to authenticate GitLab CLI.",
     });
   }
 
-  return SourceControlProviderDiscovery.providerAuth({
+  return providerAuth({
     status: "unknown",
     host,
-    detail:
-      SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
-      "GitLab CLI auth status could not be parsed.",
+    detail: firstSafeAuthLine(output) ?? "GitLab CLI auth status could not be parsed.",
   });
 }
 
-function refineUnknownGitLabRemote(
-  input: SourceControlProviderDiscovery.SourceControlUnknownRemoteRefinementInput,
-) {
+function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
   const host = input.context.provider.name.toLowerCase();
-  const authenticated = parseGitLabAuthStatusHosts(
-    SourceControlProviderDiscovery.combinedAuthOutput(input.auth),
-  ).some((entry) => entry.account !== null && entry.host === host);
+  const authenticated = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).some(
+    (entry) => entry.account !== null && entry.host === host,
+  );
 
   if (!authenticated) {
     return null;
@@ -107,9 +110,9 @@ export const discovery = {
   refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
-} satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
+} satisfies SourceControlCliDiscoverySpec;
 
-export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
+export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 
   return SourceControlProvider.SourceControlProvider.of({
@@ -167,4 +170,4 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
   });
 });
 
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make());
+export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);

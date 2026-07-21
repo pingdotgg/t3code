@@ -26,25 +26,26 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Equal from "effect/Equal";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
-import * as Scope from "effect/Scope";
-import * as Context from "effect/Context";
-import * as Stream from "effect/Stream";
-import * as Cause from "effect/Cause";
 import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
-import { ServerConfig } from "./config.ts";
+import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -108,58 +109,59 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   return { ...settings, providerInstances };
 }
 
-export interface ServerSettingsShape {
-  /** Start the settings runtime and attach file watching. */
-  readonly start: Effect.Effect<void, ServerSettingsError>;
-
-  /** Await settings runtime readiness. */
-  readonly ready: Effect.Effect<void, ServerSettingsError>;
-
-  /** Read the current settings. */
-  readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
-
-  /** Patch settings and persist. Returns the new full settings object. */
-  readonly updateSettings: (
-    patch: ServerSettingsPatch,
-  ) => Effect.Effect<ServerSettings, ServerSettingsError>;
-
-  /** Stream of settings change events. */
-  readonly streamChanges: Stream.Stream<ServerSettings>;
-}
-
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
-  ServerSettingsShape
->()("t3/serverSettings/ServerSettingsService") {
-  static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
-    Layer.effect(
-      ServerSettingsService,
-      Effect.gen(function* () {
-        const { automaticGitFetchInterval, ...overridesForMerge } = overrides;
-        const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
-        const initialSettings = yield* normalizeServerSettings({
-          ...merged,
-          ...(automaticGitFetchInterval !== undefined
-            ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
-            : {}),
-        });
-        const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+  {
+    /** Start the settings runtime and attach file watching. */
+    readonly start: Effect.Effect<void, ServerSettingsError>;
 
-        return {
-          start: Effect.void,
-          ready: Effect.void,
-          getSettings: Ref.get(currentSettingsRef),
-          updateSettings: (patch) =>
-            Ref.get(currentSettingsRef).pipe(
-              Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-              Effect.flatMap(normalizeServerSettings),
-              Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-            ),
-          streamChanges: Stream.empty,
-        } satisfies ServerSettingsShape;
-      }),
-    );
+    /** Await settings runtime readiness. */
+    readonly ready: Effect.Effect<void, ServerSettingsError>;
+
+    /** Read the current settings. */
+    readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Patch settings and persist. Returns the new full settings object. */
+    readonly updateSettings: (
+      patch: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Stream of settings change events. */
+    readonly streamChanges: Stream.Stream<ServerSettings>;
+  }
+>()("t3/serverSettings/ServerSettingsService") {
+  /** @deprecated Import and use `layerTest` from this module. */
+  static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
+
+const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
+  Effect.gen(function* () {
+    const { automaticGitFetchInterval, ...overridesForMerge } = overrides;
+    const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
+    const initialSettings = yield* normalizeServerSettings({
+      ...merged,
+      ...(automaticGitFetchInterval !== undefined
+        ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
+        : {}),
+    });
+    const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+
+    return {
+      start: Effect.void,
+      ready: Effect.void,
+      getSettings: Ref.get(currentSettingsRef),
+      updateSettings: (patch) =>
+        Ref.get(currentSettingsRef).pipe(
+          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
+          Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+        ),
+      streamChanges: Stream.empty,
+    } satisfies ServerSettingsService["Service"];
+  });
+
+export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
+  Layer.effect(ServerSettingsService, makeTest(overrides));
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
@@ -254,8 +256,8 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
   return Object.is(current, defaults) ? undefined : current;
 }
 
-const makeServerSettings = Effect.gen(function* () {
-  const { settingsPath } = yield* ServerConfig;
+const make = Effect.gen(function* () {
+  const { settingsPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -350,7 +352,7 @@ const makeServerSettings = Effect.gen(function* () {
             );
           environment.push({
             ...variable,
-            value: secret ? textDecoder.decode(secret) : "",
+            value: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
           });
         }
         providerInstances[instanceId] = {
@@ -577,9 +579,7 @@ const makeServerSettings = Effect.gen(function* () {
         Stream.map(resolveTextGenerationProvider),
       );
     },
-  } satisfies ServerSettingsShape;
+  } satisfies ServerSettingsService["Service"];
 });
 
-export const ServerSettingsLive = Layer.effect(ServerSettingsService, makeServerSettings).pipe(
-  Layer.provide(ServerSecretStore.layer),
-);
+export const layer = Layer.effect(ServerSettingsService, make);

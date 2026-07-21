@@ -3,13 +3,13 @@ import { RelayAgentActivityState as RelayAgentActivityStateSchema } from "@t3too
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { cast } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowUpsertPersistenceError>()(
@@ -39,24 +39,26 @@ export class AgentActivityRowListPersistenceError extends Schema.TaggedErrorClas
   }
 }
 
-export interface AgentActivityRowsShape {
-  readonly upsert: (input: {
-    readonly environmentPublicKey: string;
-    readonly state: RelayAgentActivityState;
-  }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
-  readonly remove: (input: {
-    readonly environmentId: string;
-    readonly environmentPublicKey: string;
-    readonly threadId: string;
-  }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
-  readonly listForUser: (input: {
-    readonly userId: string;
-  }) => Effect.Effect<ReadonlyArray<RelayAgentActivityState>, AgentActivityRowListPersistenceError>;
-}
-
-export class AgentActivityRows extends Context.Service<AgentActivityRows, AgentActivityRowsShape>()(
-  "t3code-relay/agentActivity/AgentActivityRows",
-) {}
+export class AgentActivityRows extends Context.Service<
+  AgentActivityRows,
+  {
+    readonly upsert: (input: {
+      readonly environmentPublicKey: string;
+      readonly state: RelayAgentActivityState;
+    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    readonly remove: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly threadId: string;
+    }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
+    readonly listForUser: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<
+      ReadonlyArray<RelayAgentActivityState>,
+      AgentActivityRowListPersistenceError
+    >;
+  }
+>()("t3code-relay/agentActivity/AgentActivityRows") {}
 
 const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const encodeJsonValue = Schema.encodeEffect(Schema.UnknownFromJsonString);
@@ -69,8 +71,8 @@ const decodeRelayAgentActivityStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityStateSchema),
 );
 
-const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+export const make = Effect.gen(function* () {
+  const db = yield* RelayDb.RelayDb;
 
   return AgentActivityRows.of({
     upsert: Effect.fn("relay.agent_activity_rows.upsert")(
@@ -82,7 +84,7 @@ const make = Effect.gen(function* () {
         const now = yield* DateTime.now;
         const stateJson = yield* encodeRelayAgentActivityStateJson(input.state).pipe(
           Effect.flatMap(decodeJsonString),
-          Effect.map(cast<unknown, RelayAgentActivityState>),
+          Effect.map(Function.cast<unknown, RelayAgentActivityState>),
         );
         yield* db
           .insert(relayAgentActivityRows)

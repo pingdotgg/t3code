@@ -83,7 +83,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
             removeListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
           }),
       ).pipe(Effect.asVoid),
-  } satisfies ElectronUpdater.ElectronUpdaterShape);
+  } satisfies ElectronUpdater.ElectronUpdater["Service"]);
 
   const windowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
@@ -99,7 +99,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
     destroyAll: Effect.void,
     syncAllAppearance: () => Effect.void,
-  } satisfies ElectronWindow.ElectronWindowShape);
+  } satisfies ElectronWindow.ElectronWindow["Service"]);
 
   const backendLayer = Layer.succeed(DesktopBackendManager.DesktopBackendManager, {
     start: Effect.void,

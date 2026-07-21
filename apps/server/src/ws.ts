@@ -22,6 +22,7 @@ import {
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
+  type DiscoveredLocalServerList,
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -33,12 +34,15 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectListEntriesError,
+  ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  AssetAccessError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -52,41 +56,44 @@ import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
-import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
-import { ServerConfig } from "./config.ts";
-import { Keybindings } from "./keybindings.ts";
+import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as ServerConfig from "./config.ts";
+import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
-import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
-import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
-import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
-import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
-import { TerminalManager } from "./terminal/Services/Manager.ts";
-import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
-import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
-import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
-import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
-import { VcsProvisioningService } from "./vcs/VcsProvisioningService.ts";
-import { GitWorkflowService } from "./git/GitWorkflowService.ts";
-import { ReviewService } from "./review/ReviewService.ts";
-import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
-import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
-import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSettings from "./serverSettings.ts";
+import * as TerminalManager from "./terminal/Manager.ts";
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as PreviewManager from "./preview/Manager.ts";
+import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import * as PortScanner from "./preview/PortScanner.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as ReviewService from "./review/ReviewService.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import type { AuthenticatedSession } from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
-import * as SourceControlDiscoveryLayer from "./sourceControl/SourceControlDiscovery.ts";
-import { SourceControlRepositoryService } from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -101,9 +108,80 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
-const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
+const isWorkspacePathOutsideRootError = Schema.is(WorkspacePaths.WorkspacePathOutsideRootError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+function unexpectedCompatibilityError(error: never): never {
+  throw new Error(`Unhandled compatibility error: ${String(error)}`);
+}
+
+/** Preserve pre-structured-error display behavior at the RPC boundary. */
+function legacyPlatformFailureDescription(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** Preserve the setup runner's broader pre-refactor message normalization. */
+function legacySetupFailureDescription(cause: unknown): string {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "message" in cause &&
+    typeof cause.message === "string"
+  ) {
+    return cause.message;
+  }
+  return String(cause);
+}
+
+function workspaceEntriesCompatibilityDetail(
+  error: WorkspaceEntries.WorkspaceEntriesError,
+): string {
+  switch (error._tag) {
+    case "WorkspaceRootNotExistsError":
+      return `Workspace root does not exist: ${error.normalizedWorkspaceRoot}`;
+    case "WorkspaceRootCreateFailedError":
+      return `Failed to create workspace root: ${error.normalizedWorkspaceRoot}`;
+    case "WorkspaceRootNotDirectoryError":
+      return `Workspace root is not a directory: ${error.normalizedWorkspaceRoot}`;
+    case "WorkspaceSearchIndexCreateFailed":
+      return `Failed to create the workspace search index for '${error.cwd}': ${error.reason}`;
+    case "WorkspaceSearchIndexScanTimedOut":
+      return `Workspace search index for '${error.cwd}' did not finish scanning within ${error.timeout}`;
+    case "WorkspaceSearchIndexSearchFailed":
+      return `Workspace search failed for '${error.cwd}': ${error.reason}`;
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function workspaceBrowseCompatibilityDetail(
+  error: WorkspaceEntries.WorkspaceEntriesBrowseError,
+): string {
+  switch (error._tag) {
+    case "WorkspaceEntriesWindowsPathUnsupportedError":
+      return "Windows-style paths are only supported on Windows.";
+    case "WorkspaceEntriesCurrentProjectRequiredError":
+      return "Relative filesystem browse paths require a current project.";
+    case "WorkspaceEntriesReadDirectoryError":
+      return `Unable to browse '${error.parentPath}': ${legacyPlatformFailureDescription(error.cause)}`;
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function projectSetupScriptCompatibilityDetail(
+  error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError,
+): string {
+  switch (error._tag) {
+    case "ProjectSetupScriptOperationError":
+      return legacySetupFailureDescription(error.cause);
+    case "ProjectSetupScriptProjectNotFoundError":
+      return "Project was not found for setup script execution.";
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -154,10 +232,13 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
+  [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -180,6 +261,18 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.terminalClose, AuthTerminalOperateScope],
   [WS_METHODS.subscribeTerminalEvents, AuthTerminalOperateScope],
   [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
+  [WS_METHODS.previewOpen, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewNavigate, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewRefresh, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewClose, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewList, AuthOrchestrationReadScope],
+  [WS_METHODS.previewReportStatus, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationConnect, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationRespond, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationReportOwner, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationClearOwner, AuthOrchestrationOperateScope],
+  [WS_METHODS.subscribePreviewEvents, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeDiscoveredLocalServers, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
@@ -225,34 +318,38 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
+const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
-      const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-      const orchestrationEngine = yield* OrchestrationEngineService;
-      const checkpointDiffQuery = yield* CheckpointDiffQuery;
-      const keybindings = yield* Keybindings;
+      const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
-      const gitWorkflow = yield* GitWorkflowService;
-      const review = yield* ReviewService;
-      const vcsProvisioning = yield* VcsProvisioningService;
-      const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
-      const terminalManager = yield* TerminalManager;
-      const providerRegistry = yield* ProviderRegistry;
+      const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const review = yield* ReviewService.ReviewService;
+      const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
+      const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const terminalManager = yield* TerminalManager.TerminalManager;
+      const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const previewManager = yield* PreviewManager.PreviewManager;
+      const portDiscovery = yield* PortScanner.PortDiscovery;
+      const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
-      const config = yield* ServerConfig;
-      const lifecycleEvents = yield* ServerLifecycleEvents;
-      const serverSettings = yield* ServerSettingsService;
-      const startup = yield* ServerRuntimeStartup;
-      const workspaceEntries = yield* WorkspaceEntries;
-      const workspaceFileSystem = yield* WorkspaceFileSystem;
-      const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
-      const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
-      const serverEnvironment = yield* ServerEnvironment;
+      const config = yield* ServerConfig.ServerConfig;
+      const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+      const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const repositoryIdentityResolver =
+        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
+      const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
         Effect.catch((cause) =>
@@ -261,7 +358,8 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           }).pipe(Effect.as(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
         ),
       );
-      const sourceControlRepositories = yield* SourceControlRepositoryService;
+      const sourceControlRepositories =
+        yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -534,12 +632,11 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               : Effect.void;
 
           const recordSetupScriptLaunchFailure = (input: {
-            readonly error: unknown;
+            readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
             readonly requestedAt: string;
             readonly worktreePath: string;
           }) => {
-            const detail =
-              input.error instanceof Error ? input.error.message : "Unknown setup failure.";
+            const detail = projectSetupScriptCompatibilityDetail(input.error);
             return appendSetupScriptActivity({
               threadId: command.threadId,
               kind: "setup-script.failed",
@@ -668,10 +765,24 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             }
 
             if (bootstrap?.prepareWorktree) {
+              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
+              if (bootstrap.prepareWorktree.startFromOrigin) {
+                yield* gitWorkflow.fetchRemote({
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  remoteName: "origin",
+                });
+                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  refName: bootstrap.prepareWorktree.baseBranch,
+                  fallbackRemoteName: "origin",
+                });
+                worktreeBaseRef = resolvedRemoteBase.commitSha;
+              }
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: bootstrap.prepareWorktree.baseBranch,
+                refName: worktreeBaseRef,
                 newRefName: bootstrap.prepareWorktree.branch,
+                baseRefName: bootstrap.prepareWorktree.baseBranch,
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
@@ -727,7 +838,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
-        const settings = redactServerSettingsForClient(yield* serverSettings.getSettings);
+        const settings = ServerSettings.redactServerSettingsForClient(
+          yield* serverSettings.getSettings,
+        );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
 
@@ -739,7 +852,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: ExternalLauncher.resolveAvailableEditors(),
+          availableEditors: yield* externalLauncher.resolveAvailableEditors(),
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -1029,7 +1142,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverGetSettings]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetSettings,
-            serverSettings.getSettings.pipe(Effect.map(redactServerSettingsForClient)),
+            serverSettings.getSettings.pipe(
+              Effect.map(ServerSettings.redactServerSettingsForClient),
+            ),
             {
               "rpc.aggregate": "server",
             },
@@ -1037,7 +1152,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
-            serverSettings.updateSettings(patch).pipe(Effect.map(redactServerSettingsForClient)),
+            serverSettings
+              .updateSettings(patch)
+              .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
             {
               "rpc.aggregate": "server",
             },
@@ -1143,10 +1260,37 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
-                    message: `Failed to search workspace entries: ${cause.detail}`,
+                    message: `Failed to search workspace entries: ${workspaceEntriesCompatibilityDetail(cause)}`,
                     cause,
                   }),
               ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsListEntries]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListEntries,
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    message: `Failed to list workspace entries: ${workspaceEntriesCompatibilityDetail(cause)}`,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsReadFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsReadFile,
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError((cause) => {
+                const message = isWorkspacePathOutsideRootError(cause)
+                  ? "Workspace file path must stay within the project root."
+                  : `Failed to read workspace file: ${legacyPlatformFailureDescription(cause.cause)}`;
+                return new ProjectReadFileError({ message, cause });
+              }),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -1177,11 +1321,57 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new FilesystemBrowseError({
-                    message: cause.detail,
+                    message: workspaceBrowseCompatibilityDetail(cause),
                     cause,
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.assetsCreateUrl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.assetsCreateUrl,
+            Effect.gen(function* () {
+              if (input.resource._tag !== "workspace-file") {
+                return yield* issueAssetUrl({ resource: input.resource });
+              }
+              const thread = yield* projectionSnapshotQuery
+                .getThreadShellById(input.resource.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetAccessError({
+                        message: "Failed to resolve workspace context.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(thread)) {
+                return yield* new AssetAccessError({
+                  message: "Workspace context was not found.",
+                });
+              }
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.value.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetAccessError({
+                        message: "Failed to resolve workspace context.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AssetAccessError({
+                  message: "Workspace context was not found.",
+                });
+              }
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+              });
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
@@ -1350,6 +1540,80 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             ),
             { "rpc.aggregate": "terminal" },
           ),
+        [WS_METHODS.previewOpen]: (input) =>
+          observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewNavigate]: (input) =>
+          observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewRefresh]: (input) =>
+          observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewClose]: (input) =>
+          observeRpcEffect(WS_METHODS.previewClose, previewManager.close(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewList]: (input) =>
+          observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewReportStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewAutomationConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.previewAutomationConnect,
+            previewAutomationBroker.connect(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationRespond,
+            previewAutomationBroker.respond(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationReportOwner]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationReportOwner,
+            previewAutomationBroker.reportOwner(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationClearOwner]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationClearOwner,
+            previewAutomationBroker.clearOwner(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.subscribePreviewEvents]: (_input) =>
+          observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.subscribeDiscoveredLocalServers]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDiscoveredLocalServers,
+            Stream.callback<DiscoveredLocalServerList>((queue) =>
+              Effect.gen(function* () {
+                yield* portDiscovery.retain;
+                const initial = yield* portDiscovery.scan();
+                const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
+                yield* Queue.offer(queue, {
+                  servers: initial,
+                  scannedAt: initialScannedAt,
+                });
+                yield* portDiscovery.subscribe((servers) =>
+                  Effect.gen(function* () {
+                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
+                    yield* Queue.offer(queue, { servers, scannedAt });
+                  }),
+                );
+              }),
+            ),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.subscribeServerConfig]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,
@@ -1373,7 +1637,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               const settingsUpdates = serverSettings.streamChanges.pipe(
-                Stream.map((settings) => redactServerSettingsForClient(settings)),
+                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
                   version: 1 as const,
                   type: "settingsUpdated" as const,
@@ -1462,10 +1726,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-          Effect.catchTags({
-            ServerAuthInvalidCredentialError: (error) => failEnvironmentAuthInvalid(error.reason),
-            ServerAuthInternalError: (error) => failEnvironmentInternal("internal_error", error),
-          }),
+          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+          ),
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("internal_error", error),
+          ),
         );
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
@@ -1473,9 +1739,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           Effect.provide(
             makeWsRpcLayer(session).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(PreviewAutomationBroker.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
-                SourceControlDiscoveryLayer.layer.pipe(
+                SourceControlDiscovery.layer.pipe(
                   Layer.provide(
                     SourceControlProviderRegistry.layer.pipe(
                       Layer.provide(

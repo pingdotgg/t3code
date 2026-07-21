@@ -1,0 +1,6 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3ComposerEditorModule"]
+  }
+}

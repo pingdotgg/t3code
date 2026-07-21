@@ -3,7 +3,6 @@ export {
   readPrimaryEnvironmentDescriptor,
   resetPrimaryEnvironmentDescriptorForTests,
   resolveInitialPrimaryEnvironmentDescriptor,
-  usePrimaryEnvironmentId,
   writePrimaryEnvironmentDescriptor,
   __resetPrimaryEnvironmentBootstrapForTests,
   __resetPrimaryEnvironmentDescriptorBootstrapForTests,
@@ -33,6 +32,8 @@ export {
 } from "./auth";
 
 export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";
+
+export { PrimaryEnvironmentHttpClient } from "./httpClient";
 
 export {
   readPrimaryEnvironmentTarget,

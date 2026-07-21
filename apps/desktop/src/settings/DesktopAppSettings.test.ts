@@ -8,11 +8,6 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import {
-  DEFAULT_DESKTOP_SETTINGS,
-  resolveDefaultDesktopSettings,
-  type DesktopSettings as DesktopSettingsValue,
-} from "./DesktopAppSettings.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 const DesktopSettingsPatch = Schema.Struct({
@@ -82,20 +77,23 @@ describe("DesktopSettings", () => {
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        assert.deepEqual(yield* settings.load, DEFAULT_DESKTOP_SETTINGS);
-        assert.deepEqual(yield* settings.get, DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
       }),
     ),
   );
 
   it("defaults packaged nightly builds to the nightly update channel", () => {
-    assert.deepEqual(resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"), {
-      serverExposureMode: "local-only",
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
-      updateChannel: "nightly",
-      updateChannelConfiguredByUser: false,
-    } satisfies DesktopSettingsValue);
+    assert.deepEqual(
+      DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
+      {
+        serverExposureMode: "local-only",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+        updateChannel: "nightly",
+        updateChannelConfiguredByUser: false,
+      } satisfies DesktopAppSettings.DesktopSettings,
+    );
   });
 
   it.effect("loads persisted settings and applies semantic updates", () =>
@@ -116,7 +114,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
-        } satisfies DesktopSettingsValue);
+        } satisfies DesktopAppSettings.DesktopSettings);
 
         const exposure = yield* settings.setServerExposureMode("local-only");
         assert.isTrue(exposure.changed);
@@ -133,6 +131,27 @@ describe("DesktopSettings", () => {
         assert.isTrue(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannel, "nightly");
         assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
+      }),
+    ),
+  );
+
+  it.effect("reports the failed desktop settings write operation and path", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.desktopSettingsPath, { recursive: true });
+
+        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
+        assert.instanceOf(error, DesktopAppSettings.DesktopSettingsWriteError);
+        assert.equal(error.operation, "replace-settings-file");
+        assert.equal(error.path, environment.desktopSettingsPath);
+        assert.exists(error.cause);
+        assert.equal(
+          error.message,
+          `Desktop settings write failed during replace-settings-file at ${environment.desktopSettingsPath}.`,
+        );
       }),
     ),
   );
@@ -167,7 +186,7 @@ describe("DesktopSettings", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.desktopSettingsPath, "{not-json");
 
-        assert.deepEqual(yield* settings.load, DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
       }),
     ),
   );
@@ -195,7 +214,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
-        } satisfies DesktopSettingsValue);
+        } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
   );
@@ -234,7 +253,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
-        } satisfies DesktopSettingsValue);
+        } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
     ),
@@ -256,7 +275,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
-        } satisfies DesktopSettingsValue);
+        } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
     ),
@@ -277,7 +296,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
-        } satisfies DesktopSettingsValue);
+        } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
   );

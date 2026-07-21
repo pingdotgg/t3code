@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -17,7 +18,7 @@ const TRUE_BYTES = new TextEncoder().encode("true");
 
 export const readCliDesiredCloudLink = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  return (yield* secrets.get(CLOUD_CLI_DESIRED_LINK_SECRET)) !== null;
+  return Option.isSome(yield* secrets.get(CLOUD_CLI_DESIRED_LINK_SECRET));
 });
 
 export const setCliDesiredCloudLink = Effect.fn("cloud.cli_state.set_desired")(function* (

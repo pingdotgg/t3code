@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
-import { appendFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
 
@@ -22,6 +22,7 @@ const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION ===
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -41,7 +42,7 @@ function logExit(reason: string): void {
   if (!exitLogPath) {
     return;
   }
-  appendFileSync(exitLogPath, `${reason}\n`, "utf8");
+  NodeFS.appendFileSync(exitLogPath, `${reason}\n`, "utf8");
 }
 
 process.once("SIGTERM", () => {
@@ -363,6 +364,10 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+
+      if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
+        yield* Effect.sleep(`${promptDelayMs} millis`);
+      }
 
       if (emitInterleavedAssistantToolCalls) {
         const toolCallId = "tool-call-1";
@@ -688,7 +693,7 @@ const program = Effect.gen(function* () {
               }
               const payload = event.payload;
               return Effect.sync(() => {
-                appendFileSync(
+                NodeFS.appendFileSync(
                   requestLogPath,
                   payload.endsWith("\n") ? payload : `${payload}\n`,
                   "utf8",

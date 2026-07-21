@@ -7,19 +7,18 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as Option from "effect/Option";
 
-import { ServerConfig } from "../config.ts";
-import { AuthPairingLinkRepositoryLive } from "../persistence/Layers/AuthPairingLinks.ts";
-import { AuthPairingLinkRepository } from "../persistence/Services/AuthPairingLinks.ts";
+import * as ServerConfig from "../config.ts";
+import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
@@ -30,22 +29,110 @@ export interface BootstrapGrant {
   readonly expiresAt: DateTime.DateTime;
 }
 
-export class BootstrapCredentialInvalidError extends Data.TaggedError(
-  "BootstrapCredentialInvalidError",
-)<{
-  readonly message: string;
-}> {}
+export class UnknownBootstrapCredentialError extends Schema.TaggedErrorClass<UnknownBootstrapCredentialError>()(
+  "UnknownBootstrapCredentialError",
+  {},
+) {
+  override get message(): string {
+    return "Unknown bootstrap credential.";
+  }
+}
 
-export class BootstrapCredentialInternalError extends Data.TaggedError(
-  "BootstrapCredentialInternalError",
-)<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ExpiredBootstrapCredentialError extends Schema.TaggedErrorClass<ExpiredBootstrapCredentialError>()(
+  "ExpiredBootstrapCredentialError",
+  {},
+) {
+  override get message(): string {
+    return "Bootstrap credential expired.";
+  }
+}
 
-export type BootstrapCredentialError =
-  | BootstrapCredentialInvalidError
-  | BootstrapCredentialInternalError;
+export class BootstrapCredentialProofKeyMismatchError extends Schema.TaggedErrorClass<BootstrapCredentialProofKeyMismatchError>()(
+  "BootstrapCredentialProofKeyMismatchError",
+  {},
+) {
+  override get message(): string {
+    return "Bootstrap credential proof key mismatch.";
+  }
+}
+
+export class UnavailableBootstrapCredentialError extends Schema.TaggedErrorClass<UnavailableBootstrapCredentialError>()(
+  "UnavailableBootstrapCredentialError",
+  {},
+) {
+  override get message(): string {
+    return "Bootstrap credential is no longer available.";
+  }
+}
+
+export const BootstrapCredentialInvalidError = Schema.Union([
+  UnknownBootstrapCredentialError,
+  ExpiredBootstrapCredentialError,
+  BootstrapCredentialProofKeyMismatchError,
+  UnavailableBootstrapCredentialError,
+]);
+export type BootstrapCredentialInvalidError = typeof BootstrapCredentialInvalidError.Type;
+export const isBootstrapCredentialInvalidError = Schema.is(BootstrapCredentialInvalidError);
+
+export class ActivePairingLinksLoadError extends Schema.TaggedErrorClass<ActivePairingLinksLoadError>()(
+  "ActivePairingLinksLoadError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to load active pairing links.";
+  }
+}
+
+export class PairingLinkRevokeError extends Schema.TaggedErrorClass<PairingLinkRevokeError>()(
+  "PairingLinkRevokeError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke pairing link.";
+  }
+}
+
+export class PairingCredentialIssueError extends Schema.TaggedErrorClass<PairingCredentialIssueError>()(
+  "PairingCredentialIssueError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to issue pairing credential.";
+  }
+}
+
+export class BootstrapCredentialConsumeError extends Schema.TaggedErrorClass<BootstrapCredentialConsumeError>()(
+  "BootstrapCredentialConsumeError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to consume bootstrap credential.";
+  }
+}
+
+export const BootstrapCredentialInternalError = Schema.Union([
+  ActivePairingLinksLoadError,
+  PairingLinkRevokeError,
+  PairingCredentialIssueError,
+  BootstrapCredentialConsumeError,
+]);
+export type BootstrapCredentialInternalError = typeof BootstrapCredentialInternalError.Type;
+export const isBootstrapCredentialInternalError = Schema.is(BootstrapCredentialInternalError);
+
+export const BootstrapCredentialError = Schema.Union([
+  BootstrapCredentialInvalidError,
+  BootstrapCredentialInternalError,
+]);
+export type BootstrapCredentialError = typeof BootstrapCredentialError.Type;
+export const isBootstrapCredentialError = Schema.is(BootstrapCredentialError);
 
 export interface IssuedBootstrapCredential {
   readonly id: string;
@@ -65,31 +152,30 @@ export type BootstrapCredentialChange =
       readonly id: string;
     };
 
-export interface PairingGrantStoreShape {
-  readonly issueOneTimeToken: (input?: {
-    readonly ttl?: Duration.Duration;
-    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
-    readonly subject?: string;
-    readonly label?: string;
-    readonly proofKeyThumbprint?: string;
-  }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
-  readonly listActive: () => Effect.Effect<
-    ReadonlyArray<AuthPairingLink>,
-    BootstrapCredentialInternalError
-  >;
-  readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
-  readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
-  readonly consume: (
-    credential: string,
-    input?: {
+export class PairingGrantStore extends Context.Service<
+  PairingGrantStore,
+  {
+    readonly issueOneTimeToken: (input?: {
+      readonly ttl?: Duration.Duration;
+      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly subject?: string;
+      readonly label?: string;
       readonly proofKeyThumbprint?: string;
-    },
-  ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
-}
-
-export class PairingGrantStore extends Context.Service<PairingGrantStore, PairingGrantStoreShape>()(
-  "t3/auth/PairingGrantStore",
-) {}
+    }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
+    readonly listActive: () => Effect.Effect<
+      ReadonlyArray<AuthPairingLink>,
+      BootstrapCredentialInternalError
+    >;
+    readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
+    readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
+    readonly consume: (
+      credential: string,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
+  }
+>()("t3/auth/PairingGrantStore") {}
 
 interface StoredBootstrapGrant extends BootstrapGrant {
   readonly remainingUses: number | "unbounded";
@@ -112,21 +198,10 @@ const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
   Math.floor(256 / PAIRING_TOKEN_ALPHABET.length) * PAIRING_TOKEN_ALPHABET.length;
 
-const invalidBootstrapCredentialError = (message: string) =>
-  new BootstrapCredentialInvalidError({
-    message,
-  });
-
-const internalBootstrapCredentialError = (message: string, cause: unknown) =>
-  new BootstrapCredentialInternalError({
-    message,
-    cause,
-  });
-
-export const make = Effect.fn("makePairingGrantStore")(function* () {
+export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
-  const config = yield* ServerConfig;
-  const pairingLinks = yield* AuthPairingLinkRepository;
+  const config = yield* ServerConfig.ServerConfig;
+  const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
@@ -178,10 +253,7 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
     });
   }
 
-  const toBootstrapCredentialError = (message: string) => (cause: unknown) =>
-    internalBootstrapCredentialError(message, cause);
-
-  const listActive: PairingGrantStoreShape["listActive"] = Effect.fn(
+  const listActive: PairingGrantStore["Service"]["listActive"] = Effect.fn(
     "PairingGrantStore.listActive",
   )(
     function* () {
@@ -209,10 +281,10 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
             } satisfies AuthPairingLink),
       );
     },
-    Effect.mapError(toBootstrapCredentialError("Failed to load active pairing links.")),
+    Effect.mapError((cause) => new ActivePairingLinksLoadError({ cause })),
   );
 
-  const revoke: PairingGrantStoreShape["revoke"] = Effect.fn("PairingGrantStore.revoke")(
+  const revoke: PairingGrantStore["Service"]["revoke"] = Effect.fn("PairingGrantStore.revoke")(
     function* (id) {
       const revokedAt = yield* DateTime.now;
       const revoked = yield* pairingLinks.revoke({
@@ -224,10 +296,10 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
       }
       return revoked;
     },
-    Effect.mapError(toBootstrapCredentialError("Failed to revoke pairing link.")),
+    Effect.mapError((cause) => new PairingLinkRevokeError({ cause })),
   );
 
-  const issueOneTimeToken: PairingGrantStoreShape["issueOneTimeToken"] = Effect.fn(
+  const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
   )(
     function* (input) {
@@ -265,10 +337,10 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
       });
       return issued;
     },
-    Effect.mapError(toBootstrapCredentialError("Failed to issue pairing credential.")),
+    Effect.mapError((cause) => new PairingCredentialIssueError({ cause })),
   );
 
-  const consume: PairingGrantStoreShape["consume"] = Effect.fn("PairingGrantStore.consume")(
+  const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
       const seededResult: ConsumeResult = yield* Ref.modify(
@@ -280,7 +352,7 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
               {
                 _tag: "error",
                 reason: "not-found",
-                error: invalidBootstrapCredentialError("Unknown bootstrap credential."),
+                error: new UnknownBootstrapCredentialError({}),
               },
               current,
             ];
@@ -293,7 +365,7 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
               {
                 _tag: "error",
                 reason: "expired",
-                error: invalidBootstrapCredentialError("Bootstrap credential expired."),
+                error: new ExpiredBootstrapCredentialError({}),
               },
               next,
             ];
@@ -304,7 +376,7 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
               {
                 _tag: "error",
                 reason: "not-found",
-                error: invalidBootstrapCredentialError("Bootstrap credential proof key mismatch."),
+                error: new BootstrapCredentialProofKeyMismatchError({}),
               },
               next,
             ];
@@ -371,41 +443,36 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
 
       const matching = yield* pairingLinks.getByCredential({ credential });
       if (Option.isNone(matching)) {
-        return yield* invalidBootstrapCredentialError("Unknown bootstrap credential.");
+        return yield* new UnknownBootstrapCredentialError({});
       }
 
       if (matching.value.revokedAt !== null) {
-        return yield* invalidBootstrapCredentialError(
-          "Bootstrap credential is no longer available.",
-        );
+        return yield* new UnavailableBootstrapCredentialError({});
       }
 
       if (matching.value.consumedAt !== null) {
-        return yield* invalidBootstrapCredentialError("Unknown bootstrap credential.");
+        return yield* new UnknownBootstrapCredentialError({});
       }
 
       if (DateTime.isGreaterThanOrEqualTo(now, matching.value.expiresAt)) {
-        return yield* invalidBootstrapCredentialError("Bootstrap credential expired.");
+        return yield* new ExpiredBootstrapCredentialError({});
       }
 
       if (
         matching.value.proofKeyThumbprint !== null &&
         matching.value.proofKeyThumbprint !== input?.proofKeyThumbprint
       ) {
-        return yield* invalidBootstrapCredentialError("Bootstrap credential proof key mismatch.");
+        return yield* new BootstrapCredentialProofKeyMismatchError({});
       }
 
-      return yield* invalidBootstrapCredentialError("Bootstrap credential is no longer available.");
+      return yield* new UnavailableBootstrapCredentialError({});
     },
     Effect.mapError((cause) =>
-      cause._tag === "BootstrapCredentialInvalidError" ||
-      cause._tag === "BootstrapCredentialInternalError"
-        ? cause
-        : internalBootstrapCredentialError("Failed to consume bootstrap credential.", cause),
+      isBootstrapCredentialError(cause) ? cause : new BootstrapCredentialConsumeError({ cause }),
     ),
   );
 
-  return {
+  return PairingGrantStore.of({
     issueOneTimeToken,
     listActive,
     get streamChanges() {
@@ -413,9 +480,9 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
     },
     revoke,
     consume,
-  } satisfies PairingGrantStoreShape;
+  });
 });
 
-export const layer = Layer.effect(PairingGrantStore, make()).pipe(
-  Layer.provideMerge(AuthPairingLinkRepositoryLive),
+export const layer = Layer.effect(PairingGrantStore, make).pipe(
+  Layer.provideMerge(AuthPairingLinks.layer),
 );
