@@ -13,7 +13,7 @@ describe("searchSlashCommandItems", () => {
         id: "slash:default",
         type: "slash-command",
         command: "default",
-        label: "/default",
+        label: "default",
         description: "Switch this thread back to normal build mode",
       },
       {
@@ -21,7 +21,7 @@ describe("searchSlashCommandItems", () => {
         type: "provider-slash-command",
         provider: claudeDriver,
         command: { name: "ui" },
-        label: "/ui",
+        label: "ui",
         description: "Explore, build, and refine UI.",
       },
       {
@@ -29,16 +29,18 @@ describe("searchSlashCommandItems", () => {
         type: "provider-slash-command",
         provider: claudeDriver,
         command: { name: "frontend-design" },
-        label: "/frontend-design",
+        label: "frontend-design",
         description: "Create distinctive, production-grade frontend interfaces",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<
+        ComposerCommandItem,
+        { type: "slash-command" | "provider-slash-command" | "custom-slash-command" }
+      >
     >;
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:ui",
-      "slash:default",
     ]);
   });
 
@@ -49,7 +51,7 @@ describe("searchSlashCommandItems", () => {
         type: "provider-slash-command",
         provider: claudeDriver,
         command: { name: "gh-fix-ci" },
-        label: "/gh-fix-ci",
+        label: "gh-fix-ci",
         description: "Fix failing GitHub Actions",
       },
       {
@@ -57,11 +59,14 @@ describe("searchSlashCommandItems", () => {
         type: "provider-slash-command",
         provider: claudeDriver,
         command: { name: "github" },
-        label: "/github",
+        label: "github",
         description: "General GitHub help",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<
+        ComposerCommandItem,
+        { type: "slash-command" | "provider-slash-command" | "custom-slash-command" }
+      >
     >;
 
     expect(searchSlashCommandItems(items, "gfc").map((item) => item.id)).toEqual([

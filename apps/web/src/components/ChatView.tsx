@@ -72,6 +72,7 @@ import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
+import { collectComposerSlashCommands } from "../lib/composerSlashCommands";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -2290,6 +2291,14 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const visibleSlashCommands = useMemo(
+    () =>
+      collectComposerSlashCommands(providerStatuses, {
+        hiddenSlashCommandsByProvider: settings.hiddenProviderSlashCommands,
+        customSlashCommands: settings.customSlashCommands,
+      }),
+    [providerStatuses, settings.customSlashCommands, settings.hiddenProviderSlashCommands],
+  );
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -5279,6 +5288,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
+                slashCommands={visibleSlashCommands}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState}

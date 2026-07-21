@@ -13,6 +13,10 @@ function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
 }
 
+export function isAgentsSkillPath(pathValue: string): boolean {
+  return normalizePathSeparators(pathValue).includes("/.agents/");
+}
+
 export function formatProviderSkillDisplayName(
   skill: Pick<ServerProviderSkill, "name" | "displayName">,
 ): string {

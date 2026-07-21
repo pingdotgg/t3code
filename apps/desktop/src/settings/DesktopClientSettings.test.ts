@@ -14,11 +14,18 @@ import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
   autoOpenPlanSidebar: false,
+  collapsedAgentsSlashCommands: false,
+  collapsedCustomSlashCommands: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  customSlashCommands: [],
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
   favorites: [],
+  hiddenCustomSlashCommands: [],
+  hiddenGlobalSlashCommands: [],
+  hiddenProviderSlashCommands: {},
+  collapsedProviderSlashCommandProviders: [],
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {

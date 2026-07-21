@@ -7,12 +7,16 @@ import {
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 
 function scoreSlashCommandItem(
-  item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>,
+  item: Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "custom-slash-command" }
+  >,
   query: string,
 ): number | null {
   const primaryValue =
-    item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
-  const description = item.description.toLowerCase();
+    item.type === "slash-command"
+      ? item.command.toLowerCase()
+      : (item.command.displayName ?? item.command.name).toLowerCase();
 
   const scores = [
     scoreQueryMatch({
@@ -25,14 +29,18 @@ function scoreSlashCommandItem(
       fuzzyBase: 100,
       boundaryMarkers: ["-", "_", "/"],
     }),
-    scoreQueryMatch({
-      value: description,
-      query,
-      exactBase: 20,
-      prefixBase: 22,
-      boundaryBase: 24,
-      includesBase: 26,
-    }),
+    ...(item.type === "slash-command"
+      ? []
+      : [
+          scoreQueryMatch({
+            value: item.description.toLowerCase(),
+            query,
+            exactBase: 20,
+            prefixBase: 22,
+            boundaryBase: 24,
+            includesBase: 26,
+          }),
+        ]),
   ].filter((score): score is number => score !== null);
 
   if (scores.length === 0) {
@@ -44,10 +52,18 @@ function scoreSlashCommandItem(
 
 export function searchSlashCommandItems(
   items: ReadonlyArray<
-    Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+    Extract<
+      ComposerCommandItem,
+      { type: "slash-command" | "provider-slash-command" | "custom-slash-command" }
+    >
   >,
   query: string,
-): Array<Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>> {
+): Array<
+  Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "custom-slash-command" }
+  >
+> {
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
   if (!normalizedQuery) {
     return [...items];
@@ -70,10 +86,7 @@ export function searchSlashCommandItems(
       {
         item,
         score,
-        tieBreaker:
-          item.type === "slash-command"
-            ? `0\u0000${item.command}`
-            : `1\u0000${item.command.name}\u0000${item.provider}`,
+        tieBreaker: item.id,
       },
       Number.POSITIVE_INFINITY,
     );

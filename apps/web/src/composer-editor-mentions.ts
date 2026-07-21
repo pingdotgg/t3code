@@ -6,6 +6,10 @@ import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
+import {
+  collectComposerSlashCommandTokens,
+  type ComposerSlashCommandLike,
+} from "./lib/composerSlashCommands";
 
 export type ComposerPromptSegment =
   | {
@@ -19,6 +23,10 @@ export type ComposerPromptSegment =
     }
   | {
       type: "skill";
+      name: string;
+    }
+  | {
+      type: "slash-command";
       name: string;
     }
   | {
@@ -124,13 +132,19 @@ function forEachMentionMatch(
   });
 }
 
-function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegment[] {
+function splitPromptTextIntoComposerSegmentsWithSlashCommands(
+  text: string,
+  slashCommands: ReadonlyArray<ComposerSlashCommandLike>,
+): ComposerPromptSegment[] {
   const segments: ComposerPromptSegment[] = [];
   if (!text) {
     return segments;
   }
 
-  const tokenMatches = collectComposerInlineTokens(text);
+  const tokenMatches = [
+    ...collectComposerInlineTokens(text),
+    ...collectComposerSlashCommandTokens(text, slashCommands),
+  ].sort((left, right) => left.start - right.start);
   let cursor = 0;
   for (const match of tokenMatches) {
     if (match.start < cursor) {
@@ -146,6 +160,11 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
         type: "mention",
         path: match.value,
         source: match.source,
+      });
+    } else if (match.type === "slash-command") {
+      segments.push({
+        type: "slash-command",
+        name: match.name,
       });
     } else {
       segments.push({ type: "skill", name: match.value });
@@ -198,6 +217,7 @@ export function selectionTouchesMentionBoundary(
 export function splitPromptIntoComposerSegments(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft> = [],
+  slashCommands: ReadonlyArray<ComposerSlashCommandLike> = [],
 ): ComposerPromptSegment[] {
   if (!prompt) {
     return [];
@@ -207,7 +227,9 @@ export function splitPromptIntoComposerSegments(
   let terminalContextIndex = 0;
   forEachPromptSegmentSlice(prompt, (slice) => {
     if (slice.type === "text") {
-      segments.push(...splitPromptTextIntoComposerSegments(slice.text));
+      segments.push(
+        ...splitPromptTextIntoComposerSegmentsWithSlashCommands(slice.text, slashCommands),
+      );
       return false;
     }
 

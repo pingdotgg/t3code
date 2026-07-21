@@ -2,12 +2,13 @@ import {
   type ProjectEntry,
   type ProviderDriverKind,
   type ServerProviderSkill,
-  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { formatProviderDisplayName } from "../../lib/contextWindow";
+import { type ComposerSlashCommandLike } from "~/lib/composerSlashCommands";
 import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
@@ -18,7 +19,9 @@ import {
   CommandList,
   CommandSeparator,
 } from "../ui/command";
+import { AppLogoIcon } from "../AppLogoIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 
 export type ComposerCommandItem =
   | {
@@ -40,7 +43,15 @@ export type ComposerCommandItem =
       id: string;
       type: "provider-slash-command";
       provider: ProviderDriverKind;
-      command: ServerProviderSlashCommand;
+      sourceKind?: "agents";
+      command: ComposerSlashCommandLike;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "custom-slash-command";
+      command: ComposerSlashCommandLike;
       label: string;
       description: string;
     }
@@ -49,6 +60,7 @@ export type ComposerCommandItem =
       type: "skill";
       provider: ProviderDriverKind;
       skill: ServerProviderSkill;
+      sourceKind?: "agents";
       label: string;
       description: string;
     };
@@ -84,21 +96,60 @@ function groupCommandItems(
   groupSlashCommandSections: boolean,
 ): ComposerCommandGroup[] {
   if (triggerKind === "skill") {
-    return items.length > 0 ? [{ id: "skills", label: "Skills", items }] : [];
+    const agentItems = items.filter(
+      (item) => item.type === "skill" && item.sourceKind === "agents",
+    );
+    const otherSkillItems = items.filter(
+      (item) => item.type !== "skill" || item.sourceKind !== "agents",
+    );
+    const groups: ComposerCommandGroup[] = [];
+    if (agentItems.length > 0) {
+      groups.push({ id: "global", label: "Global", items: agentItems });
+    }
+    if (otherSkillItems.length > 0) {
+      groups.push({ id: "skills", label: "Skills", items: otherSkillItems });
+    }
+    return groups;
   }
   if (triggerKind !== "slash-command" || !groupSlashCommandSections) {
     return [{ id: "default", label: null, items }];
   }
 
+  const customItems = items.filter((item) => item.type === "custom-slash-command");
   const builtInItems = items.filter((item) => item.type === "slash-command");
-  const providerItems = items.filter((item) => item.type === "provider-slash-command");
+  const providerGroups = new Map<ProviderDriverKind, ComposerCommandItem[]>();
+  for (const item of items) {
+    if (item.type !== "provider-slash-command" || item.sourceKind === "agents") continue;
+    const bucket = providerGroups.get(item.provider);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      providerGroups.set(item.provider, [item]);
+    }
+  }
+
+  const agentItems = items.filter(
+    (item) =>
+      (item.type === "skill" && item.sourceKind === "agents") ||
+      (item.type === "provider-slash-command" && item.sourceKind === "agents"),
+  );
 
   const groups: ComposerCommandGroup[] = [];
+  if (customItems.length > 0) {
+    groups.push({ id: "custom", label: "Custom", items: customItems });
+  }
+  if (agentItems.length > 0) {
+    groups.push({ id: "global", label: "Global", items: agentItems });
+  }
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
   }
-  if (providerItems.length > 0) {
-    groups.push({ id: "provider", label: "Provider", items: providerItems });
+  for (const [provider, providerItems] of providerGroups) {
+    groups.push({
+      id: `provider:${provider}`,
+      label: formatProviderDisplayName(provider),
+      items: providerItems,
+    });
   }
   return groups;
 }
@@ -208,6 +259,15 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceLabel =
     props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const ProviderIcon =
+    props.item.type === "provider-slash-command" ||
+    (props.item.type === "skill" && props.item.sourceKind !== "agents")
+      ? (PROVIDER_ICON_BY_PROVIDER[props.item.provider] ?? null)
+      : null;
+  const showAppIcon = props.item.type === "custom-slash-command";
+  const showAgentIcon = props.item.type === "skill" && props.item.sourceKind === "agents";
+  const showAgentSlashIcon =
+    props.item.type === "provider-slash-command" && props.item.sourceKind === "agents";
 
   return (
     <CommandItem
@@ -237,12 +297,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
-      {props.item.type === "provider-slash-command" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
-          <SkillGlyph className="size-3.5" />
-        </span>
-      ) : null}
-      {props.item.type === "skill" ? (
+      {showAppIcon ? <AppLogoIcon className="size-4 shrink-0 text-muted-foreground/80" /> : null}
+      {showAgentIcon || showAgentSlashIcon ? (
+        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
+      ) : ProviderIcon ? (
+        <ProviderIcon className="size-4 shrink-0 text-muted-foreground/80" aria-hidden />
+      ) : props.item.type === "provider-slash-command" || props.item.type === "skill" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>

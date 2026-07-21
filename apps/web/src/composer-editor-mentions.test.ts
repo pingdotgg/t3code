@@ -6,6 +6,8 @@ import {
 } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
+const slashCommands = [{ name: "ui", description: "Explore and refine UI" }];
+
 describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md please")).toEqual([
@@ -92,6 +94,20 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "Use " },
       { type: "skill", name: "review-follow-up" },
       { type: "text", text: " please" },
+    ]);
+  });
+
+  it("splits known slash commands into slash-command segments", () => {
+    expect(splitPromptIntoComposerSegments("Run /ui please", [], slashCommands)).toEqual([
+      { type: "text", text: "Run " },
+      { type: "slash-command", name: "ui" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("leaves unknown slash commands as text", () => {
+    expect(splitPromptIntoComposerSegments("Run /unknown please", [], slashCommands)).toEqual([
+      { type: "text", text: "Run /unknown please" },
     ]);
   });
 

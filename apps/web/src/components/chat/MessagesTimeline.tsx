@@ -33,6 +33,7 @@ import {
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import type { ComposerSlashCommandLike } from "~/lib/composerSlashCommands";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -133,6 +134,7 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  slashCommands: ReadonlyArray<ComposerSlashCommandLike>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -152,6 +154,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_TIMELINE_SLASH_COMMANDS: ReadonlyArray<ComposerSlashCommandLike> = [];
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -182,6 +185,7 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
+  slashCommands?: ReadonlyArray<ComposerSlashCommandLike>;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
@@ -216,6 +220,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  slashCommands = EMPTY_TIMELINE_SLASH_COMMANDS,
   onIsAtEndChange,
   onManualNavigation,
   hideEmptyPlaceholder = false,
@@ -424,6 +429,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      slashCommands,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -438,6 +444,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      slashCommands,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -1024,6 +1031,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           threadRef={ctx.threadRef ?? undefined}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
+          slashCommands={ctx.slashCommands}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -1551,6 +1559,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             cwd={props.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             skills={props.skills}
+            slashCommands={ctx.slashCommands}
             className="text-foreground"
             lineBreaks
           />
@@ -1573,6 +1582,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
                   cwd={props.markdownCwd}
                   threadRef={ctx.threadRef ?? undefined}
                   skills={props.skills}
+                  slashCommands={ctx.slashCommands}
                   className="text-foreground"
                   lineBreaks
                 />
@@ -1661,6 +1671,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           cwd={props.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           skills={props.skills}
+          slashCommands={ctx.slashCommands}
           className="text-foreground"
           lineBreaks
         />,
@@ -1686,6 +1697,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
+      slashCommands={ctx.slashCommands}
       className="text-foreground"
       lineBreaks
     />
@@ -1721,6 +1733,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
+          slashCommands={ctx.slashCommands}
           className="text-foreground"
         />
       )}

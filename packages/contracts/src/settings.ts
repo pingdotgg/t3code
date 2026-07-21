@@ -41,8 +41,27 @@ export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  collapsedAgentsSlashCommands: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  collapsedCustomSlashCommands: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  hiddenCustomSlashCommands: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  hiddenGlobalSlashCommands: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  customSlashCommands: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      title: TrimmedNonEmptyString,
+      prompt: Schema.String,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -72,6 +91,13 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  hiddenProviderSlashCommands: Schema.Record(
+    ProviderInstanceId,
+    Schema.Array(TrimmedNonEmptyString),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  collapsedProviderSlashCommandProviders: Schema.Array(ProviderInstanceId).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -543,9 +569,23 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
+  collapsedAgentsSlashCommands: Schema.optionalKey(Schema.Boolean),
+  collapsedCustomSlashCommands: Schema.optionalKey(Schema.Boolean),
+  hiddenCustomSlashCommands: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  hiddenGlobalSlashCommands: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  diffWordWrap: Schema.optionalKey(Schema.Boolean),
+  customSlashCommands: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        title: TrimmedNonEmptyString,
+        prompt: Schema.String,
+      }),
+    ),
+  ),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -567,6 +607,10 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  hiddenProviderSlashCommands: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, Schema.Array(TrimmedNonEmptyString)),
+  ),
+  collapsedProviderSlashCommandProviders: Schema.optionalKey(Schema.Array(ProviderInstanceId)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
