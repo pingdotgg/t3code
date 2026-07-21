@@ -42,6 +42,17 @@ export function resolveEnvironmentOptionLabel(input: {
   return runtimeLabel ?? savedLabel ?? input.environmentId;
 }
 
+// A remote (non-primary) environment is always surfaced, even when it is the
+// only environment available: with a single connected machine there is nothing
+// to pick, but the user still needs to see where the project runs.
+export function shouldShowEnvironmentIndicator(input: {
+  activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
+  canPickEnvironment: boolean;
+}): boolean {
+  if (input.canPickEnvironment) return true;
+  return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
+}
+
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
