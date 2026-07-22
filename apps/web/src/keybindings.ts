@@ -282,6 +282,74 @@ export function threadTraversalDirectionFromCommand(
   return null;
 }
 
+export type ThreadSidebarShortcutAction<TThreadKey> =
+  | { readonly type: "none" }
+  | { readonly type: "consume" }
+  | { readonly type: "navigate"; readonly threadKey: TThreadKey }
+  | { readonly type: "confirm-settle"; readonly threadKey: TThreadKey };
+
+/**
+ * Resolves the thread commands shared by both sidebar implementations.
+ * A settle confirmation is modal with respect to thread shortcuts: navigation
+ * must not change the route behind it, and a second settle shortcut must not
+ * replace or reopen it.
+ */
+export function resolveThreadSidebarShortcutAction<TThreadKey>(input: {
+  readonly command: KeybindingCommand | null;
+  readonly orderedThreadKeys: readonly TThreadKey[];
+  readonly jumpThreadKeys?: readonly TThreadKey[];
+  readonly routeThreadKey: TThreadKey | null;
+  readonly settleConfirmationThreadKey: TThreadKey | null;
+  readonly canSettleRouteThread: boolean;
+  readonly isRouteThreadSettling: boolean;
+}): ThreadSidebarShortcutAction<TThreadKey> {
+  const traversalDirection = threadTraversalDirectionFromCommand(input.command);
+  const jumpIndex = threadJumpIndexFromCommand(input.command ?? "");
+  const isThreadCommand =
+    input.command === "thread.settle" || traversalDirection !== null || jumpIndex !== null;
+
+  if (!isThreadCommand) return { type: "none" };
+  if (input.settleConfirmationThreadKey !== null) return { type: "consume" };
+
+  if (input.command === "thread.settle") {
+    if (
+      input.routeThreadKey === null ||
+      !input.canSettleRouteThread ||
+      input.isRouteThreadSettling
+    ) {
+      return { type: "consume" };
+    }
+    return { type: "confirm-settle", threadKey: input.routeThreadKey };
+  }
+
+  if (traversalDirection !== null) {
+    const threadKey = resolveAdjacentItem({
+      items: input.orderedThreadKeys,
+      current: input.routeThreadKey,
+      direction: traversalDirection,
+    });
+    return threadKey === null ? { type: "none" } : { type: "navigate", threadKey };
+  }
+
+  const threadKey = (input.jumpThreadKeys ?? input.orderedThreadKeys)[jumpIndex ?? -1];
+  return threadKey === undefined ? { type: "none" } : { type: "navigate", threadKey };
+}
+
+function resolveAdjacentItem<T>(input: {
+  readonly items: readonly T[];
+  readonly current: T | null;
+  readonly direction: "previous" | "next";
+}): T | null {
+  if (input.items.length === 0) return null;
+  if (input.current === null) {
+    return input.direction === "previous" ? (input.items.at(-1) ?? null) : (input.items[0] ?? null);
+  }
+  const currentIndex = input.items.indexOf(input.current);
+  if (currentIndex === -1) return null;
+  const targetIndex = input.direction === "previous" ? currentIndex - 1 : currentIndex + 1;
+  return input.items[targetIndex] ?? null;
+}
+
 export function shouldShowThreadJumpHints(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

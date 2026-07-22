@@ -1,4 +1,4 @@
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   type KeybindingCommand,
@@ -21,6 +21,7 @@ import {
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
+  resolveThreadSidebarShortcutAction,
   shouldShowModelPickerJumpHints,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
@@ -173,6 +174,55 @@ describe("thread settle shortcut", () => {
         { platform: "Linux", context: { terminalFocus: true } },
       ),
     );
+  });
+
+  it("routes an eligible settle command to the shared confirmation flow", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.settle",
+        orderedThreadKeys: ["thread-1", "thread-2"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: null,
+        canSettleRouteThread: true,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "confirm-settle", threadKey: "thread-1" });
+  });
+
+  it("consumes thread navigation while settle confirmation is open", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.next",
+        orderedThreadKeys: ["thread-1", "thread-2"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: "thread-1",
+        canSettleRouteThread: true,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "consume" });
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.jump.2",
+        orderedThreadKeys: ["thread-1", "thread-2"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: "thread-1",
+        canSettleRouteThread: true,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "consume" });
+  });
+
+  it("consumes settle without reopening confirmation while the route thread is settling", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.settle",
+        orderedThreadKeys: ["thread-1"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: null,
+        canSettleRouteThread: true,
+        isRouteThreadSettling: true,
+      }),
+    ).toEqual({ type: "consume" });
   });
 });
 

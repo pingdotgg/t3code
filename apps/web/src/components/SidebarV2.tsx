@@ -57,11 +57,10 @@ import {
 import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
+  resolveThreadSidebarShortcutAction,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
-  threadJumpIndexFromCommand,
-  threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -117,7 +116,6 @@ import {
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
-  resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
@@ -1565,6 +1563,10 @@ export default function SidebarV2() {
   );
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
+  const [settleConfirmationThreadKey, setSettleConfirmationThreadKey] = useState<string | null>(
+    null,
+  );
+  const settleConfirmationButtonRef = useRef<HTMLButtonElement>(null);
 
   const jumpLabelByKey = useMemo(() => {
     const mapping = new Map<string, string>();
@@ -1696,6 +1698,7 @@ export default function SidebarV2() {
         const threadKey = scopedThreadKey(threadRef);
         if (settlingThreadKeysRef.current.has(threadKey)) return;
         settlingThreadKeysRef.current.add(threadKey);
+        setSettleConfirmationThreadKey((current) => (current === threadKey ? null : current));
         try {
           const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
           const result = await settleThread(threadRef);
@@ -2124,10 +2127,6 @@ export default function SidebarV2() {
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
-  const [settleConfirmationThreadKey, setSettleConfirmationThreadKey] = useState<string | null>(
-    null,
-  );
-  const settleConfirmationButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
@@ -2140,42 +2139,31 @@ export default function SidebarV2() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
-      const navigateToThreadKey = (targetThreadKey: string | null) => {
-        if (!targetThreadKey) return false;
-        const targetThread = threadByKey.get(targetThreadKey);
-        if (!targetThread) return false;
-        event.preventDefault();
-        event.stopPropagation();
-        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
-        return true;
-      };
-      if (command === "thread.settle") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!routeThreadKey) return;
-        const thread = threadByKey.get(routeThreadKey);
-        const supportsSettlement =
-          thread &&
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
-            true;
-        if (!thread || !supportsSettlement || settledThreadKeys.has(routeThreadKey)) return;
-        setSettleConfirmationThreadKey(routeThreadKey);
+      const routeThread = routeThreadKey ? threadByKey.get(routeThreadKey) : null;
+      const action = resolveThreadSidebarShortcutAction({
+        command,
+        orderedThreadKeys,
+        routeThreadKey,
+        settleConfirmationThreadKey,
+        canSettleRouteThread:
+          routeThread != null &&
+          serverConfigs.get(routeThread.environmentId)?.environment.capabilities
+            .threadSettlement === true &&
+          !settledThreadKeys.has(routeThreadKey ?? ""),
+        isRouteThreadSettling:
+          routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
+      });
+      if (action.type === "none") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action.type === "consume") return;
+      if (action.type === "confirm-settle") {
+        setSettleConfirmationThreadKey(action.threadKey);
         return;
       }
-      const traversalDirection = threadTraversalDirectionFromCommand(command);
-      if (traversalDirection !== null) {
-        navigateToThreadKey(
-          resolveAdjacentThreadId({
-            threadIds: orderedThreadKeys,
-            currentThreadId: routeThreadKey,
-            direction: traversalDirection,
-          }),
-        );
-        return;
-      }
-      const jumpIndex = threadJumpIndexFromCommand(command ?? "");
-      if (jumpIndex === null) return;
-      navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
+      const targetThread = threadByKey.get(action.threadKey);
+      if (!targetThread) return;
+      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
@@ -2186,6 +2174,7 @@ export default function SidebarV2() {
     routeTerminalOpen,
     routeThreadKey,
     serverConfigs,
+    settleConfirmationThreadKey,
     settledThreadKeys,
     threadByKey,
   ]);
@@ -2195,11 +2184,20 @@ export default function SidebarV2() {
     : null;
   const confirmShortcutSettle = useCallback(() => {
     if (!settleConfirmationThread) return;
-    setSettleConfirmationThreadKey(null);
     attemptSettle(
       scopeThreadRef(settleConfirmationThread.environmentId, settleConfirmationThread.id),
     );
   }, [attemptSettle, settleConfirmationThread]);
+
+  useEffect(() => {
+    if (
+      settleConfirmationThreadKey !== null &&
+      (settledThreadKeys.has(settleConfirmationThreadKey) ||
+        !threadByKey.has(settleConfirmationThreadKey))
+    ) {
+      setSettleConfirmationThreadKey(null);
+    }
+  }, [settleConfirmationThreadKey, settledThreadKeys, threadByKey]);
 
   // Same predicate as v1: hints show only while the held modifiers exactly
   // match a thread-jump binding. Adding Shift (screenshots) or Alt no
