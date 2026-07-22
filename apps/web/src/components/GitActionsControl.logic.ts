@@ -3,7 +3,11 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import {
+  canCreateChangeRequest,
+  getChangeRequestAvailability,
+  isTemporaryWorktreeBranch,
+} from "@t3tools/shared/git";
 import {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
   getChangeRequestTerminology,
@@ -101,7 +105,9 @@ export function buildMenuItems(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
+  const changeRequestAvailability = getChangeRequestAvailability(gitStatus);
+  const hasOpenPr = changeRequestAvailability === "open";
+  const lookupSucceeded = changeRequestAvailability === "available";
   const isBehind = gitStatus.behindCount > 0;
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
@@ -116,7 +122,7 @@ export function buildMenuItems(
     !isBusy &&
     hasBranch &&
     !hasChanges &&
-    !hasOpenPr &&
+    canCreateChangeRequest(gitStatus) &&
     hasDefaultBranchDelta &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
@@ -155,7 +161,11 @@ export function buildMenuItems(
         }
       : {
           id: "pr",
-          label: `Create ${terminology.shortLabel}`,
+          label: lookupSucceeded
+            ? `Create ${terminology.shortLabel}`
+            : changeRequestAvailability === "pending"
+              ? `Checking ${terminology.shortLabel} status`
+              : `${terminology.shortLabel} status unavailable`,
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",
@@ -185,7 +195,9 @@ export function resolveQuickAction(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
+  const changeRequestAvailability = getChangeRequestAvailability(gitStatus);
+  const hasOpenPr = changeRequestAvailability === "open";
+  const lookupSucceeded = changeRequestAvailability === "available";
   const isAhead = gitStatus.aheadCount > 0;
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
@@ -205,7 +217,7 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultRef) {
+    if (hasOpenPr || isDefaultRef || !lookupSucceeded) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
@@ -238,7 +250,7 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultRef) {
+    if (hasOpenPr || isDefaultRef || !lookupSucceeded) {
       return {
         label: "Push",
         disabled: false,
@@ -272,7 +284,7 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultRef) {
+    if (hasOpenPr || isDefaultRef || !lookupSucceeded) {
       return {
         label: "Push",
         disabled: false,
@@ -290,6 +302,21 @@ export function resolveQuickAction(
 
   if (hasOpenPr && gitStatus.hasUpstream) {
     return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
+  }
+
+  if (!lookupSucceeded) {
+    return {
+      label:
+        changeRequestAvailability === "pending"
+          ? `Checking ${terminology.shortLabel} status`
+          : `${terminology.shortLabel} status unavailable`,
+      disabled: true,
+      kind: "show_hint",
+      hint:
+        changeRequestAvailability === "pending"
+          ? `Checking for an existing ${terminology.singular}.`
+          : `${terminology.shortLabel} status could not be checked.`,
+    };
   }
 
   if (hasDefaultBranchDelta && !isDefaultRef) {

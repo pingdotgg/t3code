@@ -20,6 +20,7 @@ import {
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
+import { changeRequestLookupWarning } from "./ThreadStatusIndicators.logic";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -462,6 +463,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const lookupWarning = changeRequestLookupWarning(thread.branch, gitStatus.data);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -701,6 +703,22 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 }
               />
               <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+            </Tooltip>
+          )}
+          {lookupWarning && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    role="img"
+                    aria-label={lookupWarning}
+                    className="inline-flex items-center justify-center text-amber-600/70 dark:text-amber-300/70"
+                  />
+                }
+              >
+                <TriangleAlertIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{lookupWarning}</TooltipPopup>
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}

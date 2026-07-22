@@ -112,11 +112,13 @@ function nonRepositoryLocalStatus(): VcsStatusLocalResult {
 function nonRepositoryStatus(): VcsStatusResult {
   return {
     ...nonRepositoryLocalStatus(),
+    statusRefName: null,
     hasUpstream: false,
     aheadCount: 0,
     behindCount: 0,
     aheadOfDefaultCount: 0,
     pr: null,
+    changeRequestLookup: { _tag: "succeeded" },
   };
 }
 

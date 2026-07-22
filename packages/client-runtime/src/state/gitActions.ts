@@ -4,7 +4,11 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import {
+  canCreateChangeRequest,
+  getChangeRequestAvailability,
+  isTemporaryWorktreeBranch,
+} from "@t3tools/shared/git";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -91,7 +95,9 @@ export function buildMenuItems(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
+  const changeRequestAvailability = getChangeRequestAvailability(gitStatus);
+  const hasOpenPr = changeRequestAvailability === "open";
+  const lookupSucceeded = changeRequestAvailability === "available";
   const isBehind = gitStatus.behindCount > 0;
   const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
@@ -106,7 +112,7 @@ export function buildMenuItems(
     !isBusy &&
     hasBranch &&
     !hasChanges &&
-    !hasOpenPr &&
+    canCreateChangeRequest(gitStatus) &&
     gitStatus.aheadCount > 0 &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
@@ -139,7 +145,11 @@ export function buildMenuItems(
         }
       : {
           id: "pr",
-          label: "Create PR",
+          label: lookupSucceeded
+            ? "Create PR"
+            : changeRequestAvailability === "pending"
+              ? "Checking PR status"
+              : "PR status unavailable",
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",
@@ -169,7 +179,9 @@ export function resolveQuickAction(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
+  const changeRequestAvailability = getChangeRequestAvailability(gitStatus);
+  const hasOpenPr = changeRequestAvailability === "open";
+  const lookupSucceeded = changeRequestAvailability === "available";
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
@@ -187,7 +199,7 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasOriginRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || !lookupSucceeded) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
@@ -221,7 +233,7 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || !lookupSucceeded) {
       return {
         label: "Push",
         disabled: false,
@@ -255,7 +267,7 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || !lookupSucceeded) {
       return {
         label: "Push",
         disabled: false,
@@ -273,6 +285,19 @@ export function resolveQuickAction(
 
   if (hasOpenPr && gitStatus.hasUpstream) {
     return { label: "View PR", disabled: false, kind: "open_pr" };
+  }
+
+  if (!lookupSucceeded) {
+    return {
+      label:
+        changeRequestAvailability === "pending" ? "Checking PR status" : "PR status unavailable",
+      disabled: true,
+      kind: "show_hint",
+      hint:
+        changeRequestAvailability === "pending"
+          ? "Checking for an existing PR."
+          : "PR status could not be checked.",
+    };
   }
 
   return {

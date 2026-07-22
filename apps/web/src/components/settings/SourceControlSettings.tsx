@@ -329,7 +329,8 @@ function GitFetchIntervalSettings() {
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
             Refresh remote branch status in the background. Set this to 0 seconds if Git credentials
-            or security keys should only be prompted by explicit Git actions.
+            or security keys should only be prompted by explicit Git actions. Lightweight pull or
+            merge request status checks continue without fetching Git remotes.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

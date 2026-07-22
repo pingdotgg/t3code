@@ -66,11 +66,13 @@ describe("GitWorkflowService", () => {
           insertions: 0,
           deletions: 0,
         },
+        statusRefName: null,
         hasUpstream: false,
         aheadCount: 0,
         behindCount: 0,
         aheadOfDefaultCount: 0,
         pr: null,
+        changeRequestLookup: { _tag: "succeeded" },
       });
     }).pipe(
       Effect.provide(

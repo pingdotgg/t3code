@@ -895,11 +895,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           insertions: 0,
           deletions: 0,
         },
+        statusRefName: null,
         hasUpstream: false,
         aheadCount: 0,
         behindCount: 0,
         aheadOfDefaultCount: 0,
         pr: null,
+        changeRequestLookup: { _tag: "pending" },
       });
     }),
   );
@@ -925,11 +927,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           insertions: 0,
           deletions: 0,
         },
+        statusRefName: null,
         hasUpstream: false,
         aheadCount: 0,
         behindCount: 0,
         aheadOfDefaultCount: 0,
         pr: null,
+        changeRequestLookup: { _tag: "pending" },
       });
     }),
   );
@@ -1311,7 +1315,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("status is resilient to gh lookup failures and returns pr null", () =>
+  it.effect("status reports provider availability failures without leaking diagnostics", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1333,6 +1337,39 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
+      expect(status.changeRequestLookup).toEqual({
+        _tag: "failed",
+        provider: "github",
+        reason: "provider_unavailable",
+      });
+    }),
+  );
+
+  it.effect("status reports source control authentication failures", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-auth"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-auth"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          failWith: new GitHubCli.GitHubCliAuthenticationError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("private authentication output"),
+          }),
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.changeRequestLookup).toEqual({
+        _tag: "failed",
+        provider: "github",
+        reason: "authentication_required",
+      });
     }),
   );
 

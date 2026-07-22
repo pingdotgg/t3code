@@ -526,25 +526,73 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const refreshLocalGitStatusFromTurnCompletion = Effect.fn(
-    "refreshLocalGitStatusFromTurnCompletion",
-  )(function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
-    const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
-    if (Option.isNone(sessionRuntime)) {
-      return;
-    }
+  const refreshGitStatusFromTurnCompletion = Effect.fn("refreshGitStatusFromTurnCompletion")(
+    function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
+      const turnId = toTurnId(event.turnId);
+      const thread = yield* resolveThreadDetail(event.threadId);
+      if (
+        thread?.session?.activeTurnId &&
+        (!turnId || !sameId(thread.session.activeTurnId, turnId))
+      ) {
+        return;
+      }
 
-    yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to refresh local git status after turn completion", {
-          threadId: event.threadId,
-          turnId: event.turnId ?? null,
-          cwd: sessionRuntime.value.cwd,
-          detail: error.message,
-        }),
-      ),
-    );
-  });
+      const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
+      let cwd = Option.getOrUndefined(sessionRuntime)?.cwd;
+      if (!cwd) {
+        if (thread) {
+          cwd = yield* resolveCheckpointCwd({
+            threadId: thread.id,
+            thread,
+            projects: yield* resolveThreadProjects(thread.projectId),
+            preferSessionRuntime: true,
+          });
+        }
+      }
+      if (!cwd) {
+        return;
+      }
+
+      const [local, remote] = yield* Effect.all(
+        [
+          vcsStatusBroadcaster.refreshLocalStatus(cwd).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to refresh local git status after turn completion", {
+                threadId: event.threadId,
+                turnId: event.turnId ?? null,
+                cwd,
+                detail: error.message,
+              }).pipe(Effect.as(undefined)),
+            ),
+          ),
+          vcsStatusBroadcaster.refreshChangeRequestStatus(cwd).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to refresh change request status after turn completion", {
+                threadId: event.threadId,
+                turnId: event.turnId ?? null,
+                cwd,
+                detail: error.message,
+              }).pipe(Effect.as(undefined)),
+            ),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      if (local && remote && remote.statusRefName !== local.refName) {
+        yield* vcsStatusBroadcaster.refreshChangeRequestStatus(cwd).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to reconcile change request status after branch change", {
+              threadId: event.threadId,
+              turnId: event.turnId ?? null,
+              cwd,
+              detail: error.message,
+            }),
+          ),
+        );
+      }
+    },
+  );
 
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fn(
     "ensurePreTurnBaselineFromDomainTurnStart",
@@ -790,7 +838,7 @@ const make = Effect.gen(function* () {
 
     if (event.type === "turn.completed") {
       const turnId = toTurnId(event.turnId);
-      yield* refreshLocalGitStatusFromTurnCompletion(event);
+      yield* refreshGitStatusFromTurnCompletion(event);
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>

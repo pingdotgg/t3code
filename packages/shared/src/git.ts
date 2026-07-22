@@ -203,12 +203,23 @@ export function detectSourceControlProviderFromGitRemoteUrl(
 }
 
 const EMPTY_GIT_STATUS_REMOTE: VcsStatusRemoteResult = {
+  statusRefName: null,
   hasUpstream: false,
   aheadCount: 0,
   behindCount: 0,
   aheadOfDefaultCount: 0,
   pr: null,
+  changeRequestLookup: { _tag: "pending" },
 };
+
+function remoteStatusForLocal(
+  local: VcsStatusLocalResult,
+  remote: VcsStatusRemoteResult | null,
+): VcsStatusRemoteResult {
+  return remote !== null && remote.statusRefName === local.refName
+    ? remote
+    : EMPTY_GIT_STATUS_REMOTE;
+}
 
 export function mergeGitStatusParts(
   local: VcsStatusLocalResult,
@@ -216,12 +227,13 @@ export function mergeGitStatusParts(
 ): VcsStatusResult {
   return {
     ...local,
-    ...(remote ?? EMPTY_GIT_STATUS_REMOTE),
+    ...remoteStatusForLocal(local, remote),
   };
 }
 
 function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
   return {
+    statusRefName: status.statusRefName,
     hasUpstream: status.hasUpstream,
     aheadCount: status.aheadCount,
     behindCount: status.behindCount,
@@ -229,6 +241,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
       ? {}
       : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
     pr: status.pr,
+    changeRequestLookup: status.changeRequestLookup,
   };
 }
 
@@ -269,6 +282,22 @@ export function applyGitStatusStreamEvent(
           event.remote,
         );
       }
+      if (event.remote?.statusRefName !== current.refName) {
+        return current;
+      }
       return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
   }
+}
+
+export type ChangeRequestAvailability = "pending" | "failed" | "open" | "available";
+
+export function getChangeRequestAvailability(status: VcsStatusResult): ChangeRequestAvailability {
+  if (status.pr?.state === "open") return "open";
+  if (status.changeRequestLookup._tag === "pending") return "pending";
+  if (status.changeRequestLookup._tag === "failed") return "failed";
+  return "available";
+}
+
+export function canCreateChangeRequest(status: VcsStatusResult): boolean {
+  return getChangeRequestAvailability(status) === "available";
 }

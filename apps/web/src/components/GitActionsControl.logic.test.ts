@@ -24,13 +24,57 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
       insertions: 0,
       deletions: 0,
     },
+    statusRefName: "feature/test",
     hasUpstream: true,
     aheadCount: 0,
     behindCount: 0,
     pr: null,
+    changeRequestLookup: { _tag: "succeeded" },
     ...overrides,
   };
 }
+
+describe("when: change request lookup is not confirmed", () => {
+  it.each([
+    { _tag: "pending" as const },
+    {
+      _tag: "failed" as const,
+      provider: "github" as const,
+      reason: "authentication_required" as const,
+    },
+  ])("never offers PR creation for $._tag lookup", (changeRequestLookup) => {
+    const gitStatus = status({ aheadCount: 2, changeRequestLookup });
+
+    assert.equal(resolveQuickAction(gitStatus, false).action, "push");
+    const prItem = buildMenuItems(gitStatus, false).find((item) => item.id === "pr");
+    assert.equal(prItem?.disabled, true);
+    assert.notEqual(prItem?.label, "Create PR");
+  });
+
+  it("keeps an existing PR actionable when a refresh fails", () => {
+    const gitStatus = status({
+      pr: {
+        number: 42,
+        title: "Existing PR",
+        url: "https://example.com/pr/42",
+        baseRef: "main",
+        headRef: "feature/test",
+        state: "open",
+      },
+      changeRequestLookup: {
+        _tag: "failed",
+        provider: "github",
+        reason: "lookup_failed",
+      },
+    });
+
+    assert.equal(resolveQuickAction(gitStatus, false).kind, "open_pr");
+    assert.equal(
+      buildMenuItems(gitStatus, false).find((item) => item.id === "pr")?.label,
+      "View PR",
+    );
+  });
+});
 
 describe("when: ref is clean and has an open PR", () => {
   it("resolveQuickAction opens the existing PR", () => {

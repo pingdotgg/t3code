@@ -4,7 +4,13 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import {
+  CloudIcon,
+  FolderGit2Icon,
+  GitPullRequestIcon,
+  TerminalIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
@@ -14,6 +20,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import { changeRequestLookupWarning } from "./ThreadStatusIndicators.logic";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -208,6 +215,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   );
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const lookupWarning = changeRequestLookupWarning(thread.branch, gitStatus.data);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -215,7 +223,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     },
   });
 
-  if (!prStatus && !threadStatus) {
+  if (!prStatus && !lookupWarning && !threadStatus) {
     return null;
   }
 
@@ -234,6 +242,21 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
             <ChangeRequestStatusIcon className="size-3" />
           </TooltipTrigger>
           <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {lookupWarning ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label={lookupWarning}
+                className="inline-flex items-center justify-center text-amber-600/70 dark:text-amber-300/70"
+              />
+            }
+          >
+            <TriangleAlertIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{lookupWarning}</TooltipPopup>
         </Tooltip>
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}

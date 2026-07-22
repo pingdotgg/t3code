@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsStatusChangeRequestLookup,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,19 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeChangeRequestLookup = Schema.decodeUnknownSync(VcsStatusChangeRequestLookup);
+
+describe("VcsStatusChangeRequestLookup", () => {
+  it.each([
+    { _tag: "pending" },
+    { _tag: "succeeded" },
+    { _tag: "failed", provider: "github", reason: "authentication_required" },
+    { _tag: "failed", provider: "gitlab", reason: "provider_unavailable" },
+    { _tag: "failed", provider: "bitbucket", reason: "lookup_failed" },
+  ])("decodes provider-neutral lookup state $._tag", (lookup) => {
+    expect(decodeChangeRequestLookup(lookup)).toEqual(lookup);
+  });
+});
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {

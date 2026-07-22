@@ -262,10 +262,12 @@ describe("ProviderCommandReactor", () => {
           insertions: 0,
           deletions: 0,
         },
+        statusRefName: "renamed-branch",
         hasUpstream: true,
         aheadCount: 0,
         behindCount: 0,
         pr: null,
+        changeRequestLookup: { _tag: "succeeded" as const },
       }),
     );
     const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>((_) =>
@@ -358,6 +360,8 @@ describe("ProviderCommandReactor", () => {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
           refreshLocalStatus: () =>
             Effect.die("refreshLocalStatus should not be called in this test"),
+          refreshChangeRequestStatus: () =>
+            Effect.die("refreshChangeRequestStatus should not be called in this test"),
           refreshStatus,
           streamStatus: () => Stream.die("streamStatus should not be called in this test"),
         }),

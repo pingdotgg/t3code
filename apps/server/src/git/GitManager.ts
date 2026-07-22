@@ -25,6 +25,7 @@ import {
   GitStackedAction,
   VcsStatusInput,
   type VcsStatusLocalResult,
+  type VcsStatusChangeRequestLookup,
   type VcsStatusRemoteResult,
   VcsStatusResult,
   ModelSelection,
@@ -49,7 +50,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import type { ChangeRequest } from "@t3tools/contracts";
+import type { ChangeRequest, SourceControlProviderError } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -101,6 +102,32 @@ type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effe
 
 function isNotGitRepositoryError(error: GitCommandError): boolean {
   return error.message.toLowerCase().includes("not a git repository");
+}
+
+function lookupFailureReason(error: SourceControlProviderError): VcsStatusChangeRequestLookup {
+  const tags = new Set<string>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current !== null && typeof current === "object"; depth += 1) {
+    if ("_tag" in current && typeof current._tag === "string") {
+      tags.add(current._tag);
+    }
+    if ("status" in current && (current.status === 401 || current.status === 403)) {
+      return {
+        _tag: "failed",
+        provider: error.provider,
+        reason: "authentication_required",
+      };
+    }
+    current = "cause" in current ? current.cause : null;
+  }
+
+  const hasTagSuffix = (suffix: string) => [...tags].some((tag) => tag.endsWith(suffix));
+  const reason = hasTagSuffix("AuthenticationError")
+    ? "authentication_required"
+    : hasTagSuffix("UnavailableError") || tags.has("VcsProcessSpawnError")
+      ? "provider_unavailable"
+      : "lookup_failed";
+  return { _tag: "failed", provider: error.provider, reason };
 }
 
 interface OpenPrInfo {
@@ -779,29 +806,36 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const pr =
-      details.branch !== null
-        ? yield* findLatestPr(cwd, {
-            branch: details.branch,
-            upstreamRef: details.upstreamRef,
-          }).pipe(
-            Effect.map((latest) => {
-              if (!latest) return null;
-              // On the default branch, only surface open PRs.
-              // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
-              if (details.isDefaultBranch && latest.state !== "open") return null;
-              return toStatusPr(latest);
-            }),
-            Effect.orElseSucceed(() => null),
-          )
-        : null;
+    let pr: VcsStatusRemoteResult["pr"] = null;
+    let changeRequestLookup: VcsStatusChangeRequestLookup = { _tag: "succeeded" };
+    if (details.branch !== null) {
+      const lookup = yield* findLatestPr(cwd, {
+        branch: details.branch,
+        upstreamRef: details.upstreamRef,
+      }).pipe(
+        Effect.match({
+          onFailure: (error) => ({ error }),
+          onSuccess: (latest) => ({ latest }),
+        }),
+      );
+      if ("error" in lookup) {
+        changeRequestLookup = lookupFailureReason(lookup.error);
+      } else {
+        const latest = lookup.latest;
+        if (latest && (!details.isDefaultBranch || latest.state === "open")) {
+          pr = toStatusPr(latest);
+        }
+      }
+    }
 
     return {
+      statusRefName: details.branch,
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: details.aheadOfDefaultCount,
       pr,
+      changeRequestLookup,
     } satisfies VcsStatusRemoteResult;
   });
   const remoteStatusResultCache = yield* Cache.makeWith((cwd: string) => readRemoteStatus(cwd), {

@@ -1,6 +1,10 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
+import {
+  SourceControlProviderError,
+  SourceControlProviderInfo,
+  SourceControlProviderKind,
+} from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -198,6 +202,16 @@ const VcsStatusChangeRequest = Schema.Struct({
   state: VcsStatusChangeRequestState,
 });
 
+export const VcsStatusChangeRequestLookup = Schema.Union([
+  Schema.TaggedStruct("pending", {}),
+  Schema.TaggedStruct("succeeded", {}),
+  Schema.TaggedStruct("failed", {
+    provider: SourceControlProviderKind,
+    reason: Schema.Literals(["authentication_required", "provider_unavailable", "lookup_failed"]),
+  }),
+]);
+export type VcsStatusChangeRequestLookup = typeof VcsStatusChangeRequestLookup.Type;
+
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
@@ -219,11 +233,13 @@ const VcsStatusLocalShape = {
 };
 
 const VcsStatusRemoteShape = {
+  statusRefName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   aheadOfDefaultCount: Schema.optional(NonNegativeInt),
   pr: Schema.NullOr(VcsStatusChangeRequest),
+  changeRequestLookup: VcsStatusChangeRequestLookup,
 };
 
 export const VcsStatusLocalResult = Schema.Struct(VcsStatusLocalShape);

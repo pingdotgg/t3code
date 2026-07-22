@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
+/* oxlint-disable t3code/no-manual-effect-runtime-in-tests */
+// This integration harness owns a ManagedRuntime and exercises its Promise boundary directly.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -14,6 +16,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  GitManagerError,
   MessageId,
   ProjectId,
   ThreadId,
@@ -197,6 +200,16 @@ async function waitForEvent(
   return poll();
 }
 
+async function waitForCondition(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
+  while (!predicate()) {
+    if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
+      throw new Error("Timed out waiting for condition.");
+    }
+    await Effect.runPromise(Effect.sleep("10 millis"));
+  }
+}
+
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return NodeChildProcess.execFileSync("git", args, {
     cwd,
@@ -280,6 +293,10 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly changeRequestStatusRefreshCalls?: Array<string>;
+    readonly failGitStatusRefresh?: boolean;
+    readonly failChangeRequestStatusRefresh?: boolean;
+    readonly gitStatusRefreshWait?: Promise<void>;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -311,14 +328,45 @@ describe("CheckpointReactor", () => {
         Effect.sync(() => {
           options?.gitStatusRefreshCalls?.push(cwd);
         }).pipe(
-          Effect.as({
-            isRepo: true,
-            hasPrimaryRemote: false,
-            isDefaultRef: true,
-            refName: "main",
-            hasWorkingTreeChanges: false,
-            workingTree: { files: [], insertions: 0, deletions: 0 },
-          }),
+          Effect.andThen(
+            options?.gitStatusRefreshWait
+              ? Effect.promise(() => options.gitStatusRefreshWait!)
+              : Effect.void,
+          ),
+          Effect.andThen(
+            options?.failGitStatusRefresh
+              ? Effect.fail(
+                  new GitManagerError({
+                    operation: "refreshLocalStatus",
+                    cwd,
+                    detail: "test failure",
+                  }),
+                )
+              : Effect.succeed({
+                  isRepo: true as const,
+                  hasPrimaryRemote: false,
+                  isDefaultRef: true,
+                  refName: "main",
+                  hasWorkingTreeChanges: false,
+                  workingTree: { files: [], insertions: 0, deletions: 0 },
+                }),
+          ),
+        ),
+      refreshChangeRequestStatus: (cwd: string) =>
+        Effect.sync(() => {
+          options?.changeRequestStatusRefreshCalls?.push(cwd);
+        }).pipe(
+          Effect.andThen(
+            options?.failChangeRequestStatusRefresh
+              ? Effect.fail(
+                  new GitManagerError({
+                    operation: "refreshChangeRequestStatus",
+                    cwd,
+                    detail: "test failure",
+                  }),
+                )
+              : Effect.succeed(null),
+          ),
         ),
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
       streamStatus: () => Stream.empty,
@@ -496,11 +544,13 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
-  it("refreshes local git status state on turn completion using the session cwd", async () => {
+  it("refreshes local and change request status on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
+    const changeRequestStatusRefreshCalls: string[] = [];
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
       gitStatusRefreshCalls,
+      changeRequestStatusRefreshCalls,
     });
 
     harness.provider.emit({
@@ -516,10 +566,105 @@ describe("CheckpointReactor", () => {
     await harness.drain();
 
     expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(changeRequestStatusRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("falls back to the thread worktree when no provider session is available", async () => {
+    const gitStatusRefreshCalls: string[] = [];
+    const changeRequestStatusRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      hasSession: false,
+      seedFilesystemCheckpoints: false,
+      gitStatusRefreshCalls,
+      changeRequestStatusRefreshCalls,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-refresh-fallback"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-refresh-fallback"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(changeRequestStatusRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it.each([
+    { name: "local", failGitStatusRefresh: true, failChangeRequestStatusRefresh: false },
+    { name: "change request", failGitStatusRefresh: false, failChangeRequestStatusRefresh: true },
+  ])("runs both completion refreshes when the $name refresh fails", async (failure) => {
+    const gitStatusRefreshCalls: string[] = [];
+    const changeRequestStatusRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      gitStatusRefreshCalls,
+      changeRequestStatusRefreshCalls,
+      failGitStatusRefresh: failure.failGitStatusRefresh,
+      failChangeRequestStatusRefresh: failure.failChangeRequestStatusRefresh,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make(`evt-turn-completed-${failure.name}-refresh-failure`),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId(`turn-${failure.name}-refresh-failure`),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(changeRequestStatusRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("starts change request refresh without waiting for local refresh", async () => {
+    const gitStatusRefreshCalls: string[] = [];
+    const changeRequestStatusRefreshCalls: string[] = [];
+    let releaseLocalRefresh: (() => void) | undefined;
+    const gitStatusRefreshWait = new Promise<void>((resolve) => {
+      releaseLocalRefresh = resolve;
+    });
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      gitStatusRefreshCalls,
+      changeRequestStatusRefreshCalls,
+      gitStatusRefreshWait,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-independent-refreshes"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-independent-refreshes"),
+      payload: { state: "completed" },
+    });
+    const draining = harness.drain();
+    await waitForCondition(
+      () => gitStatusRefreshCalls.length === 1 && changeRequestStatusRefreshCalls.length === 1,
+    );
+
+    expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(changeRequestStatusRefreshCalls).toEqual([harness.cwd]);
+    releaseLocalRefresh?.();
+    await draining;
   });
 
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const gitStatusRefreshCalls: string[] = [];
+    const changeRequestStatusRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      gitStatusRefreshCalls,
+      changeRequestStatusRefreshCalls,
+    });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -571,6 +716,20 @@ describe("CheckpointReactor", () => {
     const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.checkpoints).toHaveLength(0);
+    expect(gitStatusRefreshCalls).toEqual([]);
+    expect(changeRequestStatusRefreshCalls).toEqual([]);
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-missing-id"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+    expect(gitStatusRefreshCalls).toEqual([]);
+    expect(changeRequestStatusRefreshCalls).toEqual([]);
 
     harness.provider.emit({
       type: "turn.completed",
