@@ -1318,6 +1318,7 @@ export default function SidebarV2() {
       });
       return;
     }
+    if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projects.length, setOpenMobile]);
 
