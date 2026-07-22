@@ -25,8 +25,9 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   recoverDraftThreadAfterBootstrap,
-  resolveThreadMetadataUpdateForNextTurn,
+  resolveStartedThreadRef,
   resolveSendEnvMode,
+  resolveThreadMetadataUpdateForNextTurn,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -144,6 +145,21 @@ describe("recoverDraftThreadAfterBootstrap", () => {
 
     expect(subscribe).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveStartedThreadRef", () => {
+  const threadRef = { environmentId, threadId };
+
+  it("promotes from authoritative started detail", () => {
+    expect(resolveStartedThreadRef(threadRef, makeThread({ session: readySession }))).toEqual(
+      threadRef,
+    );
+  });
+
+  it("waits while detail has not started", () => {
+    expect(resolveStartedThreadRef(threadRef, makeThread())).toBeNull();
+    expect(resolveStartedThreadRef(threadRef, null)).toBeNull();
   });
 });
 

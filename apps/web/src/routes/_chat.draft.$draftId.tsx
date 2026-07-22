@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import ChatView from "../components/ChatView";
-import { threadHasStarted } from "../components/ChatView.logic";
+import { resolveStartedThreadRef } from "../components/ChatView.logic";
 import {
   DraftId,
   markPromotedDraftThreadByRef,
@@ -10,7 +10,7 @@ import {
 import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams, resolveDraftThreadSubscriptionRef } from "../threadRoutes";
-import { useThread } from "../state/entities";
+import { useThreadDetail } from "../state/entities";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
@@ -18,9 +18,12 @@ function DraftChatThreadRouteView() {
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const serverThreadRef = resolveDraftThreadSubscriptionRef(draftSession);
-  const serverThread = useThread(serverThreadRef);
-  const serverThreadStarted = threadHasStarted(serverThread);
-  const canonicalThreadRef = serverThreadStarted ? serverThreadRef : null;
+  // Promotion is driven by the authoritative detail stream. The composed
+  // `useThread` view intentionally overlays shell metadata, whose independent
+  // subscription can briefly lag and erase a started session/latest turn.
+  const serverThreadDetail = useThreadDetail(serverThreadRef);
+  const canonicalThreadRef = resolveStartedThreadRef(serverThreadRef, serverThreadDetail);
+  const serverThreadStarted = canonicalThreadRef !== null;
 
   useEffect(() => {
     if (!serverThreadStarted || !serverThreadRef || draftSession?.promotedTo) {
