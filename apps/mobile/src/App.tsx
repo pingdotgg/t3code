@@ -13,7 +13,10 @@ import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
-import { AppearancePreferencesProvider } from "./features/settings/appearance/AppearancePreferencesProvider";
+import {
+  AppearancePreferencesProvider,
+  useAppearancePreferences,
+} from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
@@ -40,18 +43,25 @@ const appLinking = {
 
 const Navigation = createStaticNavigation(RootStack);
 
+function SplashScreenCoordinator() {
+  const { isReady } = useAppearancePreferences();
+
+  useEffect(() => {
+    if (isReady) void SplashScreen.hide();
+  }, [isReady]);
+
+  return null;
+}
+
 export default function App() {
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
-
-  useEffect(() => {
-    SplashScreen.hide();
-  }, []);
 
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
+          <SplashScreenCoordinator />
           <GestureHandlerRootView className="flex-1">
             <KeyboardProvider statusBarTranslucent>
               <SafeAreaProvider>

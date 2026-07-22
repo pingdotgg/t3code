@@ -33,7 +33,6 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import {
   hasCustomHomeListOptions,
-  PROJECT_GROUPING_OPTIONS,
   PROJECT_SORT_OPTIONS,
   THREAD_SORT_OPTIONS,
   useHomeListOptions,
@@ -217,13 +216,8 @@ function ThreadNavigationSidebarPane(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const {
-    options,
-    setSelectedEnvironmentId,
-    setProjectGroupingMode,
-    setProjectSortOrder,
-    setThreadSortOrder,
-  } = useHomeListOptions(availableEnvironmentIds);
+  const { options, setSelectedEnvironmentId, setProjectSortOrder, setThreadSortOrder } =
+    useHomeListOptions(availableEnvironmentIds);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectFilterOptions = useMemo(
     () =>
@@ -541,16 +535,6 @@ function ThreadNavigationSidebarPane(
                 state: options.threadSortOrder === option.value ? "on" : "off",
               })),
             },
-            {
-              id: "project-grouping",
-              title: "Group projects",
-              subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
-                id: `project-grouping:${option.value}`,
-                title: option.label,
-                subtitle: option.subtitle,
-                state: options.projectGroupingMode === option.value ? "on" : "off",
-              })),
-            },
           ] satisfies MenuAction[])),
     ],
     [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
@@ -594,15 +578,10 @@ function ThreadNavigationSidebarPane(
         setThreadSortOrder(threadSort.value);
         return;
       }
-      const grouping = PROJECT_GROUPING_OPTIONS.find(
-        (option) => `project-grouping:${option.value}` === event,
-      );
-      if (grouping) setProjectGroupingMode(grouping.value);
     },
     [
       environments,
       projectFilterOptions,
-      setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
@@ -898,12 +877,10 @@ function ThreadNavigationSidebarPane(
         selectedProjectKey,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
-        projectGroupingMode: options.projectGroupingMode,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
         onProjectSortOrderChange: setProjectSortOrder,
         onThreadSortOrderChange: setThreadSortOrder,
-        onProjectGroupingModeChange: setProjectGroupingMode,
         listOrganization: !threadListV2Enabled,
       }),
     [
@@ -911,7 +888,6 @@ function ThreadNavigationSidebarPane(
       options,
       projectFilterOptions,
       selectedProjectKey,
-      setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
