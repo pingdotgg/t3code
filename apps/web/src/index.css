@@ -108,11 +108,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
-  /* Duty-cycled indicator animations: long opacity holds with short stepped
-     ramps, so the compositor only produces frames while the value changes
-     (~20% of the cycle) instead of every vsync. Keep flat holds dominant. */
+  /* Duty-cycled indicator animations: long holds with stepped ramps, so the
+     compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
+  --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
   --font-sans:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
@@ -185,6 +185,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       scale: 2;
     }
   }
+  @keyframes sidebar-working-text {
+    0%,
+    36% {
+      opacity: 1;
+      animation-timing-function: steps(10);
+    }
+    50%,
+    86% {
+      opacity: 0.75;
+      animation-timing-function: steps(10);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
 }
 
 @layer base {
@@ -232,8 +247,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   /* Stage-channel sidebar art; ::after ramps to the sidebar bg color and the
-     mask lets the surface grain show through at the boundary. */
+     mask lets the surface grain show through at the boundary. Panels whose
+     background differs from the app chrome (e.g. sidebar v2) override
+     --sidebar-stage-fade so the art fades into their own surface color. */
   .sidebar-stage-backdrop {
+    --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
     mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
     -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
   }
@@ -246,12 +264,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       to bottom,
       transparent 0%,
       transparent 28%,
-      color-mix(in srgb, var(--app-chrome-background) 10%, transparent) 40%,
-      color-mix(in srgb, var(--app-chrome-background) 30%, transparent) 52%,
-      color-mix(in srgb, var(--app-chrome-background) 58%, transparent) 64%,
-      color-mix(in srgb, var(--app-chrome-background) 82%, transparent) 75%,
-      color-mix(in srgb, var(--app-chrome-background) 96%, transparent) 85%,
-      var(--app-chrome-background) 93%
+      color-mix(in srgb, var(--stage-fade) 10%, transparent) 40%,
+      color-mix(in srgb, var(--stage-fade) 30%, transparent) 52%,
+      color-mix(in srgb, var(--stage-fade) 58%, transparent) 64%,
+      color-mix(in srgb, var(--stage-fade) 82%, transparent) 75%,
+      color-mix(in srgb, var(--stage-fade) 96%, transparent) 85%,
+      var(--stage-fade) 93%
     );
   }
 
@@ -448,6 +466,41 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
   }
+}
+
+/* Give the navigation rail its own cool graphite surface instead of borrowing
+   the workspace card color. The scoped semantic tokens keep sidebar v2's
+   controls in the same palette without changing v1 or the settings nav. */
+.app-sidebar {
+  --background: oklch(0.965 0.009 265);
+  --foreground: oklch(0.27 0.025 265);
+  --card: oklch(0.945 0.014 265);
+  --card-foreground: var(--foreground);
+  --accent: oklch(0.875 0.008 265);
+  --accent-foreground: oklch(0.24 0.012 265);
+  --muted: oklch(0.9 0.018 265);
+  --muted-foreground: oklch(0.49 0.03 265);
+  --border: oklch(0.72 0.025 265 / 28%);
+  --input: oklch(0.62 0.03 265 / 28%);
+  --sidebar-stage-fade: var(--card);
+  background-color: var(--card);
+}
+
+.dark .app-sidebar {
+  --background: #000;
+  --foreground: #f1f3f7;
+  --card: #000;
+  --card-foreground: var(--foreground);
+  --accent: #191a1d;
+  --accent-foreground: #f7f9ff;
+  --muted: #0a0a0a;
+  --muted-foreground: #a3a3a3;
+  --border: rgb(255 255 255 / 14%);
+  --input: rgb(255 255 255 / 18%);
+  /* The stage-channel header art must ramp to THIS panel's surface, not the
+     global chrome background, or the fade shows a seam (same rule as the
+     light palette above). */
+  --sidebar-stage-fade: var(--card);
 }
 
 body {

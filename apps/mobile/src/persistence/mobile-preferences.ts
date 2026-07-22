@@ -22,6 +22,12 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  /**
+   * Device-local mirror of the web beta's `sidebarV2Enabled`. Mobile has no
+   * client-settings sync, so the flat v2 thread list is opted into per
+   * device.
+   */
+  readonly threadListV2Enabled?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -71,6 +77,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     codeWordBreak?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    threadListV2Enabled?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -96,6 +103,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(
       (key): key is string => typeof key === "string",
     );
+  }
+  if (typeof parsed.threadListV2Enabled === "boolean") {
+    preferences.threadListV2Enabled = parsed.threadListV2Enabled;
   }
   return preferences;
 }
