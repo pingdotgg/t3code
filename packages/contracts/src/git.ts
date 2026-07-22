@@ -163,6 +163,55 @@ export const VcsRemoveWorktreeInput = Schema.Struct({
 });
 export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 
+export const VcsManagedWorktree = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  refName: TrimmedNonEmptyStringSchema,
+  isDirty: Schema.Boolean,
+});
+export type VcsManagedWorktree = typeof VcsManagedWorktree.Type;
+
+export const VcsListManagedWorktreesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsListManagedWorktreesInput = typeof VcsListManagedWorktreesInput.Type;
+
+export const VcsListManagedWorktreesResult = Schema.Struct({
+  worktrees: Schema.Array(VcsManagedWorktree),
+});
+export type VcsListManagedWorktreesResult = typeof VcsListManagedWorktreesResult.Type;
+
+export const VcsWorktreeSizeInput = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+});
+export type VcsWorktreeSizeInput = typeof VcsWorktreeSizeInput.Type;
+
+export const VcsWorktreeSizeResult = Schema.Struct({
+  sizeBytes: NonNegativeInt,
+});
+export type VcsWorktreeSizeResult = typeof VcsWorktreeSizeResult.Type;
+
+const VcsRemoveWorktreeItem = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  force: Schema.optional(Schema.Boolean),
+});
+
+export const VcsRemoveWorktreesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  items: Schema.Array(VcsRemoveWorktreeItem),
+});
+export type VcsRemoveWorktreesInput = typeof VcsRemoveWorktreesInput.Type;
+
+const VcsRemoveWorktreeOutcome = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  ok: Schema.Boolean,
+  error: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
+export const VcsRemoveWorktreesResult = Schema.Struct({
+  results: Schema.Array(VcsRemoveWorktreeOutcome),
+});
+export type VcsRemoveWorktreesResult = typeof VcsRemoveWorktreesResult.Type;
+
 export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
