@@ -15,6 +15,7 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
+  type LinearIssueDetail,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -45,6 +46,12 @@ import {
   elementContextDedupKey,
   newElementContextId,
 } from "./lib/elementContext";
+import {
+  type LinearIssueContextDraft,
+  clampLinearIssueDetail,
+  linearIssueDedupKey,
+  newLinearIssueContextId,
+} from "./lib/linearIssueContext";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
@@ -125,11 +132,37 @@ const PersistedElementContextDraft = Schema.Struct({
 });
 type PersistedElementContextDraft = typeof PersistedElementContextDraft.Type;
 
+const PersistedLinearIssueComment = Schema.Struct({
+  authorName: Schema.NullOr(Schema.String),
+  body: Schema.String,
+  createdAt: Schema.String,
+});
+
+const PersistedLinearIssueDraft = Schema.Struct({
+  id: Schema.String,
+  threadId: ThreadId,
+  attachedAt: Schema.String,
+  identifier: Schema.String,
+  title: Schema.String,
+  url: Schema.String,
+  stateName: Schema.String,
+  stateType: Schema.String,
+  teamKey: Schema.String,
+  description: Schema.NullOr(Schema.String),
+  priorityLabel: Schema.NullOr(Schema.String),
+  assigneeName: Schema.NullOr(Schema.String),
+  labels: Schema.Array(Schema.String),
+  updatedAt: Schema.String,
+  comments: Schema.Array(PersistedLinearIssueComment),
+});
+type PersistedLinearIssueDraft = typeof PersistedLinearIssueDraft.Type;
+
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
   elementContexts: Schema.optionalKey(Schema.Array(PersistedElementContextDraft)),
+  linearIssues: Schema.optionalKey(Schema.Array(PersistedLinearIssueDraft)),
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
   reviewComments: Schema.optionalKey(Schema.Array(ReviewCommentContextSchema)),
   // Keyed by `ProviderInstanceId` (open branded slug) so custom provider
@@ -260,6 +293,12 @@ export interface ComposerThreadDraftState {
    * re-derive the snapshot from on reload.
    */
   elementContexts: ElementContextDraft[];
+  /**
+   * Linear issue attachments picked from the composer footer. The full issue
+   * payload (title / description / comments) is persisted inline so the chip
+   * survives reload without re-fetching from the Linear API.
+   */
+  linearIssues: LinearIssueContextDraft[];
   previewAnnotations: PreviewAnnotationPayload[];
   reviewComments: ReviewCommentContext[];
   /**
@@ -465,6 +504,21 @@ interface ComposerDraftStoreState {
   ) => void;
   removeElementContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
   clearElementContexts: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Attach a Linear issue to the draft. Returns true when accepted, false when
+   * deduped against an already-attached issue with the same identifier.
+   */
+  addLinearIssueContext: (threadRef: ComposerThreadTarget, issue: LinearIssueDetail) => boolean;
+  /**
+   * Replace the entire linear-issues list (used by send-failure retry to
+   * restore the pre-send snapshot).
+   */
+  setLinearIssueContexts: (
+    threadRef: ComposerThreadTarget,
+    issues: ReadonlyArray<LinearIssueContextDraft>,
+  ) => void;
+  removeLinearIssueContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
+  clearLinearIssueContexts: (threadRef: ComposerThreadTarget) => void;
   addPreviewAnnotation: (
     threadRef: ComposerThreadTarget,
     annotation: PreviewAnnotationPayload,
@@ -556,12 +610,14 @@ const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
 const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
 const EMPTY_ELEMENT_CONTEXTS: ElementContextDraft[] = [];
+const EMPTY_LINEAR_ISSUES: LinearIssueContextDraft[] = [];
 const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
 const EMPTY_REVIEW_COMMENTS: ReviewCommentContext[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
 Object.freeze(EMPTY_ELEMENT_CONTEXTS);
+Object.freeze(EMPTY_LINEAR_ISSUES);
 Object.freeze(EMPTY_PREVIEW_ANNOTATIONS);
 Object.freeze(EMPTY_REVIEW_COMMENTS);
 const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderDriverKind, ModelSelection>> =
@@ -578,6 +634,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   persistedAttachments: EMPTY_PERSISTED_ATTACHMENTS,
   terminalContexts: EMPTY_TERMINAL_CONTEXTS,
   elementContexts: EMPTY_ELEMENT_CONTEXTS,
+  linearIssues: EMPTY_LINEAR_ISSUES,
   previewAnnotations: EMPTY_PREVIEW_ANNOTATIONS,
   reviewComments: EMPTY_REVIEW_COMMENTS,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
@@ -600,6 +657,7 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     persistedAttachments: [],
     terminalContexts: [],
     elementContexts: [],
+    linearIssues: [],
     previewAnnotations: [],
     reviewComments: [],
     modelSelectionByProvider: {},
@@ -673,6 +731,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.persistedAttachments.length === 0 &&
     draft.terminalContexts.length === 0 &&
     draft.elementContexts.length === 0 &&
+    draft.linearIssues.length === 0 &&
     draft.previewAnnotations.length === 0 &&
     draft.reviewComments.length === 0 &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
@@ -1122,6 +1181,68 @@ function normalizePersistedElementContextDraft(
     componentName: typeof candidate.componentName === "string" ? candidate.componentName : null,
     source,
     styles: typeof candidate.styles === "string" ? candidate.styles : "",
+  };
+}
+
+function normalizePersistedLinearIssueComment(
+  value: unknown,
+): PersistedLinearIssueDraft["comments"][number] | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.body !== "string" || typeof candidate.createdAt !== "string") {
+    return null;
+  }
+  return {
+    authorName: typeof candidate.authorName === "string" ? candidate.authorName : null,
+    body: candidate.body,
+    createdAt: candidate.createdAt,
+  };
+}
+
+function normalizePersistedLinearIssueDraft(value: unknown): PersistedLinearIssueDraft | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const id = candidate.id;
+  const threadId = candidate.threadId;
+  const attachedAt = candidate.attachedAt;
+  const identifier = candidate.identifier;
+  if (
+    typeof id !== "string" ||
+    id.length === 0 ||
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    typeof attachedAt !== "string" ||
+    attachedAt.length === 0 ||
+    typeof identifier !== "string" ||
+    identifier.length === 0
+  ) {
+    return null;
+  }
+  const labels = Array.isArray(candidate.labels)
+    ? candidate.labels.filter((label): label is string => typeof label === "string")
+    : [];
+  const comments = Array.isArray(candidate.comments)
+    ? candidate.comments.flatMap((entry) => {
+        const normalized = normalizePersistedLinearIssueComment(entry);
+        return normalized ? [normalized] : [];
+      })
+    : [];
+  return {
+    id,
+    threadId: threadId as ThreadId,
+    attachedAt,
+    identifier,
+    title: typeof candidate.title === "string" ? candidate.title : "",
+    url: typeof candidate.url === "string" ? candidate.url : "",
+    stateName: typeof candidate.stateName === "string" ? candidate.stateName : "",
+    stateType: typeof candidate.stateType === "string" ? candidate.stateType : "",
+    teamKey: typeof candidate.teamKey === "string" ? candidate.teamKey : "",
+    description: typeof candidate.description === "string" ? candidate.description : null,
+    priorityLabel: typeof candidate.priorityLabel === "string" ? candidate.priorityLabel : null,
+    assigneeName: typeof candidate.assigneeName === "string" ? candidate.assigneeName : null,
+    labels,
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
+    comments,
   };
 }
 
@@ -1657,6 +1778,12 @@ function normalizePersistedDraftsByThreadId(
           return normalized ? [normalized] : [];
         })
       : [];
+    const linearIssues = Array.isArray(draftCandidate.linearIssues)
+      ? draftCandidate.linearIssues.flatMap((entry) => {
+          const normalized = normalizePersistedLinearIssueDraft(entry);
+          return normalized ? [normalized] : [];
+        })
+      : [];
     const reviewComments = Array.isArray(draftCandidate.reviewComments)
       ? draftCandidate.reviewComments.filter(isReviewCommentContext)
       : [];
@@ -1724,6 +1851,7 @@ function normalizePersistedDraftsByThreadId(
       attachments.length === 0 &&
       terminalContexts.length === 0 &&
       elementContexts.length === 0 &&
+      linearIssues.length === 0 &&
       reviewComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
@@ -1748,6 +1876,15 @@ function normalizePersistedDraftsByThreadId(
       attachments,
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(elementContexts.length > 0 ? { elementContexts } : {}),
+      ...(linearIssues.length > 0
+        ? {
+            linearIssues: linearIssues.map((issue) => ({
+              ...issue,
+              labels: [...issue.labels],
+              comments: issue.comments.map((comment) => ({ ...comment })),
+            })),
+          }
+        : {}),
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
       ...(hasModelData
         ? {
@@ -1832,6 +1969,7 @@ function partializeComposerDraftStoreState(
       draft.persistedAttachments.length === 0 &&
       draft.terminalContexts.length === 0 &&
       draft.elementContexts.length === 0 &&
+      draft.linearIssues.length === 0 &&
       draft.previewAnnotations.length === 0 &&
       draft.reviewComments.length === 0 &&
       !hasModelData &&
@@ -1870,6 +2008,31 @@ function partializeComposerDraftStoreState(
               componentName: context.componentName,
               source: context.source,
               styles: context.styles,
+            })),
+          }
+        : {}),
+      ...(draft.linearIssues.length > 0
+        ? {
+            linearIssues: draft.linearIssues.map((issue) => ({
+              id: issue.id,
+              threadId: issue.threadId,
+              attachedAt: issue.attachedAt,
+              identifier: issue.identifier,
+              title: issue.title,
+              url: issue.url,
+              stateName: issue.stateName,
+              stateType: issue.stateType,
+              teamKey: issue.teamKey,
+              description: issue.description,
+              priorityLabel: issue.priorityLabel,
+              assigneeName: issue.assigneeName,
+              labels: [...issue.labels],
+              updatedAt: issue.updatedAt,
+              comments: issue.comments.map((comment) => ({
+                authorName: comment.authorName,
+                body: comment.body,
+                createdAt: comment.createdAt,
+              })),
             })),
           }
         : {}),
@@ -2124,6 +2287,12 @@ function toHydratedThreadDraft(
     elementContexts:
       persistedDraft.elementContexts?.map((context) => ({
         ...context,
+      })) ?? [],
+    linearIssues:
+      persistedDraft.linearIssues?.map((issue) => ({
+        ...issue,
+        labels: [...issue.labels],
+        comments: issue.comments.map((comment) => ({ ...comment })),
       })) ?? [],
     previewAnnotations:
       persistedDraft.previewAnnotations?.map((annotation) => ({ ...annotation })) ?? [],
@@ -3139,6 +3308,94 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        addLinearIssueContext: (threadRef, issue) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          const threadId = resolveComposerThreadId(get(), threadRef);
+          if (!threadKey || !threadId) return false;
+          let accepted = false;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const dedupKey = linearIssueDedupKey(issue);
+            if (existing.linearIssues.some((entry) => linearIssueDedupKey(entry) === dedupKey)) {
+              return state;
+            }
+            accepted = true;
+            const draft: LinearIssueContextDraft = {
+              ...clampLinearIssueDetail(issue),
+              id: newLinearIssueContextId(),
+              threadId,
+              attachedAt: new Date().toISOString(),
+            };
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  linearIssues: [...existing.linearIssues, draft],
+                },
+              },
+            };
+          });
+          return accepted;
+        },
+        setLinearIssueContexts: (threadRef, issues) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextDraft: ComposerThreadDraftState = {
+              ...existing,
+              linearIssues: [...issues],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        removeLinearIssueContext: (threadRef, contextId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0 || contextId.length === 0) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) return state;
+            const filtered = current.linearIssues.filter((entry) => entry.id !== contextId);
+            if (filtered.length === current.linearIssues.length) return state;
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              linearIssues: filtered,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearLinearIssueContexts: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current || current.linearIssues.length === 0) return state;
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              linearIssues: [],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         addPreviewAnnotation: (threadRef, annotation) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
@@ -3324,6 +3581,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               persistedAttachments: [],
               terminalContexts: [],
               elementContexts: [],
+              linearIssues: [],
               previewAnnotations: [],
               reviewComments: [],
             };

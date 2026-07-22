@@ -79,6 +79,10 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function linearApiKeySecretName(): string {
+  return "linear-api-key";
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -105,7 +109,11 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return {
+    ...settings,
+    providerInstances,
+    linear: { ...settings.linear, apiKey: "" },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -464,6 +472,90 @@ const make = Effect.gen(function* () {
       };
     });
 
+  // Reading the Linear secret must never take down a settings read: a failure
+  // here degrades to "disconnected" (getStatus self-heals, the user can
+  // reconnect) instead of failing every getSettings/streamChanges over a
+  // linear-only problem. Returns without an error channel by design.
+  const materializeLinearApiKey = (settings: ServerSettings): Effect.Effect<ServerSettings> =>
+    Effect.gen(function* () {
+      // Legacy plaintext key still on disk (not yet migrated) — use it as-is.
+      if (settings.linear.apiKey.trim().length > 0 || !settings.linear.apiKeySet) {
+        return settings;
+      }
+      const secret = yield* secretStore.get(linearApiKeySecretName());
+      return {
+        ...settings,
+        linear: {
+          ...settings.linear,
+          apiKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        },
+      };
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to materialize Linear API key", {
+          operation: "read-secret",
+          cause,
+        }).pipe(Effect.as({ ...settings, linear: { ...settings.linear, apiKey: "" } })),
+      ),
+    );
+
+  const writeLinearApiKeySecret = (key: string) =>
+    secretStore.set(linearApiKeySecretName(), textEncoder.encode(key)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "write-secret",
+            cause,
+          }),
+      ),
+    );
+
+  const removeLinearApiKeySecret = secretStore.remove(linearApiKeySecretName()).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath,
+          operation: "remove-secret",
+          cause,
+        }),
+    ),
+  );
+
+  // Plans the on-disk placeholder plus the secret-store mutation for a patch.
+  // The mutation (`commit`) is deferred so it runs only after the settings file
+  // is written: a failed file write leaves the previous secret untouched, so a
+  // working key is never lost to a diverged secret/placeholder state.
+  const planLinearApiKeySecret = (
+    next: ServerSettings,
+    patch: ServerSettingsPatch,
+  ): { settings: ServerSettings; commit: Effect.Effect<void, ServerSettingsError> } => {
+    const key = next.linear.apiKey.trim();
+    const connected: ServerSettings = {
+      ...next,
+      linear: { ...next.linear, apiKey: "", apiKeySet: true },
+    };
+
+    // When the patch does not touch `linear`, preserve the stored secret. A
+    // lingering plaintext key (pre-migration settings.json) is secured here.
+    if (patch.linear?.apiKey === undefined) {
+      return key.length === 0
+        ? { settings: next, commit: Effect.void }
+        : { settings: connected, commit: writeLinearApiKeySecret(key) };
+    }
+
+    // Connect: real key provided → store it, persist only the placeholder.
+    if (key.length > 0) {
+      return { settings: connected, commit: writeLinearApiKeySecret(key) };
+    }
+
+    // Disconnect: empty key provided → delete the stored secret.
+    return {
+      settings: { ...next, linear: { ...next.linear, apiKey: "", apiKeySet: false } },
+      commit: removeLinearApiKeySecret,
+    };
+  };
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -496,6 +588,39 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  // Migration for settings.json files that still carry a plaintext
+  // `linear.apiKey`: move it into the secret store and rewrite the file with
+  // the placeholder so the raw key never lingers on disk. Runs at startup and
+  // again on every watcher-driven reload, so a plaintext key reintroduced while
+  // the server is running (hand edit, backup restore, older client) is secured
+  // promptly rather than only at the next restart. Idempotent once the key is
+  // already a placeholder.
+  const migrateLinearApiKeyToSecretStore = writeSemaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const current = yield* getSettingsFromCache;
+      const plaintext = current.linear.apiKey.trim();
+      if (plaintext.length === 0) {
+        return;
+      }
+      yield* secretStore.set(linearApiKeySecretName(), textEncoder.encode(plaintext)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "write-secret",
+              cause,
+            }),
+        ),
+      );
+      const migrated: ServerSettings = {
+        ...current,
+        linear: { ...current.linear, apiKey: "", apiKeySet: true },
+      };
+      yield* writeSettingsAtomically(migrated);
+      yield* Cache.set(settingsCache, cacheKey, migrated);
+    }),
+  );
+
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
     const settingsFile = pathService.basename(settingsPath);
@@ -513,6 +638,9 @@ const make = Effect.gen(function* () {
     );
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+    const migrateLinearApiKeyToSecretStoreSafely = migrateLinearApiKeyToSecretStore.pipe(
+      Effect.ignoreCause({ log: true }),
+    );
 
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
@@ -528,11 +656,12 @@ const make = Effect.gen(function* () {
       Stream.debounce(Duration.millis(100)),
     );
 
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    yield* Stream.runForEach(debouncedSettingsEvents, () =>
+      // Revalidate first so migration reads the freshly reloaded settings, then
+      // secure any plaintext `linear.apiKey` the reload brought in. Each step
+      // takes one `writeSemaphore` permit, sequentially — never nested.
+      revalidateAndEmitSafely.pipe(Effect.andThen(migrateLinearApiKeyToSecretStoreSafely)),
+    ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
   });
 
   const start = Effect.gen(function* () {
@@ -545,6 +674,7 @@ const make = Effect.gen(function* () {
       yield* startWatcher;
       yield* Cache.invalidate(settingsCache, cacheKey);
       yield* getSettingsFromCache;
+      yield* migrateLinearApiKeyToSecretStore;
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -561,6 +691,7 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeLinearApiKey),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
@@ -571,11 +702,46 @@ const make = Effect.gen(function* () {
             current,
             applyServerSettingsPatch(current, patch),
           );
-          const next = yield* normalizeServerSettings(nextPersisted);
+          const linearPlan = planLinearApiKeySecret(nextPersisted, patch);
+          const next = yield* normalizeServerSettings(linearPlan.settings);
           yield* writeSettingsAtomically(next);
+          // settings.json and the secret store are two independent stores with
+          // no shared transaction, so the pair can never be updated atomically.
+          // The file write already landed; if committing the secret fails, the
+          // file would claim `apiKeySet: true` while the store holds a stale key
+          // or none. Roll back ONLY the linear placeholder to the previous
+          // persisted state (`current.linear`), which still matches the
+          // untouched linear secret — the rest of this patch stays, since
+          // `persistProviderEnvironmentSecrets` already mutated the provider
+          // secret store and its placeholders must remain consistent with it.
+          // Best-effort: a failed rollback is logged; the original error always
+          // surfaces.
+          yield* linearPlan.commit.pipe(
+            Effect.catch((commitError) =>
+              normalizeServerSettings({ ...next, linear: current.linear }).pipe(
+                Effect.flatMap((reverted) =>
+                  writeSettingsAtomically(reverted).pipe(
+                    Effect.flatMap(() => Cache.set(settingsCache, cacheKey, reverted)),
+                  ),
+                ),
+                Effect.catch((rollbackError) =>
+                  Effect.logWarning(
+                    "failed to roll back settings after Linear secret write failure",
+                    {
+                      operation: rollbackError.operation,
+                      cause: rollbackError.cause,
+                    },
+                  ),
+                ),
+                Effect.andThen(Effect.fail(commitError)),
+              ),
+            ),
+          );
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeProviderEnvironmentSecrets(next).pipe(
+            Effect.flatMap(materializeLinearApiKey),
+          );
           return resolveTextGenerationProvider(materialized);
         }),
       ),
@@ -583,8 +749,9 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>
           materializeProviderEnvironmentSecrets(settings).pipe(
+            Effect.flatMap(materializeLinearApiKey),
             Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
+              Effect.logWarning("failed to materialize server settings secrets", {
                 operation: error.operation,
                 providerInstanceId: error.providerInstanceId,
                 environmentVariable: error.environmentVariable,

@@ -10,8 +10,10 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -589,6 +591,142 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores the Linear API key outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const connected = yield* serverSettings.updateSettings({
+        linear: { apiKey: "lin_api_secret" },
+      });
+
+      assert.deepEqual(connected.linear, { apiKey: "lin_api_secret", apiKeySet: true });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "lin_api_secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).linear, { apiKeySet: true });
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "lin_api_secret");
+
+      const disconnected = yield* serverSettings.updateSettings({
+        linear: { apiKey: "" },
+      });
+      assert.deepEqual(disconnected.linear, { apiKey: "", apiKeySet: false });
+
+      const rawAfter = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(rawAfter, "lin_api_secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.isUndefined(JSON.parse(rawAfter).linear);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps the previous Linear API key when the settings write fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const settingsDir = path.dirname(serverConfig.settingsPath);
+
+      yield* serverSettings.updateSettings({ linear: { apiKey: "lin_first_key" } });
+
+      // Make the settings directory read-only so the atomic write fails while
+      // the (separate) secret store stays writable.
+      yield* fileSystem.chmod(settingsDir, 0o500);
+
+      const exit = yield* serverSettings
+        .updateSettings({ linear: { apiKey: "lin_second_key" } })
+        .pipe(
+          Effect.exit,
+          Effect.ensuring(fileSystem.chmod(settingsDir, 0o700).pipe(Effect.ignore)),
+        );
+      assert.isTrue(Exit.isFailure(exit));
+
+      // The failed connect must not have overwritten the working key.
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "lin_first_key");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("rolls settings.json back when the Linear secret write fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      // Make the secret store read-only so committing the secret fails while the
+      // settings file write (separate directory) still succeeds.
+      yield* fileSystem.chmod(serverConfig.secretsDir, 0o500);
+
+      const exit = yield* serverSettings
+        .updateSettings({ linear: { apiKey: "lin_uncommittable" } })
+        .pipe(
+          Effect.exit,
+          Effect.ensuring(fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(Effect.ignore)),
+        );
+      assert.isTrue(Exit.isFailure(exit));
+
+      // The file must not claim a connected account it cannot back with a secret.
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.isUndefined(JSON.parse(raw).linear);
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "");
+      assert.equal(materialized.linear.apiKeySet, false);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("degrades to disconnected when the Linear secret cannot be read", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const secretFile = path.join(serverConfig.secretsDir, "linear-api-key.bin");
+
+      yield* serverSettings.updateSettings({ linear: { apiKey: "lin_unreadable" } });
+
+      // Make the stored secret unreadable so materialization's read fails.
+      yield* fileSystem.chmod(secretFile, 0o000);
+
+      // getSettings must still succeed — a linear-only read failure degrades to
+      // disconnected instead of taking down every settings read.
+      const materialized = yield* serverSettings.getSettings.pipe(
+        Effect.ensuring(fileSystem.chmod(secretFile, 0o600).pipe(Effect.ignore)),
+      );
+      assert.equal(materialized.linear.apiKey, "");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("migrates a plaintext Linear API key found in settings.json", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      // A plaintext key on disk (hand edit / backup restore / older client).
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"linear":{"apiKey":"lin_plaintext"}}',
+      );
+
+      // `start` runs the same migration the file watcher invokes on reload.
+      yield* serverSettings.start;
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "lin_plaintext");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).linear, { apiKeySet: true });
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.equal(materialized.linear.apiKey, "lin_plaintext");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

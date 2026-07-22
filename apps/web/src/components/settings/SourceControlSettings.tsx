@@ -48,7 +48,12 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsItemMark,
+  SettingsPageContainer,
+  SettingsSection,
+} from "./settingsLayout";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -136,21 +141,11 @@ function SourceControlItemMark({
     ? SOURCE_CONTROL_PROVIDER_ICONS[item.kind]
     : VCS_ICONS[item.kind];
 
-  if (!Icon) {
-    return <span className={cn("size-2 shrink-0 rounded-full", dotClassName)} aria-hidden />;
-  }
-
   return (
-    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-      <Icon className="size-4.5 text-foreground/80" aria-hidden />
-      <span
-        className={cn(
-          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
-          dotClassName,
-        )}
-        aria-hidden
-      />
-    </span>
+    <SettingsItemMark
+      dotClassName={dotClassName}
+      icon={Icon ? <Icon className="size-4.5 text-foreground/80" aria-hidden /> : undefined}
+    />
   );
 }
 
