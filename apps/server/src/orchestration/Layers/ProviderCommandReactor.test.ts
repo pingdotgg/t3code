@@ -514,6 +514,44 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("clears pending work when turn startup is interrupted", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+      const messageId = asMessageId("user-message-start-interrupted");
+      harness.sendTurn.mockImplementationOnce(() => Effect.interrupt);
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-interrupted"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId,
+          role: "user",
+          text: "hello reactor",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads[0]?.activities.some(
+              (activity) => activity.kind === "provider.turn.start.failed",
+            ) ?? false
+          );
+        }),
+      );
+
+      const shellSnapshot = yield* harness.snapshotQuery.getShellSnapshot();
+      expect(shellSnapshot.threads[0]?.hasPendingTurnStart).toBe(false);
+    }),
+  );
+
   it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

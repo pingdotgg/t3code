@@ -802,30 +802,37 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.void;
+    const handleTurnStartFailure = Effect.fnUntraced(function* (cause: Cause.Cause<unknown>) {
+      const interrupted = Cause.hasInterruptsOnly(cause);
+      if (interrupted) {
+        const threadShell = yield* projectionSnapshotQuery.getThreadShellById(
+          event.payload.threadId,
+        );
+        if (Option.isNone(threadShell) || threadShell.value.hasPendingTurnStart !== true) {
+          return;
+        }
       }
-      const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
+
+      const detail = interrupted
+        ? "Provider turn start was interrupted before it began."
+        : formatFailureDetail(cause);
+      if (!interrupted) {
+        yield* setThreadSessionErrorOnTurnStartFailure({
+          threadId: event.payload.threadId,
+          detail,
+          createdAt: event.payload.createdAt,
+        });
+      }
+      yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
         detail,
+        turnId: null,
         createdAt: event.payload.createdAt,
-      }).pipe(
-        Effect.flatMap(() =>
-          appendProviderFailureActivity({
-            threadId: event.payload.threadId,
-            kind: "provider.turn.start.failed",
-            summary: "Provider turn start failed",
-            detail,
-            turnId: null,
-            createdAt: event.payload.createdAt,
-            requestId: event.payload.messageId,
-          }),
-        ),
-        Effect.asVoid,
-      );
-    };
+        requestId: event.payload.messageId,
+      });
+    });
 
     const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
       handleTurnStartFailure(cause).pipe(

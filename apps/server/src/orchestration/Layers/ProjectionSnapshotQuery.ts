@@ -1907,69 +1907,81 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     });
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
-    Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow, pendingTurnStartRow] = yield* Effect.all([
-        getActiveThreadRowById({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const [threadRow, latestTurnRow, sessionRow, pendingTurnStartRow] = yield* Effect.all([
+            getActiveThreadRowById({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
+                ),
+              ),
             ),
-          ),
-        ),
-        getLatestTurnRowByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
+            getLatestTurnRowByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
+                ),
+              ),
             ),
-          ),
-        ),
-        getThreadSessionRowByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
+            getThreadSessionRowByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
+                ),
+              ),
             ),
-          ),
-        ),
-        getPendingTurnStartRowByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadShellById:getPendingTurnStart:query",
-              "ProjectionSnapshotQuery.getThreadShellById:getPendingTurnStart:decodeRow",
+            getPendingTurnStartRowByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getPendingTurnStart:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getPendingTurnStart:decodeRow",
+                ),
+              ),
             ),
-          ),
-        ),
-      ]);
+          ]);
 
-      if (Option.isNone(threadRow)) {
-        return Option.none<OrchestrationThreadShell>();
-      }
+          if (Option.isNone(threadRow)) {
+            return Option.none<OrchestrationThreadShell>();
+          }
 
-      return Option.some({
-        id: threadRow.value.threadId,
-        projectId: threadRow.value.projectId,
-        title: threadRow.value.title,
-        modelSelection: threadRow.value.modelSelection,
-        runtimeMode: threadRow.value.runtimeMode,
-        interactionMode: threadRow.value.interactionMode,
-        branch: threadRow.value.branch,
-        worktreePath: threadRow.value.worktreePath,
-        latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
-        createdAt: threadRow.value.createdAt,
-        updatedAt: threadRow.value.updatedAt,
-        archivedAt: threadRow.value.archivedAt,
-        settledOverride: threadRow.value.settledOverride,
-        settledAt: threadRow.value.settledAt,
-        session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
-        latestUserMessageAt: threadRow.value.latestUserMessageAt,
-        hasPendingTurnStart: Option.isSome(pendingTurnStartRow),
-        hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
-        hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
-        hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
-      } satisfies OrchestrationThreadShell);
-    });
+          return Option.some({
+            id: threadRow.value.threadId,
+            projectId: threadRow.value.projectId,
+            title: threadRow.value.title,
+            modelSelection: threadRow.value.modelSelection,
+            runtimeMode: threadRow.value.runtimeMode,
+            interactionMode: threadRow.value.interactionMode,
+            branch: threadRow.value.branch,
+            worktreePath: threadRow.value.worktreePath,
+            latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+            createdAt: threadRow.value.createdAt,
+            updatedAt: threadRow.value.updatedAt,
+            archivedAt: threadRow.value.archivedAt,
+            settledOverride: threadRow.value.settledOverride,
+            settledAt: threadRow.value.settledAt,
+            session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+            latestUserMessageAt: threadRow.value.latestUserMessageAt,
+            hasPendingTurnStart: Option.isSome(pendingTurnStartRow),
+            hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
+            hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
+            hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+          } satisfies OrchestrationThreadShell);
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getThreadShellById:transaction")(
+                error,
+              ),
+        ),
+      );
 
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     Effect.gen(function* () {
