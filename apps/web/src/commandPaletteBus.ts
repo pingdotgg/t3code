@@ -1,9 +1,9 @@
-// Tiny event bus allowing components (e.g. SidebarV2) to programmatically
-// open the command palette without owning its React state.
+// Tiny event bus allowing components to programmatically open the command palette
+// without owning its React state.
 const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
-  readonly open?: "new-thread-in";
+  readonly open?: "add-project" | "new-thread-in";
 }
 
 export function openCommandPalette(detail?: CommandPaletteOpenDetail): void {
@@ -20,4 +20,11 @@ export function onOpenCommandPalette(
   };
   window.addEventListener(COMMAND_PALETTE_OPEN_EVENT, handler);
   return () => window.removeEventListener(COMMAND_PALETTE_OPEN_EVENT, handler);
+}
+
+/** Read at event time so consumers do not subscribe to transient dialog state. */
+export function isCommandPaletteOpen(): boolean {
+  return (
+    typeof document !== "undefined" && document.querySelector("[data-command-palette]") !== null
+  );
 }
