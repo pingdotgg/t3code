@@ -41,6 +41,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  shouldShowBranchPickerShortcutHint,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import {
@@ -638,6 +639,11 @@ export function BranchToolbarBranchSelector({
     ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state}) in browser`
     : "";
   const openPrLink = useOpenPrLink();
+  const showShortcutHint = shouldShowBranchPickerShortcutHint({
+    shortcutHintLabel,
+    isInitialBranchesLoadPending,
+    isBranchActionPending,
+  });
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
@@ -771,7 +777,7 @@ export function BranchToolbarBranchSelector({
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />
             <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-            {shortcutHintLabel ? (
+            {showShortcutHint ? (
               <Kbd className="h-4 min-w-0 shrink-0 rounded-sm px-1.5 text-[10px]">
                 {shortcutHintLabel}
               </Kbd>

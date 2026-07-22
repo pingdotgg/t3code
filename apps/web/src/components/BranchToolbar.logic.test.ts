@@ -4,6 +4,7 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
+  resolveAvailableBranchToolbarPicker,
   resolveBranchSelectionTarget,
   resolveBranchPickerQueryForOpenState,
   resolveBranchToolbarPickerOpenChange,
@@ -16,6 +17,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  shouldShowBranchPickerShortcutHint,
   shouldIncludeBranchPickerItem,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -29,6 +31,69 @@ describe("resolveBranchToolbarPickerOpenChange", () => {
   it("ignores a stale close event from a picker that is no longer active", () => {
     expect(resolveBranchToolbarPickerOpenChange("branch", "environment", false)).toBe("branch");
     expect(resolveBranchToolbarPickerOpenChange("branch", "branch", false)).toBeNull();
+  });
+});
+
+describe("resolveAvailableBranchToolbarPicker", () => {
+  const allAvailable = {
+    environment: true,
+    envMode: true,
+    mobileRunContext: true,
+    branch: true,
+  };
+
+  it("preserves a picker while its interactive control is available", () => {
+    expect(resolveAvailableBranchToolbarPicker("environment", allAvailable)).toBe("environment");
+    expect(resolveAvailableBranchToolbarPicker("mobile-run-context", allAvailable)).toBe(
+      "mobile-run-context",
+    );
+  });
+
+  it("clears each picker when its interactive control stops being available", () => {
+    expect(
+      resolveAvailableBranchToolbarPicker("environment", {
+        ...allAvailable,
+        environment: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveAvailableBranchToolbarPicker("env-mode", { ...allAvailable, envMode: false }),
+    ).toBeNull();
+    expect(
+      resolveAvailableBranchToolbarPicker("mobile-run-context", {
+        ...allAvailable,
+        mobileRunContext: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveAvailableBranchToolbarPicker("branch", { ...allAvailable, branch: false }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldShowBranchPickerShortcutHint", () => {
+  it("only shows a hint while the corresponding shortcut can toggle the picker", () => {
+    expect(
+      shouldShowBranchPickerShortcutHint({
+        shortcutHintLabel: "⌘B",
+        isInitialBranchesLoadPending: false,
+        isBranchActionPending: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowBranchPickerShortcutHint({
+        shortcutHintLabel: "⌘B",
+        isInitialBranchesLoadPending: true,
+        isBranchActionPending: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowBranchPickerShortcutHint({
+        shortcutHintLabel: "⌘B",
+        isInitialBranchesLoadPending: false,
+        isBranchActionPending: true,
+      }),
+    ).toBe(false);
   });
 });
 

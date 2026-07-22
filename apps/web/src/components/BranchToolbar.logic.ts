@@ -18,6 +18,41 @@ export type EnvMode = typeof EnvMode.Type;
 
 export type BranchToolbarPicker = "environment" | "env-mode" | "mobile-run-context" | "branch";
 
+export interface BranchToolbarPickerAvailability {
+  readonly environment: boolean;
+  readonly envMode: boolean;
+  readonly mobileRunContext: boolean;
+  readonly branch: boolean;
+}
+
+export function resolveAvailableBranchToolbarPicker(
+  picker: BranchToolbarPicker | null,
+  availability: BranchToolbarPickerAvailability,
+): BranchToolbarPicker | null {
+  switch (picker) {
+    case "environment":
+      return availability.environment ? picker : null;
+    case "env-mode":
+      return availability.envMode ? picker : null;
+    case "mobile-run-context":
+      return availability.mobileRunContext ? picker : null;
+    case "branch":
+      return availability.branch ? picker : null;
+    case null:
+      return null;
+  }
+}
+
+export function shouldShowBranchPickerShortcutHint(input: {
+  readonly shortcutHintLabel: string | null | undefined;
+  readonly isInitialBranchesLoadPending: boolean;
+  readonly isBranchActionPending: boolean;
+}): boolean {
+  return Boolean(
+    input.shortcutHintLabel && !input.isInitialBranchesLoadPending && !input.isBranchActionPending,
+  );
+}
+
 export function resolveBranchToolbarPickerOpenChange(
   current: BranchToolbarPicker | null,
   picker: BranchToolbarPicker,

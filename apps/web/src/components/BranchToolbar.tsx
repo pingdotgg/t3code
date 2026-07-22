@@ -13,6 +13,7 @@ import {
   memo,
   useCallback,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from "react";
@@ -32,6 +33,7 @@ import {
   type EnvMode,
   type EnvironmentOption,
   resolveCurrentWorkspaceLabel,
+  resolveAvailableBranchToolbarPicker,
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPickerOpenChange,
@@ -334,11 +336,30 @@ export const BranchToolbar = memo(function BranchToolbar({
   });
   const isMobile = useIsMobile();
 
+  const isRendered = hasActiveThread && activeProject !== null;
+  const environmentPickerAvailable =
+    showEnvironmentIndicator && availableEnvironments !== undefined && showEnvironmentPicker;
+
   const toolbarLayout = isMobile ? "mobile" : "desktop";
-  const [activePicker, setActivePicker] = useLayoutScopedState<
+  const [storedActivePicker, setActivePicker] = useLayoutScopedState<
     typeof toolbarLayout,
     BranchToolbarPicker | null
   >(toolbarLayout, null);
+  const pickerAvailability = useMemo(
+    () => ({
+      environment: isRendered && !isMobile && environmentPickerAvailable && !envLocked,
+      envMode: isRendered && !isMobile && !envModeLocked,
+      mobileRunContext: isRendered && isMobile && !envLocked && !envModeLocked,
+      branch: isRendered,
+    }),
+    [envLocked, envModeLocked, environmentPickerAvailable, isMobile, isRendered],
+  );
+  const activePicker = resolveAvailableBranchToolbarPicker(storedActivePicker, pickerAvailability);
+  useLayoutEffect(() => {
+    if (storedActivePicker !== activePicker) {
+      setActivePicker(activePicker);
+    }
+  }, [activePicker, setActivePicker, storedActivePicker]);
   const environmentPickerOpen = activePicker === "environment";
   const envModePickerOpen = activePicker === "env-mode";
   const mobileRunContextOpen = activePicker === "mobile-run-context";
@@ -351,9 +372,6 @@ export const BranchToolbar = memo(function BranchToolbar({
     [setActivePicker],
   );
 
-  const isRendered = hasActiveThread && activeProject !== null;
-  const environmentPickerAvailable =
-    showEnvironmentIndicator && availableEnvironments !== undefined && showEnvironmentPicker;
   useImperativeHandle(
     toolbarRef,
     () => ({
