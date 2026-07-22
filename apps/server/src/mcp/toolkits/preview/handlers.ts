@@ -1,4 +1,8 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import type {
   PreviewAutomationOperation,
   PreviewAutomationRecordingArtifact,
@@ -8,7 +12,11 @@ import type {
   PreviewAutomationStatus,
   PreviewTabId,
 } from "@t3tools/contracts";
+import { PreviewAutomationScreenshotSaveError } from "@t3tools/contracts";
 
+import * as ServerConfig from "../../../config.ts";
+import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
@@ -46,6 +54,90 @@ const invokeTargeted = <A>(
   return invoke<A>(operation, operationInput, timeoutMs, tabId);
 };
 
+const writeScreenshotFile = (input: {
+  readonly absolutePath: string;
+  readonly screenshotBase64: string;
+}) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(path.dirname(input.absolutePath), { recursive: true });
+    yield* fileSystem.writeFile(
+      input.absolutePath,
+      new Uint8Array(Buffer.from(input.screenshotBase64, "base64")),
+    );
+  });
+
+const saveSnapshotScreenshotArtifact = Effect.fn("PreviewToolkit.saveSnapshotScreenshotArtifact")(
+  function* (input: {
+    readonly scope: McpInvocationContext.McpInvocationScope;
+    readonly screenshotBase64: string;
+  }) {
+    const config = yield* ServerConfig.ServerConfig;
+    const fileName = `browser-screenshot-${(yield* Clock.currentTimeMillis).toString(36)}.png`;
+    const path = yield* Path.Path;
+    const absolutePath = path.join(config.browserArtifactsDir, fileName);
+    yield* writeScreenshotFile({ absolutePath, screenshotBase64: input.screenshotBase64 }).pipe(
+      Effect.mapError(
+        () =>
+          new PreviewAutomationScreenshotSaveError({
+            operation: "snapshot",
+            environmentId: input.scope.environmentId,
+            threadId: input.scope.threadId,
+            providerSessionId: input.scope.providerSessionId,
+            providerInstanceId: input.scope.providerInstanceId,
+            savePath: fileName,
+            reason: "failed to write the screenshot artifact",
+          }),
+      ),
+    );
+    return absolutePath;
+  },
+);
+
+const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot")(
+  function* (input: {
+    readonly scope: McpInvocationContext.McpInvocationScope;
+    readonly savePath: string;
+    readonly screenshotBase64: string;
+  }) {
+    const { savePath, scope } = input;
+    const fail = (reason: string) =>
+      new PreviewAutomationScreenshotSaveError({
+        operation: "snapshot",
+        environmentId: scope.environmentId,
+        threadId: scope.threadId,
+        providerSessionId: scope.providerSessionId,
+        providerInstanceId: scope.providerInstanceId,
+        savePath,
+        reason,
+      });
+    if (!savePath.toLowerCase().endsWith(".png")) {
+      return yield* fail("savePath must end with .png");
+    }
+
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const threadContext = yield* projectionSnapshotQuery
+      .getThreadCheckpointContext(scope.threadId)
+      .pipe(Effect.mapError(() => fail("failed to resolve the thread workspace")));
+    if (Option.isNone(threadContext)) {
+      return yield* fail("thread was not found");
+    }
+    const workspaceRoot = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
+
+    const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+    const resolved = yield* workspacePaths
+      .resolveRelativePathWithinRoot({ workspaceRoot, relativePath: savePath })
+      .pipe(Effect.mapError(() => fail("savePath must be a relative path inside the workspace")));
+
+    yield* writeScreenshotFile({
+      absolutePath: resolved.absolutePath,
+      screenshotBase64: input.screenshotBase64,
+    }).pipe(Effect.mapError(() => fail("failed to write the screenshot file")));
+    return resolved.relativePath;
+  },
+);
+
 const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
@@ -58,7 +150,29 @@ const handlers = {
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
-  preview_snapshot: (input) => invokeTargeted<PreviewAutomationSnapshot>("snapshot", input ?? {}),
+  preview_snapshot: (input) =>
+    Effect.gen(function* () {
+      const { save, savePath, ...target } = input ?? {};
+      const snapshot = yield* invokeTargeted<PreviewAutomationSnapshot>("snapshot", target);
+      if (savePath !== undefined) {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const savedScreenshotPath = yield* saveSnapshotScreenshot({
+          scope,
+          savePath,
+          screenshotBase64: snapshot.screenshot.data,
+        });
+        return { ...snapshot, savedScreenshotPath };
+      }
+      if (save === true) {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const savedScreenshotPath = yield* saveSnapshotScreenshotArtifact({
+          scope,
+          screenshotBase64: snapshot.screenshot.data,
+        });
+        return { ...snapshot, savedScreenshotPath };
+      }
+      return snapshot;
+    }),
   preview_click: (input) =>
     invokeTargeted<void>("click", input, input.timeoutMs).pipe(Effect.as(null)),
   preview_type: (input) =>

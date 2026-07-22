@@ -11,20 +11,35 @@ import {
   PreviewAutomationResizeResult,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotInput,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
+import * as ServerConfig from "../../../config.ts";
+import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   PreviewAutomationBroker.PreviewAutomationBroker,
+];
+
+const snapshotDependencies = [
+  ...dependencies,
+  ServerConfig.ServerConfig,
+  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  WorkspacePaths.WorkspacePaths,
+  FileSystem.FileSystem,
+  Path.Path,
 ];
 
 const browserTool = <T extends Tool.Any>(tool: T): T =>
@@ -89,11 +104,11 @@ export const PreviewResizeTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot.",
-    parameters: PreviewAutomationTabTargetInput,
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. To keep visual evidence for the human (before/after states of UI work), pass save:true — the result then includes savedScreenshotPath, which you embed in your final reply with markdown image syntax, e.g. ![after](<savedScreenshotPath>). Use savePath only when the screenshot should live inside the repo.",
+    parameters: PreviewAutomationSnapshotInput,
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
-    dependencies,
+    dependencies: snapshotDependencies,
   }).annotate(Tool.Title, "Inspect browser page"),
 );
 
@@ -176,7 +191,8 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
-    description: "Stop the active browser recording and save it as a local evidence artifact.",
+    description:
+      "Stop the active browser recording and save it as a local evidence artifact (.webm). To show the recording to the human, embed the returned path directly in your final reply with markdown image syntax, e.g. ![demo](<path>) — the chat renders it as a playable video.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,

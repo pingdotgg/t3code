@@ -12,6 +12,10 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
+  /** A file in the server's browser-artifacts directory (screenshots/recordings). */
+  Schema.TaggedStruct("browser-artifact", {
+    fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
@@ -83,7 +87,7 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedErrorClass<Ass
   },
 ) {
   override get message(): string {
-    return "Only browser documents and images can be previewed.";
+    return "Only browser documents, images, and videos can be previewed.";
   }
 }
 
@@ -130,6 +134,17 @@ export class AssetAttachmentNotFoundError extends Schema.TaggedErrorClass<AssetA
 ) {
   override get message(): string {
     return "Attachment was not found.";
+  }
+}
+
+export class AssetBrowserArtifactNotFoundError extends Schema.TaggedErrorClass<AssetBrowserArtifactNotFoundError>()(
+  "AssetBrowserArtifactNotFoundError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "Browser artifact was not found.";
   }
 }
 
@@ -190,6 +205,7 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,
   AssetAttachmentNotFoundError,
+  AssetBrowserArtifactNotFoundError,
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
