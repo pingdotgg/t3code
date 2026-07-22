@@ -32,7 +32,7 @@ import {
   quoteSystemdValue,
   renderBootServiceUnit,
 } from "./bootService.ts";
-import { ensurePinnedRuntimeInstalled } from "./pinnedRuntime.ts";
+import { ensurePinnedRuntimeInstalled, removePinnedRuntimeInstallation } from "./pinnedRuntime.ts";
 
 /**
  * Lets a connected client replace this server with another published `t3`
@@ -247,13 +247,16 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         // A completed npm install can still be unusable under this Node or on
         // this machine. Remove its sentinel and tree so a retry of the same
         // version performs a clean install instead of reusing a known-bad one.
-        yield* fs
-          .remove(runtimePaths.versionDir, { recursive: true, force: true })
-          .pipe(
-            Effect.mapError((cause) =>
-              failWith(`Could not remove the failed t3@${targetVersion} installation.`, cause),
-            ),
-          );
+        yield* removePinnedRuntimeInstallation({
+          baseDir: serverConfig.baseDir,
+          version: targetVersion,
+          fs,
+          path,
+        }).pipe(
+          Effect.mapError((error) =>
+            failWith(`Could not remove the failed t3@${targetVersion} installation.`, error),
+          ),
+        );
         return yield* failWith(
           `The installed t3@${targetVersion} failed its version check (exit code ${String(preflight.code)}).`,
         );

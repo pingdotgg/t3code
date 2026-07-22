@@ -150,3 +150,27 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     );
   },
 );
+
+/** Removes one pinned runtime while holding the same process-wide lock used
+ * by install/check/sentinel work, so cleanup cannot race another caller that
+ * is materializing or reusing the runtime tree. */
+export const removePinnedRuntimeInstallation = Effect.fn("cloud.pinned_runtime.remove")(
+  function* (input: {
+    readonly baseDir: string;
+    readonly version: string;
+    readonly fs: FileSystem.FileSystem;
+    readonly path: Path.Path;
+  }) {
+    const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
+    yield* pinnedRuntimeInstallLock.withPermit(
+      input.fs
+        .remove(paths.versionDir, { recursive: true, force: true })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({ step: "removing the pinned runtime", cause }),
+          ),
+        ),
+    );
+  },
+);
