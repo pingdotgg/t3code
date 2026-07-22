@@ -1166,6 +1166,15 @@ describe("deriveWorkLogEntries", () => {
   });
 
   it("uses grep raw output summaries instead of repeating the generic tool label", () => {
+    const searchItem = {
+      type: "webSearch",
+      id: "web-search-1",
+      query: "React 19 hydration warnings",
+      action: {
+        type: "search",
+        queries: ["React 19 hydration warnings"],
+      },
+    };
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "grep-update",
@@ -1179,6 +1188,7 @@ describe("deriveWorkLogEntries", () => {
           data: {
             toolCallId: "tool-grep-1",
             kind: "search",
+            item: searchItem,
             rawInput: {},
           },
         },
@@ -1211,6 +1221,7 @@ describe("deriveWorkLogEntries", () => {
       toolTitle: "grep",
       detail: "19 files",
       itemType: "web_search",
+      toolData: searchItem,
     });
   });
 
