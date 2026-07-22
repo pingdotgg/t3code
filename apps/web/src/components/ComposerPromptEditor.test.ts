@@ -4,6 +4,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   COMMAND_PRIORITY_EDITOR,
   createEditor,
@@ -11,6 +12,66 @@ import {
 } from "lexical";
 
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import { $replaceComposerReadlineSelection } from "../composerEmacsReadline";
+
+describe("$replaceComposerReadlineSelection", () => {
+  it.each([
+    {
+      boundary: "at EOF",
+      serializedToken: "[file.ts](src/file.ts)",
+      suffix: "",
+      tokenType: "mention",
+    },
+    {
+      boundary: "before punctuation",
+      serializedToken: "[file.ts](src/file.ts)",
+      suffix: ".",
+      tokenType: "mention",
+    },
+    {
+      boundary: "at EOF",
+      serializedToken: "$review",
+      suffix: "",
+      tokenType: "skill",
+    },
+    {
+      boundary: "before punctuation",
+      serializedToken: "$review",
+      suffix: ".",
+      tokenType: "skill",
+    },
+  ])(
+    "preserves an existing $tokenType chip $boundary during a readline mutation",
+    ({ serializedToken, suffix }) => {
+      const editor = createEditor();
+      let tokenKey = "";
+
+      editor.update(
+        () => {
+          const paragraph = $createParagraphNode();
+          const prefix = $createTextNode("before");
+          const token = $createTextNode(serializedToken).setMode("token");
+          tokenKey = token.getKey();
+          paragraph.append(prefix, token);
+          if (suffix.length > 0) paragraph.append($createTextNode(suffix));
+          $getRoot().append(paragraph);
+
+          $replaceComposerReadlineSelection(prefix.select(0, 1), [$createTextNode("B")]);
+        },
+        { discrete: true },
+      );
+
+      editor.getEditorState().read(() => {
+        const paragraph = $getRoot().getFirstChild();
+        expect($isElementNode(paragraph)).toBe(true);
+        if (!$isElementNode(paragraph)) return;
+        const token = paragraph.getChildren().find((node) => node.getKey() === tokenKey);
+        expect(token?.getTextContent()).toBe(serializedToken);
+        expect($getRoot().getTextContent()).toBe(`Before${serializedToken}${suffix}`);
+      });
+    },
+  );
+});
 
 class TestClipboardEvent extends Event {
   readonly clipboardData: DataTransfer;

@@ -1,11 +1,56 @@
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import type { LexicalNode, RangeSelection } from "lexical";
+
 import type { PlainTextEdit } from "./emacsReadlineBindings";
-import { collapseExpandedComposerCursor } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export interface ComposerReadlineReplacement {
-  readonly caretOffset: number;
+  readonly insertedText: string;
   readonly killedText?: string;
-  readonly value: string;
+}
+
+export type ComposerReadlineInsertionSegment =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "mention"; readonly path: string }
+  | { readonly type: "skill"; readonly name: string };
+
+export function splitComposerReadlineInsertion(
+  text: string,
+): readonly ComposerReadlineInsertionSegment[] {
+  // A virtual delimiter recognizes a confirmed killed chip even when its
+  // serialized source ends at the kill-ring boundary.
+  const tokens = collectComposerInlineTokens(`${text}\n`).filter(
+    (token) => token.end <= text.length,
+  );
+  const segments: ComposerReadlineInsertionSegment[] = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    if (token.start < cursor) continue;
+    if (token.start > cursor) {
+      segments.push({ type: "text", text: text.slice(cursor, token.start) });
+    }
+    segments.push(
+      token.type === "mention"
+        ? { type: "mention", path: token.value }
+        : { type: "skill", name: token.value },
+    );
+    cursor = token.end;
+  }
+  if (cursor < text.length) {
+    segments.push({ type: "text", text: text.slice(cursor) });
+  }
+  return segments;
+}
+
+export function $replaceComposerReadlineSelection(
+  selection: RangeSelection,
+  nodes: readonly LexicalNode[],
+): void {
+  if (nodes.length > 0) {
+    selection.insertNodes([...nodes]);
+  } else {
+    selection.removeText();
+  }
 }
 
 function expandTerminalContextPlaceholders(
@@ -22,21 +67,11 @@ function expandTerminalContextPlaceholders(
 
 export function resolveComposerReadlineReplacement(input: {
   readonly edit: PlainTextEdit;
-  readonly expandedReplacementEnd: number;
-  readonly expandedReplacementStart: number;
   readonly selectedText: string;
-  readonly serializedValue: string;
   readonly terminalContextTexts: readonly string[];
 }): ComposerReadlineReplacement {
-  const insertedText = input.edit.insertedText ?? "";
-  const value =
-    input.serializedValue.slice(0, input.expandedReplacementStart) +
-    insertedText +
-    input.serializedValue.slice(input.expandedReplacementEnd);
-  const expandedCaretOffset = input.expandedReplacementStart + insertedText.length;
   return {
-    caretOffset: collapseExpandedComposerCursor(value, expandedCaretOffset),
-    value,
+    insertedText: input.edit.insertedText ?? "",
     ...(input.edit.killedText === undefined
       ? {}
       : {

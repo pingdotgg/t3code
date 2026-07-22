@@ -61,7 +61,11 @@ import {
   resolveManagedEmacsReadlineAction,
   storeEmacsReadlineKilledText,
 } from "~/emacsReadlineBindings";
-import { resolveComposerReadlineReplacement } from "~/composerEmacsReadline";
+import {
+  $replaceComposerReadlineSelection,
+  resolveComposerReadlineReplacement,
+  splitComposerReadlineInsertion,
+} from "~/composerEmacsReadline";
 import { useClientSettings } from "~/hooks/useSettings";
 import {
   clampCollapsedComposerCursor,
@@ -865,6 +869,48 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
   }
 }
 
+function $createComposerReadlineInsertion(
+  text: string,
+  skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
+): { readonly logicalLength: number; readonly nodes: LexicalNode[] } {
+  const nodes: LexicalNode[] = [];
+  let logicalLength = 0;
+
+  for (const segment of splitComposerReadlineInsertion(text)) {
+    if (segment.type === "mention") {
+      nodes.push($createComposerMentionNode(segment.path));
+      logicalLength += 1;
+      continue;
+    }
+    if (segment.type === "skill") {
+      const metadata = skillMetadata.get(segment.name);
+      nodes.push(
+        $createComposerSkillNode(
+          segment.name,
+          metadata?.label ?? formatProviderSkillDisplayName({ name: segment.name }),
+          metadata?.description ?? null,
+        ),
+      );
+      logicalLength += 1;
+      continue;
+    }
+
+    const lines = segment.text.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      if (line.length > 0) {
+        nodes.push($createTextNode(line));
+      }
+      if (index < lines.length - 1) {
+        nodes.push($createLineBreakNode());
+      }
+    }
+    logicalLength += segment.text.length;
+  }
+
+  return { logicalLength, nodes };
+}
+
 function $setComposerEditorPrompt(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft>,
@@ -1123,10 +1169,7 @@ function ComposerHomeEndKeyPlugin() {
   return null;
 }
 
-function ComposerEmacsReadlinePlugin(props: {
-  terminalContexts: ReadonlyArray<TerminalContextDraft>;
-  skills: ReadonlyArray<ServerProviderSkill>;
-}) {
+function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProviderSkill> }) {
   const [editor] = useLexicalComposerContext();
   const enabled = useClientSettings((settings) => settings.keyboardEditingMode === "emacs");
   const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
@@ -1184,9 +1227,6 @@ function ComposerEmacsReadlinePlugin(props: {
           $setSelectionRangeAtComposerOffsets(replacementStart, replacementEnd);
           const replacementSelection = $getSelection();
           if (!$isRangeSelection(replacementSelection)) return false;
-          const expandedReplacementRange =
-            getSelectionRangeForExpandedComposerOffsets(replacementSelection);
-          if (!expandedReplacementRange) return false;
 
           const removedTerminalContextIds = new Set<string>();
           const removedTerminalContextTexts: string[] = [];
@@ -1198,22 +1238,19 @@ function ComposerEmacsReadlinePlugin(props: {
           }
           const replacement = resolveComposerReadlineReplacement({
             edit,
-            expandedReplacementStart: expandedReplacementRange.start,
-            expandedReplacementEnd: expandedReplacementRange.end,
             selectedText: replacementSelection.getTextContent(),
-            serializedValue: $getRoot().getTextContent(),
             terminalContextTexts: removedTerminalContextTexts,
           });
           if (replacement.killedText !== undefined) {
             storeEmacsReadlineKilledText(replacement.killedText);
           }
 
-          $setComposerEditorPrompt(
-            replacement.value,
-            props.terminalContexts.filter((context) => !removedTerminalContextIds.has(context.id)),
+          const insertion = $createComposerReadlineInsertion(
+            replacement.insertedText,
             skillMetadata,
           );
-          $setSelectionAtComposerOffset(replacement.caretOffset);
+          $replaceComposerReadlineSelection(replacementSelection, insertion.nodes);
+          $setSelectionAtComposerOffset(replacementStart + insertion.logicalLength);
           for (const contextId of removedTerminalContextIds) {
             onRemoveTerminalContext(contextId);
           }
@@ -1231,7 +1268,7 @@ function ComposerEmacsReadlinePlugin(props: {
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, enabled, onRemoveTerminalContext, props.terminalContexts, skillMetadata]);
+  }, [editor, enabled, onRemoveTerminalContext, skillMetadata]);
 
   return null;
 }
@@ -1935,7 +1972,7 @@ function ComposerPromptEditorInner({
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
-        <ComposerEmacsReadlinePlugin terminalContexts={terminalContexts} skills={skills} />
+        <ComposerEmacsReadlinePlugin skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
