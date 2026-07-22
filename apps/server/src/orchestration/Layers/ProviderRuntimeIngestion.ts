@@ -4,7 +4,6 @@ import {
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
-  type OrchestrationEvent,
   type OrchestrationCheckpointFile,
   type OrchestrationProposedPlanId,
   CheckpointRef,
@@ -54,24 +53,10 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const RUNTIME_INGESTION_QUEUE_CAPACITY = 1_024;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type ProviderTurnDiffFile = OrchestrationCheckpointFile;
-
-type TurnStartRequestedDomainEvent = Extract<
-  OrchestrationEvent,
-  { type: "thread.turn-start-requested" }
->;
-
-type RuntimeIngestionInput =
-  | {
-      source: "runtime";
-      event: ProviderRuntimeEvent;
-    }
-  | {
-      source: "domain";
-      event: TurnStartRequestedDomainEvent;
-    };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
@@ -1803,43 +1788,27 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
-  const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
-
-  const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
-
-  const processInputSafely = (input: RuntimeIngestionInput) =>
-    processInput(input).pipe(
+  const processRuntimeEventSafely = (event: ProviderRuntimeEvent) =>
+    processRuntimeEvent(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
         }
         return Effect.logWarning("provider runtime ingestion failed to process event", {
-          source: input.source,
-          eventId: input.event.eventId,
-          eventType: input.event.type,
+          eventId: event.eventId,
+          eventType: event.type,
           cause: Cause.pretty(cause),
         });
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const worker = yield* makeDrainableWorker(processRuntimeEventSafely, {
+    capacity: RUNTIME_INGESTION_QUEUE_CAPACITY,
+  });
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
-      yield* Effect.forkScoped(
-        Stream.runForEach(providerService.streamEvents, (event) =>
-          worker.enqueue({ source: "runtime", event }),
-        ),
-      );
-      yield* Effect.forkScoped(
-        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-          if (event.type !== "thread.turn-start-requested") {
-            return Effect.void;
-          }
-          return worker.enqueue({ source: "domain", event });
-        }),
-      );
+      yield* Effect.forkScoped(Stream.runForEach(providerService.streamEvents, worker.enqueue));
     });
 
   return {

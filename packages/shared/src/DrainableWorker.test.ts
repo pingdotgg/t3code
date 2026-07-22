@@ -14,20 +14,22 @@ describe("makeDrainableWorker", () => {
         const secondStarted = yield* Deferred.make<void>();
         const releaseSecond = yield* Deferred.make<void>();
 
-        const worker = yield* makeDrainableWorker((item: string) =>
-          Effect.gen(function* () {
-            if (item === "first") {
-              yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
-              yield* Deferred.await(releaseFirst);
-            }
+        const worker = yield* makeDrainableWorker(
+          (item: string) =>
+            Effect.gen(function* () {
+              if (item === "first") {
+                yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseFirst);
+              }
 
-            if (item === "second") {
-              yield* Deferred.succeed(secondStarted, undefined).pipe(Effect.orDie);
-              yield* Deferred.await(releaseSecond);
-            }
+              if (item === "second") {
+                yield* Deferred.succeed(secondStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseSecond);
+              }
 
-            processed.push(item);
-          }),
+              processed.push(item);
+            }),
+          { capacity: 1 },
         );
 
         yield* worker.enqueue("first");
@@ -50,6 +52,54 @@ describe("makeDrainableWorker", () => {
         yield* Deferred.await(drained);
 
         expect(processed).toEqual(["first", "second"]);
+      }),
+    ),
+  );
+
+  it.live("applies backpressure when the queue reaches capacity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const thirdOfferStarted = yield* Deferred.make<void>();
+        const thirdEnqueued = yield* Deferred.make<void>();
+        const processed: string[] = [];
+
+        const worker = yield* makeDrainableWorker(
+          (item: string) =>
+            Effect.gen(function* () {
+              if (item === "first") {
+                yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseFirst);
+              }
+              processed.push(item);
+            }),
+          { capacity: 1 },
+        );
+
+        yield* worker.enqueue("first");
+        yield* Deferred.await(firstStarted);
+        yield* worker.enqueue("second");
+        yield* Effect.forkChild(
+          Deferred.succeed(thirdOfferStarted, undefined).pipe(
+            Effect.andThen(
+              worker
+                .enqueue("third")
+                .pipe(
+                  Effect.tap(() => Deferred.succeed(thirdEnqueued, undefined).pipe(Effect.orDie)),
+                ),
+            ),
+          ),
+        );
+        yield* Deferred.await(thirdOfferStarted);
+
+        expect(yield* Deferred.isDone(thirdEnqueued)).toBe(false);
+
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(thirdEnqueued);
+        yield* worker.drain;
+
+        expect(processed).toEqual(["first", "second", "third"]);
       }),
     ),
   );

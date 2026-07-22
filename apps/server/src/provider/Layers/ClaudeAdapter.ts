@@ -194,6 +194,7 @@ export interface ClaudeAdapterLiveOptions {
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly runtimeEventBufferCapacity?: number;
 }
 
 function isUuid(value: string): boolean {
@@ -1004,14 +1005,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.bounded<ProviderRuntimeEvent>(
+    options?.runtimeEventBufferCapacity ?? 1024,
+  );
+  let isShuttingDown = false;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const nextEventId = Effect.sync(() => EventId.make(randomUUID()));
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+    isShuttingDown ? Effect.void : Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fn("logNativeSdkMessage")(function* (
     context: ClaudeSessionContext,
@@ -2464,7 +2468,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerRefs: {},
       });
     }
-
     sessions.delete(context.session.threadId);
   });
 
@@ -3244,14 +3247,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     );
 
   yield* Effect.addFinalizer(() =>
-    Effect.forEach(
-      sessions,
-      ([, context]) =>
-        stopSessionInternal(context, {
-          emitExitEvent: false,
-        }),
-      { discard: true },
-    ).pipe(Effect.tap(() => Queue.shutdown(runtimeEventQueue))),
+    Effect.sync(() => {
+      isShuttingDown = true;
+    }).pipe(
+      Effect.andThen(Queue.shutdown(runtimeEventQueue)),
+      Effect.andThen(
+        Effect.forEach(
+          sessions,
+          ([, context]) =>
+            stopSessionInternal(context, {
+              emitExitEvent: false,
+            }),
+          { discard: true },
+        ),
+      ),
+    ),
   );
 
   return {

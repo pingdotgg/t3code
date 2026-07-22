@@ -1,7 +1,7 @@
 /**
  * DrainableWorker - A queue-based worker that exposes a `drain()` effect.
  *
- * Wraps the common `Queue.unbounded` + `Effect.forever` pattern and adds
+ * Wraps the common queue + `Effect.forever` pattern and adds
  * a signal that resolves when the queue is empty **and** the current item
  * has finished processing. This lets tests replace timing-sensitive
  * `Effect.sleep` calls with deterministic `drain()`.
@@ -26,20 +26,35 @@ export interface DrainableWorker<A> {
   readonly drain: Effect.Effect<void>;
 }
 
+export interface DrainableWorkerOptions {
+  /**
+   * Maximum number of work items waiting to be processed.
+   *
+   * Enqueueing waits for capacity instead of allowing the queue to grow
+   * without bound.
+   */
+  readonly capacity: number;
+}
+
 /**
- * Create a drainable worker that processes items from an unbounded queue.
+ * Create a drainable worker that processes items from a queue.
  *
  * The worker is forked into the current scope and will be interrupted when
  * the scope closes. A finalizer shuts down the queue.
  *
  * @param process - The effect to run for each queued item.
+ * @param options - Optional bounded-queue configuration.
  * @returns A `DrainableWorker` with `queue` and `drain`.
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
+  options?: DrainableWorkerOptions,
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
-    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
+    const queue = yield* Effect.acquireRelease(
+      options === undefined ? TxQueue.unbounded<A>() : TxQueue.bounded<A>(options.capacity),
+      TxQueue.shutdown,
+    );
     const outstanding = yield* TxRef.make(0);
 
     yield* TxQueue.take(queue).pipe(

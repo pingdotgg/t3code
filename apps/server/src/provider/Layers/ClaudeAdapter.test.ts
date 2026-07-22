@@ -1481,6 +1481,66 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("keeps terminal events ordered while the runtime event queue is backpressured", () => {
+    const query = new FakeClaudeQuery();
+    const layer = Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings({});
+        return yield* makeClaudeAdapter(claudeConfig, {
+          createQuery: () => query,
+          runtimeEventBufferCapacity: 1,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const startupEventsFiber = yield* Stream.take(adapter.streamEvents, 3).pipe(
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* Fiber.join(startupEventsFiber);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+
+      const stopFiber = yield* adapter.stopSession(THREAD_ID).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.isUndefined(stopFiber.pollUnsafe());
+
+      const terminalEventsFiber = yield* Stream.take(adapter.streamEvents, 3).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
+      const terminalEvents = Array.from(
+        yield* Fiber.join(terminalEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+
+      assert.deepEqual(
+        terminalEvents.map((event) => event.type),
+        ["turn.started", "turn.completed", "session.exited"],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("forwards Claude task progress summaries for subagent updates", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
