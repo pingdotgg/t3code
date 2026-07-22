@@ -6,6 +6,7 @@ import { DraftId } from "./composerDraftStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
+  resolveActiveThreadRouteRef,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "./threadRoutes";
@@ -62,6 +63,36 @@ describe("threadRoutes", () => {
     ).toEqual({
       kind: "draft",
       draftId: "draft-1",
+    });
+  });
+
+  it("resolves the backing thread while a draft route is being promoted", () => {
+    const target = resolveThreadRouteTarget({ draftId: "draft-1" });
+
+    expect(
+      resolveActiveThreadRouteRef(target, {
+        environmentId: "env-1" as never,
+        threadId: ThreadId.make("draft-thread"),
+        promotedTo: scopeThreadRef("env-2" as never, ThreadId.make("server-thread")),
+      }),
+    ).toEqual({
+      environmentId: "env-2",
+      threadId: "server-thread",
+    });
+  });
+
+  it("uses a draft's reserved thread ref before promotion is recorded", () => {
+    const target = resolveThreadRouteTarget({ draftId: "draft-1" });
+
+    expect(
+      resolveActiveThreadRouteRef(target, {
+        environmentId: "env-1" as never,
+        threadId: ThreadId.make("draft-thread"),
+        promotedTo: null,
+      }),
+    ).toEqual({
+      environmentId: "env-1",
+      threadId: "draft-thread",
     });
   });
 });

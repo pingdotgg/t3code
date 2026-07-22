@@ -12,6 +12,12 @@ export type ThreadRouteTarget =
       draftId: DraftId;
     };
 
+type DraftThreadRouteState = {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  promotedTo?: ScopedThreadRef | null;
+};
+
 export function buildThreadRouteParams(ref: ScopedThreadRef): {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -56,4 +62,22 @@ export function resolveThreadRouteTarget(
     kind: "draft",
     draftId: params.draftId as DraftId,
   };
+}
+
+/**
+ * Resolves the thread represented by either a canonical thread route or the
+ * draft route that temporarily remains mounted while its first send is being
+ * promoted to a server thread.
+ */
+export function resolveActiveThreadRouteRef(
+  target: ThreadRouteTarget | null,
+  draftThread: DraftThreadRouteState | null,
+): ScopedThreadRef | null {
+  if (target?.kind === "server") {
+    return target.threadRef;
+  }
+  if (target?.kind !== "draft" || !draftThread) {
+    return null;
+  }
+  return draftThread.promotedTo ?? scopeThreadRef(draftThread.environmentId, draftThread.threadId);
 }
