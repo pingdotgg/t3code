@@ -318,6 +318,10 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             deletedAt: payload.deletedAt,
             updatedAt: payload.deletedAt,
+            // Persistence drops this thread's queued-message rows on delete;
+            // mirror that here so queue commands can't act on a deleted
+            // thread's stale in-memory queue.
+            queuedMessages: [],
           }),
         })),
       );

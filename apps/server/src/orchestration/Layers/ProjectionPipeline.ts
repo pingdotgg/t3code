@@ -1556,13 +1556,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
         apply: applyProjectsProjection,
       },
-      {
-        name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
-        apply: applyThreadMessagesProjection,
-      },
+      // queuedMessages must bootstrap before threadMessages: the revert
+      // handler in threadMessages reads the queued-message projection to
+      // retain queued attachments, so on replay that table has to be
+      // populated first or the prune deletes files still referenced.
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.queuedMessages,
         apply: applyQueuedMessagesProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
+        apply: applyThreadMessagesProjection,
       },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,

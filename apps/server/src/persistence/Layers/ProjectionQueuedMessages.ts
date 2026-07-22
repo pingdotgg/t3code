@@ -26,10 +26,14 @@ const ProjectionQueuedMessageDbRowSchema = ProjectionQueuedMessage.mapFields(
 const makeProjectionQueuedMessageRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // Replace-then-insert (not ON CONFLICT UPDATE) so a re-queued messageId
+  // gets a fresh rowid and moves to the queue tail — the same semantics as
+  // the in-memory projector. Drain order is rowid order: a monotonic
+  // insertion sequence that never ties, unlike queued_at timestamps.
   const upsertProjectionQueuedMessageRow = SqlSchema.void({
     Request: ProjectionQueuedMessage,
     execute: (row) => sql`
-      INSERT INTO projection_queued_messages (
+      INSERT OR REPLACE INTO projection_queued_messages (
         message_id,
         thread_id,
         text,
@@ -49,15 +53,6 @@ const makeProjectionQueuedMessageRepository = Effect.gen(function* () {
         ${row.sourceProposedPlanId},
         ${row.queuedAt}
       )
-      ON CONFLICT (message_id)
-      DO UPDATE SET
-        thread_id = excluded.thread_id,
-        text = excluded.text,
-        attachments_json = excluded.attachments_json,
-        model_selection_json = excluded.model_selection_json,
-        source_proposed_plan_thread_id = excluded.source_proposed_plan_thread_id,
-        source_proposed_plan_id = excluded.source_proposed_plan_id,
-        queued_at = excluded.queued_at
     `,
   });
 
@@ -76,7 +71,7 @@ const makeProjectionQueuedMessageRepository = Effect.gen(function* () {
         queued_at AS "queuedAt"
       FROM projection_queued_messages
       WHERE thread_id = ${threadId}
-      ORDER BY queued_at ASC, message_id ASC
+      ORDER BY rowid ASC
     `,
   });
 
