@@ -66,6 +66,7 @@ import {
   promptResponseHasMissingXAiStopReason,
   XAiAskUserQuestionRequest,
 } from "../acp/XAiAcpExtension.ts";
+import { mergeProviderSessionEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -572,7 +573,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            environment: mergeProviderSessionEnvironment(options?.environment, input.env),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

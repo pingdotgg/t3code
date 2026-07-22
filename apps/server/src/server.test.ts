@@ -7225,6 +7225,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc terminal methods", () =>
     Effect.gen(function* () {
+      const terminalProjectId = ProjectId.make("project-1");
+      const terminalProject = {
+        id: terminalProjectId,
+        title: "Project",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
       const snapshot = {
         threadId: "thread-1",
         terminalId: "default",
@@ -7241,6 +7251,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          projectionSnapshotQuery: {
+            getProjectShellById: (projectId) =>
+              Effect.succeed(
+                projectId === terminalProjectId ? Option.some(terminalProject) : Option.none(),
+              ),
+          },
           terminalManager: {
             open: () => Effect.succeed(snapshot),
             write: () => Effect.void,

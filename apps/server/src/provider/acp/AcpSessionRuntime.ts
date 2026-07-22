@@ -21,6 +21,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { mergeProviderSessionEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -329,16 +330,15 @@ export const make = (
         ),
       );
 
-    const spawnCommand = yield* resolveSpawnCommand(
-      options.spawn.command,
-      options.spawn.args,
-      options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {},
-    );
+    const spawnEnv = mergeProviderSessionEnvironment(process.env, options.spawn.env);
+    const spawnCommand = yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
+      env: spawnEnv,
+    });
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),
+          env: spawnEnv,
           shell: spawnCommand.shell,
         }),
       )

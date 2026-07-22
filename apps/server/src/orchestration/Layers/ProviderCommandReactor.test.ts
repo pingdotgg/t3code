@@ -57,6 +57,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
+import { ProjectLaunchEnvLive } from "../../projectLaunchEnv/Layers/ProjectLaunchEnvLive.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
@@ -343,7 +344,16 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const serverConfigLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
+      Layer.provide(NodeServices.layer),
+    );
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(
+        ProjectLaunchEnvLive.pipe(
+          Layer.provide(projectionSnapshotLayer),
+          Layer.provide(serverConfigLayer),
+        ),
+      ),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -369,7 +379,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -453,6 +463,12 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: "/tmp/provider-project",
+      env: {
+        T3CODE_HOME: expect.any(String),
+        T3CODE_PROJECT_ROOT: "/tmp/provider-project",
+        T3CODE_PROJECT_ID: "project-1",
+        T3CODE_THREAD_ID: "thread-1",
+      },
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",

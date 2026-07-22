@@ -8,7 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
@@ -552,10 +552,6 @@ function ThreadRouteContent(
         project: { cwd: selectedThreadProject.workspaceRoot },
         worktreePath: preferredWorktreePath,
       });
-      const env = projectScriptRuntimeEnv({
-        project: { cwd: selectedThreadProject.workspaceRoot },
-        worktreePath: preferredWorktreePath,
-      });
       stagePendingTerminalLaunch({
         target: {
           environmentId: selectedThread.environmentId,
@@ -565,7 +561,6 @@ function ThreadRouteContent(
         launch: {
           cwd,
           worktreePath: preferredWorktreePath,
-          env,
           initialInput: `${script.command}\r`,
         },
       });

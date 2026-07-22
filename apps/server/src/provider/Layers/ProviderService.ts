@@ -521,11 +521,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
-      const parsed = yield* decodeInputOrValidationError({
+      const { env, ...publicInput } = rawInput;
+      const parsedBase = yield* decodeInputOrValidationError({
         operation: "ProviderService.startSession",
         schema: ProviderSessionStartInput,
-        payload: rawInput,
+        payload: publicInput,
       });
+      const parsed = {
+        ...parsedBase,
+        ...(env !== undefined ? { env } : {}),
+      };
 
       const resolvedInstanceId = yield* requireBindingInstanceId(
         "ProviderService.startSession",

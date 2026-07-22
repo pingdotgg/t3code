@@ -112,6 +112,19 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.providerInstanceId).toBe("ollama_local");
     expect(parsed.modelSelection?.instanceId).toBe("ollama_local");
   });
+
+  it("does not expose provider process env on the public start-session contract", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "codex",
+      runtimeMode: "full-access",
+      env: {
+        T3CODE_PROJECT_ID: "project-1",
+      },
+    });
+
+    expect("env" in parsed).toBe(false);
+  });
 });
 
 describe("ProviderSendTurnInput", () => {

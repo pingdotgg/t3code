@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
+import { ProjectId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_TERMINAL_ID,
@@ -73,6 +74,17 @@ describe("TerminalOpenInput", () => {
         rows: 24,
       }),
     ).toBe(false);
+  });
+
+  it("accepts optional projectId for draft threads", () => {
+    expect(
+      decodes(TerminalOpenInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        projectId: ProjectId.make("project-1"),
+        cwd: "/tmp/project",
+      }),
+    ).toBe(true);
   });
 
   it("accepts optional env overrides", () => {

@@ -1,16 +1,37 @@
 import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
 
+import {
+  isManagedRuntimeEnvKey,
+  stripManagedRuntimeEnvKeys,
+  type EnvRecord,
+} from "../projectLaunchEnv/projectLaunchEnvUtils.ts";
+
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
-  baseEnv: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
+  baseEnv: EnvRecord = process.env,
+): Record<string, string> {
+  const next = stripManagedRuntimeEnvKeys(baseEnv);
   if (!environment || environment.length === 0) {
-    return baseEnv;
+    return next;
   }
 
-  const next: NodeJS.ProcessEnv = { ...baseEnv };
   for (const variable of environment) {
+    if (isManagedRuntimeEnvKey(variable.name)) continue;
     next[variable.name] = variable.value;
+  }
+  return next;
+}
+
+export function mergeProviderSessionEnvironment(
+  baseEnv?: EnvRecord | null,
+  sessionEnv?: EnvRecord | null,
+): Record<string, string> {
+  const next = stripManagedRuntimeEnvKeys(baseEnv ?? process.env);
+  if (!sessionEnv) return next;
+  for (const [key, value] of Object.entries(sessionEnv)) {
+    if (value !== undefined) {
+      next[key] = value;
+    }
   }
   return next;
 }

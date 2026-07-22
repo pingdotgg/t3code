@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
@@ -26,6 +27,12 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
+import {
+  ProjectLaunchEnv,
+  type ResolvedProjectLaunchEnvForThread,
+} from "../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
+import { ProjectLaunchEnvThreadLookupError } from "../projectLaunchEnv/Services/ProjectLaunchEnvErrors.ts";
+import { mergeResolvedProjectLaunchEnv } from "../projectLaunchEnv/projectLaunchEnvUtils.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -213,7 +220,39 @@ interface CreateManagerOptions {
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   ptyAdapter?: FakePtyAdapter;
+  projectLaunchEnv?: ProjectLaunchEnv["Service"];
 }
+
+const projectLaunchEnvTestStub = (fixtures: {
+  readonly t3Home: string;
+  readonly projectId: ProjectId;
+}): ProjectLaunchEnv["Service"] => ({
+  resolve: (input) =>
+    Effect.succeed(
+      mergeResolvedProjectLaunchEnv({
+        t3Home: fixtures.t3Home,
+        ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
+        context: {
+          projectRoot: input.projectRoot,
+          projectId: String(input.projectId),
+          threadId: input.threadId,
+          ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+        },
+      }),
+    ),
+  resolveForThread: (resolveInput) =>
+    Effect.succeed({
+      projectId: fixtures.projectId,
+      ...(resolveInput.worktreePath !== undefined
+        ? { worktreePath: resolveInput.worktreePath }
+        : {}),
+      env: Object.fromEntries(
+        Object.entries(resolveInput.extraEnv ?? {}).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      ),
+    } satisfies ResolvedProjectLaunchEnvForThread),
+});
 
 interface ManagerFixture {
   readonly baseDir: string;
@@ -242,6 +281,12 @@ const createManager = (
         logsDir,
         historyLineLimit,
         ptyAdapter,
+        projectLaunchEnv:
+          options.projectLaunchEnv ??
+          projectLaunchEnvTestStub({
+            t3Home: baseDir,
+            projectId: ProjectId.make("project-1"),
+          }),
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
         ...(options.subprocessInspector !== undefined
@@ -1316,6 +1361,7 @@ it.layer(
         env: {
           PORT: "5173",
           T3CODE_PORT: "3773",
+          T3_MCP_BEARER_TOKEN: "client-token",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
         },
@@ -1327,6 +1373,7 @@ it.layer(
 
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
+      expect(spawnInput.env.T3_MCP_BEARER_TOKEN).toBeUndefined();
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       // Arbitrary host env vars must pass through — terminals inherit the
       // user's environment apart from the explicit blocklist.
@@ -1410,6 +1457,39 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+    }),
+  );
+
+  it.effect("does not spawn when thread lookup fails without a project id", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        projectLaunchEnv: {
+          resolve: () => Effect.succeed({}),
+          resolveForThread: (input) =>
+            Effect.fail(
+              new ProjectLaunchEnvThreadLookupError({
+                threadId: input.threadId,
+                terminalId: input.terminalId,
+              }),
+            ),
+        },
+      });
+
+      const error = yield* Effect.flip(
+        manager.open(
+          openInput({
+            env: {
+              T3CODE_PROJECT_ID: "client-spoofed-project",
+              T3CODE_THREAD_ID: "client-spoofed-thread",
+            },
+          }),
+        ),
+      );
+
+      assert.instanceOf(error, TerminalManager.TerminalSessionLookupError);
+      assert.deepStrictEqual(ptyAdapter.spawnInputs, []);
     }),
   );
 

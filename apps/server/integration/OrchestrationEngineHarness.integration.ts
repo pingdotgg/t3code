@@ -36,6 +36,7 @@ import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapt
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerRegistryMock.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
+import { ProjectLaunchEnvLive } from "../src/projectLaunchEnv/Layers/ProjectLaunchEnvLive.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
@@ -373,14 +374,21 @@ export const makeOrchestrationIntegrationHarness = (
         }),
       ),
     );
+    const serverConfigLayer = ServerConfig.layerTest(workspaceDir, rootDir);
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(orchestrationReactorLayer),
       Layer.provideMerge(providerRegistryLayer),
+      Layer.provideMerge(
+        ProjectLaunchEnvLive.pipe(
+          Layer.provide(serverConfigLayer),
+          Layer.provide(projectionSnapshotQueryLayer),
+        ),
+      ),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+      Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(NodeServices.layer),
     );
 

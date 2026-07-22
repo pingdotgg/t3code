@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -36,6 +37,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -45,6 +47,7 @@ import {
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
+import { mergeProviderSessionEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -279,6 +282,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       NodeAssert.deepStrictEqual(validationRuntimeFactory.factory.mock.calls[0]?.[0], {
         binaryPath: "codex",
         cwd: process.cwd(),
+        environment: mergeProviderSessionEnvironment(undefined, undefined),
         launchArgs: "",
         model: "gpt-5.3-codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
@@ -286,6 +290,52 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+  it.effect("preserves launch env when adding MCP server configuration", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "https://mcp.example.test",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      try {
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          env: {
+            T3CODE_HOME: "/tmp/t3-home",
+            T3CODE_PROJECT_ROOT: "/tmp/project",
+            T3CODE_PROJECT_ID: "project-1",
+            T3CODE_THREAD_ID: "thread-mcp",
+          },
+          runtimeMode: "full-access",
+        });
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
+
+      const runtimeOptions = validationRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.ok(runtimeOptions?.environment);
+      const environment = runtimeOptions.environment;
+      NodeAssert.equal(environment.T3CODE_HOME, "/tmp/t3-home");
+      NodeAssert.equal(environment.T3CODE_PROJECT_ROOT, "/tmp/project");
+      NodeAssert.equal(environment.T3CODE_PROJECT_ID, "project-1");
+      NodeAssert.equal(environment.T3CODE_THREAD_ID, "thread-mcp");
+      NodeAssert.equal(environment.T3_MCP_BEARER_TOKEN, "test-token");
+      NodeAssert.deepStrictEqual(runtimeOptions?.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-code.url=https://mcp.example.test",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+      ]);
     }),
   );
 });
