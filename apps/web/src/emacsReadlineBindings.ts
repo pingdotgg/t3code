@@ -485,6 +485,57 @@ export function applyEmacsReadlineActionToContentEditable(
     document.execCommand("delete");
     return killedText;
   };
+  const restoreRange = (range: Range) => {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+  const adjacentCharacter = (
+    origin: Range,
+    direction: "backward" | "forward",
+  ): { readonly range: Range; readonly text: string } | null => {
+    restoreRange(origin.cloneRange());
+    selection.modify("extend", direction, "character");
+    if (selection.isCollapsed || selection.rangeCount === 0) return null;
+    const text = selection.toString();
+    return text ? { range: selection.getRangeAt(0).cloneRange(), text } : null;
+  };
+  const transposeCharacters = (): void => {
+    if (!selection.isCollapsed) return;
+    const original = selection.getRangeAt(0).cloneRange();
+    const previous = adjacentCharacter(original, "backward");
+    if (!previous) {
+      restoreRange(original);
+      return;
+    }
+
+    const next = adjacentCharacter(original, "forward");
+    let before: { readonly range: Range; readonly text: string };
+    let after: { readonly range: Range; readonly text: string };
+    let endContainer = original.endContainer;
+    let endOffset = original.endOffset;
+    if (next) {
+      before = previous;
+      after = next;
+      endContainer = next.range.endContainer;
+      endOffset = next.range.endOffset;
+    } else {
+      const previousOrigin = previous.range.cloneRange();
+      previousOrigin.collapse(true);
+      const previousPrevious = adjacentCharacter(previousOrigin, "backward");
+      if (!previousPrevious) {
+        restoreRange(original);
+        return;
+      }
+      before = previousPrevious;
+      after = previous;
+    }
+
+    const transposeRange = document.createRange();
+    transposeRange.setStart(before.range.startContainer, before.range.startOffset);
+    transposeRange.setEnd(endContainer, endOffset);
+    restoreRange(transposeRange);
+    document.execCommand("insertText", false, `${after.text}${before.text}`);
+  };
 
   let killedText: string | undefined;
   switch (action) {
@@ -537,9 +588,8 @@ export function applyEmacsReadlineActionToContentEditable(
       document.execCommand("insertText", false, yankText);
       break;
     case "transpose-chars":
-      // Rich editors need to own this operation so their internal document
-      // model and undo history stay synchronized.
-      return { handled: false };
+      transposeCharacters();
+      break;
   }
 
   return { handled: true, ...(killedText === undefined ? {} : { killedText }) };
@@ -560,12 +610,7 @@ export function createEmacsReadlineKeydownHandler(options?: {
 }): (event: KeyboardEvent) => void {
   return (event) => {
     const action = resolveEmacsReadlineAction(event);
-    if (
-      !action ||
-      isTerminalTarget(event.target) ||
-      isKeybindingCaptureTarget(event.target) ||
-      options?.shouldYieldToApplicationShortcut?.(event)
-    ) {
+    if (!action || isTerminalTarget(event.target) || isKeybindingCaptureTarget(event.target)) {
       return;
     }
 
@@ -577,6 +622,8 @@ export function createEmacsReadlineKeydownHandler(options?: {
       dispatchCandidateNavigation(event, action === "forward-line" ? "ArrowDown" : "ArrowUp");
       return;
     }
+
+    if (options?.shouldYieldToApplicationShortcut?.(event)) return;
 
     const control = getPlainTextControl(event.target);
     const editableHost = control ? null : getContentEditableHost(event.target);

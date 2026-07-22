@@ -87,6 +87,51 @@ describe("resolveEmacsReadlineAction", () => {
     } as unknown as KeyboardEvent);
     expect(captureYield).not.toHaveBeenCalled();
   });
+
+  it("gives an open candidate list precedence over an application shortcut", () => {
+    class TestElement extends EventTarget {
+      ownerDocument!: Document;
+
+      closest(): null {
+        return null;
+      }
+    }
+    class TestKeyboardEvent extends Event {
+      readonly key: string;
+
+      constructor(type: string, init: KeyboardEventInit) {
+        super(type, init);
+        this.key = init.key ?? "";
+      }
+    }
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+
+    const target = new TestElement();
+    const document = {
+      activeElement: target,
+      defaultView: { KeyboardEvent: TestKeyboardEvent },
+      querySelectorAll: () => [{ getAttribute: () => null, hidden: false }],
+    } as unknown as Document;
+    target.ownerDocument = document;
+    const dispatchedKeys: string[] = [];
+    target.addEventListener("keydown", (event) => {
+      dispatchedKeys.push((event as unknown as KeyboardEvent).key);
+    });
+    const yieldToAppShortcut = vi.fn(() => true);
+    createEmacsReadlineKeydownHandler({
+      shouldYieldToApplicationShortcut: yieldToAppShortcut,
+    })({
+      ...keyboardEvent({ key: "n", ctrlKey: true }),
+      preventDefault: vi.fn(),
+      repeat: false,
+      stopImmediatePropagation: vi.fn(),
+      target,
+    } as unknown as KeyboardEvent);
+
+    expect(dispatchedKeys).toEqual(["ArrowDown"]);
+    expect(yieldToAppShortcut).not.toHaveBeenCalled();
+  });
 });
 
 describe("applyEmacsReadlineActionToPlainText", () => {
@@ -250,15 +295,85 @@ describe("applyEmacsReadlineActionToContentEditable", () => {
     },
   );
 
-  it("preserves the selection for an empty yank and yields unsupported transpose", () => {
+  it("preserves selections for an empty yank and transpose", () => {
     const { execCommand, host } = harness({ isCollapsed: false });
     expect(applyEmacsReadlineActionToContentEditable(host, "yank", "")).toEqual({
       handled: true,
     });
     expect(applyEmacsReadlineActionToContentEditable(host, "transpose-chars", "")).toEqual({
-      handled: false,
+      handled: true,
     });
     expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it("transposes the characters around a collapsed caret", () => {
+    const textNode = {} as Node;
+    class TestRange {
+      startContainer = textNode;
+      endContainer = textNode;
+
+      constructor(
+        public startOffset: number,
+        public endOffset: number,
+      ) {}
+
+      cloneRange(): TestRange {
+        return new TestRange(this.startOffset, this.endOffset);
+      }
+
+      collapse(toStart: boolean): void {
+        if (toStart) this.endOffset = this.startOffset;
+        else this.startOffset = this.endOffset;
+      }
+
+      setStart(_node: Node, offset: number): void {
+        this.startOffset = offset;
+      }
+
+      setEnd(_node: Node, offset: number): void {
+        this.endOffset = offset;
+      }
+    }
+    let currentRange = new TestRange(1, 1);
+    const selection = {
+      anchorNode: textNode,
+      focusNode: textNode,
+      get isCollapsed() {
+        return currentRange.startOffset === currentRange.endOffset;
+      },
+      rangeCount: 1,
+      addRange: (range: Range) => {
+        currentRange = range as unknown as TestRange;
+      },
+      getRangeAt: () => currentRange,
+      modify: (_alter: string, direction: "backward" | "forward") => {
+        if (direction === "backward") currentRange.startOffset -= 1;
+        else currentRange.endOffset += 1;
+      },
+      removeAllRanges: () => undefined,
+      toString: () => "ab".slice(currentRange.startOffset, currentRange.endOffset),
+    } as unknown as Selection & {
+      modify(
+        alter: "extend" | "move",
+        direction: "backward" | "forward",
+        granularity: string,
+      ): void;
+    };
+    const execCommand = vi.fn(() => true);
+    const document = {
+      createRange: () => new TestRange(0, 0),
+      execCommand,
+      getSelection: () => selection,
+    } as unknown as Document;
+    const host = {
+      contains: (node: Node) => node === textNode,
+      ownerDocument: document,
+    } as unknown as HTMLElement;
+
+    expect(applyEmacsReadlineActionToContentEditable(host, "transpose-chars", "")).toEqual({
+      handled: true,
+    });
+    expect(execCommand).toHaveBeenCalledWith("insertText", false, "ba");
   });
 
   it.each([
