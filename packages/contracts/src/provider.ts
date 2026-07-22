@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   EventId,
   IsoDateTime,
+  NonNegativeInt,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -16,6 +17,8 @@ import {
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
+  THREAD_GOAL_MAX_OBJECTIVE_CHARS,
+  ThreadGoalStatus,
   ProviderRequestKind,
   ProviderSandboxMode,
   ProviderUserInputAnswers,
@@ -94,6 +97,21 @@ export const ProviderStopSessionInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
+
+export const ProviderSetThreadGoalInput = Schema.Struct({
+  threadId: ThreadId,
+  objective: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(THREAD_GOAL_MAX_OBJECTIVE_CHARS)),
+  ),
+  status: Schema.optional(ThreadGoalStatus),
+  tokenBudget: Schema.optional(Schema.NullOr(NonNegativeInt)),
+});
+export type ProviderSetThreadGoalInput = typeof ProviderSetThreadGoalInput.Type;
+
+export const ProviderClearThreadGoalInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProviderClearThreadGoalInput = typeof ProviderClearThreadGoalInput.Type;
 
 export const ProviderRespondToRequestInput = Schema.Struct({
   threadId: ThreadId,

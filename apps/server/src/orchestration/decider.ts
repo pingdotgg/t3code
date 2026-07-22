@@ -588,6 +588,50 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.goal.set": {
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (
+        command.objective === undefined &&
+        command.status === undefined &&
+        command.tokenBudget === undefined
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A goal update must include an objective, status, or token budget.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.goal-set-requested",
+        payload: {
+          threadId: command.threadId,
+          ...(command.objective !== undefined ? { objective: command.objective } : {}),
+          ...(command.status !== undefined ? { status: command.status } : {}),
+          ...(command.tokenBudget !== undefined ? { tokenBudget: command.tokenBudget } : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.goal.clear": {
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.goal-clear-requested",
+        payload: { threadId: command.threadId, createdAt: command.createdAt },
+      };
+    }
+
     case "thread.turn.start": {
       const targetThread = yield* requireThread({
         readModel,
@@ -663,24 +707,44 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Real activity resets ANY override: it wakes an explicitly settled
       // thread, and it clears a keep-active pin back to neutral so the
       // thread can auto-settle again after this burst of work goes stale.
-      if (targetThread.settledOverride === null) {
-        return [userMessageEvent, turnStartRequestedEvent];
+      const activityEvents: PlannedOrchestrationEvent[] = [];
+      if (targetThread.settledOverride !== null) {
+        activityEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.unsettled",
-        payload: {
-          threadId: command.threadId,
-          reason: "activity",
-          updatedAt: command.createdAt,
-        },
-      };
-      return [unsettledEvent, userMessageEvent, turnStartRequestedEvent];
+      if (command.goal !== undefined) {
+        activityEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.goal-set-requested",
+          payload: {
+            threadId: command.threadId,
+            objective: command.goal.objective,
+            status: "active",
+            ...(command.goal.tokenBudget !== undefined
+              ? { tokenBudget: command.goal.tokenBudget }
+              : {}),
+            createdAt: command.createdAt,
+          },
+        });
+      }
+      return [...activityEvents, userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {

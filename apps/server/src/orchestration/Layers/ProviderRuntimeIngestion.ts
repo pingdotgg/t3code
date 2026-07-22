@@ -317,6 +317,34 @@ export function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "thread.goal.updated":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "goal.updated",
+          summary: `Goal ${event.payload.goal.status}`,
+          payload: { goal: event.payload.goal },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+
+    case "thread.goal.cleared":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "goal.cleared",
+          summary: "Goal cleared",
+          payload: {},
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];

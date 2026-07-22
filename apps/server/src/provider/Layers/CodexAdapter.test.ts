@@ -141,6 +141,12 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
   }
 
+  setThreadGoal() {
+    return Effect.void;
+  }
+
+  clearThreadGoal = Effect.void;
+
   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
     return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
   }
@@ -1147,6 +1153,50 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastOutputTokens: 6,
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
+      });
+    }),
+  );
+
+  it.effect("maps Codex goal updates into canonical runtime events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-codex-goal-updated"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "thread/goal/updated",
+        payload: {
+          threadId: "provider-thread-1",
+          goal: {
+            threadId: "provider-thread-1",
+            objective: "Finish goal support",
+            status: "active",
+            tokenBudget: 50_000,
+            tokensUsed: 1_234,
+            timeUsedSeconds: 75,
+            createdAt: 1_767_225_600,
+            updatedAt: 1_767_225_675,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "thread.goal.updated") {
+        return;
+      }
+      NodeAssert.deepEqual(firstEvent.value.payload.goal, {
+        objective: "Finish goal support",
+        status: "active",
+        tokenBudget: 50_000,
+        tokensUsed: 1_234,
+        timeUsedSeconds: 75,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:01:15.000Z",
       });
     }),
   );

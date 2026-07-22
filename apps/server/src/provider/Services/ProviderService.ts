@@ -18,6 +18,8 @@ import type {
   ProviderRespondToUserInputInput,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
+  ProviderSetThreadGoalInput,
+  ProviderClearThreadGoalInput,
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
@@ -77,6 +79,14 @@ export interface ProviderServiceShape {
    */
   readonly stopSession: (
     input: ProviderStopSessionInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly setThreadGoal: (
+    input: ProviderSetThreadGoalInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly clearThreadGoal: (
+    input: ProviderClearThreadGoalInput,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**

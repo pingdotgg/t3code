@@ -6,6 +6,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  parseGoalComposerSlashCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
   shouldSubmitComposerOnEnter,
@@ -361,5 +362,25 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+});
+
+describe("parseGoalComposerSlashCommand", () => {
+  it("parses a goal objective", () => {
+    expect(parseGoalComposerSlashCommand("/goal ship reliable reconnects")).toEqual({
+      type: "set",
+      objective: "ship reliable reconnects",
+    });
+  });
+
+  it("parses goal lifecycle controls", () => {
+    expect(parseGoalComposerSlashCommand("/goal")).toEqual({ type: "view" });
+    expect(parseGoalComposerSlashCommand("/goal pause")).toEqual({ type: "pause" });
+    expect(parseGoalComposerSlashCommand("/goal resume")).toEqual({ type: "resume" });
+    expect(parseGoalComposerSlashCommand("/goal clear")).toEqual({ type: "clear" });
+  });
+
+  it("does not capture unrelated slash commands", () => {
+    expect(parseGoalComposerSlashCommand("/goals are useful")).toBeNull();
   });
 });

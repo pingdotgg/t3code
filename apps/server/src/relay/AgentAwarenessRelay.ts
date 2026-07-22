@@ -77,6 +77,8 @@ export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boo
     case "thread.proposed-plan-upserted":
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":
+    case "thread.goal-set-requested":
+    case "thread.goal-clear-requested":
       return false;
     case "thread.activity-appended":
       return (

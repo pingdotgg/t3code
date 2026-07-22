@@ -163,6 +163,16 @@ export function applyThreadDetailEvent(
       };
 
     // ── Turn lifecycle ──────────────────────────────────────────────
+    case "thread.goal-set-requested":
+    case "thread.goal-clear-requested":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          updatedAt: event.payload.createdAt,
+        },
+      };
+
     case "thread.turn-start-requested":
       return {
         kind: "updated",

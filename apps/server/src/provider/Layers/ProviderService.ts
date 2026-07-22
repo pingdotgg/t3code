@@ -17,6 +17,8 @@ import {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
+  ProviderSetThreadGoalInput,
+  ProviderClearThreadGoalInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   type ProviderInstanceId,
@@ -874,6 +876,60 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const setThreadGoal: ProviderServiceMethod<"setThreadGoal"> = Effect.fn("setThreadGoal")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.setThreadGoal",
+        schema: ProviderSetThreadGoalInput,
+        payload: rawInput,
+      });
+      if (
+        input.objective === undefined &&
+        input.status === undefined &&
+        input.tokenBudget === undefined
+      ) {
+        return yield* toValidationError(
+          "ProviderService.setThreadGoal",
+          "At least one goal field must be provided.",
+        );
+      }
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.setThreadGoal",
+        allowRecovery: true,
+      });
+      if (!routed.adapter.setThreadGoal) {
+        return yield* toValidationError(
+          "ProviderService.setThreadGoal",
+          `Provider '${routed.adapter.provider}' does not support persisted thread goals.`,
+        );
+      }
+      yield* routed.adapter.setThreadGoal(input);
+    },
+  );
+
+  const clearThreadGoal: ProviderServiceMethod<"clearThreadGoal"> = Effect.fn("clearThreadGoal")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.clearThreadGoal",
+        schema: ProviderClearThreadGoalInput,
+        payload: rawInput,
+      });
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.clearThreadGoal",
+        allowRecovery: true,
+      });
+      if (!routed.adapter.clearThreadGoal) {
+        return yield* toValidationError(
+          "ProviderService.clearThreadGoal",
+          `Provider '${routed.adapter.provider}' does not support persisted thread goals.`,
+        );
+      }
+      yield* routed.adapter.clearThreadGoal(input.threadId);
+    },
+  );
+
   const listSessions: ProviderServiceMethod<"listSessions"> = Effect.fn("listSessions")(
     function* () {
       const currentAdapters = yield* getAdapterEntries;
@@ -1074,6 +1130,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     interruptTurn,
     respondToRequest,
     respondToUserInput,
+    setThreadGoal,
+    clearThreadGoal,
     stopSession,
     listSessions,
     getCapabilities,

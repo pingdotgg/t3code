@@ -2,7 +2,13 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "goal";
+export type GoalComposerCommand =
+  | { readonly type: "view" }
+  | { readonly type: "pause" }
+  | { readonly type: "resume" }
+  | { readonly type: "clear" }
+  | { readonly type: "set"; readonly objective: string };
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -262,9 +268,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   };
 }
 
-export function parseStandaloneComposerSlashCommand(
-  text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+export function parseStandaloneComposerSlashCommand(text: string): "plan" | "default" | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
@@ -272,6 +276,25 @@ export function parseStandaloneComposerSlashCommand(
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
   return "default";
+}
+
+export function parseGoalComposerSlashCommand(text: string): GoalComposerCommand | null {
+  const trimmed = text.trim();
+  if (!/^\/goal(?:\s|$)/i.test(trimmed)) {
+    return null;
+  }
+  const argument = trimmed.slice("/goal".length).trim();
+  if (argument.length === 0) return { type: "view" };
+  switch (argument.toLowerCase()) {
+    case "pause":
+      return { type: "pause" };
+    case "resume":
+      return { type: "resume" };
+    case "clear":
+      return { type: "clear" };
+    default:
+      return { type: "set", objective: argument };
+  }
 }
 
 export function replaceTextRange(
