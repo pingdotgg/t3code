@@ -240,6 +240,24 @@ describe("hasQueuedTurnStart", () => {
   it("is quiet without user messages", () => {
     expect(hasQueuedTurnStart(makeShell({ activityAt: FRESH }), JUST_AFTER)).toBe(false);
   });
+
+  it("bounds the grace window in both directions: a future-stamped message is skew, not queued work", () => {
+    // Message timestamps originate on other devices; a clock an hour ahead
+    // must not hold the queued state for the whole skew.
+    const skewed = {
+      latestUserMessageAt: "2026-04-09T13:00:00.000Z",
+      latestTurn: null,
+      session: null,
+    };
+    expect(hasQueuedTurnStart(skewed, { now: "2026-04-09T12:00:00.000Z" })).toBe(false);
+    // A small negative age (within the grace window) still reads as queued.
+    const slightlyAhead = {
+      latestUserMessageAt: "2026-04-09T12:00:30.000Z",
+      latestTurn: null,
+      session: null,
+    };
+    expect(hasQueuedTurnStart(slightlyAhead, { now: "2026-04-09T12:00:00.000Z" })).toBe(true);
+  });
 });
 
 describe("canSettle", () => {
@@ -277,6 +295,40 @@ describe("canSettle", () => {
     ).toBe(false);
     // Past the window the message is a failed/stale start: settleable again.
     expect(canSettle(queued, { now: NOW })).toBe(true);
+  });
+
+  it("lets a server-accepted settle overrule the clock-derived queued blocker", () => {
+    // The settle action ran with wall-clock `now` (past the grace window);
+    // the list partition re-evaluates with a minute-floored `now` that is
+    // still INSIDE the window. settledAt >= message time proves the server
+    // already adjudicated this exact message, so the row must not snap back
+    // to active until the coarser clock catches up.
+    const messageAt = "2026-04-09T12:00:00.000Z";
+    const flooredNow = "2026-04-09T12:01:00.000Z";
+    const base = makeShell({ settledOverride: "settled", activityAt: null });
+    const settledAfterMessage = {
+      ...base,
+      latestUserMessageAt: messageAt,
+      settledAt: "2026-04-09T12:02:10.000Z",
+    };
+    expect(hasQueuedTurnStart(settledAfterMessage, { now: flooredNow })).toBe(true);
+    expect(effectiveSettled(settledAfterMessage, { now: flooredNow, autoSettleAfterDays: 3 })).toBe(
+      true,
+    );
+
+    // A message NEWER than settledAt is genuinely new work: still blocked
+    // until the server's auto-unsettle lands.
+    const messageAfterSettle = {
+      ...base,
+      latestUserMessageAt: "2026-04-09T12:03:00.000Z",
+      settledAt: "2026-04-09T12:02:10.000Z",
+    };
+    expect(
+      effectiveSettled(messageAfterSettle, {
+        now: "2026-04-09T12:03:30.000Z",
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(false);
   });
 
   it("agrees with effectiveSettled's blockers for explicitly settled shells", () => {

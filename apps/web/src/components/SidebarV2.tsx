@@ -1103,7 +1103,11 @@ export default function SidebarV2() {
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
       }
-      const deletedThreadKeys = new Set(threadKeys);
+      // Grown as deletions actually land, never seeded with the whole batch:
+      // orphaned-worktree detection must only discount threads that are
+      // really gone, or the first delete would treat still-alive batch mates
+      // as deleted and remove a worktree they still point at.
+      const deletedThreadKeys = new Set<string>();
       for (const threadKey of threadKeys) {
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) continue;
@@ -1123,6 +1127,7 @@ export default function SidebarV2() {
           }
           return;
         }
+        deletedThreadKeys.add(threadKey);
       }
       removeFromSelection(threadKeys);
     },

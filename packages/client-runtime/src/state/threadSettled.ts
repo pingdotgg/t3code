@@ -56,7 +56,11 @@ export function hasQueuedTurnStart(
   if (Number.isNaN(messageAt)) return false;
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(nowMs)) return false;
-  if (nowMs - messageAt > QUEUED_TURN_START_GRACE_MS) return false;
+  // Bounded on both sides: message timestamps originate on whichever device
+  // sent the message, so a clock ahead of this one yields a negative age
+  // that would otherwise hold the queued state for the whole skew. Mirrors
+  // the decider's guard.
+  if (Math.abs(nowMs - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
   const turn = shell.latestTurn;
   if (turn === null) return true;
   return [turn.requestedAt, turn.startedAt, turn.completedAt].every(
@@ -103,7 +107,24 @@ export function effectiveSettled(
   },
 ): boolean {
   // Blocked work must remain visible even when a user explicitly settled it.
-  if (!canSettle(shell, { now: options.now })) return false;
+  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
+  if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
+  if (hasQueuedTurnStart(shell, { now: options.now })) {
+    // The queued-turn blocker alone is forgivable: it is clock-derived, and
+    // list callers pass a coarser `now` than the settle action used. When
+    // the server already adjudicated the queued message by accepting a
+    // settle after it (settledAt stamps server accept time), trust that
+    // ruling — otherwise a settle near the grace boundary leaves the row
+    // pinned active until the caller's clock ticks over. A message NEWER
+    // than settledAt is genuinely new work and keeps the block until the
+    // server's auto-unsettle lands.
+    const serverAdjudicated =
+      shell.settledOverride === "settled" &&
+      shell.settledAt !== null &&
+      shell.latestUserMessageAt !== null &&
+      Date.parse(shell.settledAt) >= Date.parse(shell.latestUserMessageAt);
+    if (!serverAdjudicated) return false;
+  }
   if (shell.settledOverride === "settled") return true;
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.

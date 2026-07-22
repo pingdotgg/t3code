@@ -34,7 +34,25 @@ const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
  * approval or user-input request with no later resolution for the same
  * requestId. The server-side twin of the shell's hasPendingApprovals /
  * hasPendingUserInput flags, which the decider read model does not carry.
+ * The clearing rules MUST match ProjectionPipeline's pending accounting —
+ * resolved activities always clear, respond.failed clears only when the
+ * failure detail marks the request stale/unknown — or settle would be
+ * rejected on threads whose shell flags read as clear.
  */
+function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): boolean {
+  const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
+  if (detail === null) return false;
+  return (
+    detail.includes("stale pending approval request") ||
+    detail.includes("unknown pending approval request") ||
+    detail.includes("unknown pending permission request") ||
+    detail.includes("stale pending user-input request") ||
+    detail.includes("unknown pending user-input request") ||
+    detail.includes("unknown pending user input request") ||
+    detail.includes("unknown pending codex user input request")
+  );
+}
+
 function hasOpenBlockingRequest(thread: {
   readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
 }): boolean {
@@ -49,6 +67,12 @@ function hasOpenBlockingRequest(thread: {
     if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
       openRequestIds.add(requestId);
     } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
+      openRequestIds.delete(requestId);
+    } else if (
+      (activity.kind === "provider.approval.respond.failed" ||
+        activity.kind === "provider.user-input.respond.failed") &&
+      isStaleRequestFailureDetail(payload)
+    ) {
       openRequestIds.delete(requestId);
     }
   }
@@ -415,11 +439,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
               ),
             );
+      // The age check is bounded on BOTH sides: message timestamps are
+      // client-supplied, so a client clock ahead of the server yields a
+      // negative age. Without the lower bound that negative age satisfies
+      // `<= grace` for as long as the skew lasts, extending the settle
+      // block far past the intended two minutes.
+      const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
       const hasQueuedTurnStart =
         thread.session?.status !== "error" &&
         Number.isFinite(latestUserMessageAtMs) &&
         latestUserMessageAtMs > latestTurnAtMs &&
-        Date.parse(occurredAt) - latestUserMessageAtMs <= QUEUED_TURN_START_GRACE_MS;
+        Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS;
       if (hasQueuedTurnStart) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({

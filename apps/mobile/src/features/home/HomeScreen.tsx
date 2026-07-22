@@ -767,8 +767,15 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
     )
   ) : null;
+  // Self-contained: v1's listEmpty keys off projectGroups, which ignores the
+  // v2 project scope, so it can be null (results elsewhere) while this list
+  // is empty. Search outranks the scope — "No results" names the actionable
+  // fact when a query is active. Pending tasks render in the header, so the
+  // list showing them isn't empty in the user's eyes.
   const v2ListEmpty =
-    threadListV2Items.length === 0 && v2PendingTasks.length === 0 && v2ScopedProject !== null ? (
+    v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
+      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+    ) : v2ScopedProject !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProject.title}`}
         detail="Choose another project or create a new task."

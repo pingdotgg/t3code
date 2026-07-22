@@ -177,7 +177,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <Pressable
-        accessibilityHint="Opens the thread. Swipe left to settle."
+        accessibilityHint={`Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`}
         accessibilityLabel={thread.title}
         accessibilityRole="button"
         onPress={() => {
@@ -255,7 +255,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </Pressable>
     ) : (
       <Pressable
-        accessibilityHint={`Opens the thread. Swipe left to ${canUnsettle ? "un-settle" : "settle"}.`}
+        accessibilityHint={`Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`}
         accessibilityLabel={thread.title}
         accessibilityRole="button"
         className="bg-screen"
