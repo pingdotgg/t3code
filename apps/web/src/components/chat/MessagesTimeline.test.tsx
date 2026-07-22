@@ -218,6 +218,17 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry(text: string) {
+  const entry = buildUserTimelineEntry(text);
+  return {
+    ...entry,
+    message: {
+      ...entry.message,
+      role: "assistant" as const,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("keeps assistant changed-files headers sticky below the thread header", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -412,6 +423,121 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
+  });
+
+  it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              'Without reading a file, do you have <global-agent-instructions scope="workspace">',
+              'Before <nested data-value="a&b">inside</nested> after',
+              "</global-agent-instructions> in your context?",
+              "Comparison: 2 < 3 and 5 > 4.",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("&lt;global-agent-instructions scope=&quot;workspace&quot;&gt;");
+    expect(markup).toContain(
+      "Before &lt;nested data-value=&quot;a&amp;b&quot;&gt;inside&lt;/nested&gt; after",
+    );
+    expect(markup).toContain("&lt;/global-agent-instructions&gt; in your context?");
+    expect(markup).toContain("Comparison: 2 &lt; 3 and 5 &gt; 4.");
+  });
+
+  it("preserves XML-like source inside user code spans and fences", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              'Inline `<tag attr="x">`',
+              "",
+              "```xml",
+              '<root><child enabled="true" /></root>',
+              "```",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("<code>&lt;tag attr=&quot;x&quot;&gt;</code>");
+    expect(markup).toContain("&lt;root&gt;&lt;child enabled=&quot;true&quot; /&gt;&lt;/root&gt;");
+  });
+
+  it("renders unsafe user HTML as inert source text", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            '<script>globalThis.__t3Xss = 1</script><img src="x" onerror="globalThis.__t3Xss = 2">',
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("&lt;script&gt;globalThis.__t3Xss = 1&lt;/script&gt;");
+    expect(markup).toContain(
+      "&lt;img src=&quot;x&quot; onerror=&quot;globalThis.__t3Xss = 2&quot;&gt;",
+    );
+    expect(markup).not.toMatch(/<script(?:\s|>)/i);
+    expect(markup).not.toMatch(/<img(?:\s|>)/i);
+  });
+
+  it("continues to render sanitized raw HTML in assistant messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry("<details><summary>More</summary>Details</details>"),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-markdown-details=""');
+    expect(markup).toContain("More");
+    expect(markup).not.toContain("&lt;details&gt;");
+  });
+
+  it("sanitizes executable HTML while preserving supported assistant markup", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            [
+              '<details open onclick="globalThis.__t3Xss = 1">',
+              "<summary>Safe details</summary>",
+              "<script>globalThis.__t3Xss = 2</script>",
+              '<img src="x" onerror="globalThis.__t3Xss = 3">',
+              '<a href="javascript:globalThis.__t3Xss = 4">Unsafe link</a>',
+              "</details>",
+            ].join(""),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-markdown-details=""');
+    expect(markup).toContain("Safe details");
+    expect(markup).not.toMatch(/<script(?:\s|>)/i);
+    expect(markup).not.toContain("onclick=");
+    expect(markup).not.toContain("onerror=");
+    expect(markup).not.toContain("javascript:");
+    expect(markup).not.toContain("globalThis.__t3Xss");
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {
