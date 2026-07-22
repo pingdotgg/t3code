@@ -1123,10 +1123,14 @@ function ComposerHomeEndKeyPlugin() {
   return null;
 }
 
-function ComposerEmacsReadlinePlugin() {
+function ComposerEmacsReadlinePlugin(props: {
+  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  skills: ReadonlyArray<ServerProviderSkill>;
+}) {
   const [editor] = useLexicalComposerContext();
   const enabled = useClientSettings((settings) => settings.keyboardEditingMode === "emacs");
   const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
+  const skillMetadata = useMemo(() => skillMetadataByName(props.skills), [props.skills]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -1180,6 +1184,9 @@ function ComposerEmacsReadlinePlugin() {
           $setSelectionRangeAtComposerOffsets(replacementStart, replacementEnd);
           const replacementSelection = $getSelection();
           if (!$isRangeSelection(replacementSelection)) return false;
+          const expandedReplacementRange =
+            getSelectionRangeForExpandedComposerOffsets(replacementSelection);
+          if (!expandedReplacementRange) return false;
 
           const removedTerminalContextIds = new Set<string>();
           const removedTerminalContextTexts: string[] = [];
@@ -1191,14 +1198,21 @@ function ComposerEmacsReadlinePlugin() {
           }
           const replacement = resolveComposerReadlineReplacement({
             edit,
+            expandedReplacementStart: expandedReplacementRange.start,
+            expandedReplacementEnd: expandedReplacementRange.end,
             selectedText: replacementSelection.getTextContent(),
+            serializedValue: $getRoot().getTextContent(),
             terminalContextTexts: removedTerminalContextTexts,
           });
           if (replacement.killedText !== undefined) {
             storeEmacsReadlineKilledText(replacement.killedText);
           }
 
-          replacementSelection.insertRawText(replacement.insertedText);
+          $setComposerEditorPrompt(
+            replacement.value,
+            props.terminalContexts.filter((context) => !removedTerminalContextIds.has(context.id)),
+            skillMetadata,
+          );
           $setSelectionAtComposerOffset(replacement.caretOffset);
           for (const contextId of removedTerminalContextIds) {
             onRemoveTerminalContext(contextId);
@@ -1217,7 +1231,7 @@ function ComposerEmacsReadlinePlugin() {
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, enabled, onRemoveTerminalContext]);
+  }, [editor, enabled, onRemoveTerminalContext, props.terminalContexts, skillMetadata]);
 
   return null;
 }
@@ -1921,7 +1935,7 @@ function ComposerPromptEditorInner({
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
-        <ComposerEmacsReadlinePlugin />
+        <ComposerEmacsReadlinePlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
