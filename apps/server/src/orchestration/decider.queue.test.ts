@@ -176,6 +176,29 @@ it.layer(NodeServices.layer)("decider queue flows", (it) => {
     }),
   );
 
+  it.effect("rejects queueing past the per-thread cap", () =>
+    Effect.gen(function* () {
+      let readModel = yield* withSessionStatus(yield* seedReadModel, "running", 3);
+      for (let index = 0; index < 50; index += 1) {
+        readModel = yield* applyPlanned(
+          readModel,
+          yield* decideOrchestrationCommand({
+            command: turnStartCommand(`cap-${index}`),
+            readModel,
+          }),
+        );
+      }
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({ command: turnStartCommand("cap-overflow"), readModel }),
+      );
+      expect(error.message).toContain("queued messages");
+
+      const thread = readModel.threads.find((entry) => entry.id === THREAD_ID);
+      expect(thread?.queuedMessages).toHaveLength(50);
+    }),
+  );
+
   it.effect("steer dispatches a queued message even while running", () =>
     Effect.gen(function* () {
       let readModel = yield* withSessionStatus(yield* seedReadModel, "running", 3);

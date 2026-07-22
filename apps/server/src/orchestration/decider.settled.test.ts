@@ -46,6 +46,7 @@ function makeReadModel(
         settledAt: settledOverride === "settled" ? SETTLED_AT : null,
         deletedAt: null,
         messages,
+        queuedMessages: [],
         proposedPlans: [],
         activities,
         checkpoints: [],

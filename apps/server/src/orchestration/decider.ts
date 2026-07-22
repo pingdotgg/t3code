@@ -127,6 +127,13 @@ function isThreadTurnActive(thread: OrchestrationThread): boolean {
   return status === "running" || status === "starting";
 }
 
+/**
+ * Enforced here in the decider so a `thread.message-queued` event past the
+ * cap is never emitted — projections and persistence stay in lockstep with
+ * the event stream instead of each clamping independently.
+ */
+const MAX_THREAD_QUEUED_MESSAGES = 50;
+
 interface TurnStartMessageInput {
   readonly messageId: OrchestrationQueuedMessage["messageId"];
   readonly text: string;
@@ -793,6 +800,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // mid-turn injection goes through `thread.queue.steer`. Bootstrap
       // starts are exempt — their thread was created in the same dispatch.
       if (command.bootstrap === undefined && isThreadTurnActive(targetThread)) {
+        if (targetThread.queuedMessages.length >= MAX_THREAD_QUEUED_MESSAGES) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Thread '${command.threadId}' already has ${MAX_THREAD_QUEUED_MESSAGES} queued messages.`,
+          });
+        }
         return {
           ...(yield* withEventBase({
             aggregateKind: "thread",

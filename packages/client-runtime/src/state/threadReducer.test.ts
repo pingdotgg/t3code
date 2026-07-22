@@ -397,6 +397,79 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.message-queued / thread.queued-message-removed", () => {
+    const queuedPayload = {
+      threadId: ThreadId.make("thread-1"),
+      messageId: MessageId.make("queued-1"),
+      text: "Queued follow-up",
+      attachments: [],
+      queuedAt: "2026-04-01T06:00:00.000Z",
+    };
+
+    it("appends a queued message and replaces an existing messageId", () => {
+      const queued = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-queued",
+        payload: queuedPayload,
+      });
+
+      expect(queued.kind).toBe("updated");
+      if (queued.kind !== "updated") return;
+      expect(queued.thread.queuedMessages).toHaveLength(1);
+      expect(queued.thread.queuedMessages[0]?.text).toBe("Queued follow-up");
+
+      const replaced = applyThreadDetailEvent(queued.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-queued",
+        payload: { ...queuedPayload, text: "Edited follow-up" },
+      });
+
+      expect(replaced.kind).toBe("updated");
+      if (replaced.kind !== "updated") return;
+      expect(replaced.thread.queuedMessages).toHaveLength(1);
+      expect(replaced.thread.queuedMessages[0]?.text).toBe("Edited follow-up");
+    });
+
+    it("removes a queued message and leaves others intact", () => {
+      const threadWithQueue: OrchestrationThread = {
+        ...baseThread,
+        queuedMessages: [
+          { ...queuedPayload, messageId: MessageId.make("queued-1") },
+          { ...queuedPayload, messageId: MessageId.make("queued-2") },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithQueue, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-removed",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-1"),
+          reason: "dispatched",
+          removedAt: "2026-04-01T06:02:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.queuedMessages.map((entry) => entry.messageId)).toEqual([
+        MessageId.make("queued-2"),
+      ]);
+    });
+  });
+
   describe("thread.session-set", () => {
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {

@@ -1292,7 +1292,9 @@ export const makeCodexSessionRuntime = (
           // appending input mid-turn instead of opening a second provider
           // turn while the first is still settling. The `expectedTurnId`
           // precondition fails when the turn just ended or is not steerable
-          // (e.g. review/compact); fall back to a fresh `turn/start`.
+          // (e.g. review/compact); only that request-level rejection falls
+          // back to a fresh `turn/start` — transport and protocol failures
+          // propagate rather than racing a duplicate turn.
           const activeSession = yield* Ref.get(sessionRef);
           if (activeSession.status === "running" && activeSession.activeTurnId !== undefined) {
             const steeredTurnId = yield* client
@@ -1303,7 +1305,7 @@ export const makeCodexSessionRuntime = (
               })
               .pipe(
                 Effect.map((steerResponse) => TurnId.make(steerResponse.turnId)),
-                Effect.catch((cause) =>
+                Effect.catchTag("CodexAppServerRequestError", (cause) =>
                   Effect.as(
                     Effect.logDebug("Codex turn/steer rejected; falling back to turn/start.", {
                       cause,

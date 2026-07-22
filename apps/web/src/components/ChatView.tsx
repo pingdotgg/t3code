@@ -3682,8 +3682,9 @@ function ChatViewContent(props: ChatViewProps) {
     }
     // A queued message is server-acknowledged too — it renders as a chip
     // above the composer, so its optimistic timeline copy must go.
+    const persistedMessageIds = new Set(activeThread.messages.map((message) => message.id));
     const serverIds = new Set([
-      ...activeThread.messages.map((message) => message.id),
+      ...persistedMessageIds,
       ...activeThread.queuedMessages.map((message) => message.messageId),
     ]);
     const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
@@ -3697,7 +3698,10 @@ function ChatViewContent(props: ChatViewProps) {
     }, 0);
     for (const removedMessage of removedMessages) {
       const previewUrls = collectUserMessageBlobPreviewUrls(removedMessage);
-      if (previewUrls.length > 0) {
+      // Handoff keeps blob previews alive only for messages entering the
+      // timeline; a queued-only acknowledgment renders as a text chip, so
+      // its previews would never be promoted — revoke them instead.
+      if (previewUrls.length > 0 && persistedMessageIds.has(removedMessage.id)) {
         handoffAttachmentPreviews(removedMessage.id, previewUrls);
         continue;
       }
