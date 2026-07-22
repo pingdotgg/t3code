@@ -502,9 +502,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
         automaticGitFetchInterval: Duration.seconds(10),
+        defaultRuntimeMode: "approval-required",
       });
 
       assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
+      assert.equal(next.defaultRuntimeMode, "approval-required");
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -524,6 +526,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
         automaticGitFetchInterval: 10_000,
+        defaultRuntimeMode: "approval-required",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
