@@ -516,18 +516,12 @@ describe("EnvironmentThreads", () => {
 
           expect(Option.getOrThrow(state.data).archivedAt).toBe("2026-04-01T02:00:00.000Z");
           expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
-          expect(
-            (yield* Ref.get(harness.savedThreads)).some(
-              (saved) => saved.thread.archivedAt !== null,
-            ),
-          ).toBe(false);
+          expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
           return harness.savedThreads;
         }),
       );
 
-      expect((yield* Ref.get(savedThreads)).some((saved) => saved.thread.archivedAt !== null)).toBe(
-        false,
-      );
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
     }),
   );
 
