@@ -1,8 +1,7 @@
 "use client";
 
-import { CheckIcon } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ProviderInstanceId,
   ProviderDriverKind,
@@ -29,6 +28,12 @@ import { toastManager } from "../ui/toast";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { AnimatedHeight } from "../AnimatedHeight";
+import {
+  ADD_PROVIDER_WIZARD_STEPS,
+  resolveWizardNavigation,
+  type WizardNavigation,
+} from "./AddProviderInstanceDialog.logic";
+import { AddProviderInstanceWizardSteps } from "./AddProviderInstanceWizardSteps";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -108,30 +113,6 @@ function validateInstanceId(id: string, existing: ReadonlySet<string>): string |
   return null;
 }
 
-export type WizardAdvance =
-  | { readonly kind: "advance"; readonly step: number }
-  | { readonly kind: "blocked"; readonly error: string };
-
-/**
- * Decide what clicking "Next" should do in the add-instance wizard. The
- * Identity step (index 1) owns the Instance ID, so the wizard must not advance
- * past it while the id is invalid — otherwise the user reaches the final step
- * only for "Add instance" to silently no-op. Returns either the next step to
- * move to, or the error that blocks advancing (mirrors the gate `handleSave`
- * applies before submit).
- */
-export function advanceInstanceWizard(
-  currentStep: number,
-  stepCount: number,
-  validation: { readonly instanceIdError: string | null },
-): WizardAdvance {
-  const blockingError = currentStep === 1 ? validation.instanceIdError : null;
-  if (blockingError !== null) {
-    return { kind: "blocked", error: blockingError };
-  }
-  return { kind: "advance", step: Math.min(stepCount - 1, currentStep + 1) };
-}
-
 interface AddProviderInstanceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -167,26 +148,37 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   const instanceIdError = validateInstanceId(instanceId, existingIds);
   const showInstanceIdError = hasAttemptedSubmit && instanceIdError !== null;
   const previewLabel = label.trim() || `${driverOption.label} Workspace`;
-  const wizardSteps = ["Driver", "Identity", "Config"] as const;
   const wizardStepSummaries = [driverOption.label, previewLabel, null] as const;
 
   const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
-  const setConfigDraft = useCallback(
-    (config: Record<string, unknown> | undefined) => {
-      setConfigByDriver((existing) => {
-        const next = { ...existing };
-        if (config === undefined || Object.keys(config).length === 0) {
-          delete next[driver];
-        } else {
-          next[driver] = config;
-        }
-        return next;
-      });
-    },
-    [driver],
-  );
+  const setConfigDraft = (config: Record<string, unknown> | undefined) => {
+    setConfigByDriver((existing) => {
+      const next = { ...existing };
+      if (config === undefined || Object.keys(config).length === 0) {
+        delete next[driver];
+      } else {
+        next[driver] = config;
+      }
+      return next;
+    });
+  };
 
-  const handleSave = useCallback(() => {
+  const applyWizardNavigation = (navigation: WizardNavigation) => {
+    if (navigation.kind === "blocked") {
+      setHasAttemptedSubmit(true);
+    }
+    setWizardStep(navigation.step);
+  };
+
+  const navigateToStep = (requestedStep: number) => {
+    applyWizardNavigation(
+      resolveWizardNavigation(wizardStep, requestedStep, ADD_PROVIDER_WIZARD_STEPS.length, {
+        instanceIdError,
+      }),
+    );
+  };
+
+  const handleSave = () => {
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null) return;
 
@@ -225,18 +217,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
         description: error instanceof Error ? error.message : "Update failed.",
       });
     }
-  }, [
-    driver,
-    driverOption,
-    configByDriver,
-    instanceId,
-    instanceIdError,
-    label,
-    accentColor,
-    onOpenChange,
-    settings.providerInstances,
-    updateSettings,
-  ]);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -248,46 +229,12 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               Configure an additional provider instance — for example, a second Codex install
               pointed at a different workspace.
             </DialogDescription>
-            <div className="grid grid-cols-3 gap-2">
-              {wizardSteps.map((step, index) => (
-                <button
-                  key={step}
-                  type="button"
-                  className={cn(
-                    "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
-                    index === wizardStep
-                      ? "border-primary bg-primary/10 ring-1 ring-primary/25"
-                      : index < wizardStep
-                        ? "border-border bg-background"
-                        : "border-border bg-muted/40",
-                  )}
-                  onClick={() => setWizardStep(index)}
-                >
-                  <span
-                    className={cn(
-                      "row-span-2 mt-0.5 grid size-4 place-items-center rounded-full border",
-                      index < wizardStep
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : index === wizardStep
-                          ? "border-primary bg-background"
-                          : "border-muted-foreground/35 bg-background",
-                    )}
-                    aria-hidden
-                  >
-                    {index < wizardStep ? <CheckIcon className="size-3" /> : null}
-                  </span>
-                  <span className="text-[10px] font-medium uppercase text-muted-foreground">
-                    Step {index + 1}
-                  </span>
-                  <span className="truncate text-xs font-semibold text-foreground">
-                    {step}
-                    {index < wizardStep && wizardStepSummaries[index]
-                      ? `: ${wizardStepSummaries[index]}`
-                      : ""}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <AddProviderInstanceWizardSteps
+              currentStep={wizardStep}
+              summaries={wizardStepSummaries}
+              instanceIdError={instanceIdError}
+              onNavigation={applyWizardNavigation}
+            />
           </DialogHeader>
 
           <div
@@ -476,20 +423,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
             >
               {wizardStep === 0 ? "Cancel" : "Back"}
             </Button>
-            {wizardStep < wizardSteps.length - 1 ? (
-              <Button
-                size="sm"
-                onClick={() => {
-                  const advance = advanceInstanceWizard(wizardStep, wizardSteps.length, {
-                    instanceIdError,
-                  });
-                  if (advance.kind === "blocked") {
-                    setHasAttemptedSubmit(true);
-                    return;
-                  }
-                  setWizardStep(advance.step);
-                }}
-              >
+            {wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
+              <Button size="sm" onClick={() => navigateToStep(wizardStep + 1)}>
                 Next
               </Button>
             ) : (
