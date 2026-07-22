@@ -14,6 +14,7 @@
  */
 
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -25,8 +26,18 @@ import * as Path from "effect/Path";
 const SKILL_FILE_NAME = "SKILL.md";
 const CURSOR_SKILLS_REL = NodePath.join(".cursor", "skills");
 
-/** `$skill-name` mentions (Codex-style composer insert). */
-const CURSOR_SKILL_MENTION_RE = /\$([a-z0-9]+(?:-[a-z0-9]+)*)\b/gi;
+/**
+ * Max UTF-8 bytes for a skill body stored/injected after frontmatter strip.
+ * Keeps ACP prompts bounded if a skill file is accidentally huge.
+ */
+export const MAX_CURSOR_SKILL_CONTENT_BYTES = 64 * 1024;
+
+/**
+ * `$skill-name` mentions (Codex-style composer insert).
+ * Leading lookbehind rejects mid-token / assignment forms like `ENV=$skill`
+ * and `pre$skill` (must not be preceded by ident or `=`).
+ */
+const CURSOR_SKILL_MENTION_RE = /(?<![A-Za-z0-9_=-])\$([a-z0-9]+(?:-[a-z0-9]+)*)\b/gi;
 
 export interface CursorSkillRoots {
   /**
@@ -53,6 +64,46 @@ export interface DiscoveredCursorSkill {
   readonly scope?: string;
   readonly displayName?: string;
   readonly shortDescription?: string;
+}
+
+export function isPathInsideRoot(root: string, candidate: string): boolean {
+  const relative = NodePath.relative(root, candidate);
+  return (
+    relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative)
+  );
+}
+
+/** Strip leading YAML frontmatter; returns body only (trimmed). */
+export function stripYamlFrontmatter(content: string): string {
+  const normalized = content.replace(/^\uFEFF/, "");
+  if (!normalized.startsWith("---")) {
+    return normalized.trim();
+  }
+  const endIdx = normalized.indexOf("\n---", 3);
+  if (endIdx === -1) {
+    return normalized.trim();
+  }
+  let bodyStart = endIdx + "\n---".length;
+  if (normalized[bodyStart] === "\r") {
+    bodyStart += 1;
+  }
+  if (normalized[bodyStart] === "\n") {
+    bodyStart += 1;
+  }
+  return normalized.slice(bodyStart).trim();
+}
+
+function utf8ByteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+/** Body suitable for injection, or null when over the size cap. */
+export function skillBodyForInjection(content: string): string | null {
+  const body = stripYamlFrontmatter(content);
+  if (utf8ByteLength(body) > MAX_CURSOR_SKILL_CONTENT_BYTES) {
+    return null;
+  }
+  return body;
 }
 
 function normalizeProjectCwds(
@@ -125,12 +176,16 @@ export function parseCursorSkillMarkdown(
 ): DiscoveredCursorSkill | null {
   const content = raw.replace(/^\uFEFF/, "");
   let frontmatter = "";
+  let body = content;
 
   if (content.startsWith("---")) {
     const endIdx = content.indexOf("\n---", 3);
     if (endIdx !== -1) {
       frontmatter = content.slice(3, endIdx).replace(/^\r?\n/, "");
+      body = stripYamlFrontmatter(content);
     }
+  } else {
+    body = content.trim();
   }
 
   const nameFromFm = frontmatter.match(/^name:\s*['"]?([a-z0-9-]+)['"]?\s*$/im)?.[1];
@@ -139,12 +194,16 @@ export function parseCursorSkillMarkdown(
     return null;
   }
 
+  if (utf8ByteLength(body) > MAX_CURSOR_SKILL_CONTENT_BYTES) {
+    return null;
+  }
+
   const description = parseDescriptionField(frontmatter);
   return {
     name,
     path: skillPath,
     enabled: true,
-    content: content.trim(),
+    content: body,
     ...(scope ? { scope } : {}),
     ...(description
       ? {
@@ -156,6 +215,17 @@ export function parseCursorSkillMarkdown(
   };
 }
 
+export type CursorSkillDiscoveryFs = {
+  readonly readFile: (path: string) => Promise<string | null>;
+  readonly readDirectory: (path: string) => Promise<ReadonlyArray<string> | null>;
+  readonly isDirectory: (path: string) => Promise<boolean>;
+  readonly join: (...parts: string[]) => string;
+  /** Canonicalize path; return null when the path cannot be resolved. */
+  readonly realPath?: (path: string) => Promise<string | null>;
+  /** `lstat`-based regular-file check (rejects symlinks). Defaults to true. */
+  readonly lstatIsRegularFile?: (path: string) => Promise<boolean>;
+};
+
 /**
  * Pure scan helper for tests — pass filesystem callbacks.
  */
@@ -166,18 +236,19 @@ export async function discoverCursorSkillsWithFs(
     readonly projectSkillsDir?: string | null;
     readonly userSkillsDir?: string | null;
   },
-  fs: {
-    readonly readFile: (path: string) => Promise<string | null>;
-    readonly readDirectory: (path: string) => Promise<ReadonlyArray<string> | null>;
-    readonly isDirectory: (path: string) => Promise<boolean>;
-    readonly join: (...parts: string[]) => string;
-  },
+  fs: CursorSkillDiscoveryFs,
 ): Promise<ReadonlyArray<DiscoveredCursorSkill>> {
   const discovered: Array<DiscoveredCursorSkill> = [];
   const seenNames = new Set<string>();
+  const realPath = fs.realPath ?? (async (path: string) => path);
+  const lstatIsRegularFile = fs.lstatIsRegularFile ?? (async () => true);
 
   const scanRoot = async (skillsRoot: string | null | undefined, scope: "user" | "repo") => {
     if (!skillsRoot) {
+      return;
+    }
+    const realSkillsRoot = await realPath(skillsRoot);
+    if (!realSkillsRoot) {
       return;
     }
     const entries = await fs.readDirectory(skillsRoot);
@@ -193,12 +264,23 @@ export async function discoverCursorSkillsWithFs(
       if (!(await fs.isDirectory(skillDir))) {
         continue;
       }
+      const realSkillDir = await realPath(skillDir);
+      if (!realSkillDir || !isPathInsideRoot(realSkillsRoot, realSkillDir)) {
+        continue;
+      }
       const skillPath = fs.join(skillDir, SKILL_FILE_NAME);
-      const raw = await fs.readFile(skillPath);
+      if (!(await lstatIsRegularFile(skillPath))) {
+        continue;
+      }
+      const realSkillPath = await realPath(skillPath);
+      if (!realSkillPath || !isPathInsideRoot(realSkillsRoot, realSkillPath)) {
+        continue;
+      }
+      const raw = await fs.readFile(realSkillPath);
       if (raw === null) {
         continue;
       }
-      const skill = parseCursorSkillMarkdown(raw, skillPath, entryName, scope);
+      const skill = parseCursorSkillMarkdown(raw, realSkillPath, entryName, scope);
       if (!skill || seenNames.has(skill.name)) {
         continue;
       }
@@ -259,12 +341,26 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
       Effect.orElseSucceed(() => false),
     );
 
+  const realPath = (filePath: string) =>
+    fileSystem.realPath(filePath).pipe(Effect.orElseSucceed(() => null as string | null));
+
+  const lstatIsRegularFile = (filePath: string) =>
+    Effect.promise(() =>
+      NodeFS.lstat(filePath)
+        .then((stat) => stat.isFile())
+        .catch(() => false),
+    );
+
   const discovered: Array<DiscoveredCursorSkill> = [];
   const seenNames = new Set<string>();
 
   const scanRoot = (skillsRoot: string | null, scope: "user" | "repo") =>
     Effect.gen(function* () {
       if (!skillsRoot) {
+        return;
+      }
+      const realSkillsRoot = yield* realPath(skillsRoot);
+      if (!realSkillsRoot) {
         return;
       }
       const entries = yield* readDirectory(skillsRoot);
@@ -279,12 +375,23 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
         if (!(yield* isDirectory(skillDir))) {
           continue;
         }
+        const realSkillDir = yield* realPath(skillDir);
+        if (!realSkillDir || !isPathInsideRoot(realSkillsRoot, realSkillDir)) {
+          continue;
+        }
         const skillPath = pathApi.join(skillDir, SKILL_FILE_NAME);
-        const raw = yield* readFile(skillPath);
+        if (!(yield* lstatIsRegularFile(skillPath))) {
+          continue;
+        }
+        const realSkillPath = yield* realPath(skillPath);
+        if (!realSkillPath || !isPathInsideRoot(realSkillsRoot, realSkillPath)) {
+          continue;
+        }
+        const raw = yield* readFile(realSkillPath);
         if (raw === null) {
           continue;
         }
-        const skill = parseCursorSkillMarkdown(raw, skillPath, entryName, scope);
+        const skill = parseCursorSkillMarkdown(raw, realSkillPath, entryName, scope);
         if (!skill || seenNames.has(skill.name)) {
           continue;
         }
@@ -315,11 +422,8 @@ export function collectCursorSkillMentions(prompt: string): ReadonlyArray<string
 }
 
 function formatInjectedSkillBlock(skill: Pick<DiscoveredCursorSkill, "name" | "content">): string {
-  return [
-    `Skill \`${skill.name}\` (applied by T3 Code for Cursor ACP):`,
-    "",
-    skill.content.trim(),
-  ].join("\n");
+  const body = skillBodyForInjection(skill.content) ?? "";
+  return [`Skill \`${skill.name}\` (applied by T3 Code for Cursor ACP):`, "", body].join("\n");
 }
 
 /**
@@ -347,9 +451,14 @@ export function applyCursorSkillMentions(
   const applied: Array<Pick<DiscoveredCursorSkill, "name" | "content">> = [];
   for (const name of mentioned) {
     const skill = byName.get(name);
-    if (skill) {
-      applied.push(skill);
+    if (!skill) {
+      continue;
     }
+    const body = skillBodyForInjection(skill.content);
+    if (body === null) {
+      continue;
+    }
+    applied.push({ name: skill.name, content: body });
   }
   if (applied.length === 0) {
     return prompt;
