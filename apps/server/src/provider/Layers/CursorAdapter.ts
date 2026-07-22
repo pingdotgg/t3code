@@ -77,6 +77,7 @@ import {
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { applyCursorSkillMentions, discoverCursorSkills } from "../cursorSkillDiscovery.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -962,7 +963,17 @@ export function makeCursorAdapter(
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+            // Codex-style `$name` is inert under Cursor ACP. Rediscover FS skills
+            // for this session cwd and inject matched SKILL.md bodies before prompt.
+            const discoveredSkills = yield* discoverCursorSkills({
+              projectCwd: ctx.session.cwd,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.orElseSucceed(() => [] as const),
+            );
+            const promptText = applyCursorSkillMentions(input.input.trim(), discoveredSkills);
+            promptParts.push({ type: "text", text: promptText });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {

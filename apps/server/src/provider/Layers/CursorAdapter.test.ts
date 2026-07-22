@@ -1429,4 +1429,70 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }).pipe(Effect.provide(customAdapterLayer));
     },
   );
+
+  it.effect("injects discovered Cursor FS skill content when sendTurn includes $skill", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-skill-apply-probe");
+
+      const projectDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-skill-project-")),
+      );
+      const skillDir = NodePath.join(projectDir, ".cursor", "skills", "ship-it");
+      yield* Effect.promise(() => NodeFSP.mkdir(skillDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(skillDir, "SKILL.md"),
+          `---
+name: ship-it
+description: Ships changes carefully
+---
+
+# Ship It
+
+Always verify tests before shipping.
+`,
+          "utf8",
+        ),
+      );
+
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-skill-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: projectDir,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "$ship-it prepare the release",
+        attachments: [],
+      });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptRequest = requests.find((entry) => entry.method === "session/prompt");
+      assert.isDefined(promptRequest);
+      const prompt = (promptRequest?.params as { prompt?: Array<{ type?: string; text?: string }> })
+        ?.prompt;
+      const textPart = prompt?.find((part) => part.type === "text")?.text ?? "";
+      assert.include(textPart, "Always verify tests before shipping.");
+      assert.include(textPart, "prepare the release");
+      assert.include(textPart, "Skill `ship-it` (applied by T3 Code for Cursor ACP):");
+      assert.notMatch(textPart, /\$ship-it\b/);
+    }),
+  );
 });

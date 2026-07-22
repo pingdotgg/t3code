@@ -46,6 +46,7 @@ import {
 } from "../providerMaintenance.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
+import { discoverCursorSkills, toServerProviderSkills } from "../cursorSkillDiscovery.ts";
 
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
   CursorListAvailableModelsResponse,
@@ -628,6 +629,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly skills?: ServerProviderDraft["skills"];
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -639,6 +641,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    skills: input.skills ?? [],
     probe: {
       installed: true,
       version: input.parsed.version,
@@ -1101,6 +1104,12 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
+  // Soft-fail FS skill discovery for the `$` menu snapshot. Project skills use
+  // process.cwd(); session send-path rediscovers against the thread cwd.
+  const discoveredSkills = yield* discoverCursorSkills({
+    projectCwd: process.cwd(),
+  }).pipe(Effect.orElseSucceed(() => [] as const));
+
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1109,6 +1118,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       Option.filter(discoveredModels, (models) => models.length > 0),
       () => [] as const,
     ),
+    skills: toServerProviderSkills(discoveredSkills),
     ...(discoveryWarning ? { discoveryWarning } : {}),
   });
 });

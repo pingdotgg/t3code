@@ -339,6 +339,38 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
+      skills: [],
+    });
+  });
+
+  it("includes filesystem-discovered skills in the provider snapshot", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated" },
+        },
+        skills: [
+          {
+            name: "ship-it",
+            path: "/tmp/project/.cursor/skills/ship-it/SKILL.md",
+            enabled: true,
+            scope: "repo",
+            description: "Ships changes carefully",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      skills: [
+        {
+          name: "ship-it",
+          enabled: true,
+          scope: "repo",
+        },
+      ],
     });
   });
 
