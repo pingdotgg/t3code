@@ -122,10 +122,14 @@ export function resolveNextProviderWorkspaceSkillsSnapshot(input: {
   readonly skills: ReadonlyArray<ServerProviderSkill> | null;
   readonly isPending: boolean;
   readonly error: string | null;
+  readonly inactive?: boolean;
   readonly unavailable?: boolean;
   readonly current: ProviderWorkspaceSkillsSnapshot | null;
 }): ProviderWorkspaceSkillsSnapshot | null {
   if (input.key === null) return null;
+  if (input.inactive === true) {
+    return input.current?.key === input.key ? input.current : null;
+  }
   if (input.unavailable === true) {
     return input.current?.key === input.key ? input.current : null;
   }

@@ -159,6 +159,34 @@ describe("resolveProviderWorkspaceSkills", () => {
 });
 
 describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
+  it("preserves only the same target snapshot while lookup is inactive", () => {
+    const current = {
+      key: "local:codex:/repo",
+      skills: [skill("repo-local")],
+    };
+
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: current.key,
+        skills: null,
+        isPending: false,
+        error: null,
+        inactive: true,
+        current,
+      }),
+    ).toBe(current);
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: "local:codex:/other-repo",
+        skills: null,
+        isPending: false,
+        error: null,
+        inactive: true,
+        current,
+      }),
+    ).toBeNull();
+  });
+
   it("keeps the settled snapshot during refresh and clears it when disabled", () => {
     const current = {
       key: "local:codex:/repo",

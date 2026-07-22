@@ -33,7 +33,8 @@ export function useProviderWorkspaceSkills(
       target.instanceId,
     ],
   );
-  const key = providerWorkspaceSkillsTargetKey(stableTarget);
+  const targetKey = providerWorkspaceSkillsTargetKey({ ...stableTarget, enabled: true });
+  const key = stableTarget.enabled ? targetKey : null;
   const unavailable = key !== null && !stableTarget.connectionAvailable;
   const query = useEnvironmentQuery(
     key !== null &&
@@ -54,14 +55,15 @@ export function useProviderWorkspaceSkills(
   const querySkills = query.data?.skills ?? null;
   useEffect(() => {
     previousWorkspaceSkillsRef.current = resolveNextProviderWorkspaceSkillsSnapshot({
-      key,
+      key: targetKey,
       skills: querySkills,
       isPending: query.isPending,
       error: query.error,
+      inactive: key === null,
       unavailable,
       current: previousWorkspaceSkillsRef.current,
     });
-  }, [key, query.error, query.isPending, querySkills, unavailable]);
+  }, [key, query.error, query.isPending, querySkills, targetKey, unavailable]);
 
   if (key === null) {
     return { skills: target.fallbackSkills, isPending: false, error: null };
