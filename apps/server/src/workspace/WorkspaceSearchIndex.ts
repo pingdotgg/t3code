@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 import type {
   ProjectEntry,
   ProjectListEntriesResult,
+  ProjectSearchContentsInput,
+  ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 
@@ -97,6 +99,9 @@ export class WorkspaceSearchIndex extends Context.Service<
       query: string,
       limit: number,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
+    readonly searchContents: (
+      input: Omit<ProjectSearchContentsInput, "cwd">,
+    ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
     readonly refresh: () => Effect.Effect<
       void,
       WorkspaceSearchIndexRefreshFailed | WorkspaceSearchIndexScanTimedOut
@@ -175,7 +180,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (c
       FileFinder.create({
         basePath: cwd,
         disableMmapCache: true,
-        disableContentIndexing: true,
+        disableContentIndexing: false,
         aiMode: false,
         enableFsRootScanning: true,
         enableHomeDirScanning: true,
@@ -307,7 +312,86 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: strin
     return mapMixedSearchResult(result, limit);
   });
 
-  return WorkspaceSearchIndex.of({ list, refresh, search });
+  const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
+    "WorkspaceSearchIndex.searchContents",
+  )(function* (input) {
+    const escapedQuery = input.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const wordCharacter = /[\p{Letter}\p{Mark}\p{Number}_]/u;
+    const firstCharacter = Array.from(input.query).at(0) ?? "";
+    const lastCharacter = Array.from(input.query).at(-1) ?? "";
+    // Use \b only when the pattern edge is a word character; otherwise \b cannot
+    // match (e.g. query "foo-" → \b(?:foo-)\b never matches "foo- "). Fall back to
+    // (?:^|\W)/(?:$|\W) for non-word edges, same as the literal whole-word path.
+    const wrapWholeWord = (pattern: string) =>
+      `${wordCharacter.test(firstCharacter) ? "\\b" : "(?:^|\\W)"}(?:${pattern})${wordCharacter.test(lastCharacter) ? "\\b" : "(?:$|\\W)"}`;
+    const query = input.wholeWord
+      ? wrapWholeWord(input.useRegex ? input.query : escapedQuery)
+      : input.query;
+    const regexMode = input.useRegex || input.wholeWord;
+    const searchQuery = input.caseSensitive
+      ? query
+      : regexMode
+        ? `(?i:${query})`
+        : query.toLowerCase();
+    const result = yield* Effect.try({
+      try: () =>
+        finder.grep(searchQuery, {
+          mode: regexMode ? "regex" : "plain",
+          smartCase: !input.caseSensitive && !regexMode,
+          maxMatchesPerFile: input.limit,
+          pageSize: input.limit,
+          timeBudgetMs: 250,
+        }),
+      catch: (cause) =>
+        new WorkspaceSearchIndexSearchFailed({
+          cwd,
+          queryLength: input.query.length,
+          pageSize: input.limit,
+          reason: "FileFinder.grep threw unexpectedly.",
+          cause,
+        }),
+    });
+    if (!result.ok) {
+      return yield* new WorkspaceSearchIndexSearchFailed({
+        cwd,
+        queryLength: input.query.length,
+        pageSize: input.limit,
+        reason: result.error,
+      });
+    }
+
+    const byteOffsetToStringIndex = (line: string, byteOffset: number): number =>
+      Buffer.from(line).subarray(0, byteOffset).toString().length;
+    const mapMatchRange = (line: string, startByte: number, endByte: number) => {
+      const start = byteOffsetToStringIndex(line, startByte);
+      const end = byteOffsetToStringIndex(line, endByte);
+      if (!input.wholeWord || input.useRegex) return { start, end };
+
+      const matchedText = line.slice(start, end);
+      const queryIndex = input.caseSensitive
+        ? matchedText.indexOf(input.query)
+        : matchedText.toLocaleLowerCase().indexOf(input.query.toLocaleLowerCase());
+      return queryIndex === -1
+        ? { start, end }
+        : { start: start + queryIndex, end: start + queryIndex + input.query.length };
+    };
+    return {
+      matches: result.value.items.map((match) => ({
+        path: toPosixPath(match.relativePath),
+        lineNumber: match.lineNumber,
+        lineContent: match.lineContent,
+        matchRanges: match.matchRanges.map(([start, end]) =>
+          mapMatchRange(match.lineContent, start, end),
+        ),
+      })),
+      truncated: result.value.nextCursor !== null,
+      ...(result.value.regexFallbackError
+        ? { regexFallbackError: result.value.regexFallbackError }
+        : {}),
+    };
+  });
+
+  return WorkspaceSearchIndex.of({ list, refresh, search, searchContents });
 });
 
 /**

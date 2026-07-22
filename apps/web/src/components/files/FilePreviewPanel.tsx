@@ -941,6 +941,8 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               cwd={cwd}
               projectName={projectName}
+              selectedPath={relativePath}
+              selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
             />
           </aside>

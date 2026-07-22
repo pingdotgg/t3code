@@ -85,11 +85,15 @@ it.effect("preserves search and refresh failures with operation context", () =>
     Effect.gen(function* () {
       const searchCause = new Error("native search failed");
       const refreshCause = new Error("native scan failed");
+      const contentSearchCause = new Error("native grep failed");
       const finder = {
         destroy: vi.fn(),
         isScanning: vi.fn(() => false),
         mixedSearch: vi.fn(() => {
           throw searchCause;
+        }),
+        grep: vi.fn(() => {
+          throw contentSearchCause;
         }),
         scanFiles: vi.fn(() => {
           throw refreshCause;
@@ -100,6 +104,15 @@ it.effect("preserves search and refresh failures with operation context", () =>
       const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
       const query = "authorization: Bearer secret-token";
       const searchError = yield* Effect.flip(searchIndex.search(query, 3));
+      const contentSearchError = yield* Effect.flip(
+        searchIndex.searchContents({
+          query,
+          limit: 3,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: false,
+        }),
+      );
       const refreshError = yield* Effect.flip(searchIndex.refresh());
 
       expect(searchError).toMatchObject({
@@ -112,6 +125,15 @@ it.effect("preserves search and refresh failures with operation context", () =>
       });
       expect(searchError).not.toHaveProperty("query");
       expect(searchError.message).not.toMatch(/Bearer|secret-token/);
+      expect(contentSearchError).toMatchObject({
+        _tag: "WorkspaceSearchIndexSearchFailed",
+        cwd: "/workspace/project",
+        queryLength: query.length,
+        pageSize: 3,
+        reason: "FileFinder.grep threw unexpectedly.",
+        cause: contentSearchCause,
+      });
+      expect(contentSearchError).not.toHaveProperty("query");
       expect(refreshError).toMatchObject({
         _tag: "WorkspaceSearchIndexRefreshFailed",
         cwd: "/workspace/project",

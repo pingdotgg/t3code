@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
+const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
 
@@ -25,6 +26,37 @@ export const ProjectSearchEntriesResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
+
+export const ProjectSearchContentsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_CONTENTS_MAX_LIMIT)),
+  caseSensitive: Schema.Boolean,
+  useRegex: Schema.Boolean,
+  wholeWord: Schema.Boolean,
+});
+export type ProjectSearchContentsInput = typeof ProjectSearchContentsInput.Type;
+
+export const ProjectContentMatchRange = Schema.Struct({
+  start: NonNegativeInt,
+  end: NonNegativeInt,
+});
+export type ProjectContentMatchRange = typeof ProjectContentMatchRange.Type;
+
+export const ProjectContentMatch = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  lineNumber: PositiveInt,
+  lineContent: Schema.String,
+  matchRanges: Schema.Array(ProjectContentMatchRange),
+});
+export type ProjectContentMatch = typeof ProjectContentMatch.Type;
+
+export const ProjectSearchContentsResult = Schema.Struct({
+  matches: Schema.Array(ProjectContentMatch),
+  truncated: Schema.Boolean,
+  regexFallbackError: Schema.optional(Schema.String),
+});
+export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Type;
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -90,6 +122,37 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
       message:
         decodedProjectErrorMessage(props) ??
         `Failed to search workspace entries in '${props.cwd}'.`,
+    } as any);
+  }
+}
+
+export class ProjectSearchContentsError extends Schema.TaggedErrorClass<ProjectSearchContentsError>()(
+  "ProjectSearchContentsError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    queryLength: Schema.optional(NonNegativeInt),
+    limit: Schema.optional(PositiveInt),
+    failure: Schema.optional(ProjectEntriesFailure),
+    normalizedCwd: Schema.optional(TrimmedNonEmptyString),
+    timeout: Schema.optional(TrimmedNonEmptyString),
+    detail: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(
+    props: ProjectEntriesFailureContext & {
+      readonly cwd: string;
+      readonly queryLength: number;
+      readonly limit: number;
+    },
+  ) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to search workspace contents in '${props.cwd}'.`,
     } as any);
   }
 }

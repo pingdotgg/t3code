@@ -42,6 +42,7 @@ import {
   type ProjectFileOperation,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
@@ -312,6 +313,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
+  [WS_METHODS.projectsSearchContents, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
@@ -1615,6 +1617,23 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSearchContents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsSearchContents,
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
                     cwd: input.cwd,
                     queryLength: input.query.length,
                     limit: input.limit,

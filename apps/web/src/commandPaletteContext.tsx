@@ -24,6 +24,7 @@ export function useOpenAddProjectCommandPalette(): () => void {
 /** Read at event time so the chat tree does not subscribe to transient dialog state. */
 export function isCommandPaletteOpen(): boolean {
   return (
-    typeof document !== "undefined" && document.querySelector("[data-command-palette]") !== null
+    typeof document !== "undefined" &&
+    document.querySelector("[data-command-palette], [data-project-search]") !== null
   );
 }

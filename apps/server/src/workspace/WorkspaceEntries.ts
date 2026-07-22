@@ -16,6 +16,8 @@ import type {
   ProjectListEntriesResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectSearchContentsInput,
+  ProjectSearchContentsResult,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
@@ -93,6 +95,9 @@ export class WorkspaceEntries extends Context.Service<
     readonly search: (
       input: ProjectSearchEntriesInput,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
+    readonly searchContents: (
+      input: ProjectSearchContentsInput,
+    ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceEntriesError>;
     readonly refresh: (cwd: string) => Effect.Effect<void>;
   }
 >()("t3/workspace/WorkspaceEntries") {}
@@ -251,7 +256,17 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search });
+  const searchContents: WorkspaceEntries["Service"]["searchContents"] = Effect.fn(
+    "WorkspaceEntries.searchContents",
+  )(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    return yield* Effect.gen(function* () {
+      const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+      return yield* searchIndex.searchContents(input);
+    }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
+  });
+
+  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

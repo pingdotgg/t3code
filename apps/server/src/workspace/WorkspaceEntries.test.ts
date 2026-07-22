@@ -292,6 +292,130 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 
+  describe("searchContents", () => {
+    it.effect("returns content matches with file paths, line numbers, and ranges", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-search-" });
+        yield* writeTextFile(
+          cwd,
+          "src/shapes.ts",
+          "export const square = 4;\nexport const Square = 16;\nexport const squareSize = 8;\n",
+        );
+        yield* writeTextFile(cwd, "src/other.ts", "const circle = true;\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "Square",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: true,
+          useRegex: false,
+        });
+
+        expect(result.matches.map((match) => [match.path, match.lineNumber])).toEqual([
+          ["src/shapes.ts", 1],
+          ["src/shapes.ts", 2],
+        ]);
+        expect(result.matches[0]?.matchRanges).toEqual([{ start: 13, end: 19 }]);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("honors case sensitivity and gitignore rules", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-ignore-", git: true });
+        yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
+        yield* writeTextFile(cwd, "src/keep.ts", "square\nSquare\n");
+        yield* writeTextFile(cwd, "ignored.txt", "Square\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "Square",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        expect(result.matches).toHaveLength(1);
+        expect(result.matches[0]).toMatchObject({ path: "src/keep.ts", lineNumber: 2 });
+      }),
+    );
+
+    it.effect("matches punctuation-ended literal queries as whole words", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-punctuation-" });
+        yield* writeTextFile(cwd, "src/words.ts", "foo- foo-bar foo-\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo-",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: true,
+          useRegex: false,
+        });
+
+        expect(result.matches).toHaveLength(1);
+        expect(result.matches[0]).toMatchObject({
+          path: "src/words.ts",
+          lineNumber: 1,
+          matchRanges: [
+            { start: 0, end: 4 },
+            { start: 13, end: 17 },
+          ],
+        });
+      }),
+    );
+
+    it.effect("matches punctuation-ended regex queries as whole words", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-regex-punctuation-" });
+        yield* writeTextFile(cwd, "src/words.ts", "foo- foo-bar foo-\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo-",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: true,
+          useRegex: true,
+        });
+
+        // wholeWord + useRegex must not silently drop non-word-edged patterns like "foo-"
+        expect(result.matches).toHaveLength(1);
+        expect(result.matches[0]).toMatchObject({
+          path: "src/words.ts",
+          lineNumber: 1,
+        });
+        expect(result.matches[0]?.matchRanges).toHaveLength(2);
+      }),
+    );
+
+    it.effect("preserves regex escapes during case-insensitive searches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-regex-" });
+        yield* writeTextFile(cwd, "src/shapes.ts", "Square\nsquare\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "\\SQUARE",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: true,
+        });
+
+        expect(result.matches.map((match) => match.lineNumber)).toEqual([1, 2]);
+      }),
+    );
+  });
+
   describe("browse", () => {
     it.effect("returns matching directories and excludes files", () =>
       Effect.gen(function* () {

@@ -30,6 +30,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+-", "command": "preview.zoomOut", "when": "previewFocus" },
   { "key": "mod+0", "command": "preview.resetZoom", "when": "previewFocus" },
   { "key": "mod+k", "command": "commandPalette.toggle", "when": "!terminalFocus" },
+  { "key": "mod+shift+f", "command": "project.searchContents", "when": "!terminalFocus" },
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
@@ -64,6 +65,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `preview.zoomOut`: zoom the preview viewport out one step (in focused preview context by default)
 - `preview.resetZoom`: reset the preview zoom to 100% (in focused preview context by default)
 - `commandPalette.toggle`: open or close the global command palette
+- `project.searchContents`: search file contents across the active project
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
