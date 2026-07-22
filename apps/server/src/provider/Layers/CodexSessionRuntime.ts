@@ -40,6 +40,7 @@ import { makeT3CodexDynamicToolWaitRegistry, T3_CODEX_DYNAMIC_TOOLS } from "./Co
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import type { GitHubWaitpointRegistrationService } from "../../github/GitHubWaitpointRegistration.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 const decodeV2ThreadStartResponse = Schema.decodeUnknownEffect(
   EffectCodexSchema.V2ThreadStartResponse,
@@ -110,6 +111,7 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly registerGitHubWaitpoint?: GitHubWaitpointRegistrationService["register"];
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -743,7 +745,15 @@ export const makeCodexSessionRuntime = (
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
-    const dynamicToolWaitRegistry = yield* makeT3CodexDynamicToolWaitRegistry();
+    const dynamicToolWaitRegistry = yield* makeT3CodexDynamicToolWaitRegistry(
+      options.registerGitHubWaitpoint === undefined
+        ? undefined
+        : {
+            threadId: options.threadId,
+            cwd: options.cwd,
+            registerGitHubWaitpoint: options.registerGitHubWaitpoint,
+          },
+    );
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const closedRef = yield* Ref.make(false);
 

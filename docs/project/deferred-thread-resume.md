@@ -13,8 +13,8 @@ This project is split into two deliberately different capabilities:
    implementation milestone and the scope of the initial PR.
 2. **Durable resume** — the current turn ends, T3 persists a waitpoint, and a scheduler starts a new
    turn after a timer or external event. This is required for restarts, webhook triggers, and
-   long-lived watches such as pull-request CI. It is a follow-up because its lifecycle and delivery
-   semantics are materially different from a blocking tool call.
+   long-lived watches such as pull-request CI. The first durable adapter is a local GitHub watcher;
+   it does not depend on T3 Connect or public webhook infrastructure.
 
 ## Problem
 
@@ -110,9 +110,9 @@ Suggested waitpoint fields:
 Delivery should be at-least-once with an atomic claim and idempotent continuation key. On startup,
 the scheduler reloads pending waitpoints and re-arms timers. External triggers should enter through
 authenticated, scoped adapters rather than exposing a generic unauthenticated callback. A GitHub PR
-watcher can then translate check-suite, review, and pull-request webhooks into normalized waitpoint
-signals. The sidebar/thread lifecycle should add an explicit `waiting` state only for this durable
-mode; a live wait remains an active tool call.
+watcher can translate polling results or future webhooks into normalized waitpoint signals. An
+explicit sidebar `waiting` state remains a possible follow-up; the first durable adapter relies on
+the registered tool activity and normal thread-running transition when delivery occurs.
 
 ## Alternatives considered
 
@@ -127,6 +127,46 @@ mode; a live wait remains an active tool call.
 - **Keep a WebSocket open for every trigger:** useful as an adapter transport, but not sufficient as
   the source of truth because sockets do not survive process or network failure.
 
+## Durable GitHub watcher
+
+The second implementation milestone adds `t3.await_github` for Codex. The tool takes an
+`owner/repository`, pull-request number, condition, optional reason, and timeout. Registration reads
+an initial snapshot through the authenticated `gh` CLI, persists the waitpoint, and returns
+immediately. The agent is instructed to finish its current turn instead of polling.
+
+Supported conditions are deliberately narrow:
+
+- `checks_settled`: at least one reported check exists and every check is terminal. Failed checks
+  still satisfy the condition so the resumed agent can diagnose them.
+- `new_review_activity`: a review or issue comment appears that was not in the registration snapshot.
+- `pull_request_closed`: the pull request is merged or closed without merging.
+
+The local worker wakes every five seconds to find due database rows. It first verifies that the
+originating T3 turn has settled, then queries GitHub no more than once per row every 30 seconds. A
+busy thread is retried after five seconds without querying GitHub. The first poll occurs 30 seconds
+after registration. If the user advances the thread with another turn, the older waitpoint expires
+instead of injecting a stale continuation later.
+
+Delivery uses a 60-second database lease and a deterministic orchestration command id. If T3 stops
+after dispatching the continuation but before marking the row delivered, the lease expires and the
+worker retries the same command id; the orchestration command-receipt store deduplicates it. Pending
+rows and expired leases are discovered from SQLite on startup, so no in-memory timer is the source
+of truth.
+
+The continuation is a clearly identified T3 GitHub watcher message containing the observed result.
+Normal orchestration events then move the thread back to its running state in connected clients.
+No bespoke webhook route, GitHub App, T3 Connect link, or new frontend state is required for this
+milestone.
+
+### Durable GitHub non-goals
+
+- Hosted monitoring while the local T3 server is offline. The worker catches up when T3 runs again.
+- Generic arbitrary webhooks or user-supplied callback URLs.
+- Durable timer waits; `t3.wait` remains the live timer primitive.
+- Cross-provider exposure before those providers support an equivalent host-tool hook.
+- Conditional HTTP requests or cross-waitpoint GitHub request coalescing. Those are optimizations if
+  observed watch volume approaches GitHub API limits.
+
 ## Test plan
 
 Focused automated coverage:
@@ -138,6 +178,11 @@ Focused automated coverage:
 - Duration bounds, malformed arguments, wrong namespaces, and unknown tool names fail without sleep.
 - Cancellation wins the race and returns a failed/cancelled tool result.
 - Existing provider adapter tests continue to verify canonical dynamic-tool activity mapping.
+- Migration and repository tests cover idempotent registration, due ordering, exclusive claims,
+  expired-lease recovery, rescheduling, delivery, and expiry.
+- GitHub adapter tests cover normalization and each supported condition.
+- Worker tests cover active-turn deferral, satisfied-condition delivery, and duplicate suppression.
+- The orchestration gateway test verifies deterministic continuation command and message ids.
 
 Targeted validation:
 
@@ -154,6 +199,11 @@ omitting the tool rather than breaking the session. Existing provider event inge
 dynamic-tool lifecycle. A follow-up may add wait duration/cancellation metrics once the contract is
 used beyond Codex.
 
+The GitHub milestone adds migration 034 and no feature flag. Removing the runtime layer stops new
+polls without deleting rows; reverting the code leaves the additive table inert. Structured logs are
+emitted when a waitpoint is registered, delivered, or a worker tick fails. Per-condition counters and
+request coalescing can be added after real watch volume is observed.
+
 ## Risks
 
 - Experimental app-server protocol changes: isolate the raw field construction and response decode
@@ -163,6 +213,10 @@ used beyond Codex.
   it before sending the interrupt request.
 - Confusing live and durable behavior: name and document the initial tool as a live wait and do not
   claim restart or webhook guarantees.
+- GitHub CLI authentication loss: retain the pending row, store the last error, and retry until its
+  deadline rather than waking the model with an infrastructure failure.
+- Duplicate continuation after a crash: use a delivery lease plus deterministic orchestration
+  command id so the existing command receipt is the idempotency boundary.
 
 ## Definition of done for the initial PR
 
@@ -172,3 +226,13 @@ used beyond Codex.
 - Focused tests and server typecheck pass.
 - The provider documentation explains the capability and its live-session limitation.
 - The PR explicitly links this design and leaves durable waitpoints as follow-up scope.
+
+## Definition of done for the GitHub milestone
+
+- `t3.await_github` validates and snapshots a pull request through authenticated `gh`.
+- Registration returns immediately and the agent is told to finish its current turn.
+- Pending rows and expired delivery leases survive a T3 restart.
+- A busy thread is never probed or resumed; a satisfied condition starts one continuation turn.
+- Missing threads and elapsed deadlines move the waitpoint to `expired`.
+- Focused migration, repository, adapter, worker, gateway, and Codex runtime tests pass.
+- The server package typechecks and the live `gh` payload shape is smoke-tested against a real PR.

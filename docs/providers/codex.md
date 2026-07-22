@@ -35,9 +35,18 @@ T3 Code and does not repeatedly wake the model, so the agent can perform one sta
 wait instead of spending inference on frequent polling.
 
 This is a live-session wait. It is cancelled if the current turn is interrupted, the provider
-session closes, or T3 Code stops. It does not wake a completed thread after an app restart and does
-not subscribe to external webhooks. Durable timers and event-triggered continuation are described in
-the [deferred thread resume design](../project/deferred-thread-resume.md).
+session closes, or T3 Code stops.
+
+For pull-request work, Codex also receives `t3.await_github`. It can wait for all reported checks to
+settle, a new review or comment, or the pull request to merge or close. T3 stores this wait in its
+local database, checks GitHub through your authenticated `gh` CLI, and starts one continuation turn
+when the condition is met. This survives a T3 restart and does not require T3 Connect or a public
+webhook endpoint. The local T3 server must eventually run again to observe the change and resume the
+thread.
+
+GitHub waits expire after 24 hours by default and may be bounded from one minute through seven days.
+See the [deferred thread resume design](../project/deferred-thread-resume.md) for delivery and recovery
+semantics.
 
 ## I Want Work And Personal Codex Accounts
 

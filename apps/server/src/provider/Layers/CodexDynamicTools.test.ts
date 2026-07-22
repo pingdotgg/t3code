@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +14,7 @@ import {
   makeT3CodexDynamicToolWaitRegistry,
   T3_CODEX_DYNAMIC_TOOLS,
   T3_CODEX_DYNAMIC_TOOL_NAMESPACE,
+  T3_CODEX_GITHUB_WAIT_TOOL_NAME,
   T3_CODEX_WAIT_MAX_DURATION_MS,
   T3_CODEX_WAIT_MIN_DURATION_MS,
   T3_CODEX_WAIT_TOOL_NAME,
@@ -33,10 +35,17 @@ function waitCall(
   };
 }
 
+function githubWaitCall(arguments_: unknown): EffectCodexSchema.DynamicToolCallParams {
+  return waitCall(arguments_, {
+    callId: "github-wait-call-1",
+    tool: T3_CODEX_GITHUB_WAIT_TOOL_NAME,
+  });
+}
+
 describe("T3 Codex dynamic tools", () => {
   it("publishes a bounded namespaced wait tool", () => {
     const namespace = T3_CODEX_DYNAMIC_TOOLS[0];
-    const wait = namespace?.tools[0];
+    const wait = namespace?.tools.find((tool) => tool.name === T3_CODEX_WAIT_TOOL_NAME);
 
     NodeAssert.equal(namespace?.type, "namespace");
     NodeAssert.equal(namespace?.name, T3_CODEX_DYNAMIC_TOOL_NAMESPACE);
@@ -61,6 +70,47 @@ describe("T3 Codex dynamic tools", () => {
       additionalProperties: false,
     });
   });
+
+  it.effect("registers a durable GitHub waitpoint and returns without holding the turn open", () =>
+    Effect.gen(function* () {
+      let registered: unknown;
+      const response = yield* handleT3CodexDynamicToolCall(
+        githubWaitCall({
+          repository: "pingdotgg/t3code",
+          pullRequestNumber: 4262,
+          condition: "checks_settled",
+          timeoutMinutes: 60,
+          reason: "Wait for CI before addressing failures.",
+        }),
+        Effect.never,
+        {
+          threadId: ThreadId.make("thread-1"),
+          cwd: "/tmp/project",
+          registerGitHubWaitpoint: (input) =>
+            Effect.sync(() => {
+              registered = input;
+              return { id: "github:thread-1:github-wait-call-1" };
+            }),
+        },
+      );
+
+      NodeAssert.equal(response.success, true);
+      NodeAssert.match(
+        response.contentItems[0]?.type === "inputText" ? response.contentItems[0].text : "",
+        /registered/i,
+      );
+      NodeAssert.deepStrictEqual(registered, {
+        idempotencyKey: "github-wait-call-1",
+        threadId: ThreadId.make("thread-1"),
+        cwd: "/tmp/project",
+        repository: "pingdotgg/t3code",
+        pullRequestNumber: 4262,
+        condition: "checks_settled",
+        timeoutMinutes: 60,
+        reason: "Wait for CI before addressing failures.",
+      });
+    }),
+  );
 
   it.effect("does not complete before the requested duration", () =>
     Effect.gen(function* () {

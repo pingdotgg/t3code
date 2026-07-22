@@ -40,6 +40,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { GitHubWaitpointRegistrationService } from "../../github/GitHubWaitpointRegistration.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -83,6 +84,7 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly registerGitHubWaitpoint?: GitHubWaitpointRegistrationService["register"];
 }
 
 interface CodexAdapterSessionContext {
@@ -1411,6 +1413,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          ...(options?.registerGitHubWaitpoint
+            ? { registerGitHubWaitpoint: options.registerGitHubWaitpoint }
+            : {}),
           ...(mcpSession
             ? {
                 environment: {
