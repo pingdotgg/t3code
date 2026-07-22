@@ -27,6 +27,17 @@ export interface PlainTextEdit {
   readonly value: string;
 }
 
+const MUTATING_ACTIONS: ReadonlySet<EmacsReadlineAction> = new Set([
+  "backward-kill-word",
+  "delete-backward",
+  "delete-forward",
+  "forward-kill-word",
+  "kill-line",
+  "transpose-chars",
+  "unix-line-discard",
+  "yank",
+]);
+
 const CANDIDATE_SURFACE_SELECTOR = [
   '[data-slot="command-dialog-popup"]',
   '[data-slot="command-list"]',
@@ -414,12 +425,14 @@ function dispatchInputEvent(
   control.dispatchEvent(new InputEventConstructor("input", { bubbles: true, inputType, data }));
 }
 
-function applyActionToPlainTextControl(
+export function applyEmacsReadlineActionToPlainTextControl(
   control: PlainTextControl,
   action: EmacsReadlineAction,
   yankText: string,
 ): { readonly handled: boolean; readonly killedText?: string } {
-  if (control.disabled || control.readOnly) return { handled: false };
+  if (control.disabled || (control.readOnly && MUTATING_ACTIONS.has(action))) {
+    return { handled: false };
+  }
   const selectionStart = control.selectionStart;
   const selectionEnd = control.selectionEnd;
   if (selectionStart === null || selectionEnd === null) return { handled: false };
@@ -666,7 +679,7 @@ export function createEmacsReadlineKeydownHandler(options?: {
       return;
     }
     const result = control
-      ? applyActionToPlainTextControl(control, action, killRingText)
+      ? applyEmacsReadlineActionToPlainTextControl(control, action, killRingText)
       : editableHost
         ? applyEmacsReadlineActionToContentEditable(editableHost, action, killRingText)
         : { handled: false };

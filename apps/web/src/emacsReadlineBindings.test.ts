@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   applyEmacsReadlineActionToContentEditable,
   applyEmacsReadlineActionToPlainText,
+  applyEmacsReadlineActionToPlainTextControl,
   createEmacsReadlineKeydownHandler,
   didEmacsReadlineYieldToApplicationShortcut,
   inputEventDataForPlainTextEdit,
@@ -318,6 +319,42 @@ describe("applyEmacsReadlineActionToPlainText", () => {
       selectionStart: 3,
     });
     expect(apply("forward-word", "𝒜x", 0).selectionStart).toBe(3);
+  });
+});
+
+describe("applyEmacsReadlineActionToPlainTextControl", () => {
+  function control(input?: { readonly disabled?: boolean; readonly readOnly?: boolean }) {
+    return {
+      disabled: input?.disabled ?? false,
+      readOnly: input?.readOnly ?? false,
+      selectionStart: 3,
+      selectionEnd: 3,
+      value: "hello",
+      type: "text",
+      setRangeText: vi.fn(),
+      setSelectionRange: vi.fn(),
+    } as unknown as HTMLInputElement;
+  }
+
+  it("allows navigation but blocks edits in read-only controls", () => {
+    const readOnlyControl = control({ readOnly: true });
+
+    expect(
+      applyEmacsReadlineActionToPlainTextControl(readOnlyControl, "backward-char", ""),
+    ).toEqual({ handled: true });
+    expect(readOnlyControl.setSelectionRange).toHaveBeenCalledWith(2, 2);
+    expect(
+      applyEmacsReadlineActionToPlainTextControl(readOnlyControl, "delete-backward", ""),
+    ).toEqual({ handled: false });
+    expect(readOnlyControl.setRangeText).not.toHaveBeenCalled();
+  });
+
+  it("blocks navigation in disabled controls", () => {
+    const disabledControl = control({ disabled: true });
+    expect(
+      applyEmacsReadlineActionToPlainTextControl(disabledControl, "backward-char", ""),
+    ).toEqual({ handled: false });
+    expect(disabledControl.setSelectionRange).not.toHaveBeenCalled();
   });
 });
 
