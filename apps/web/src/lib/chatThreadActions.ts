@@ -75,6 +75,14 @@ export async function startNewThreadInProjectFromContext(
   context: ChatThreadActionContext,
   projectRef: ScopedProjectRef,
 ): Promise<void> {
+  const contextualProjectRef = resolveThreadActionProjectRef(context);
+  const matchesContext =
+    contextualProjectRef?.environmentId === projectRef.environmentId &&
+    contextualProjectRef.projectId === projectRef.projectId;
+  if (!matchesContext) {
+    await context.handleNewThread(projectRef);
+    return;
+  }
   await context.handleNewThread(projectRef, buildContextualThreadOptions(context));
 }
 

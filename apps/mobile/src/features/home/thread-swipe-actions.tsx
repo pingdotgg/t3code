@@ -167,6 +167,13 @@ export function ThreadSwipeable(props: {
   /** Disables NEW swipe activations (e.g. while the list scrolls). */
   readonly enabled?: boolean;
   readonly enableTrackpadSwipe?: boolean;
+  /**
+   * What a full swipe commits: "delete" (default, v1 behavior — the Delete
+   * button stretches) or "primary" — the advertised primary action fires and
+   * its button stretches instead. A full swipe must always match the action
+   * the stretching button advertises.
+   */
+  readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeWidth: number;
   readonly onDelete: () => void;
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
@@ -239,7 +246,11 @@ export function ThreadSwipeable(props: {
         if (fullSwipeArmedRef.current) {
           fullSwipeArmedRef.current = false;
           methods.close();
-          props.onDelete();
+          if (props.fullSwipeAction === "primary") {
+            props.primaryAction.onPress();
+          } else {
+            props.onDelete();
+          }
         }
       }}
       overshootFriction={1}
@@ -247,6 +258,7 @@ export function ThreadSwipeable(props: {
       renderRightActions={(_progress, translation, methods) => (
         <ThreadSwipeActions
           backgroundColor={props.backgroundColor}
+          fullSwipeAction={props.fullSwipeAction ?? "delete"}
           fullSwipeThreshold={fullSwipeThreshold}
           onDelete={props.onDelete}
           onFullSwipeArmedChange={handleFullSwipeArmedChange}
@@ -422,6 +434,7 @@ function SwipeActionButton(props: {
 
 export function ThreadSwipeActions(props: {
   readonly backgroundColor: ColorValue;
+  readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeThreshold: number;
   readonly onDelete: () => void;
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
@@ -430,6 +443,7 @@ export function ThreadSwipeActions(props: {
   readonly threadTitle: string;
   readonly translation: SharedValue<number>;
 }) {
+  const fullSwipeIsPrimary = props.fullSwipeAction === "primary";
   useAnimatedReaction(
     () => -props.translation.value >= props.fullSwipeThreshold,
     (armed, previous) => {
@@ -457,7 +471,7 @@ export function ThreadSwipeActions(props: {
         icon={props.primaryAction.icon}
         label={props.primaryAction.label}
         onPress={props.primaryAction.onPress}
-        stretchesOnFullSwipe={false}
+        stretchesOnFullSwipe={fullSwipeIsPrimary}
         translation={props.translation}
       />
       <SwipeActionButton
@@ -471,7 +485,7 @@ export function ThreadSwipeActions(props: {
           props.swipeableMethods.close();
           props.onDelete();
         }}
-        stretchesOnFullSwipe
+        stretchesOnFullSwipe={!fullSwipeIsPrimary}
         translation={props.translation}
       />
     </View>
