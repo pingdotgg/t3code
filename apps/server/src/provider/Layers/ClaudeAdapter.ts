@@ -2585,6 +2585,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       },
     };
 
+    // Undeclared-but-real subtypes (absent from the SDK's union, so they can't
+    // be switch cases): consumed intentionally without emitting, otherwise
+    // they fall through to the unknown-subtype warning and surface as spurious
+    // error rows in client work logs. `background_tasks_changed` is a roster
+    // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
+    // authoritative per-agent data and the typed background_tasks control
+    // request is the reconciliation source.
+    if ((message.subtype as string) === "background_tasks_changed") {
+      return;
+    }
+
     switch (message.subtype) {
       case "init":
         yield* offerRuntimeEvent({

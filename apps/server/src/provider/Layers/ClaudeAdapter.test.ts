@@ -1705,6 +1705,24 @@ describe("ClaudeAdapterLive", () => {
         );
         assert.equal(progressEvent.payload.description, "Running background teammate");
       }
+
+      // The undeclared background_tasks_changed roster snapshot is consumed
+      // silently — it must not surface as an unknown-subtype warning row.
+      harness.query.emit({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: "workflow-1", task_type: "local_workflow", description: "Run checks" }],
+        session_id: "session",
+        uuid: "roster",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      const rosterWarnings = runtimeEvents.filter(
+        (event) =>
+          event.type === "runtime.warning" &&
+          typeof event.payload.message === "string" &&
+          event.payload.message.includes("background_tasks_changed"),
+      );
+      assert.equal(rosterWarnings.length, 0);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
