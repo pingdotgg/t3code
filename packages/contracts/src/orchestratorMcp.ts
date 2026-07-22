@@ -31,9 +31,35 @@ import {
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
-const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
-const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
-const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
+  description: "Complete task or message text for the target agent.",
+});
+const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
+  description: "Optional concise display title.",
+});
+const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+).annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
+
+/**
+ * OpenCode 1.15 has been observed serializing nested MCP union objects as JSON
+ * strings. Keep the structured object as the documented form while accepting
+ * that compatibility shape at the tool boundary and decoding it immediately.
+ */
+const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(ScheduledTaskSchedule).annotate(
+  {
+    description:
+      "Compatibility-only JSON encoding of the schedule object. Prefer a structured object.",
+  },
+);
+
+const OrchestratorMcpSchedule = Schema.Union([
+  ScheduledTaskSchedule,
+  OrchestratorMcpScheduleFromJsonString,
+]).annotate({
+  description:
+    "Recurring schedule object: {type:'interval', everyMs} or {type:'fixed_time', timeOfDay, weekdays?}. Never stringify it unless the provider requires the compatibility form.",
+});
 
 /**
  * Shorthand `{ id: value }` record form for target model options. Unlike the
@@ -65,9 +91,21 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
 
 export const OrchestratorMcpTarget = Schema.Struct({
-  providerInstanceId: Schema.optional(ProviderInstanceId),
-  driverKind: Schema.optional(ProviderDriverKind),
-  model: Schema.optional(TrimmedNonEmptyString),
+  providerInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({
+      description: "Configured provider instance id from orchestrator_capabilities.",
+    }),
+  ),
+  driverKind: Schema.optional(
+    ProviderDriverKind.annotate({
+      description: "Provider driver kind; prefer providerInstanceId when available.",
+    }),
+  ),
+  model: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "Model id advertised for the selected provider instance.",
+    }),
+  ),
   /**
    * Model option selections for the child (for example reasoning effort).
    * Accepts the canonical `[{ id, value }]` array or the shorthand
@@ -75,7 +113,11 @@ export const OrchestratorMcpTarget = Schema.Struct({
    * advertised by orchestrator_capabilities. When omitted, options inherit
    * from the parent only when the child runs the parent's provider and model.
    */
-  options: Schema.optional(OrchestratorMcpTargetOptions),
+  options: Schema.optional(
+    OrchestratorMcpTargetOptions.annotate({
+      description: "Model option selections advertised by orchestrator_capabilities.",
+    }),
+  ),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
@@ -110,7 +152,9 @@ export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpDelegatedTaskStatus = typeof OrchestratorMcpDelegatedTaskStatus.Type;
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
-  task: OrchestratorMcpPrompt,
+  task: OrchestratorMcpPrompt.annotate({
+    description: "Self-contained task for one delegated child agent/subagent.",
+  }),
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
@@ -418,16 +462,25 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
-  prompt: OrchestratorMcpPrompt,
-  schedule: ScheduledTaskSchedule,
+  prompt: OrchestratorMcpPrompt.annotate({
+    description: "Prompt executed on every scheduled run.",
+  }),
+  schedule: OrchestratorMcpSchedule,
   title: Schema.optional(OrchestratorMcpTitle),
-  enabled: Schema.optional(Schema.Boolean),
+  enabled: Schema.optional(
+    Schema.Boolean.annotate({ description: "Whether the schedule starts enabled; defaults true." }),
+  ),
   /**
    * When true (the default), the scheduled task fires into the calling thread
    * on each run instead of launching a fresh thread. This is the recurring
    * "wake up in this thread" behaviour reserved for agent-created tasks.
    */
-  bindToCurrentThread: Schema.optional(Schema.Boolean),
+  bindToCurrentThread: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -459,7 +512,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
-  schedule: Schema.optional(ScheduledTaskSchedule),
+  schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
 });

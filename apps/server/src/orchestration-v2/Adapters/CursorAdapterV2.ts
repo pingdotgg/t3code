@@ -43,6 +43,7 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import { t3OrchestrationPromptForFirstRun } from "../../provider/T3OrchestrationInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
@@ -2008,6 +2009,11 @@ export function makeCursorAdapterV2(
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapterV2TurnInput,
         ) {
+          const text = t3OrchestrationPromptForFirstRun({
+            prompt: turnInput.message.text,
+            runOrdinal: turnInput.runOrdinal,
+            hasT3Mcp: cursorMcpServers(turnInput.threadId) !== undefined,
+          });
           const images = yield* Effect.forEach(
             turnInput.message.attachments,
             (attachment: ChatAttachment) =>
@@ -2046,9 +2052,9 @@ export function makeCursorAdapterV2(
             });
           }
           return images.length === 0
-            ? turnInput.message.text
+            ? text
             : ({
-                text: turnInput.message.text,
+                text,
                 images,
               } satisfies SDKUserMessage);
         });
