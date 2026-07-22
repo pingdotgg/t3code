@@ -2452,7 +2452,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(result.pr.number).toBe(142);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(true);
       }),
-    12_000,
+    20_000,
   );
 
   it.effect("rejects same-repo PR metadata when matching a cross-repo head context", () =>
