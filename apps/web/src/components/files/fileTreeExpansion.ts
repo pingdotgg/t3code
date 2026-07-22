@@ -2,6 +2,7 @@ import type { ProjectEntry } from "@t3tools/contracts";
 
 export const COLLAPSE_ALL_FOLDERS_LABEL = "Collapse all folders";
 export const EXPAND_ALL_FOLDERS_LABEL = "Expand all folders";
+export const TOGGLE_ALL_FOLDERS_LABEL = "Expand or collapse all folders";
 
 interface FileTreeExpansionDirectoryItem {
   collapse(): void;
@@ -23,6 +24,19 @@ interface FileTreeExpansionModel {
 }
 
 export type FileTreeExpansionSnapshot = "collapsed" | "empty" | "expanded" | "mixed" | "searching";
+
+export function getFileTreeExpansionToggle(snapshot: FileTreeExpansionSnapshot): {
+  expanded: boolean;
+  label: string;
+} {
+  if (snapshot === "collapsed") {
+    return { expanded: true, label: EXPAND_ALL_FOLDERS_LABEL };
+  }
+  if (snapshot === "expanded" || snapshot === "mixed") {
+    return { expanded: false, label: COLLAPSE_ALL_FOLDERS_LABEL };
+  }
+  return { expanded: false, label: TOGGLE_ALL_FOLDERS_LABEL };
+}
 
 function isDirectoryItem(
   item: FileTreeExpansionItem | null,

@@ -6,9 +6,11 @@ import {
   COLLAPSE_ALL_FOLDERS_LABEL,
   directoryTreePaths,
   EXPAND_ALL_FOLDERS_LABEL,
+  getFileTreeExpansionToggle,
   getFileTreeExpansionSnapshot,
   initiallyExpandedDirectoryPaths,
   setAllDirectoriesExpanded,
+  TOGGLE_ALL_FOLDERS_LABEL,
 } from "./fileTreeExpansion.ts";
 
 function makeModel(expansionByPath: Record<string, boolean>, searching = false) {
@@ -103,12 +105,33 @@ describe("file tree expansion controls", () => {
     }
   });
 
-  it("reports an empty tree and uses explicit accessible labels", () => {
+  it("reports an empty tree and gives the toggle an explicit accessible label", () => {
     const { model } = makeModel({});
 
     expect(getFileTreeExpansionSnapshot(model, [])).toBe("empty");
-    expect(COLLAPSE_ALL_FOLDERS_LABEL).toBe("Collapse all folders");
-    expect(EXPAND_ALL_FOLDERS_LABEL).toBe("Expand all folders");
+    expect(getFileTreeExpansionToggle("empty")).toEqual({
+      expanded: false,
+      label: TOGGLE_ALL_FOLDERS_LABEL,
+    });
+    expect(getFileTreeExpansionToggle("searching")).toEqual({
+      expanded: false,
+      label: TOGGLE_ALL_FOLDERS_LABEL,
+    });
+  });
+
+  it("toggles toward the opposite uniform expansion state", () => {
+    expect(getFileTreeExpansionToggle("collapsed")).toEqual({
+      expanded: true,
+      label: EXPAND_ALL_FOLDERS_LABEL,
+    });
+    expect(getFileTreeExpansionToggle("expanded")).toEqual({
+      expanded: false,
+      label: COLLAPSE_ALL_FOLDERS_LABEL,
+    });
+    expect(getFileTreeExpansionToggle("mixed")).toEqual({
+      expanded: false,
+      label: COLLAPSE_ALL_FOLDERS_LABEL,
+    });
   });
 
   it("expands only collapsed directories", () => {

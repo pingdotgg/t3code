@@ -18,9 +18,8 @@ import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
-  COLLAPSE_ALL_FOLDERS_LABEL,
   directoryTreePaths,
-  EXPAND_ALL_FOLDERS_LABEL,
+  getFileTreeExpansionToggle,
   getFileTreeExpansionSnapshot,
   initiallyExpandedDirectoryPaths,
   setAllDirectoriesExpanded,
@@ -200,12 +199,7 @@ export default function FileBrowserPanel({
   );
   const expansionControlsDisabled =
     expansionSnapshot === "empty" || expansionSnapshot === "searching";
-  const canCollapseAll =
-    !expansionControlsDisabled &&
-    (expansionSnapshot === "expanded" || expansionSnapshot === "mixed");
-  const canExpandAll =
-    !expansionControlsDisabled &&
-    (expansionSnapshot === "collapsed" || expansionSnapshot === "mixed");
+  const expansionToggle = getFileTreeExpansionToggle(expansionSnapshot);
 
   useEffect(() => {
     if (previousTreePathsRef.current === treePaths) return;
@@ -267,20 +261,17 @@ export default function FileBrowserPanel({
         <button
           type="button"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-          aria-label={COLLAPSE_ALL_FOLDERS_LABEL}
-          disabled={!canCollapseAll}
-          onClick={() => setAllDirectoriesExpanded(model, treePaths, directoryPaths, false)}
+          aria-label={expansionToggle.label}
+          disabled={expansionControlsDisabled}
+          onClick={() =>
+            setAllDirectoriesExpanded(model, treePaths, directoryPaths, expansionToggle.expanded)
+          }
         >
-          <ChevronsDownUp className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-          aria-label={EXPAND_ALL_FOLDERS_LABEL}
-          disabled={!canExpandAll}
-          onClick={() => setAllDirectoriesExpanded(model, treePaths, directoryPaths, true)}
-        >
-          <ChevronsUpDown className="size-3.5" />
+          {expansionToggle.expanded ? (
+            <ChevronsUpDown className="size-3.5" />
+          ) : (
+            <ChevronsDownUp className="size-3.5" />
+          )}
         </button>
         <button
           type="button"
