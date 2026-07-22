@@ -80,6 +80,7 @@ export function applyThreadDetailEvent(
           activities: [],
           checkpoints: [],
           session: null,
+          goal: undefined,
         },
       };
 
@@ -170,6 +171,26 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           updatedAt: event.payload.createdAt,
+        },
+      };
+
+    case "thread.goal-updated":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          goal: event.payload.goal,
+          updatedAt: event.occurredAt,
+        },
+      };
+
+    case "thread.goal-cleared":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          goal: undefined,
+          updatedAt: event.occurredAt,
         },
       };
 

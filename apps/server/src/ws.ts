@@ -834,12 +834,12 @@ const makeWsRpcLayer = (
           Stream.flatMap((items) => Stream.fromIterable(items)),
         );
 
-      const dispatchBootstrapTurnStart = (
-        command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
+      const dispatchBootstrapThreadCommand = (
+        command: Extract<OrchestrationCommand, { type: "thread.turn.start" | "thread.goal.set" }>,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
         Effect.gen(function* () {
           const bootstrap = command.bootstrap;
-          const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
+          const { bootstrap: _bootstrap, ...finalCommand } = command;
           let createdThread = false;
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
@@ -1026,7 +1026,7 @@ const makeWsRpcLayer = (
 
             yield* runSetupProgram();
 
-            return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
+            return yield* orchestrationEngine.dispatch(finalCommand);
           });
 
           return yield* bootstrapProgram.pipe(
@@ -1044,8 +1044,10 @@ const makeWsRpcLayer = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
         const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
+          (normalizedCommand.type === "thread.turn.start" ||
+            normalizedCommand.type === "thread.goal.set") &&
+          normalizedCommand.bootstrap
+            ? dispatchBootstrapThreadCommand(normalizedCommand)
             : orchestrationEngine
                 .dispatch(normalizedCommand)
                 .pipe(

@@ -1734,6 +1734,25 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (event.type === "thread.goal.updated") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId: yield* providerCommandId(event, "thread-goal-sync"),
+          threadId: thread.id,
+          goal: event.payload.goal,
+          createdAt: now,
+        });
+      }
+
+      if (event.type === "thread.goal.cleared") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.sync-clear",
+          commandId: yield* providerCommandId(event, "thread-goal-sync-clear"),
+          threadId: thread.id,
+          createdAt: now,
+        });
+      }
+
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
         const checkpointContext = turnId

@@ -104,6 +104,50 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread goal state", () => {
+    it("projects provider-confirmed goal updates and clears", () => {
+      const goalUpdatedAt = "2026-04-01T01:00:00.000Z";
+      const goal = {
+        objective: "Finish the reconnect work",
+        status: "active" as const,
+        tokenBudget: 20_000,
+        tokensUsed: 1_250,
+        timeUsedSeconds: 90,
+        createdAt: goalUpdatedAt,
+        updatedAt: goalUpdatedAt,
+      };
+      const updated = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 2,
+        occurredAt: goalUpdatedAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.goal-updated",
+        payload: { threadId: baseThread.id, goal },
+      });
+
+      expect(updated.kind).toBe("updated");
+      if (updated.kind !== "updated") return;
+      expect(updated.thread.goal).toEqual(goal);
+
+      const clearedAt = "2026-04-01T02:00:00.000Z";
+      const cleared = applyThreadDetailEvent(updated.thread, {
+        ...baseEventFields,
+        sequence: 3,
+        occurredAt: clearedAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.goal-cleared",
+        payload: { threadId: baseThread.id },
+      });
+
+      expect(cleared.kind).toBe("updated");
+      if (cleared.kind !== "updated") return;
+      expect(cleared.thread.goal).toBeUndefined();
+      expect(cleared.thread.updatedAt).toBe(clearedAt);
+    });
+  });
+
   describe("thread.deleted", () => {
     it("returns deleted signal", () => {
       const result = applyThreadDetailEvent(baseThread, {

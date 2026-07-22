@@ -215,7 +215,6 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
-  const blockedTurnStartCommandIds = new Set<CommandId>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -774,22 +773,14 @@ const make = Effect.gen(function* () {
     });
     yield* run.pipe(
       Effect.catchCause((cause) =>
-        Effect.sync(() => {
-          if (event.payload.blocksTurnStart === true && event.commandId !== null) {
-            blockedTurnStartCommandIds.add(event.commandId);
-          }
-        }).pipe(
-          Effect.andThen(
-            appendProviderFailureActivity({
-              threadId: event.payload.threadId,
-              kind: "provider.goal.set.failed",
-              summary: "Goal update failed",
-              detail: formatFailureDetail(cause),
-              turnId: null,
-              createdAt: event.payload.createdAt,
-            }),
-          ),
-        ),
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.goal.set.failed",
+          summary: "Goal update failed",
+          detail: formatFailureDetail(cause),
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }),
       ),
     );
   });
@@ -1106,9 +1097,6 @@ const make = Effect.gen(function* () {
         yield* processGoalClearRequested(event);
         return;
       case "thread.turn-start-requested":
-        if (event.commandId !== null && blockedTurnStartCommandIds.delete(event.commandId)) {
-          return;
-        }
         yield* processTurnStartRequested(event);
         return;
       case "thread.turn-interrupt-requested":

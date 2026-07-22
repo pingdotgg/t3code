@@ -472,7 +472,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
-  it("uses the first-turn model selection when setting a goal before the turn", async () => {
+  it("uses the selected model when starting a native goal", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const modelSelection = createModelSelection(
@@ -483,25 +483,18 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
-        type: "thread.turn.start",
+        type: "thread.goal.set",
         commandId: CommandId.make("cmd-goal-turn-model-selection"),
         threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-goal-model-selection"),
-          role: "user",
-          text: "Ship goal support",
-          attachments: [],
-        },
-        goal: { objective: "Ship goal support", tokenBudget: 50_000 },
+        objective: "Ship goal support",
+        status: "active",
+        tokenBudget: 50_000,
         modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
 
     await waitFor(() => harness.setThreadGoal.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls).toHaveLength(1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ modelSelection });
     expect(harness.setThreadGoal.mock.calls[0]?.[0]).toMatchObject({
@@ -510,10 +503,10 @@ describe("ProviderCommandReactor", () => {
       status: "active",
       tokenBudget: 50_000,
     });
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ modelSelection });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 
-  it("does not start a turn when its prerequisite goal setup fails", async () => {
+  it("records a native goal setup failure without starting a turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     harness.setThreadGoal.mockImplementation(() =>
@@ -528,19 +521,12 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
-        type: "thread.turn.start",
+        type: "thread.goal.set",
         commandId: CommandId.make("cmd-goal-turn-failure"),
         threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-goal-failure"),
-          role: "user",
-          text: "Ship goal support",
-          attachments: [],
-        },
-        goal: { objective: "Ship goal support" },
+        objective: "Ship goal support",
+        status: "active",
         modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5-codex"),
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );

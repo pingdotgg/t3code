@@ -1,6 +1,5 @@
 import {
   CommandId,
-  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -37,41 +36,28 @@ const thread: OrchestrationThread = {
 };
 
 it.layer(NodeServices.layer)("goal decider", (it) => {
-  it.effect("sets the goal before starting its first turn", () =>
+  it.effect("requests a goal with the selected provider without starting a normal turn", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({
         command: {
-          type: "thread.turn.start",
+          type: "thread.goal.set",
           commandId: CommandId.make("command-goal-start"),
           threadId,
-          message: {
-            messageId: MessageId.make("message-goal-start"),
-            role: "user",
-            text: "Ship goal support",
-            attachments: [],
-          },
-          goal: { objective: "Ship goal support", tokenBudget: 50_000 },
+          objective: "Ship goal support",
+          status: "active",
+          tokenBudget: 50_000,
           modelSelection: {
             instanceId: ProviderInstanceId.make("claudeAgent"),
             model: "claude-opus-4-6",
           },
-          runtimeMode: "full-access",
-          interactionMode: "default",
           createdAt: now,
         },
         readModel: { ...createEmptyReadModel(now), threads: [thread] },
       });
 
-      expect(Array.isArray(result)).toBe(true);
-      if (!Array.isArray(result)) return;
-      expect(result.map((event) => event.type)).toEqual([
-        "thread.goal-set-requested",
-        "thread.message-sent",
-        "thread.turn-start-requested",
-      ]);
-      const goalEvent = result[0];
-      if (goalEvent?.type !== "thread.goal-set-requested") return;
-      expect(goalEvent.payload).toMatchObject({
+      expect("type" in result).toBe(true);
+      if (!("type" in result) || result.type !== "thread.goal-set-requested") return;
+      expect(result.payload).toMatchObject({
         threadId,
         objective: "Ship goal support",
         status: "active",
@@ -80,7 +66,6 @@ it.layer(NodeServices.layer)("goal decider", (it) => {
           instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
-        blocksTurnStart: true,
       });
     }),
   );

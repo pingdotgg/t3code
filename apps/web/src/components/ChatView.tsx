@@ -1382,7 +1382,7 @@ function ChatViewContent(props: ChatViewProps) {
   const isServerThread = serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const activeGoal = useMemo<ThreadGoal | null>(
-    () => (activeThread ? deriveThreadGoal(activeThread.activities) : null),
+    () => (activeThread ? (activeThread.goal ?? deriveThreadGoal(activeThread.activities)) : null),
     [activeThread],
   );
   const [isGoalMutationPending, setIsGoalMutationPending] = useState(false);
@@ -4266,6 +4266,126 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
+    if (goalObjective) {
+      const createdAt = new Date().toISOString();
+      const title = truncate(goalObjective);
+      const goalModelSelection = createModelSelection(
+        ctxSelectedModelSelection.instanceId,
+        ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+        ctxSelectedModelSelection.options,
+      );
+      const bootstrap =
+        isLocalDraftThread || baseBranchForWorktree
+          ? {
+              ...(isLocalDraftThread
+                ? {
+                    createThread: {
+                      projectId: activeProject.id,
+                      title,
+                      modelSelection: goalModelSelection,
+                      runtimeMode,
+                      interactionMode,
+                      branch: activeThreadBranch,
+                      worktreePath: activeThread.worktreePath,
+                      createdAt: activeThread.createdAt,
+                    },
+                  }
+                : {}),
+              ...(baseBranchForWorktree
+                ? {
+                    prepareWorktree: {
+                      projectCwd: activeProject.workspaceRoot,
+                      baseBranch: baseBranchForWorktree,
+                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                    },
+                    runSetupScript: true,
+                  }
+                : {}),
+            }
+          : undefined;
+
+      sendInFlightRef.current = true;
+      setIsGoalMutationPending(true);
+      if (isDraftHeroState && activeThreadKey) {
+        let resolveDockStarted: (() => void) | undefined;
+        const dockStarted = new Promise<void>((resolve) => {
+          resolveDockStarted = resolve;
+        });
+        const dockTransition = runMobileComposerTransition(() => {
+          flushSync(() => {
+            captureDraftHeroComposerRect();
+            setDockedDraftHeroThreadKey(activeThreadKey);
+          });
+          resolveDockStarted?.();
+        });
+        void dockTransition.catch(() => resolveDockStarted?.());
+        await dockStarted;
+      }
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+      setThreadError(threadIdForSend, null);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+
+      let failure: AtomCommandResult<unknown, unknown> | null = null;
+      if (isFirstMessage && isServerThread) {
+        const titleResult = await updateThreadMetadata({
+          environmentId,
+          input: { threadId: threadIdForSend, title },
+        });
+        if (titleResult._tag === "Failure") failure = titleResult;
+      }
+      if (failure === null && isServerThread) {
+        const settingsResult = await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt,
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+        });
+        if (settingsResult._tag === "Failure") failure = settingsResult;
+      }
+      if (failure === null) {
+        const goalResult = await setThreadGoal({
+          environmentId,
+          input: {
+            threadId: threadIdForSend,
+            objective: goalObjective,
+            status: "active",
+            modelSelection: ctxSelectedModelSelection,
+            ...(bootstrap ? { bootstrap } : {}),
+            createdAt,
+          },
+        });
+        if (goalResult._tag === "Failure") failure = goalResult;
+      }
+
+      if (failure !== null) {
+        promptRef.current = promptForSend;
+        setComposerDraftPrompt(composerDraftTarget, promptForSend);
+        composerRef.current?.resetCursorState({
+          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+          prompt: promptForSend,
+          detectTrigger: true,
+        });
+        if (!isAtomCommandInterrupted(failure)) {
+          const error = squashAtomCommandFailure(failure);
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error ? error.message : "Failed to start the goal.",
+          );
+        }
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        resetLocalDispatch();
+      }
+      setIsGoalMutationPending(false);
+      sendInFlightRef.current = false;
+      return;
+    }
+
     sendInFlightRef.current = true;
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -4289,7 +4409,7 @@ function ChatViewContent(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
-    const promptTextForSend = goalObjective ?? promptForSend;
+    const promptTextForSend = promptForSend;
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptTextForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
@@ -4380,7 +4500,7 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = goalObjective ?? trimmed;
+    let titleSeed = trimmed;
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -4479,7 +4599,6 @@ function ChatViewContent(props: ChatViewProps) {
           titleSeed: title,
           runtimeMode,
           interactionMode,
-          ...(goalObjective ? { goal: { objective: goalObjective } } : {}),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
