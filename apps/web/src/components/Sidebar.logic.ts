@@ -1,5 +1,9 @@
 import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
+import {
+  effectiveSettled,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -44,6 +48,39 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function shouldDismissThreadSettleConfirmation<T>(input: {
+  readonly confirmationThreadKey: T | null;
+  readonly routeThreadKey: T | null;
+  readonly targetExists: boolean;
+  readonly targetSettled: boolean;
+}): boolean {
+  return (
+    input.confirmationThreadKey !== null &&
+    (input.confirmationThreadKey !== input.routeThreadKey ||
+      !input.targetExists ||
+      input.targetSettled)
+  );
+}
+
+export function isSidebarThreadEffectivelySettled(input: {
+  readonly thread: SidebarThreadSummary;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+  readonly autoSettleAfterDays: number | null;
+  readonly changeRequestState?: ChangeRequestStateLike | null;
+}): boolean {
+  return (
+    input.settlementSupported &&
+    effectiveSettled(input.thread, {
+      now: input.now,
+      autoSettleAfterDays: input.autoSettleAfterDays,
+      ...(input.changeRequestState !== undefined
+        ? { changeRequestState: input.changeRequestState }
+        : {}),
+    })
+  );
+}
 
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },

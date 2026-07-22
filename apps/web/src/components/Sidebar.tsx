@@ -62,7 +62,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { canSettle } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSettle,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -183,6 +186,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   getSidebarThreadIdsToPrewarm,
   isContextMenuPointerDown,
+  isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   resolveNextActiveThreadIdAfterSettle,
   resolveProjectStatusIndicator,
@@ -190,6 +194,7 @@ import {
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
+  shouldDismissThreadSettleConfirmation,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
@@ -346,6 +351,7 @@ interface SidebarThreadRowProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
 }
 
 export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
@@ -372,6 +378,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    onChangeRequestState,
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -464,6 +471,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     hasDedicatedWorktree: thread.worktreePath !== null,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prState = pr?.state ?? null;
+  useEffect(() => {
+    onChangeRequestState(threadKey, prState);
+  }, [onChangeRequestState, prState, threadKey]);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -930,6 +941,7 @@ interface SidebarProjectThreadListProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
 }
@@ -970,6 +982,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    onChangeRequestState,
     expandThreadListForProject,
     collapseThreadListForProject,
   } = props;
@@ -1021,6 +1034,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               cancelRename={cancelRename}
               attemptArchiveThread={attemptArchiveThread}
               openPrLink={openPrLink}
+              onChangeRequestState={onChangeRequestState}
             />
           );
         })}
@@ -1071,6 +1085,7 @@ interface SidebarProjectItemProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -1091,6 +1106,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     archiveThread,
     deleteThread,
     threadJumpLabelByKey,
+    onChangeRequestState,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -2364,6 +2380,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
+        onChangeRequestState={onChangeRequestState}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />
@@ -2762,6 +2779,7 @@ interface SidebarProjectsContentProps {
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -2802,6 +2820,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
+    onChangeRequestState,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -2939,6 +2958,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
+                        onChangeRequestState={onChangeRequestState}
                         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
@@ -2971,6 +2991,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
+                onChangeRequestState={onChangeRequestState}
                 attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}
@@ -3007,6 +3028,7 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
+  const sidebarAutoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread, settleThread } = useThreadActions();
@@ -3030,6 +3052,50 @@ export default function Sidebar() {
     null,
   );
   const settleConfirmationButtonRef = useRef<HTMLButtonElement>(null);
+  const [settlementNowMinute, setSettlementNowMinute] = useState(() =>
+    new Date().toISOString().slice(0, 16),
+  );
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setSettlementNowMinute(new Date().toISOString().slice(0, 16)),
+      60_000,
+    );
+    return () => window.clearInterval(id);
+  }, []);
+  const settlementNow = `${settlementNowMinute}:00.000Z`;
+  const [changeRequestStateByThreadKey, setChangeRequestStateByThreadKey] = useState<
+    ReadonlyMap<string, ChangeRequestStateLike>
+  >(() => new Map());
+  const handleChangeRequestState = useCallback(
+    (threadKey: string, state: ChangeRequestStateLike | null) => {
+      setChangeRequestStateByThreadKey((current) => {
+        if ((current.get(threadKey) ?? null) === state) return current;
+        const next = new Map(current);
+        if (state === null) {
+          next.delete(threadKey);
+        } else {
+          next.set(threadKey, state);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+  const isThreadEffectivelySettled = useCallback(
+    (thread: SidebarThreadSummary) => {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return isSidebarThreadEffectivelySettled({
+        thread,
+        settlementSupported:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true,
+        now: settlementNow,
+        autoSettleAfterDays: sidebarAutoSettleAfterDays,
+        changeRequestState: changeRequestStateByThreadKey.get(threadKey) ?? null,
+      });
+    },
+    [changeRequestStateByThreadKey, serverConfigs, settlementNow, sidebarAutoSettleAfterDays],
+  );
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -3439,7 +3505,7 @@ export default function Sidebar() {
         settledThreadId: threadKey,
         isActive: (candidateKey) => {
           const candidate = sidebarThreadByKey.get(candidateKey);
-          return candidate != null && candidate.settledOverride !== "settled";
+          return candidate != null && !isThreadEffectivelySettled(candidate);
         },
       });
       const nextThread = nextThreadKey ? sidebarThreadByKey.get(nextThreadKey) : null;
@@ -3475,6 +3541,7 @@ export default function Sidebar() {
     [
       allUnarchivedSidebarThreadKeys,
       handleNewThread,
+      isThreadEffectivelySettled,
       navigateToThread,
       orderedSidebarThreadKeys,
       settleThread,
@@ -3510,7 +3577,7 @@ export default function Sidebar() {
           routeThread != null &&
           serverConfigs.get(routeThread.environmentId)?.environment.capabilities
             .threadSettlement === true &&
-          routeThread.settledOverride !== "settled" &&
+          !isThreadEffectivelySettled(routeThread) &&
           canSettle(routeThread, { now: new Date().toISOString() }),
         isRouteThreadSettling:
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
@@ -3537,6 +3604,7 @@ export default function Sidebar() {
     };
   }, [
     getCurrentSidebarShortcutContext,
+    isThreadEffectivelySettled,
     keybindings,
     navigateToThread,
     orderedSidebarThreadKeys,
@@ -3552,18 +3620,31 @@ export default function Sidebar() {
     ? (sidebarThreadByKey.get(settleConfirmationThreadKey) ?? null)
     : null;
   const confirmShortcutSettle = useCallback(() => {
-    if (!settleConfirmationThreadKey) return;
+    if (!settleConfirmationThreadKey || settleConfirmationThreadKey !== routeThreadKeyRef.current) {
+      setSettleConfirmationThreadKey(null);
+      return;
+    }
     attemptShortcutSettle(settleConfirmationThreadKey);
   }, [attemptShortcutSettle, settleConfirmationThreadKey]);
 
   useEffect(() => {
     if (
-      settleConfirmationThreadKey !== null &&
-      (settleConfirmationThread === null || settleConfirmationThread.settledOverride === "settled")
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: settleConfirmationThreadKey,
+        routeThreadKey,
+        targetExists: settleConfirmationThread !== null,
+        targetSettled:
+          settleConfirmationThread !== null && isThreadEffectivelySettled(settleConfirmationThread),
+      })
     ) {
       setSettleConfirmationThreadKey(null);
     }
-  }, [settleConfirmationThread, settleConfirmationThreadKey]);
+  }, [
+    isThreadEffectivelySettled,
+    routeThreadKey,
+    settleConfirmationThread,
+    settleConfirmationThreadKey,
+  ]);
 
   useEffect(() => {
     const onMouseDown = (event: globalThis.MouseEvent) => {
@@ -3720,6 +3801,7 @@ export default function Sidebar() {
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
+            onChangeRequestState={handleChangeRequestState}
             attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
             expandThreadListForProject={expandThreadListForProject}
             collapseThreadListForProject={collapseThreadListForProject}

@@ -12,6 +12,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -25,6 +26,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
+  shouldDismissThreadSettleConfirmation,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -42,6 +44,7 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
@@ -590,6 +593,104 @@ describe("resolveNextActiveThreadIdAfterSettle", () => {
         isActive: (threadId) => threadId.endsWith("active"),
       }),
     ).toBe("hidden-next-active");
+  });
+});
+
+describe("isSidebarThreadEffectivelySettled", () => {
+  const now = "2026-03-15T12:00:00.000Z";
+
+  it("classifies inactivity and closed change requests as settled", () => {
+    const thread = makeThreadShell({
+      latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread,
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: makeThreadShell(),
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: null,
+        changeRequestState: "closed",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps auto-settlement disabled on servers without lifecycle support", () => {
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: makeThreadShell(),
+        settlementSupported: false,
+        now,
+        autoSettleAfterDays: null,
+        changeRequestState: "merged",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps auto-settled threads out of post-settle navigation targets", () => {
+    const threads = new Map([
+      ["current", makeThreadShell({ id: ThreadId.make("current") })],
+      [
+        "inactive",
+        makeThreadShell({
+          id: ThreadId.make("inactive"),
+          latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+        }),
+      ],
+      ["active", makeThreadShell({ id: ThreadId.make("active") })],
+    ]);
+
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["current", "inactive", "active"],
+        settledThreadId: "current",
+        isActive: (threadId) => {
+          const thread = threads.get(threadId);
+          return (
+            thread !== undefined &&
+            !isSidebarThreadEffectivelySettled({
+              thread,
+              settlementSupported: true,
+              now,
+              autoSettleAfterDays: 3,
+            })
+          );
+        },
+      }),
+    ).toBe("active");
+  });
+});
+
+describe("shouldDismissThreadSettleConfirmation", () => {
+  it("dismisses a confirmation when the route changes away from its target", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-2",
+        targetExists: true,
+        targetSettled: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a confirmation open while its unsettled target remains the route", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetSettled: false,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -1167,6 +1268,17 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     checkpoints: [],
     activities: [],
+    ...overrides,
+  };
+}
+
+function makeThreadShell(overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSummary {
+  return {
+    ...makeThread(),
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
     ...overrides,
   };
 }

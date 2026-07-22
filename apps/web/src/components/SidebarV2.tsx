@@ -3,7 +3,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   canSettle,
   canSnooze,
-  effectiveSettled,
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -115,6 +114,7 @@ import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveSettledTimestamp,
@@ -124,6 +124,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
+  shouldDismissThreadSettleConfirmation,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
@@ -1361,8 +1362,22 @@ export default function SidebarV2() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const isThreadEffectivelySettled = useCallback(
+    (thread: SidebarThreadSummary) => {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return isSidebarThreadEffectivelySettled({
+        thread,
+        settlementSupported:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true,
+        now: `${nowMinute}:00.000Z`,
+        autoSettleAfterDays,
+        changeRequestState: changeRequestStateByKey.get(threadKey) ?? null,
+      });
+    },
+    [autoSettleAfterDays, changeRequestStateByKey, nowMinute, serverConfigs],
+  );
   const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
     // Snooze classification uses a REAL clock, not the quantized minute:
     // wake times are second-precise and a woken thread must not linger on
     // the shelf for the rest of the minute. snoozeWakeTick re-runs this
@@ -1379,25 +1394,14 @@ export default function SidebarV2() {
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
       const supportsSnooze =
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
       if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
         snoozed.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-      ) {
+      } else if (isThreadEffectivelySettled(thread)) {
         settled.push(thread);
       } else {
         active.push(thread);
@@ -1415,9 +1419,7 @@ export default function SidebarV2() {
       snoozeNow: preciseNow,
     };
   }, [
-    autoSettleAfterDays,
-    changeRequestStateByKey,
-    nowMinute,
+    isThreadEffectivelySettled,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
@@ -1523,6 +1525,23 @@ export default function SidebarV2() {
   // rendered at click time.
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   orderedThreadKeysRef.current = orderedThreadKeys;
+  // Route actions are independent of the selected project chip. Keep a map
+  // of every live shell for eligibility and confirmation; rendered traversal
+  // continues to use the scoped map below.
+  const allThreadByKey = useMemo(
+    () =>
+      new Map(
+        threads
+          .filter((thread) => thread.archivedAt === null)
+          .map(
+            (thread) =>
+              [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+          ),
+      ),
+    [threads],
+  );
+  const allThreadByKeyRef = useRef(allThreadByKey);
+  allThreadByKeyRef.current = allThreadByKey;
   const threadByKey = useMemo(
     () =>
       new Map(
@@ -1671,7 +1690,7 @@ export default function SidebarV2() {
   const planForwardNavigation = useCallback(
     (threadKey: string, coParkingKeys?: ReadonlySet<string>): (() => void) | null => {
       if (routeThreadKeyRef.current !== threadKey) return null;
-      const shell = threadByKeyRef.current.get(threadKey);
+      const shell = allThreadByKeyRef.current.get(threadKey);
       const orderedKeys = orderedThreadKeysRef.current;
       const settledKeys = settledThreadKeysRef.current;
       const snoozedKeys = snoozedThreadKeysRef.current;
@@ -2140,7 +2159,7 @@ export default function SidebarV2() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
-      const routeThread = routeThreadKey ? threadByKey.get(routeThreadKey) : null;
+      const routeThread = routeThreadKey ? allThreadByKey.get(routeThreadKey) : null;
       const action = resolveThreadSidebarShortcutAction({
         command,
         orderedThreadKeys,
@@ -2151,7 +2170,7 @@ export default function SidebarV2() {
           serverConfigs.get(routeThread.environmentId)?.environment.capabilities
             .threadSettlement === true &&
           canSettle(routeThread, { now: new Date().toISOString() }) &&
-          !settledThreadKeys.has(routeThreadKey ?? ""),
+          !isThreadEffectivelySettled(routeThread),
         isRouteThreadSettling:
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
       });
@@ -2172,6 +2191,8 @@ export default function SidebarV2() {
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    allThreadByKey,
+    isThreadEffectivelySettled,
     keybindings,
     navigateToThread,
     orderedThreadKeys,
@@ -2179,29 +2200,40 @@ export default function SidebarV2() {
     routeThreadKey,
     serverConfigs,
     settleConfirmationThreadKey,
-    settledThreadKeys,
     threadByKey,
   ]);
 
   const settleConfirmationThread = settleConfirmationThreadKey
-    ? (threadByKey.get(settleConfirmationThreadKey) ?? null)
+    ? (allThreadByKey.get(settleConfirmationThreadKey) ?? null)
     : null;
   const confirmShortcutSettle = useCallback(() => {
-    if (!settleConfirmationThread) return;
+    if (!settleConfirmationThread || settleConfirmationThreadKey !== routeThreadKeyRef.current) {
+      setSettleConfirmationThreadKey(null);
+      return;
+    }
     attemptSettle(
       scopeThreadRef(settleConfirmationThread.environmentId, settleConfirmationThread.id),
     );
-  }, [attemptSettle, settleConfirmationThread]);
+  }, [attemptSettle, settleConfirmationThread, settleConfirmationThreadKey]);
 
   useEffect(() => {
     if (
-      settleConfirmationThreadKey !== null &&
-      (settledThreadKeys.has(settleConfirmationThreadKey) ||
-        !threadByKey.has(settleConfirmationThreadKey))
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: settleConfirmationThreadKey,
+        routeThreadKey,
+        targetExists: settleConfirmationThread !== null,
+        targetSettled:
+          settleConfirmationThread !== null && isThreadEffectivelySettled(settleConfirmationThread),
+      })
     ) {
       setSettleConfirmationThreadKey(null);
     }
-  }, [settleConfirmationThreadKey, settledThreadKeys, threadByKey]);
+  }, [
+    isThreadEffectivelySettled,
+    routeThreadKey,
+    settleConfirmationThread,
+    settleConfirmationThreadKey,
+  ]);
 
   // Same predicate as v1: hints show only while the held modifiers exactly
   // match a thread-jump binding. Adding Shift (screenshots) or Alt no
