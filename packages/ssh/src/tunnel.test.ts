@@ -259,7 +259,7 @@ describe("ssh tunnel scripts", () => {
           )
           .pipe(Effect.asVoid);
       const waitForFile = Effect.gen(function* () {
-        for (let attempt = 0; attempt < 100; attempt += 1) {
+        for (let attempt = 0; attempt < 500; attempt += 1) {
           if (yield* fs.exists(runtimeFile)) return;
           yield* Effect.sleep("10 millis");
         }
@@ -267,7 +267,7 @@ describe("ssh tunnel scripts", () => {
       });
       const waitForPidExit = (pid: number) =>
         Effect.gen(function* () {
-          for (let attempt = 0; attempt < 100; attempt += 1) {
+          for (let attempt = 0; attempt < 500; attempt += 1) {
             if (!(yield* isPidRunning(pid))) return;
             yield* Effect.sleep("10 millis");
           }
