@@ -1514,6 +1514,54 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status keeps the last known PR when the current remote URL can't be resolved", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-config-hiccup"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-config-hiccup"]);
+
+      const existingPr = {
+        number: 217,
+        title: "Config hiccup PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/217",
+        baseRefName: "main",
+        headRefName: "feature/pr-config-hiccup",
+      };
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          prListSequence: [JSON.stringify([existingPr])],
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(217);
+
+      // `remote.origin.url` reads go through readConfigValueNullable, which
+      // maps ANY failed read (a real "no remote configured" state or a
+      // transient git-config hiccup) to null the same way. Unsetting the
+      // key here reproduces that ambiguity without touching branch
+      // tracking (refs/remotes/origin/* and branch.<b>.remote are
+      // untouched) — the remote identity has not actually changed, so the
+      // sticky PR must survive even though the current lookup can no
+      // longer resolve a remote URL to compare against.
+      yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
+      yield* manager.invalidateStatus(repoDir);
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr?.number).toBe(217);
+    }),
+  );
+
   it.effect("creates a commit when working tree is dirty", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
