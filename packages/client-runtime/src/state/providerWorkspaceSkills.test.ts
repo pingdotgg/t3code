@@ -94,8 +94,8 @@ describe("resolveProviderWorkspaceSkills", () => {
     ).toBe(currentSkills);
   });
 
-  it("preserves an empty same-workspace snapshot while the environment is unavailable", () => {
-    const currentSkills: ReadonlyArray<ServerProviderSkill> = [];
+  it("uses provider fallback for an empty same-workspace snapshot while unavailable", () => {
+    const fallbackSkills = [skill("provider-fallback")];
 
     expect(
       resolveProviderWorkspaceSkills({
@@ -105,10 +105,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         error: null,
         unavailable: true,
         currentKey: "local:codex:/repo",
-        currentSkills,
-        fallbackSkills: [skill("provider-fallback")],
+        currentSkills: [],
+        fallbackSkills,
       }),
-    ).toBe(currentSkills);
+    ).toBe(fallbackSkills);
   });
 
   it("uses provider fallback skills when a different workspace is unavailable", () => {
