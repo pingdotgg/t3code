@@ -626,7 +626,9 @@ export function BranchToolbarBranchSelector({
         onClick={() => selectBranch(refName)}
       >
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 flex-1 truncate">{itemValue}</span>
+          <span className="min-w-0 flex-1 truncate" title={itemValue}>
+            {itemValue}
+          </span>
           {badge && <span className="shrink-0 text-[10px] text-muted-foreground/45">{badge}</span>}
         </div>
       </ComboboxItem>
@@ -674,15 +676,22 @@ export function BranchToolbarBranchSelector({
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
-        <ComboboxTrigger
-          render={<Button variant="ghost" size="xs" />}
-          className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
-          disabled={isInitialBranchesLoadPending || isBranchActionPending}
-        >
-          <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-          <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-        </ComboboxTrigger>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ComboboxTrigger
+                render={<Button variant="ghost" size="xs" />}
+                className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
+                disabled={isInitialBranchesLoadPending || isBranchActionPending}
+              />
+            }
+          >
+            <GitBranchIcon className="size-3 shrink-0 opacity-70" />
+            <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+            <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+        </Tooltip>
       </div>
       <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
         <div className="shrink-0 px-3 pt-2.5">
