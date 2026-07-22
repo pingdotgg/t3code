@@ -427,19 +427,18 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             />
           </span>
           {title}
+          {/* The PR badge stays outside the hover-fading slot: it must
+              remain visible AND clickable while the row is hovered. Only
+              the time/jump label yields to the settle affordance. */}
+          {prBadge}
           <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
             <span className="inline-flex justify-end tabular-nums text-muted-foreground/40 transition-opacity group-hover/v2-row:opacity-0">
-              {props.jumpLabel ? (
-                <span className="text-[13px]">{props.jumpLabel}</span>
-              ) : (
-                (prBadge ?? (
-                  <span className="text-[13px]">
-                    {compactSidebarTimeLabel(
-                      formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.updatedAt),
-                    )}
-                  </span>
-                ))
-              )}
+              <span className="text-[13px]">
+                {props.jumpLabel ??
+                  compactSidebarTimeLabel(
+                    formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.updatedAt),
+                  )}
+              </span>
             </span>
             {!props.settlementSupported ? null : variantAction === "unsettle" ? (
               <button
@@ -598,6 +597,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : null}
             </span>
           </div>
+          {status === "failed" && thread.session?.lastError ? (
+            <div
+              className="mt-0.5 min-w-0 truncate text-[10px] text-red-600/75 dark:text-red-400/70"
+              title={thread.session.lastError}
+            >
+              {thread.session.lastError}
+            </div>
+          ) : null}
         </div>
       </div>
     </li>
@@ -1363,9 +1370,11 @@ export default function SidebarV2() {
   }, [newThreadTargetProject, projects]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
-  const newThreadShortcutLabel = isElectron
-    ? shortcutLabelForCommand(keybindings, "chat.new")
-    : null;
+  // Same resolution as v1: prefer the local-thread binding, fall back to
+  // chat.new, no platform gating — web users have working shortcuts too.
+  const newThreadShortcutLabel =
+    shortcutLabelForCommand(keybindings, "chat.newLocal") ??
+    shortcutLabelForCommand(keybindings, "chat.new");
   const projectScrollerRef = useRef<HTMLDivElement>(null);
   const [canScrollProjectsRight, setCanScrollProjectsRight] = useState(false);
   const updateProjectScrollFade = useCallback(() => {

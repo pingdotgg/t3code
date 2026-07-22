@@ -497,6 +497,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --muted-foreground: #a3a3a3;
   --border: rgb(255 255 255 / 14%);
   --input: rgb(255 255 255 / 18%);
+  /* The stage-channel header art must ramp to THIS panel's surface, not the
+     global chrome background, or the fade shows a seam (same rule as the
+     light palette above). */
+  --sidebar-stage-fade: var(--card);
 }
 
 body {
