@@ -446,8 +446,10 @@ export const make = Effect.gen(function* () {
       webPreferences.contextIsolation = false;
     });
 
+    let contextMenuRequestVersion = 0;
     window.webContents.on("context-menu", (event, params) => {
       event.preventDefault();
+      const requestVersion = ++contextMenuRequestVersion;
 
       void runPromise(
         Effect.gen(function* () {
@@ -461,10 +463,16 @@ export const make = Effect.gen(function* () {
               params.dictionarySuggestions.length > 0
                 ? params.dictionarySuggestions
                 : yield* electronSpelling.platformSuggestionsFor(params.misspelledWord);
+            if (requestVersion !== contextMenuRequestVersion) {
+              return;
+            }
             for (const suggestion of suggestions.slice(0, 5)) {
               menuTemplate.push({
                 label: suggestion,
                 click: () => {
+                  if (requestVersion !== contextMenuRequestVersion) {
+                    return;
+                  }
                   window.webContents.replaceMisspelling(suggestion);
                   window.webContents.focus();
                 },

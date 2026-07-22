@@ -523,6 +523,77 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("only opens the newest spelling menu when platform lookups overlap", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const firstSuggestions = yield* Deferred.make<ReadonlyArray<string>>();
+      const secondSuggestions = yield* Deferred.make<ReadonlyArray<string>>();
+      const firstLookupCompleted = yield* Deferred.make<void>();
+      const popupShown = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const platformSuggestionsFor = vi.fn((word: string) => {
+        if (word === "firstt") {
+          return Deferred.await(firstSuggestions).pipe(
+            Effect.tap(() => Deferred.succeed(firstLookupCompleted, undefined)),
+          );
+        }
+        return Deferred.await(secondSuggestions);
+      });
+      const popupTemplate = vi.fn((input: ElectronMenu.ElectronMenuTemplateInput) =>
+        Deferred.succeed(popupShown, input).pipe(Effect.asVoid),
+      );
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        electronMenu: {
+          setApplicationMenu: () => Effect.void,
+          popupTemplate,
+          showContextMenu: () => Effect.succeed(Option.none()),
+        },
+        electronSpelling: { platformSuggestionsFor },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        assert.isDefined(contextMenu);
+        const contextMenuParams = (misspelledWord: string) =>
+          ({
+            misspelledWord,
+            dictionarySuggestions: [],
+            linkURL: "",
+            mediaType: "none",
+            editFlags: {
+              canUndo: false,
+              canRedo: false,
+              canCut: true,
+              canCopy: true,
+              canPaste: true,
+              canDelete: false,
+              canSelectAll: true,
+              canEditRichly: false,
+            },
+          }) satisfies Partial<Electron.ContextMenuParams>;
+
+        contextMenu({ preventDefault: vi.fn() }, contextMenuParams("firstt"));
+        contextMenu({ preventDefault: vi.fn() }, contextMenuParams("secondd"));
+
+        yield* Deferred.succeed(secondSuggestions, ["second"]);
+        const popupInput = yield* Deferred.await(popupShown);
+        assert.equal(popupInput.template[0]?.label, "second");
+        assert.equal(popupTemplate.mock.calls.length, 1);
+
+        yield* Deferred.succeed(firstSuggestions, ["first"]);
+        yield* Deferred.await(firstLookupCompleted);
+        assert.equal(popupTemplate.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("uses the persisted main window bounds when opening the window", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
