@@ -55,6 +55,7 @@ import type {
   AcpSessionRuntimeStartResult,
 } from "../../provider/acp/AcpSessionRuntime.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { t3OrchestrationPromptForFirstRun } from "../../provider/T3OrchestrationInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -4227,8 +4228,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           turnInput: ProviderAdapterV2TurnInput,
         ) {
           const prompt: Array<EffectAcpSchema.ContentBlock> = [];
-          if (turnInput.message.text.length > 0) {
-            prompt.push({ type: "text", text: turnInput.message.text });
+          const text = t3OrchestrationPromptForFirstRun({
+            prompt: turnInput.message.text,
+            runOrdinal: turnInput.runOrdinal,
+            hasT3Mcp: acpMcpServers(turnInput.threadId).length > 0,
+          });
+          if (text.length > 0) {
+            prompt.push({ type: "text", text });
           }
           if (turnInput.message.attachments.length > 0 && !supportsImagePrompts) {
             return yield* new ProviderAdapterProtocolError({

@@ -18,21 +18,42 @@ import {
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 /** 24-hour "HH:MM" wall-clock time. Mirrors `parseTimeOfDay` on the server. */
-const TimeOfDay = TrimmedNonEmptyString.check(Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/));
+const TimeOfDay = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
+).annotate({ description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30." });
 
 export const ScheduledTaskSchedule = Schema.Union([
   Schema.Struct({
-    type: Schema.Literal("interval"),
-    everyMs: PositiveInt,
+    type: Schema.Literal("interval").annotate({
+      description: "Select interval scheduling.",
+    }),
+    everyMs: PositiveInt.annotate({
+      description: "Positive interval in milliseconds; 3600000 means every hour.",
+    }),
+  }).annotate({
+    description: "Run repeatedly after a fixed number of milliseconds.",
   }),
   Schema.Struct({
-    type: Schema.Literal("fixed_time"),
+    type: Schema.Literal("fixed_time").annotate({
+      description: "Select a fixed local wall-clock time.",
+    }),
     timeOfDay: TimeOfDay,
     weekdays: Schema.optional(
-      Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 }))),
+      Schema.Array(
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
+          description: "Weekday number where 0 is Sunday and 6 is Saturday.",
+        }),
+      ).annotate({
+        description: "Optional weekdays; omit to run every day.",
+      }),
     ),
+  }).annotate({
+    description: "Run at a fixed local wall-clock time on selected weekdays.",
   }),
-]);
+]).annotate({
+  description:
+    "Structured recurring schedule. Pass an object with type 'interval' or 'fixed_time'.",
+});
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
 export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
