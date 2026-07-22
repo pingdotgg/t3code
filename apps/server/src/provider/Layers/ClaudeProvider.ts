@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ServerProviderModel,
+  type ServerProviderReauthentication,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -37,7 +38,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeEnvironment, resolveClaudeHomePath } from "../Drivers/ClaudeHome.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -394,6 +395,90 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
   }
 }
 
+const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
+
+const FALSY_ENV_FLAG_VALUES = new Set(["", "0", "false", "no", "off", "n"]);
+
+function isTruthyEnvFlag(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === undefined) return false;
+  return !FALSY_ENV_FLAG_VALUES.has(normalized);
+}
+
+/**
+ * Whether `claude setup-token` (interactive first-party OAuth login) is a valid
+ * recovery for this instance's credentials.
+ *
+ * OAuth login only applies to first-party Anthropic auth. When the instance is
+ * configured for a non-OAuth backend, `setup-token` cannot fix a credential
+ * failure and offering it would be misleading, so we skip the re-authenticate
+ * action entirely. Detected from the resolved instance environment (the same
+ * env Claude Code itself reads to select a backend):
+ *   - AWS Bedrock (`CLAUDE_CODE_USE_BEDROCK`) or Google Vertex
+ *     (`CLAUDE_CODE_USE_VERTEX`) — credentials come from AWS/GCP, not OAuth.
+ *   - An explicit API key (`ANTHROPIC_API_KEY`) or auth token
+ *     (`ANTHROPIC_AUTH_TOKEN`, e.g. OpenRouter / gateways) — the fix is to
+ *     correct that key/token, not to run an OAuth login.
+ * The default (none of these set) is first-party OAuth, so the action is shown.
+ */
+function claudeUsesOAuthLogin(environment: NodeJS.ProcessEnv): boolean {
+  if (isTruthyEnvFlag(environment.CLAUDE_CODE_USE_BEDROCK)) return false;
+  if (isTruthyEnvFlag(environment.CLAUDE_CODE_USE_VERTEX)) return false;
+  if (nonEmptyProbeString(environment.ANTHROPIC_API_KEY ?? "")) return false;
+  if (nonEmptyProbeString(environment.ANTHROPIC_AUTH_TOKEN ?? "")) return false;
+  return true;
+}
+
+/**
+ * Build the in-app re-authentication descriptor for a Claude provider
+ * instance, or `undefined` when OAuth re-authentication does not apply (see
+ * {@link claudeUsesOAuthLogin} — Bedrock/Vertex/API-key/auth-token instances).
+ *
+ * Runs `claude setup-token`, which performs the interactive OAuth login
+ * (prints a URL, then accepts the pasted authorization code) and stores a
+ * fresh long-lived token. Surfacing this to the client lets users recover
+ * from an expired Claude OAuth access token — e.g. a
+ * `401 OAuth access token has expired` turn failure — from within T3 Code's
+ * integrated terminal instead of dropping to an external shell.
+ *
+ * The configured `binaryPath` is preserved so custom Claude installs
+ * re-authenticate the same binary they run, and `CLAUDE_CONFIG_DIR` is
+ * propagated so `setup-token` refreshes the credentials of that exact instance
+ * rather than the default config dir. The dir is resolved with the same
+ * precedence {@link makeClaudeEnvironment} uses: a custom `homePath` wins;
+ * otherwise a `CLAUDE_CONFIG_DIR` supplied via the instance's own environment
+ * is honored.
+ *
+ * `command` is a plain space-join intended for the common case (`claude` on
+ * PATH, or a path without spaces) and to stay portable across the integrated
+ * terminal's shell — deliberately NOT shell-quoted, since no single quoting
+ * scheme is correct for bash/zsh (`~` expansion), `cmd.exe` (literal single
+ * quotes), and POSIX paths with spaces at once. Callers that need exact argv
+ * (e.g. spawning directly rather than pasting into a shell) should use
+ * `executable` + `args`.
+ */
+export const resolveClaudeReauthentication = Effect.fn("resolveClaudeReauthentication")(function* (
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ServerProviderReauthentication | undefined, never, Path.Path> {
+  if (!claudeUsesOAuthLogin(environment)) return undefined;
+  const executable = claudeSettings.binaryPath?.trim() || "claude";
+  const args = [...CLAUDE_REAUTHENTICATION_ARGS];
+  const command = [executable, ...args].join(" ");
+  const configDir =
+    claudeSettings.homePath.trim().length > 0
+      ? yield* resolveClaudeHomePath(claudeSettings)
+      : nonEmptyProbeString(environment.CLAUDE_CONFIG_DIR ?? "");
+  const env = configDir ? { CLAUDE_CONFIG_DIR: configDir } : undefined;
+  return {
+    command,
+    executable,
+    args,
+    label: "Re-authenticate Claude",
+    ...(env ? { env } : {}),
+  } satisfies ServerProviderReauthentication;
+});
+
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -703,6 +788,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const reauthentication = yield* resolveClaudeReauthentication(
+    claudeSettings,
+    resolvedEnvironment,
+  );
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
     claudeSettings.customModels,
@@ -741,6 +830,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
+      // Offer in-app re-auth only when the binary is actually present — a
+      // missing CLI can't be re-authenticated, but an installed one that
+      // failed its health check still might be (e.g. expired credentials).
+      ...(isCommandMissingCause(error) ? {} : { reauthentication }),
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -759,6 +852,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
+      reauthentication,
       probe: {
         installed: true,
         version: null,
@@ -783,6 +877,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
+      reauthentication,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -819,6 +914,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       checkedAt,
       models,
       slashCommands: dedupedSlashCommands,
+      reauthentication,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -840,6 +936,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     checkedAt,
     models,
     slashCommands: dedupedSlashCommands,
+    reauthentication,
     probe: {
       installed: true,
       version: parsedVersion,
@@ -858,7 +955,8 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
-): Effect.Effect<ServerProviderDraft> =>
+  environment?: NodeJS.ProcessEnv,
+): Effect.Effect<ServerProviderDraft, never, Path.Path> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
@@ -883,11 +981,19 @@ export const makePendingClaudeProvider = (
       });
     }
 
+    // Expose re-authentication even on the pre-probe snapshot so a turn that
+    // fails with an auth error before the first status check completes can
+    // still offer the in-app recovery action.
+    const reauthentication = yield* resolveClaudeReauthentication(
+      claudeSettings,
+      environment ?? process.env,
+    );
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: true,
       checkedAt,
       models,
+      reauthentication,
       probe: {
         installed: false,
         version: null,
