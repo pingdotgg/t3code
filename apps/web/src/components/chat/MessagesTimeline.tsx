@@ -19,7 +19,10 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
+  type TouchEvent,
+  type WheelEvent,
 } from "react";
 import { flushSync } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -74,12 +77,18 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
+  resolveTimelineManualNavigationIsAtEnd,
+  resolveTimelineManualNavigationScrollTop,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
+  timelineScrollableNodeCanNavigateTowardHistory,
+  timelineManualNavigationMovedTowardHistory,
+  timelineManualNavigationReachedEnd,
+  timelineNavigationInputMovesTowardHistory,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -182,7 +191,11 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
-  onIsAtEndChange: (isAtEnd: boolean) => void;
+  autoFollowEnabled: boolean;
+  onIsAtEndChange: (change: {
+    readonly isAtEnd: boolean;
+    readonly manualNavigationReachedEnd: boolean;
+  }) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
 }
@@ -216,6 +229,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  autoFollowEnabled,
   onIsAtEndChange,
   onManualNavigation,
   hideEmptyPlaceholder = false,
@@ -329,6 +343,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     null,
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
+  const [navigationProbeTimelineKey, setNavigationProbeTimelineKey] = useState<string | null>(null);
+  const timelineTouchYRef = useRef<number | null>(null);
+  const manualNavigationRef = useRef<{
+    readonly timelineKey: string;
+    scrollTop: number | null;
+  } | null>(null);
+  const pointerNavigationRef = useRef<{
+    readonly pointerId: number;
+    readonly timelineKey: string;
+    scrollTop: number;
+  } | null>(null);
+  const navigationProbeRef = useRef<{
+    readonly timelineKey: string;
+    readonly initialScrollTop: number;
+  } | null>(null);
+  const navigationProbeFrameRef = useRef<number | null>(null);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
@@ -355,18 +385,127 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       : undefined;
   }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows]);
 
+  const markTimelineManualNavigation = useCallback(() => {
+    if (manualNavigationRef.current?.timelineKey !== routeThreadKey) {
+      const list = listRef.current;
+      const scrollTop = resolveTimelineManualNavigationScrollTop(
+        list?.getScrollableNode(),
+        list?.getState?.(),
+      );
+      manualNavigationRef.current = { timelineKey: routeThreadKey, scrollTop };
+    }
+    onManualNavigation();
+  }, [listRef, onManualNavigation, routeThreadKey]);
+
+  const finishTimelineNavigationProbe = useCallback(
+    (scrollNode: HTMLElement | null | undefined) => {
+      const probe = navigationProbeRef.current;
+      if (!probe || probe.timelineKey !== routeThreadKey) {
+        return;
+      }
+      navigationProbeRef.current = null;
+      setNavigationProbeTimelineKey((timelineKey) =>
+        timelineKey === routeThreadKey ? null : timelineKey,
+      );
+      if (
+        scrollNode &&
+        timelineManualNavigationMovedTowardHistory({
+          initialScrollTop: probe.initialScrollTop,
+          scrollTop: scrollNode.scrollTop,
+        })
+      ) {
+        markTimelineManualNavigation();
+      }
+    },
+    [markTimelineManualNavigation, routeThreadKey],
+  );
+
+  const beginTimelineNavigationProbe = useCallback(
+    (scrollNode: HTMLElement) => {
+      if (navigationProbeRef.current?.timelineKey !== routeThreadKey) {
+        navigationProbeRef.current = {
+          timelineKey: routeThreadKey,
+          initialScrollTop: scrollNode.scrollTop,
+        };
+      }
+      if (navigationProbeFrameRef.current !== null) {
+        cancelAnimationFrame(navigationProbeFrameRef.current);
+      }
+      flushSync(() => setNavigationProbeTimelineKey(routeThreadKey));
+      navigationProbeFrameRef.current = requestAnimationFrame(() => {
+        navigationProbeFrameRef.current = null;
+        finishTimelineNavigationProbe(listRef.current?.getScrollableNode());
+      });
+    },
+    [finishTimelineNavigationProbe, listRef, routeThreadKey],
+  );
+
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
-    const isAtEnd = resolveTimelineIsAtEnd(state);
+    const scrollNode = listRef.current?.getScrollableNode();
+    const scrollTop = resolveTimelineManualNavigationScrollTop(scrollNode, state);
+    if (manualNavigationRef.current?.timelineKey !== routeThreadKey) {
+      manualNavigationRef.current = null;
+    }
+    if (pointerNavigationRef.current?.timelineKey !== routeThreadKey) {
+      pointerNavigationRef.current = null;
+    }
+    if (navigationProbeRef.current?.timelineKey !== routeThreadKey) {
+      navigationProbeRef.current = null;
+    }
+    const navigationProbe = navigationProbeRef.current;
+    if (
+      navigationProbe &&
+      scrollNode &&
+      timelineManualNavigationMovedTowardHistory({
+        initialScrollTop: navigationProbe.initialScrollTop,
+        scrollTop: scrollNode.scrollTop,
+      })
+    ) {
+      if (navigationProbeFrameRef.current !== null) {
+        cancelAnimationFrame(navigationProbeFrameRef.current);
+        navigationProbeFrameRef.current = null;
+      }
+      finishTimelineNavigationProbe(scrollNode);
+    }
+    const pointerNavigation = pointerNavigationRef.current;
+    if (pointerNavigation && scrollTop !== null && scrollTop < pointerNavigation.scrollTop) {
+      markTimelineManualNavigation();
+    }
+    if (pointerNavigation && scrollTop !== null) {
+      pointerNavigation.scrollTop = scrollTop;
+    }
+    const manualNavigation = manualNavigationRef.current;
+    const scrollNodeIsAtEnd = resolveTimelineManualNavigationIsAtEnd(state, scrollNode);
+    const manualNavigationReachedEnd = Boolean(
+      manualNavigation &&
+      manualNavigation.scrollTop !== null &&
+      scrollTop !== null &&
+      timelineManualNavigationReachedEnd({
+        previousScrollTop: manualNavigation.scrollTop,
+        scrollTop,
+        isAtEnd: scrollNodeIsAtEnd,
+      }),
+    );
+    const isAtEnd =
+      manualNavigation && scrollTop !== null
+        ? manualNavigationReachedEnd
+        : resolveTimelineIsAtEnd(state);
+    if (manualNavigation && scrollTop !== null) {
+      manualNavigation.scrollTop = scrollTop;
+      if (isAtEnd) {
+        manualNavigationRef.current = null;
+      }
+    }
     if (isAtEnd !== undefined) {
-      onIsAtEndChange(isAtEnd);
+      onIsAtEndChange({ isAtEnd, manualNavigationReachedEnd });
     }
     if (!state || minimapItems.length === 0) {
       return;
     }
 
-    const scrollTop = state.scroll ?? 0;
-    const scrollBottom = scrollTop + (state.scrollLength ?? 0);
+    const resolvedScrollTop = state?.scroll ?? 0;
+    const scrollBottom = resolvedScrollTop + (state.scrollLength ?? 0);
 
     for (const item of minimapItems) {
       const strip = minimapStripMap.get(item.id);
@@ -379,11 +518,145 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const inView =
         rowTop !== null &&
         rowTop < scrollBottom &&
-        rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
+        rowTop + Math.max(1, rowHeight ?? 1) > resolvedScrollTop;
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+  }, [
+    listRef,
+    finishTimelineNavigationProbe,
+    markTimelineManualNavigation,
+    minimapItems,
+    minimapStripMap,
+    onIsAtEndChange,
+    routeThreadKey,
+  ]);
+
+  const handleTimelineWheelCapture = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      const scrollNode = listRef.current?.getScrollableNode();
+      if (
+        timelineNavigationInputMovesTowardHistory({ type: "wheel", deltaY: event.deltaY }) &&
+        scrollNode &&
+        timelineScrollableNodeCanNavigateTowardHistory(scrollNode)
+      ) {
+        beginTimelineNavigationProbe(scrollNode);
+      }
+    },
+    [beginTimelineNavigationProbe, listRef],
+  );
+  const handleTimelineTouchStartCapture = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    timelineTouchYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
+  const handleTimelineTouchMoveCapture = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      const currentY = event.touches[0]?.clientY ?? null;
+      const scrollNode = listRef.current?.getScrollableNode();
+      if (
+        timelineNavigationInputMovesTowardHistory({
+          type: "touch",
+          previousY: timelineTouchYRef.current,
+          currentY,
+        }) &&
+        scrollNode &&
+        timelineScrollableNodeCanNavigateTowardHistory(scrollNode)
+      ) {
+        beginTimelineNavigationProbe(scrollNode);
+      }
+      timelineTouchYRef.current = currentY;
+    },
+    [beginTimelineNavigationProbe, listRef],
+  );
+  const resetTimelineTouchTracking = useCallback(() => {
+    timelineTouchYRef.current = null;
+  }, []);
+  const handleTimelineKeyDownCapture = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (
+        !timelineNavigationInputMovesTowardHistory({
+          type: "keyboard",
+          key: event.key,
+          shiftKey: event.shiftKey,
+        })
+      ) {
+        return;
+      }
+      const scrollNode = listRef.current?.getScrollableNode();
+      if (!scrollNode || !timelineScrollableNodeCanNavigateTowardHistory(scrollNode)) {
+        return;
+      }
+      beginTimelineNavigationProbe(scrollNode);
+    },
+    [beginTimelineNavigationProbe, listRef],
+  );
+  const handleTimelinePointerDownCapture = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const scrollNode = listRef.current?.getScrollableNode();
+      if (!scrollNode || event.target !== scrollNode) {
+        return;
+      }
+      const scrollbarWidth = scrollNode.offsetWidth - scrollNode.clientWidth;
+      if (
+        scrollbarWidth > 0 &&
+        event.clientX < scrollNode.getBoundingClientRect().right - scrollbarWidth
+      ) {
+        return;
+      }
+      pointerNavigationRef.current = {
+        pointerId: event.pointerId,
+        timelineKey: routeThreadKey,
+        scrollTop: scrollNode.scrollTop,
+      };
+    },
+    [listRef, routeThreadKey],
+  );
+  const handleTimelineMinimapSelect = useCallback(
+    (item: TimelineMinimapItem) => {
+      flushSync(() => setNavigationProbeTimelineKey(routeThreadKey));
+      markTimelineManualNavigation();
+      void listRef.current?.scrollToIndex({
+        index: item.rowIndex,
+        animated: true,
+        viewOffset: 24,
+      });
+      setNavigationProbeTimelineKey((timelineKey) =>
+        timelineKey === routeThreadKey ? null : timelineKey,
+      );
+    },
+    [listRef, markTimelineManualNavigation, routeThreadKey],
+  );
+  useEffect(() => {
+    if (autoFollowEnabled) {
+      manualNavigationRef.current = null;
+    }
+    pointerNavigationRef.current = null;
+    navigationProbeRef.current = null;
+    if (navigationProbeFrameRef.current !== null) {
+      cancelAnimationFrame(navigationProbeFrameRef.current);
+      navigationProbeFrameRef.current = null;
+    }
+    setNavigationProbeTimelineKey(null);
+    return () => {
+      if (navigationProbeFrameRef.current !== null) {
+        cancelAnimationFrame(navigationProbeFrameRef.current);
+        navigationProbeFrameRef.current = null;
+      }
+    };
+  }, [autoFollowEnabled, routeThreadKey]);
+
+  useEffect(() => {
+    const resetTimelinePointerTracking = (event: globalThis.PointerEvent) => {
+      if (pointerNavigationRef.current?.pointerId === event.pointerId) {
+        pointerNavigationRef.current = null;
+      }
+    };
+    window.addEventListener("pointercancel", resetTimelinePointerTracking, true);
+    window.addEventListener("pointerup", resetTimelinePointerTracking, true);
+    return () => {
+      window.removeEventListener("pointercancel", resetTimelinePointerTracking, true);
+      window.removeEventListener("pointerup", resetTimelinePointerTracking, true);
+    };
+  }, []);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -482,7 +755,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+        <div
+          ref={setTimelineViewportElement}
+          className="relative h-full min-h-0"
+          onKeyDownCapture={handleTimelineKeyDownCapture}
+          onPointerDownCapture={handleTimelinePointerDownCapture}
+          onTouchCancelCapture={resetTimelineTouchTracking}
+          onTouchEndCapture={resetTimelineTouchTracking}
+          onTouchMoveCapture={handleTimelineTouchMoveCapture}
+          onTouchStartCapture={handleTimelineTouchStartCapture}
+          onWheelCapture={handleTimelineWheelCapture}
+        >
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
@@ -494,7 +777,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
             maintainScrollAtEnd={
-              anchoredEndSpace
+              anchoredEndSpace ||
+              !autoFollowEnabled ||
+              navigationProbeTimelineKey === routeThreadKey
                 ? false
                 : {
                     animated: false,
@@ -520,14 +805,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             hasPersistentGutter={minimapHasPersistentGutter}
             hitStripWidth={minimapHitStripWidth}
             stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
+            onSelect={handleTimelineMinimapSelect}
           />
         </div>
       </TimelineRowActivityCtx>

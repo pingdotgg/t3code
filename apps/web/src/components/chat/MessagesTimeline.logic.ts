@@ -16,13 +16,101 @@ export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
+export type TimelineNavigationInput =
+  | { readonly type: "wheel"; readonly deltaY: number }
+  | { readonly type: "touch"; readonly previousY: number | null; readonly currentY: number | null }
+  | { readonly type: "keyboard"; readonly key: string; readonly shiftKey: boolean };
+
+export function timelineNavigationInputMovesTowardHistory(input: TimelineNavigationInput) {
+  switch (input.type) {
+    case "wheel":
+      return input.deltaY < 0;
+    case "touch":
+      return (
+        input.previousY !== null && input.currentY !== null && input.currentY > input.previousY
+      );
+    case "keyboard":
+      return (
+        input.key === "ArrowUp" ||
+        input.key === "PageUp" ||
+        input.key === "Home" ||
+        (input.key === " " && input.shiftKey)
+      );
+  }
+}
+
+export interface TimelineScrollableNodeState {
+  readonly clientHeight: number;
+  readonly scrollHeight: number;
+  readonly scrollTop: number;
+}
+
+export interface TimelineScrollOffsetState {
+  readonly scroll?: number;
+}
+
+export function resolveTimelineManualNavigationScrollTop(
+  scrollNode: Pick<TimelineScrollableNodeState, "scrollTop"> | null | undefined,
+  state: TimelineScrollOffsetState | null | undefined,
+): number | null {
+  const scrollTop = scrollNode?.scrollTop ?? state?.scroll;
+  return typeof scrollTop === "number" && Number.isFinite(scrollTop) ? scrollTop : null;
+}
+
+export function timelineScrollableNodeCanNavigateTowardHistory(
+  scrollNode: TimelineScrollableNodeState | null | undefined,
+): boolean {
+  return Boolean(
+    scrollNode && scrollNode.scrollHeight > scrollNode.clientHeight && scrollNode.scrollTop > 0,
+  );
+}
+
+export function resolveTimelineScrollableNodeIsAtEnd(
+  scrollNode: TimelineScrollableNodeState | null | undefined,
+): boolean | undefined {
+  if (!scrollNode) {
+    return undefined;
+  }
+  return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight <= 1;
+}
+
+export function timelineManualNavigationMovedTowardHistory({
+  initialScrollTop,
+  scrollTop,
+}: {
+  readonly initialScrollTop: number;
+  readonly scrollTop: number;
+}) {
+  return scrollTop < initialScrollTop;
+}
+
+export function timelineManualNavigationReachedEnd({
+  previousScrollTop,
+  scrollTop,
+  isAtEnd,
+}: {
+  readonly previousScrollTop: number;
+  readonly scrollTop: number;
+  readonly isAtEnd: boolean;
+}) {
+  return isAtEnd && scrollTop > previousScrollTop;
+}
+
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
   readonly isNearEnd?: boolean;
+  readonly isWithinMaintainScrollAtEndThreshold?: boolean;
 }
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
-  return state?.isNearEnd ?? state?.isAtEnd;
+  return state?.isWithinMaintainScrollAtEndThreshold ?? state?.isNearEnd ?? state?.isAtEnd;
+}
+
+export function resolveTimelineManualNavigationIsAtEnd(
+  state: TimelineEndState | undefined,
+  scrollNode: TimelineScrollableNodeState | null | undefined,
+): boolean {
+  return state?.isAtEnd ?? resolveTimelineScrollableNodeIsAtEnd(scrollNode) ?? false;
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {

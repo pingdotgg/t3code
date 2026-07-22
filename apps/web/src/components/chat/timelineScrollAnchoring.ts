@@ -1,5 +1,35 @@
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
+export function resolveTimelineAutoFollowEnabledForRoute({
+  autoFollowRouteKey,
+  routeKey,
+  autoFollowEnabled,
+}: {
+  readonly autoFollowRouteKey: string;
+  readonly routeKey: string;
+  readonly autoFollowEnabled: boolean;
+}): boolean {
+  return autoFollowRouteKey === routeKey ? autoFollowEnabled : true;
+}
+
+export function shouldResumeTimelineAutoFollow({
+  scrollMode,
+  isAtEnd,
+  manualNavigationReachedEnd,
+}: {
+  readonly scrollMode: TimelineScrollMode;
+  readonly isAtEnd: boolean;
+  readonly manualNavigationReachedEnd: boolean;
+}): boolean {
+  if (!isAtEnd) {
+    return false;
+  }
+  if (scrollMode === "following-end") {
+    return true;
+  }
+  return scrollMode === "free-scrolling" && manualNavigationReachedEnd;
+}
+
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
   readonly scroll: number;
