@@ -88,7 +88,6 @@ export function HomeListOptionsProvider({
 export function hasCustomHomeListOptions(
   options: HomeListOptions & {
     readonly selectedProjectKey?: string | null;
-    readonly projectGroupingMode?: SidebarProjectGroupingMode;
   },
 ): boolean {
   const defaultProjectSortOrder =
@@ -97,7 +96,6 @@ export function hasCustomHomeListOptions(
       : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER;
   return (
     options.selectedEnvironmentId !== null ||
-    (options.projectGroupingMode !== undefined && options.projectGroupingMode !== "repository") ||
     (options.selectedProjectKey !== null && options.selectedProjectKey !== undefined) ||
     options.projectSortOrder !== defaultProjectSortOrder ||
     options.threadSortOrder !== DEFAULT_SIDEBAR_THREAD_SORT_ORDER

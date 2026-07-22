@@ -24,7 +24,6 @@ describe("home list options", () => {
     expect(
       hasCustomHomeListOptions({ ...defaults, selectedEnvironmentId: "environment-1" as never }),
     ).toBe(true);
-    expect(hasCustomHomeListOptions({ ...defaults, projectGroupingMode: "separate" })).toBe(true);
     expect(
       hasCustomHomeListOptions({ ...defaults, selectedProjectKey: "environment-1:project-1" }),
     ).toBe(true);

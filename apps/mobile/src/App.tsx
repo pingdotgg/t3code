@@ -29,6 +29,10 @@ if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   prepareNativeShowcaseCapture();
 }
 
+void SplashScreen.preventAutoHideAsync().catch(() => {
+  // The native module can be unavailable in non-native test environments.
+});
+
 const appLinking = {
   prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
   // The Expo dev client launches the app via
