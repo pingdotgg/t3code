@@ -128,7 +128,7 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   {
-    shortcut: modShortcut("enter", { shiftKey: true }),
+    shortcut: modShortcut("x", { shiftKey: true }),
     command: "thread.settle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
@@ -155,24 +155,21 @@ const DEFAULT_BINDINGS = compile([
 ]);
 
 describe("thread settle shortcut", () => {
-  it("resolves Mod+Shift+Enter outside the terminal", () => {
+  it("resolves Mod+Shift+X outside the terminal", () => {
     assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "Enter", metaKey: true, shiftKey: true }),
-        DEFAULT_BINDINGS,
-        { platform: "MacIntel" },
-      ),
+      resolveShortcutCommand(event({ key: "x", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
       "thread.settle",
     );
   });
 
   it("does not resolve while the terminal owns focus", () => {
     assert.isNull(
-      resolveShortcutCommand(
-        event({ key: "Enter", ctrlKey: true, shiftKey: true }),
-        DEFAULT_BINDINGS,
-        { platform: "Linux", context: { terminalFocus: true } },
-      ),
+      resolveShortcutCommand(event({ key: "x", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
     );
   });
 

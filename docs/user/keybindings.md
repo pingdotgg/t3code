@@ -34,7 +34,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
   { "key": "mod+o", "command": "editor.openFavorite" },
-  { "key": "mod+shift+enter", "command": "thread.settle", "when": "!terminalFocus" }
+  { "key": "mod+shift+x", "command": "thread.settle", "when": "!terminalFocus" }
 ]
 ```
 
