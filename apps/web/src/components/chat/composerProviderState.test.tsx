@@ -114,6 +114,11 @@ describe("toggleCompactControlsMenuForShortcut", () => {
     expect(toggleCompactControlsMenuForShortcut("model-options", "model-options")).toBeNull();
     expect(toggleCompactControlsMenuForShortcut("runtime-mode", "runtime-mode")).toBeNull();
   });
+
+  it("closes a menu that was opened directly", () => {
+    expect(toggleCompactControlsMenuForShortcut("direct", "model-options")).toBeNull();
+    expect(toggleCompactControlsMenuForShortcut("direct", "runtime-mode")).toBeNull();
+  });
 });
 
 describe("getComposerProviderState", () => {

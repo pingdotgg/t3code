@@ -48,7 +48,9 @@ export function toggleCompactControlsMenuForShortcut(
   current: CompactControlsMenuOpenSource | null,
   source: Exclude<CompactControlsMenuOpenSource, "direct">,
 ): CompactControlsMenuOpenSource | null {
-  return current === source ? null : source;
+  if (current === null) return source;
+  if (current === "direct" || current === source) return null;
+  return source;
 }
 
 export function resolveModelOptionsShortcutTarget(input: {
