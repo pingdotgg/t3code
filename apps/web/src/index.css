@@ -107,6 +107,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @theme inline {
+  --color-zinc-25: oklch(99.2% 0 0);
   --animate-skeleton: skeleton 2s -1s infinite linear;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */
@@ -143,6 +144,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-surface-raised: var(--surface-raised);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-control-surface: var(--sidebar-control-surface);
+  --color-sidebar-row-hover: var(--sidebar-row-hover);
+  --color-sidebar-row-active: var(--sidebar-row-active);
+  --color-sidebar-row-selected: var(--sidebar-row-selected);
+  --color-sidebar-border: var(--sidebar-border);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -313,7 +323,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-glass {
-    background: color-mix(in srgb, var(--card) 20%, transparent);
+    background: var(--surface-raised);
   }
 
   /* Mix from --background (not --card): the lower chrome is a full-width
@@ -322,6 +332,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      blur, not the tint, carries the frosted effect. */
   .chat-composer-lower-chrome {
     background: color-mix(in srgb, var(--background) 20%, transparent);
+  }
+
+  /* The translucent lower chrome lets the composer's shadow taper naturally
+     into the message canvas. Above the terminal drawer that same shadow reads
+     as a dirty light-to-black gradient, so end the workspace on an opaque
+     surface and let the drawer's border define the boundary instead. */
+  .chat-composer-lower-chrome[data-terminal-open="true"] {
+    background: var(--background);
   }
 
   .chat-composer-glass {
@@ -336,17 +354,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dark .chat-composer-glass {
-    background: color-mix(in srgb, var(--card) 45%, transparent);
+    background: var(--surface-raised);
   }
 
   .dark .chat-composer-lower-chrome {
     background: color-mix(in srgb, var(--background) 45%, transparent);
   }
 
+  .dark .chat-composer-lower-chrome[data-terminal-open="true"] {
+    background: var(--background);
+  }
+
   .dark .chat-composer-glass {
-    box-shadow:
-      0 18px 48px -20px rgb(0 0 0 / 60%),
-      0 4px 14px -7px rgb(0 0 0 / 40%);
+    box-shadow: none;
   }
 
   .chat-composer-lower-chrome {
@@ -410,24 +430,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root {
   color-scheme: light;
   --radius: 0.625rem;
-  --background: var(--color-white);
+  --background: var(--color-zinc-25);
   --app-chrome-background: var(--background);
-  --foreground: var(--color-neutral-800);
+  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
+  --foreground: var(--color-zinc-800);
   --card: var(--color-white);
-  --card-foreground: var(--color-neutral-800);
+  --card-foreground: var(--color-zinc-800);
   --popover: var(--color-white);
-  --popover-foreground: var(--color-neutral-800);
+  --popover-foreground: var(--color-zinc-800);
   --primary: oklch(0.488 0.217 264);
   --primary-foreground: var(--color-white);
-  --secondary: --alpha(var(--color-black) / 4%);
-  --secondary-foreground: var(--color-neutral-800);
-  --muted: --alpha(var(--color-black) / 4%);
-  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
-  --accent: --alpha(var(--color-black) / 4%);
-  --accent-foreground: var(--color-neutral-800);
+  --secondary: var(--color-zinc-50);
+  --secondary-foreground: var(--color-zinc-800);
+  --muted: var(--color-zinc-50);
+  --muted-foreground: var(--color-zinc-500);
+  --accent: var(--color-zinc-100);
+  --accent-foreground: var(--color-zinc-900);
   --destructive: var(--color-red-500);
-  --border: --alpha(var(--color-black) / 8%);
-  --input: --alpha(var(--color-black) / 10%);
+  --border: var(--color-zinc-200);
+  --input: var(--color-zinc-300);
   --ring: oklch(0.488 0.217 264);
   --destructive-foreground: var(--color-red-700);
   --info: var(--color-blue-500);
@@ -436,24 +457,35 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  /* Fallbacks for standalone sidebar primitives. App sidebars override these
+     roles on their own root so the surface hierarchy stays out of page content. */
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--accent);
+  --sidebar-row-hover: var(--accent);
+  --sidebar-row-active: var(--accent);
+  --sidebar-row-selected: var(--muted);
+  --sidebar-border: var(--border);
 
   @variant dark {
     color-scheme: dark;
-    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+    --background: var(--color-zinc-950);
     --app-chrome-background: var(--background);
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
+    --surface-raised: color-mix(in srgb, var(--card) 45%, transparent);
+    --foreground: var(--color-zinc-100);
+    --card: var(--color-zinc-900);
+    --card-foreground: var(--color-zinc-100);
+    --popover: var(--color-zinc-900);
+    --popover-foreground: var(--color-zinc-100);
     --primary: oklch(0.588 0.217 264);
     --primary-foreground: var(--color-white);
-    --secondary: --alpha(var(--color-white) / 4%);
-    --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: --alpha(var(--color-white) / 4%);
-    --accent-foreground: var(--color-neutral-100);
+    --secondary: var(--color-zinc-900);
+    --secondary-foreground: var(--color-zinc-100);
+    --muted: var(--color-zinc-900);
+    --muted-foreground: var(--color-zinc-400);
+    --accent: var(--color-zinc-900);
+    --accent-foreground: var(--color-zinc-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
@@ -468,39 +500,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* Give the navigation rail its own cool graphite surface instead of borrowing
-   the workspace card color. The scoped semantic tokens keep sidebar v2's
-   controls in the same palette without changing v1 or the settings nav. */
-.app-sidebar {
-  --background: oklch(0.965 0.009 265);
-  --foreground: oklch(0.27 0.025 265);
-  --card: oklch(0.945 0.014 265);
-  --card-foreground: var(--foreground);
-  --accent: oklch(0.875 0.008 265);
-  --accent-foreground: oklch(0.24 0.012 265);
-  --muted: oklch(0.9 0.018 265);
-  --muted-foreground: oklch(0.49 0.03 265);
-  --border: oklch(0.72 0.025 265 / 28%);
-  --input: oklch(0.62 0.03 265 / 28%);
-  --sidebar-stage-fade: var(--card);
-  background-color: var(--card);
+[data-app-sidebar] {
+  --sidebar: var(--color-zinc-50);
+  --sidebar-foreground: var(--color-zinc-800);
+  --sidebar-muted-foreground: var(--color-zinc-500);
+  --sidebar-control-surface: var(--color-zinc-100);
+  --sidebar-row-hover: var(--color-zinc-25);
+  --sidebar-row-active: var(--color-white);
+  --sidebar-row-selected: var(--color-white);
+  --sidebar-border: var(--color-zinc-200);
+  --sidebar-stage-fade: var(--sidebar);
 }
 
-.dark .app-sidebar {
-  --background: #000;
-  --foreground: #f1f3f7;
-  --card: #000;
-  --card-foreground: var(--foreground);
-  --accent: #191a1d;
-  --accent-foreground: #f7f9ff;
-  --muted: #0a0a0a;
-  --muted-foreground: #a3a3a3;
-  --border: rgb(255 255 255 / 14%);
-  --input: rgb(255 255 255 / 18%);
-  /* The stage-channel header art must ramp to THIS panel's surface, not the
-     global chrome background, or the fade shows a seam (same rule as the
-     light palette above). */
-  --sidebar-stage-fade: var(--card);
+.dark [data-app-sidebar] {
+  --sidebar: var(--color-zinc-950);
+  --sidebar-foreground: var(--color-zinc-100);
+  --sidebar-muted-foreground: var(--color-zinc-400);
+  --sidebar-control-surface: var(--color-zinc-800);
+  --sidebar-row-hover: var(--color-zinc-900);
+  --sidebar-row-active: var(--color-zinc-900);
+  --sidebar-row-selected: var(--color-zinc-900);
+  --sidebar-border: var(--color-zinc-800);
 }
 
 body {

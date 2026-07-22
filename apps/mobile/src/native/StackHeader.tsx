@@ -142,6 +142,13 @@ function stabilizeOptionFunctions(
 
 export function NativeStackScreenOptions(props: {
   readonly options?: AppNativeStackNavigationOptions;
+  /**
+   * Causes dynamic native header factories to be reapplied when their closed-over
+   * menu content changes. Factory functions are intentionally stabilized, so
+   * their source alone cannot capture a menu that was initially empty while
+   * asynchronous data was loading.
+   */
+  readonly optionsVersion?: unknown;
   readonly listeners?: Record<string, (event: never) => void>;
   readonly name?: string;
 }) {
@@ -163,7 +170,7 @@ export function NativeStackScreenOptions(props: {
     if (!navigation || !stableOptions) {
       return;
     }
-    const signature = optionsSignature(stableOptions);
+    const signature = optionsSignature([stableOptions, props.optionsVersion]);
     // Avoid re-entering navigation state when semantically equal options are
     // reapplied every layout (common when callers pass unstable object literals).
     if (lastAppliedOptionsSignatureRef.current === signature) {
@@ -171,7 +178,7 @@ export function NativeStackScreenOptions(props: {
     }
     lastAppliedOptionsSignatureRef.current = signature;
     navigation.setOptions(stableOptions);
-  }, [navigation, stableOptions]);
+  }, [navigation, props.optionsVersion, stableOptions]);
 
   useEffect(() => {
     if (!navigation || !props.listeners) {

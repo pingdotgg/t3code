@@ -5470,6 +5470,7 @@ function ChatViewContent(props: ChatViewProps) {
                       )}
                     >
                       <div
+                        data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                         className={cn(
                           "chat-composer-lower-chrome relative z-10",
                           isGitRepo
