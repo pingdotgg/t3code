@@ -163,6 +163,31 @@ describe("effectiveSettled", () => {
     ).toBe(true);
   });
 
+  it("does not re-settle a warm thread on the merge signal: a message sent in a settled thread keeps it active until idle", () => {
+    // The merge signal never clears, so without the idle guard a follow-up
+    // message would un-settle the row only until its turn completed, then
+    // snap straight back into the settled tail.
+    const justActive = makeShell({ activityAt: "2026-04-09T23:30:00.000Z" });
+    const idle = makeShell({ activityAt: "2026-04-09T22:59:59.999Z" });
+
+    for (const changeRequestState of ["merged", "closed"] as const) {
+      expect(
+        effectiveSettled(justActive, {
+          now: NOW,
+          autoSettleAfterDays: null,
+          changeRequestState,
+        }),
+      ).toBe(false);
+      expect(
+        effectiveSettled(idle, {
+          now: NOW,
+          autoSettleAfterDays: null,
+          changeRequestState,
+        }),
+      ).toBe(true);
+    }
+  });
+
   it("never settles a starting session, even with a settled override", () => {
     const shell = makeShell({
       settledOverride: "settled",
