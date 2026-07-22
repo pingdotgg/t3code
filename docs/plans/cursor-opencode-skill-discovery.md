@@ -1,9 +1,15 @@
 # Cursor + OpenCode Skill Discovery — Development Plan
 
-> **Status:** Ready for Solo execution (project `t3code`, `project_id: 5`)  
-> **Do not implement from this chat unless a Solo agent is spawned with an explicit phase prompt.**  
-> **Nested Task model allowlist:** only `composer-2.5-fast` or `cursor-grok-4.5-high-fast` (always set explicitly).  
-> **Solo agents:** **Cursor only** (`agent_tool_id: 8`). Do not spawn Claude / OpenCode / Codex Solo agents for this work.
+> **Status (2026-07-22):** **Phase 1 Cursor FS list + apply — DONE** on `feat/cursor-fs-skill-discovery` (tip `82c445ede`).  
+> Snapshot `$` skills from `.cursor/skills` + `~/.cursor/skills`; send-path injects matched SKILL.md bodies under Cursor ACP. Hardened (symlink containment, `$` mention boundary, 64KiB body cap).
+>
+> **Residuals (not blocking ship):**
+>
+> - **Per-thread / per-worktree `$` menu** — provider snapshot remains process-wide (`ServerConfig.cwd`); send-apply already merges session cwd + server cwd so listed skills still inject when roots diverge. True per-thread menu listing is a follow-up.
+> - **OpenCode `$`** — deferred until human unblocks.
+> - **Cursor ACP `/` (slashCommands)** — deferred follow-up after FS `$`.
+>
+> Nested Task model allowlist: only `composer-2.5-fast` or `cursor-grok-4.5-high-fast`. Solo agents: **Cursor only** (`agent_tool_id: 8`).
 
 ---
 
@@ -195,12 +201,14 @@ Plain language:
 
 **Acceptance criteria**
 
-- [ ] With fixture skills on disk, Cursor snapshot `skills` non-empty.
-- [ ] Composer `$` search returns those skills (web; mobile inherits snapshot).
-- [ ] **Send-path:** Selecting a listed Cursor skill and submitting applies/uses the skill usefully (or the PR documents a verified Cursor-native mechanism that makes the inserted token work). Listing alone is not enough for Phase 1 done.
-- [ ] No regression to Cursor model discovery / ACP model picker.
-- [ ] `slashCommands` still empty unless a tiny incidental change is required for the send-path fix.
-- [ ] `:typecheck` + Cursor discovery unit tests green.
+- [x] With fixture skills on disk, Cursor snapshot `skills` non-empty.
+- [x] Composer `$` search returns those skills (web; mobile inherits snapshot).
+- [x] **Send-path:** Selecting a listed Cursor skill and submitting applies/uses the skill usefully (or the PR documents a verified Cursor-native mechanism that makes the inserted token work). Listing alone is not enough for Phase 1 done.
+- [x] No regression to Cursor model discovery / ACP model picker.
+- [x] `slashCommands` still empty unless a tiny incidental change is required for the send-path fix.
+- [x] `:typecheck` + Cursor discovery unit tests green.
+
+**Shipped (Phase 1 DONE):** discover + apply (`7173f10a3`), ServerConfig.cwd listing (`95e17c1c7`), send-apply merge session+server cwd (`44c3e9ad4`), P1/P2/P3 harden (`82c445ede`).
 
 **Estimated file touch list**
 
@@ -529,12 +537,13 @@ Resolved and removed from this section: Cursor-first priority; FS before ACP; So
 
 ### Still open
 
-1. **Cursor skill roots:** Exact on-disk layouts to scan (project `.cursor/skills`, user `~/.cursor/skills`, any agents-compatible roots Cursor actually reads). Confirm during Phase 1a — don’t invent paths.
-2. **Cursor insert token if `$name` is inert:** Smallest fix — provider-aware `/name` insert, other Cursor-honored form, or (last resort) content injection on send?
-3. **OpenCode CLI skills (when unblocked):** Stable CLI command vs FS fallback for local mode?
-4. **Project-scoped skills:** Wait for Phase 5, or require cwd correctness inside Phase 1?
+1. ~~**Cursor skill roots**~~ — **Resolved:** project `.cursor/skills`, user `~/.cursor/skills` (not `skills-cursor` built-ins).
+2. ~~**Cursor insert token if `$name` is inert**~~ — **Resolved:** keep `$name` insert UX; inject SKILL.md body on send (see §10).
+3. **OpenCode CLI skills (when unblocked):** Stable CLI command vs FS fallback for local mode? _(deferred)_
+4. ~~**Project-scoped skills / cwd**~~ — **Partially resolved:** listing uses `ServerConfig.cwd`; send-apply merges session cwd + server cwd. **Residual:** per-thread `$` menu still process-wide.
 5. **Presentation:** `scope` / install badges for Cursor in the web skill picker (Codex has presentation heuristics)?
 6. **Staleness:** Cache TTL / re-probe when user adds a skill while the app is running?
+7. **Cursor ACP `/`:** still deferred (Phase 3).
 
 ---
 
