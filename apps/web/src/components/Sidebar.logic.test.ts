@@ -678,6 +678,31 @@ describe("resolveSidebarV2Status", () => {
     ).toBe("working");
   });
 
+  it("reports working for a ready session waiting on background tasks", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: {
+          ...session,
+          status: "ready" as const,
+          activeTurnId: null,
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+        },
+      }),
+    ).toBe("working");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: {
+          ...session,
+          status: "ready" as const,
+          activeTurnId: null,
+          pendingBackgroundTasks: [],
+        },
+      }),
+    ).toBe("ready");
+  });
+
   it("reports failed only while the session status is error", () => {
     expect(
       resolveSidebarV2Status({

@@ -441,6 +441,12 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
   }
+  // Ready on the wire but waiting on provider background tasks (e.g. a
+  // backgrounded codex review that outlived its turn): the provider wakes
+  // the session when the task finishes, so the thread is still in motion.
+  if ((thread.session?.pendingBackgroundTasks?.length ?? 0) > 0) {
+    return "working";
+  }
   if (thread.session?.status === "error") {
     return "failed";
   }
