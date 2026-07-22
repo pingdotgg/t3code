@@ -1122,10 +1122,13 @@ export default function SidebarV2() {
         ) {
           return;
         }
-        await archiveThreadEntries([{ threadKey: scopedThreadKey(threadRef), threadRef }]);
+        const outcome = await archiveThreadEntries([
+          { threadKey: scopedThreadKey(threadRef), threadRef },
+        ]);
+        removeFromSelection(outcome.archivedThreadKeys);
       })();
     },
-    [archiveThreadEntries, confirmArchive],
+    [archiveThreadEntries, confirmArchive, removeFromSelection],
   );
   const [isArchivingAllSettled, setIsArchivingAllSettled] = useState(false);
   const archivingAllSettledRef = useRef(false);
