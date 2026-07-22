@@ -8,6 +8,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -2411,6 +2412,123 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         );
       }),
     12_000,
+  );
+
+  it.effect(
+    "does not reuse a cross-repo PR when GitHub omits head identity metadata",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:octocat/codething-mvp.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequenceByHeadSelector: {
+              "octocat:statemachine": [
+                `[{"number":41,"title":"Ambiguous fork PR","url":"https://github.com/pingdotgg/codething-mvp/pull/41","baseRefName":"main","headRefName":"statemachine","state":"OPEN"}]`,
+                `[{"number":142,"title":"Add stacked git actions","url":"https://github.com/pingdotgg/codething-mvp/pull/142","baseRefName":"main","headRefName":"statemachine","state":"OPEN","isCrossRepository":true,"headRepository":{"nameWithOwner":"octocat/codething-mvp"},"headRepositoryOwner":{"login":"octocat"}}]`,
+              ],
+              "fork-seed:statemachine": ["[]"],
+              statemachine: ["[]"],
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("created");
+        expect(result.pr.number).toBe(142);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(true);
+      }),
+    20_000,
+  );
+
+  it.effect("rejects same-repo PR metadata when matching a cross-repo head context", () =>
+    Effect.sync(() => {
+      const headContext = {
+        headBranch: "statemachine",
+        headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+        headRepositoryOwnerLogin: "pingdotgg",
+        isCrossRepository: true,
+      };
+
+      expect(
+        GitManager.matchesBranchHeadContext(
+          {
+            number: 41,
+            title: "Same-repo PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/41",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "open",
+            updatedAt: Option.none(),
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          headContext,
+        ),
+      ).toBe(false);
+
+      expect(
+        GitManager.matchesBranchHeadContext(
+          {
+            number: 142,
+            title: "Fork PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "open",
+            updatedAt: Option.none(),
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          headContext,
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("accepts fork PR metadata when origin is the fork checkout remote", () =>
+    Effect.sync(() => {
+      const headContext = {
+        headBranch: "t3code/git-audit-stability",
+        headRepositoryNameWithOwner: "justsomelegs/t3code",
+        headRepositoryOwnerLogin: "justsomelegs",
+        isCrossRepository: false,
+      };
+
+      expect(
+        GitManager.matchesBranchHeadContext(
+          {
+            number: 2284,
+            title: "Improve branch mismatch warnings",
+            url: "https://github.com/pingdotgg/t3code/pull/2284",
+            baseRefName: "main",
+            headRefName: "t3code/git-audit-stability",
+            state: "open",
+            updatedAt: Option.none(),
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "justsomelegs/t3code",
+            headRepositoryOwnerLogin: "justsomelegs",
+          },
+          headContext,
+        ),
+      ).toBe(true);
+    }),
   );
 
   it.effect("creates PR when one does not already exist", () =>

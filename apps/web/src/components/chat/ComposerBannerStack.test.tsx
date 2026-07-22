@@ -34,4 +34,22 @@ describe("ComposerBannerStack", () => {
 
     expect(markup).not.toContain("data-composer-banner-stack-expanded-items");
   });
+
+  it("applies item-specific surface and action layout classes", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerBannerStack
+        items={[
+          {
+            ...banner("branch"),
+            className: "branch-surface",
+            actionClassName: "branch-actions",
+            actions: <button type="button">Repair</button>,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("branch-surface");
+    expect(markup).toContain("branch-actions");
+  });
 });
