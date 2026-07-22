@@ -183,6 +183,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
+  resolveNextActiveThreadIdAfterSettle,
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -3419,14 +3420,14 @@ export default function Sidebar() {
       settlingThreadKeysRef.current.add(threadKey);
       setSettleConfirmationThreadKey((current) => (current === threadKey ? null : current));
 
-      const currentIndex = orderedSidebarThreadKeys.indexOf(threadKey);
-      const nextThreadKey =
-        currentIndex === -1
-          ? null
-          : ([
-              ...orderedSidebarThreadKeys.slice(currentIndex + 1),
-              ...orderedSidebarThreadKeys.slice(0, currentIndex),
-            ][0] ?? null);
+      const nextThreadKey = resolveNextActiveThreadIdAfterSettle({
+        threadIds: orderedSidebarThreadKeys,
+        settledThreadId: threadKey,
+        isActive: (candidateKey) => {
+          const candidate = sidebarThreadByKey.get(candidateKey);
+          return candidate != null && candidate.settledOverride !== "settled";
+        },
+      });
       const nextThread = nextThreadKey ? sidebarThreadByKey.get(nextThreadKey) : null;
 
       void (async () => {
@@ -3445,15 +3446,19 @@ export default function Sidebar() {
             }
             return;
           }
-          if (routeThreadKeyRef.current === threadKey && nextThread) {
-            navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id));
+          if (routeThreadKeyRef.current === threadKey) {
+            if (nextThread) {
+              navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id));
+            } else {
+              void handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId));
+            }
           }
         } finally {
           settlingThreadKeysRef.current.delete(threadKey);
         }
       })();
     },
-    [navigateToThread, orderedSidebarThreadKeys, settleThread, sidebarThreadByKey],
+    [handleNewThread, navigateToThread, orderedSidebarThreadKeys, settleThread, sidebarThreadByKey],
   );
 
   useEffect(() => {
@@ -3489,16 +3494,18 @@ export default function Sidebar() {
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
       });
       if (action.type === "none") return;
+      if (action.type === "navigate") {
+        const targetThread = sidebarThreadByKey.get(action.threadKey);
+        if (!targetThread) return;
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (action.type === "consume") return;
-      if (action.type === "confirm-settle") {
-        setSettleConfirmationThreadKey(action.threadKey);
-        return;
-      }
-      const targetThread = sidebarThreadByKey.get(action.threadKey);
-      if (!targetThread) return;
-      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+      setSettleConfirmationThreadKey(action.threadKey);
     };
 
     window.addEventListener("keydown", onWindowKeyDown);

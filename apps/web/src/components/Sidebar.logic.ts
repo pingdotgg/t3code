@@ -351,6 +351,20 @@ export function shouldNavigateAfterProjectRemoval(input: {
   );
 }
 
+export function resolveNextActiveThreadIdAfterSettle<T>(input: {
+  threadIds: readonly T[];
+  settledThreadId: T;
+  isActive: (threadId: T) => boolean;
+}): T | null {
+  const currentIndex = input.threadIds.indexOf(input.settledThreadId);
+  if (currentIndex === -1) return null;
+  return (
+    [...input.threadIds.slice(currentIndex + 1), ...input.threadIds.slice(0, currentIndex)].find(
+      input.isActive,
+    ) ?? null
+  );
+}
+
 export function isContextMenuPointerDown(input: {
   button: number;
   ctrlKey: boolean;

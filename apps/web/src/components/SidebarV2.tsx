@@ -2154,16 +2154,18 @@ export default function SidebarV2() {
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
       });
       if (action.type === "none") return;
+      if (action.type === "navigate") {
+        const targetThread = threadByKey.get(action.threadKey);
+        if (!targetThread) return;
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (action.type === "consume") return;
-      if (action.type === "confirm-settle") {
-        setSettleConfirmationThreadKey(action.threadKey);
-        return;
-      }
-      const targetThread = threadByKey.get(action.threadKey);
-      if (!targetThread) return;
-      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+      setSettleConfirmationThreadKey(action.threadKey);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);

@@ -6,6 +6,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
+  resolveNextActiveThreadIdAfterSettle,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -509,6 +510,35 @@ describe("resolveAdjacentThreadId", () => {
         threadIds: threads,
         currentThreadId: threads[0] ?? null,
         direction: "previous",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveNextActiveThreadIdAfterSettle", () => {
+  it("wraps to the next active thread while skipping settled threads", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["thread-1", "thread-2", "thread-3"],
+        settledThreadId: "thread-1",
+        isActive: (threadId) => threadId === "thread-3",
+      }),
+    ).toBe("thread-3");
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["thread-1", "thread-2", "thread-3"],
+        settledThreadId: "thread-3",
+        isActive: (threadId) => threadId === "thread-1",
+      }),
+    ).toBe("thread-1");
+  });
+
+  it("returns null when settling leaves no active thread", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["thread-1", "thread-2"],
+        settledThreadId: "thread-1",
+        isActive: () => false,
       }),
     ).toBeNull();
   });
