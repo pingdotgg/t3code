@@ -1,4 +1,4 @@
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { ClaudeSettings, type ModelCapabilities, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -78,6 +78,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    modelCapabilities?: ModelCapabilities;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -184,7 +185,12 @@ function withFakeClaudeEnv<A, E, R>(
     );
 
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
-    const textGeneration = yield* makeClaudeTextGeneration(config);
+    const modelCapabilities = input.modelCapabilities;
+    const textGeneration = yield* makeClaudeTextGeneration(
+      config,
+      undefined,
+      modelCapabilities ? () => Effect.succeed(modelCapabilities) : undefined,
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -251,6 +257,108 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.title).toBe("Improve orchestration flow");
+        }),
+    ),
+  );
+
+  it.effect("preserves xhigh effort for custom Claude models", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use custom reasoning effort",
+          },
+        }),
+        argsMustContain: "--model gpt-5.6-sol --effort xhigh",
+        modelCapabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [{ id: "xhigh", label: "Extra High" }],
+            },
+          ],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "gpt-5.6-sol",
+              [{ id: "effort", value: "xhigh" }],
+            ),
+          });
+
+          expect(generated.title).toBe("Use custom reasoning effort");
+        }),
+    ),
+  );
+
+  it.effect("ignores custom Claude effort levels not advertised by the SDK", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use advertised custom reasoning",
+          },
+        }),
+        argsMustContain: "--model gpt-5.6-sol",
+        argsMustNotContain: "--effort",
+        modelCapabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [{ id: "low", label: "Low" }],
+            },
+          ],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "gpt-5.6-sol",
+              [{ id: "effort", value: "xhigh" }],
+            ),
+          });
+
+          expect(generated.title).toBe("Use advertised custom reasoning");
+        }),
+    ),
+  );
+
+  it.effect("does not default effort for custom Claude models", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use provider reasoning default",
+          },
+        }),
+        argsMustContain: "--model gpt-5.6-sol",
+        argsMustNotContain: "--effort",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "gpt-5.6-sol",
+            ),
+          });
+
+          expect(generated.title).toBe("Use provider reasoning default");
         }),
     ),
   );
