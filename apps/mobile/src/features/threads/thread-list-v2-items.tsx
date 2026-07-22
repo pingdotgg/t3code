@@ -70,6 +70,12 @@ const SLIM_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
+// Pre-settlement servers: no lifecycle items, archive fills the gap.
+const LEGACY_MENU_ACTIONS: MenuAction[] = [
+  { id: "archive", title: "Archive", image: "archivebox" },
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
 const PRESS_SPRING = { damping: 30, stiffness: 400 } as const;
 
 /**
@@ -136,6 +142,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  /** False on environments whose server predates thread.settle/unsettle:
+      swipe + menu fall back to Archive instead of failing on use. */
+  readonly settlementSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   /** Reports this row's live PR state up so the partition can auto-settle
@@ -157,6 +167,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onDeleteThread,
     onSettleThread,
     onUnsettleThread,
+    onArchiveThread,
     onChangeRequestState,
   } = props;
 
@@ -178,36 +189,54 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
+  const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
+      if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleDelete, handleSettle, handleUnsettle],
+    [handleArchive, handleDelete, handleSettle, handleUnsettle],
   );
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
   // row can un-settle — explicit settles clear the override, auto-settled
   // rows get pinned active until real activity clears the pin.
   const canUnsettle = variant === "slim";
-  const primaryAction = useMemo(
-    () =>
-      canUnsettle
-        ? {
-            accessibilityLabel: `Un-settle ${thread.title}`,
-            icon: "arrow.uturn.backward" as const,
-            label: "Un-settle",
-            onPress: handleUnsettle,
-          }
-        : {
-            accessibilityLabel: `Settle ${thread.title}`,
-            icon: "checkmark" as const,
-            label: "Settle",
-            onPress: handleSettle,
-          },
-    [canUnsettle, handleSettle, handleUnsettle, thread.title],
-  );
+  const primaryAction = useMemo(() => {
+    // Pre-settlement server: archive is the swipe action, as in v1. (Slim
+    // rows cannot occur here — unsupported environments never classify as
+    // settled.)
+    if (!props.settlementSupported) {
+      return {
+        accessibilityLabel: `Archive ${thread.title}`,
+        icon: "archivebox" as const,
+        label: "Archive",
+        onPress: handleArchive,
+      };
+    }
+    return canUnsettle
+      ? {
+          accessibilityLabel: `Un-settle ${thread.title}`,
+          icon: "arrow.uturn.backward" as const,
+          label: "Un-settle",
+          onPress: handleUnsettle,
+        }
+      : {
+          accessibilityLabel: `Settle ${thread.title}`,
+          icon: "checkmark" as const,
+          label: "Settle",
+          onPress: handleSettle,
+        };
+  }, [
+    canUnsettle,
+    handleArchive,
+    handleSettle,
+    handleUnsettle,
+    props.settlementSupported,
+    thread.title,
+  ]);
 
   const rowContent = (close: () => void) =>
     variant === "card" ? (
@@ -366,7 +395,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {(close) => (
           <ControlPillMenu
-            actions={canUnsettle ? SLIM_MENU_ACTIONS : CARD_MENU_ACTIONS}
+            actions={
+              !props.settlementSupported
+                ? LEGACY_MENU_ACTIONS
+                : canUnsettle
+                  ? SLIM_MENU_ACTIONS
+                  : CARD_MENU_ACTIONS
+            }
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

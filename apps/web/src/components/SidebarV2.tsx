@@ -149,6 +149,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle";
+  // False on environments whose server predates thread.settle/unsettle:
+  // the lifecycle affordances hide entirely rather than fail on click.
+  settlementSupported: boolean;
   // Draws a hairline above the first settled row after a group's card
   // block, so active work and the history tail read as separate zones
   // inside each project section.
@@ -416,7 +419,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               {props.jumpLabel ??
                 formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.updatedAt)}
             </span>
-            {variantAction === "unsettle" ? (
+            {!props.settlementSupported ? null : variantAction === "unsettle" ? (
               <button
                 type="button"
                 aria-label="Un-settle thread"
@@ -506,15 +509,17 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             >
               {props.jumpLabel ?? workingTimer ?? threadTimeLabel(thread, status)}
             </span>
-            <button
-              type="button"
-              aria-label="Settle thread"
-              onClick={handleSettleClick}
-              className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
-            >
-              <CheckIcon className="size-3" />
-              Settle
-            </button>
+            {props.settlementSupported ? (
+              <button
+                type="button"
+                aria-label="Settle thread"
+                onClick={handleSettleClick}
+                className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
+              >
+                <CheckIcon className="size-3" />
+                Settle
+              </button>
+            ) : null}
           </span>
         </div>
         <div className="py-2 pl-[15px] pr-3">
@@ -1124,14 +1129,22 @@ export default function SidebarV2() {
         if (!thread) return;
         // Un-settle works on every settled row: for explicit settles it
         // clears the override, for auto-settled rows it pins the thread
-        // active until real activity clears the pin.
+        // active until real activity clears the pin. Environments without
+        // the settlement capability get no lifecycle items at all.
+        const supportsSettlement =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
-              isSettled
-                ? { id: "unsettle", label: "Un-settle thread" }
-                : { id: "settle", label: "Settle thread" },
+              ...(supportsSettlement
+                ? [
+                    isSettled
+                      ? { id: "unsettle", label: "Un-settle thread" }
+                      : { id: "settle", label: "Settle thread" },
+                  ]
+                : []),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -1191,6 +1204,7 @@ export default function SidebarV2() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      serverConfigs,
       startThreadRename,
     ],
   );
@@ -1477,6 +1491,10 @@ export default function SidebarV2() {
                   // Every settled row can un-settle: explicit settles clear
                   // the override, auto-settled rows get pinned active.
                   variantAction={isSettledRow ? "unsettle" : "settle"}
+                  settlementSupported={
+                    serverConfigs.get(thread.environmentId)?.environment.capabilities
+                      .threadSettlement === true
+                  }
                   isActive={routeThreadKey === threadKey}
                   jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                   currentEnvironmentId={primaryEnvironmentId}

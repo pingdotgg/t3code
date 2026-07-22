@@ -395,6 +395,8 @@ export function HomeScreen(props: HomeScreenProps) {
         }
         onSelectThread={props.onSelectThread}
         onDeleteThread={handleDeleteThread}
+        onArchiveThread={props.onArchiveThread}
+        settlementSupported={settlementEnvironmentIds.has(item.thread.environmentId)}
         onSettleThread={handleSettleThread}
         onUnsettleThread={handleUnsettleThread}
         onChangeRequestState={handleChangeRequestState}
@@ -415,7 +417,9 @@ export function HomeScreen(props: HomeScreenProps) {
       handleUnsettleThread,
       projectByKey,
       projectCwdByKey,
+      props.onArchiveThread,
       props.onSelectThread,
+      settlementEnvironmentIds,
     ],
   );
   const v2KeyExtractor = useCallback(
