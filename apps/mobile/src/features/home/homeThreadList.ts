@@ -216,12 +216,15 @@ export function buildHomeThreadGroups(input: {
         : sortedThreads;
 
     // Sorted newest-first, so the first thread whose project is a group member
-    // marks the machine the user last worked on.
-    const lastActiveProject = Arr.findFirst(sortedThreads, (thread) =>
-      group.projects.some(
-        (project) =>
-          project.environmentId === thread.environmentId && project.id === thread.projectId,
-      ),
+    // marks the machine the user last worked on. Derived from the FULL history
+    // (not the search-filtered subset) so the target is stable across queries.
+    const lastActiveProject = Arr.findFirst(
+      sortThreads(group.threads, input.threadSortOrder),
+      (thread) =>
+        group.projects.some(
+          (project) =>
+            project.environmentId === thread.environmentId && project.id === thread.projectId,
+        ),
     ).pipe(
       Option.flatMap((thread) =>
         Arr.findFirst(
