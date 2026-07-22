@@ -36,10 +36,14 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { makeT3CodexDynamicToolWaitRegistry, T3_CODEX_DYNAMIC_TOOLS } from "./CodexDynamicTools.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2ThreadStartResponse = Schema.decodeUnknownEffect(
+  EffectCodexSchema.V2ThreadStartResponse,
+);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -285,12 +289,16 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+type CodexThreadStartParamsWithDynamicTools = EffectCodexSchema.V2ThreadStartParams & {
+  readonly dynamicTools: ReadonlyArray<EffectCodexSchema.V2ThreadStartParams__DynamicToolSpec>;
+};
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
-}): EffectCodexSchema.V2ThreadStartParams {
+}): CodexThreadStartParamsWithDynamicTools {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
     cwd: input.cwd,
@@ -298,6 +306,7 @@ function buildThreadStartParams(input: {
     sandbox: config.sandbox,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    dynamicTools: T3_CODEX_DYNAMIC_TOOLS,
   };
 }
 
@@ -433,10 +442,37 @@ type CodexThreadOpenResponse =
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
 interface CodexThreadOpenClient {
+  readonly raw: {
+    readonly request: (
+      method: string,
+      payload?: unknown,
+    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+  };
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
   ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
+}
+
+function startCodexThread(
+  client: CodexThreadOpenClient,
+  params: CodexThreadStartParamsWithDynamicTools,
+): Effect.Effect<
+  CodexRpc.ClientRequestResponsesByMethod["thread/start"],
+  CodexErrors.CodexAppServerError
+> {
+  return client.raw.request("thread/start", params).pipe(
+    Effect.flatMap(decodeV2ThreadStartResponse),
+    Effect.mapError((error) =>
+      Schema.isSchemaError(error)
+        ? CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+            "decode-response-payload",
+            error,
+            { method: "thread/start" },
+          )
+        : error,
+    ),
+  );
 }
 
 export const openCodexThread = (input: {
@@ -457,7 +493,7 @@ export const openCodexThread = (input: {
   });
 
   if (resumeThreadId === undefined) {
-    return input.client.request("thread/start", startParams);
+    return startCodexThread(input.client, startParams);
   }
 
   return input.client
@@ -473,7 +509,7 @@ export const openCodexThread = (input: {
           resumeThreadId,
           recoverable: true,
           cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+        }).pipe(Effect.andThen(startCodexThread(input.client, startParams))),
       ),
     );
 };
@@ -707,6 +743,7 @@ export const makeCodexSessionRuntime = (
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
+    const dynamicToolWaitRegistry = yield* makeT3CodexDynamicToolWaitRegistry();
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const closedRef = yield* Ref.make(false);
 
@@ -1113,6 +1150,8 @@ export const makeCodexSessionRuntime = (
       }),
     );
 
+    yield* client.handleServerRequest("item/tool/call", dynamicToolWaitRegistry.handle);
+
     yield* client.handleUnknownServerRequest((method) =>
       Effect.fail(CodexErrors.CodexAppServerRequestError.methodNotFound(method)),
     );
@@ -1245,6 +1284,7 @@ export const makeCodexSessionRuntime = (
       }
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
+      yield* dynamicToolWaitRegistry.cancelAll;
       yield* updateSession(sessionRef, {
         status: "closed",
         activeTurnId: undefined,
@@ -1320,6 +1360,7 @@ export const makeCodexSessionRuntime = (
           if (!effectiveTurnId) {
             return;
           }
+          yield* dynamicToolWaitRegistry.cancelTurn(effectiveTurnId);
           yield* client.request("turn/interrupt", {
             threadId: providerThreadId,
             turnId: effectiveTurnId,
