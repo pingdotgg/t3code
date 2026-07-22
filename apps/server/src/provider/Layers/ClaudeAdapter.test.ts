@@ -1726,8 +1726,9 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      // Undeclared wire-only roster snapshot + typed UX-internal subtypes:
-      // all consumed silently, none may surface as unknown-subtype warnings.
+      // Undeclared wire-only roster snapshot + every typed UX-internal
+      // subtype and top-level type consumed silently: none may surface as
+      // unknown-subtype warnings.
       for (const message of [
         {
           type: "system",
@@ -1736,7 +1737,21 @@ describe("ClaudeAdapterLive", () => {
           session_id: "session",
           uuid: "roster",
         },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "t1",
+          patch: { status: "running" },
+          session_id: "session",
+          uuid: "tu",
+        },
         { type: "system", subtype: "commands_changed", session_id: "session", uuid: "cc" },
+        { type: "system", subtype: "model_refusal_fallback", session_id: "session", uuid: "mrf" },
+        { type: "system", subtype: "local_command_output", session_id: "session", uuid: "lco" },
+        { type: "system", subtype: "plugin_install", session_id: "session", uuid: "pi" },
+        { type: "system", subtype: "memory_recall", session_id: "session", uuid: "mr" },
+        { type: "system", subtype: "elicitation_complete", session_id: "session", uuid: "ec" },
+        { type: "prompt_suggestion", suggestion: "try this", session_id: "session", uuid: "ps" },
         {
           type: "system",
           subtype: "notification",
@@ -1748,6 +1763,30 @@ describe("ClaudeAdapterLive", () => {
         },
       ]) {
         harness.query.emit(message as unknown as SDKMessage);
+      }
+      // High-priority notifications DO surface as a warning row.
+      harness.query.emit({
+        type: "system",
+        subtype: "notification",
+        key: "limit",
+        text: "context window nearly full",
+        priority: "high",
+        session_id: "session",
+        uuid: "notif-high",
+      } as unknown as SDKMessage);
+      // session_state_changed maps to the matching session states.
+      for (const [state, uuid] of [
+        ["running", "ssc-run"],
+        ["requires_action", "ssc-req"],
+        ["idle", "ssc-idle"],
+      ]) {
+        harness.query.emit({
+          type: "system",
+          subtype: "session_state_changed",
+          state,
+          session_id: "session",
+          uuid,
+        } as unknown as SDKMessage);
       }
       // api_retry maps to a session heartbeat, not a warning row.
       harness.query.emit({
@@ -1765,10 +1804,26 @@ describe("ClaudeAdapterLive", () => {
       yield* Effect.yieldNow;
 
       const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
+      // Exactly one warning: the high-priority notification. Nothing else.
       assert.deepEqual(
         warnings.map((event) => event.payload.message),
-        [],
+        ["context window nearly full"],
       );
+      const sessionStates = runtimeEvents
+        .filter((event) => event.type === "session.state.changed")
+        .map((event) =>
+          event.type === "session.state.changed"
+            ? `${event.payload.state}:${event.payload.reason ?? ""}`
+            : "",
+        )
+        .filter(
+          (entry) => entry.startsWith("running:session_state") || entry.includes("session_state"),
+        );
+      assert.deepEqual(sessionStates, [
+        "running:session_state:running",
+        "waiting:session_state:requires_action",
+        "ready:session_state:idle",
+      ]);
       const heartbeat = runtimeEvents.find(
         (event) =>
           event.type === "session.state.changed" &&
