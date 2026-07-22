@@ -1,6 +1,6 @@
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
@@ -89,6 +89,10 @@ export interface ThreadListV2Layout {
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environmentId: EnvironmentId | null;
+  readonly projectRef?: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+  } | null;
   readonly searchQuery: string;
   /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
   readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
@@ -112,6 +116,13 @@ export function buildThreadListV2Items(input: {
     // Callers pass live (unarchived) shells; settled threads are among them
     // and partition into the tail via effectiveSettled.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
+    if (
+      input.projectRef != null &&
+      (thread.environmentId !== input.projectRef.environmentId ||
+        thread.projectId !== input.projectRef.projectId)
+    ) {
+      continue;
+    }
     if (query.length > 0 && !thread.title.toLocaleLowerCase().includes(query)) continue;
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =

@@ -153,6 +153,26 @@ describe("buildThreadListV2Items", () => {
       ["settled", "slim"],
     ]);
   });
+
+  it("scopes the flat list to one project", () => {
+    const otherProjectId = ProjectId.make("project-2");
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("included"), title: "Included" }),
+        makeThread({
+          id: ThreadId.make("excluded"),
+          projectId: otherProjectId,
+          title: "Excluded",
+        }),
+      ],
+      environmentId: null,
+      projectRef: { environmentId, projectId: ProjectId.make("project-1") },
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["included"]);
+  });
 });
 
 describe("buildThreadListV2Items settled paging", () => {

@@ -15,15 +15,17 @@ import type {
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
+import { cn } from "../../lib/cn";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -167,6 +169,80 @@ function HomeTopContentSpacer() {
   return <View className="h-4" />;
 }
 
+function ThreadListV2ProjectScope(props: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly selectedKey: string | null;
+  readonly onChange: (key: string | null) => void;
+}) {
+  if (props.projects.length === 0) return null;
+
+  return (
+    <ScrollView
+      horizontal
+      contentContainerStyle={{
+        gap: 8,
+        paddingHorizontal: 16,
+        paddingBottom: 8,
+        paddingTop: Platform.OS === "ios" ? 12 : 4,
+      }}
+      keyboardShouldPersistTaps="handled"
+      showsHorizontalScrollIndicator={false}
+    >
+      {props.projects.length > 1 ? (
+        <Pressable
+          accessibilityLabel="Show all threads"
+          accessibilityRole="button"
+          accessibilityState={{ selected: props.selectedKey === null }}
+          hitSlop={4}
+          onPress={() => props.onChange(null)}
+          className={cn(
+            "min-h-8 items-center justify-center rounded-lg border px-3",
+            props.selectedKey === null
+              ? "border-border bg-subtle-strong"
+              : "border-black/15 dark:border-white/15",
+          )}
+        >
+          <Text className="text-sm font-t3-medium text-foreground">All</Text>
+        </Pressable>
+      ) : null}
+      {props.projects.map((project) => {
+        const key = scopedProjectKey(project.environmentId, project.id);
+        const selected = props.selectedKey === key;
+        return (
+          <Pressable
+            key={key}
+            accessibilityLabel={`Show ${project.title} threads`}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            hitSlop={4}
+            onPress={() => props.onChange(selected ? null : key)}
+            className={cn(
+              "min-h-8 flex-row items-center gap-1.5 rounded-lg border py-1 pl-2 pr-3",
+              selected ? "border-border bg-subtle-strong" : "border-black/15 dark:border-white/15",
+            )}
+          >
+            <ProjectFavicon
+              environmentId={project.environmentId}
+              projectTitle={project.title}
+              size={15}
+              workspaceRoot={project.workspaceRoot}
+            />
+            <Text
+              className={cn(
+                "max-w-36 text-sm font-t3-medium",
+                selected ? "text-foreground" : "text-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {project.title}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
@@ -289,6 +365,29 @@ export function HomeScreen(props: HomeScreenProps) {
     return map;
   }, [props.projects]);
 
+  const [v2ProjectScopeKey, setV2ProjectScopeKey] = useState<string | null>(null);
+  const v2ScopeProjects = useMemo(
+    () =>
+      props.selectedEnvironmentId === null
+        ? props.projects
+        : props.projects.filter((project) => project.environmentId === props.selectedEnvironmentId),
+    [props.projects, props.selectedEnvironmentId],
+  );
+  const v2ScopedProject = useMemo(
+    () =>
+      v2ProjectScopeKey === null
+        ? null
+        : (v2ScopeProjects.find(
+            (project) => scopedProjectKey(project.environmentId, project.id) === v2ProjectScopeKey,
+          ) ?? null),
+    [v2ProjectScopeKey, v2ScopeProjects],
+  );
+  useEffect(() => {
+    if (v2ProjectScopeKey !== null && v2ScopedProject === null) {
+      setV2ProjectScopeKey(null);
+    }
+  }, [v2ProjectScopeKey, v2ScopedProject]);
+
   // Thread List v2 (beta): one flat list in creation order, no grouping.
   // Settled threads collapse into a recency tail below the card block.
   // Settled threads stay in the live shell stream (settled ≠ archived), so
@@ -327,7 +426,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${v2ProjectScopeKey ?? "all"}:${props.searchQuery.trim()}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -365,6 +464,13 @@ export function HomeScreen(props: HomeScreenProps) {
     return buildThreadListV2Items({
       threads: props.threads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
+      projectRef:
+        v2ScopedProject === null
+          ? null
+          : {
+              environmentId: v2ScopedProject.environmentId,
+              projectId: v2ScopedProject.id,
+            },
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
@@ -380,11 +486,12 @@ export function HomeScreen(props: HomeScreenProps) {
     props.selectedEnvironmentId,
     props.threads,
     threadListV2Enabled,
+    v2ScopedProject,
   ]);
   const threadListV2Items = threadListV2Layout.items;
 
   const renderV2Item = useCallback(
-    ({ item }: LegendListRenderItemProps<ThreadListV2Item>) => (
+    ({ item }: { readonly item: ThreadListV2Item }) => (
       <ThreadListV2Row
         thread={item.thread}
         variant={item.variant}
@@ -392,6 +499,15 @@ export function HomeScreen(props: HomeScreenProps) {
         project={
           projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
           null
+        }
+        providerDriver={
+          serverConfigs
+            .get(item.thread.environmentId)
+            ?.providers.find(
+              (provider) =>
+                provider.instanceId ===
+                (item.thread.session?.providerInstanceId ?? item.thread.modelSelection.instanceId),
+            )?.driver ?? null
         }
         onSelectThread={props.onSelectThread}
         onDeleteThread={handleDeleteThread}
@@ -419,6 +535,7 @@ export function HomeScreen(props: HomeScreenProps) {
       projectCwdByKey,
       props.onArchiveThread,
       props.onSelectThread,
+      serverConfigs,
       settlementEnvironmentIds,
     ],
   );
@@ -609,11 +726,19 @@ export function HomeScreen(props: HomeScreenProps) {
     (pendingTask) =>
       (props.selectedEnvironmentId === null ||
         pendingTask.message.environmentId === props.selectedEnvironmentId) &&
+      (v2ScopedProject === null ||
+        (pendingTask.message.environmentId === v2ScopedProject.environmentId &&
+          pendingTask.creation.projectId === v2ScopedProject.id)) &&
       (v2SearchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
   );
   const v2ListHeader = (
     <>
       {listHeader}
+      <ThreadListV2ProjectScope
+        projects={v2ScopeProjects}
+        selectedKey={v2ProjectScopeKey}
+        onChange={setV2ProjectScopeKey}
+      />
       {v2PendingTasks.map((pendingTask, index) => (
         <PendingTaskListRow
           key={pendingTask.message.messageId}
@@ -642,18 +767,25 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
     )
   ) : null;
+  const v2ListEmpty =
+    threadListV2Items.length === 0 && v2PendingTasks.length === 0 && v2ScopedProject !== null ? (
+      <EmptyState
+        title={`No threads in ${v2ScopedProject.title}`}
+        detail="Choose another project or create a new task."
+      />
+    ) : (
+      listEmpty
+    );
 
   if (threadListV2Enabled) {
     return (
       <View className="flex-1 bg-screen">
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
-          <LegendList
+          <FlatList
             data={threadListV2Items}
             renderItem={renderV2Item}
             keyExtractor={v2KeyExtractor}
-            drawDistance={500}
-            estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
-            extraData={projectByKey}
+            extraData={{ projectByKey, serverConfigs }}
             ListHeaderComponent={v2ListHeader}
             ListFooterComponent={
               threadListV2Layout.hiddenSettledCount > 0 ? (
@@ -661,16 +793,16 @@ export function HomeScreen(props: HomeScreenProps) {
                   accessibilityRole="button"
                   accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
                   onPress={showMoreSettled}
-                  className="mx-5 mt-1 items-center rounded-full bg-subtle py-2"
+                  className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
                   style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
                 >
-                  <Text className="text-sm font-t3-medium text-foreground-muted">
+                  <Text className="text-xs font-t3-medium text-foreground-muted">
                     Show more ({threadListV2Layout.hiddenSettledCount} settled hidden)
                   </Text>
                 </Pressable>
               ) : null
             }
-            ListEmptyComponent={listEmpty}
+            ListEmptyComponent={v2ListEmpty}
             style={{ flex: 1 }}
             automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
             contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
@@ -678,12 +810,11 @@ export function HomeScreen(props: HomeScreenProps) {
             keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
             {...scrollGateHandlers}
-            recycleItems
             scrollEventThrottle={16}
             contentContainerStyle={{
               paddingBottom:
                 Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 24
+                  ? Math.max(insets.bottom, 24) + 96
                   : Math.max(insets.bottom, 16) + 88,
             }}
           />
