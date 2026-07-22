@@ -168,11 +168,20 @@ describe("effectiveSettled", () => {
     // message would un-settle the row only until its turn completed, then
     // snap straight back into the settled tail.
     const justActive = makeShell({ activityAt: "2026-04-09T23:30:00.000Z" });
+    // The idle gate is strict: activity exactly one hour old is still warm.
+    const boundary = makeShell({ activityAt: "2026-04-09T23:00:00.000Z" });
     const idle = makeShell({ activityAt: "2026-04-09T22:59:59.999Z" });
 
     for (const changeRequestState of ["merged", "closed"] as const) {
       expect(
         effectiveSettled(justActive, {
+          now: NOW,
+          autoSettleAfterDays: null,
+          changeRequestState,
+        }),
+      ).toBe(false);
+      expect(
+        effectiveSettled(boundary, {
           now: NOW,
           autoSettleAfterDays: null,
           changeRequestState,
@@ -186,6 +195,16 @@ describe("effectiveSettled", () => {
         }),
       ).toBe(true);
     }
+  });
+
+  it("re-settles a merged-PR thread once the follow-up burst goes idle", () => {
+    // Same shell, advancing clock: active while warm, settled again after
+    // the idle window passes — the burst cools and the merge signal wins.
+    const shell = makeShell({ activityAt: "2026-04-09T23:30:00.000Z" });
+    const options = { autoSettleAfterDays: null, changeRequestState: "merged" as const };
+
+    expect(effectiveSettled(shell, { ...options, now: NOW })).toBe(false);
+    expect(effectiveSettled(shell, { ...options, now: "2026-04-10T00:30:00.001Z" })).toBe(true);
   });
 
   it("never settles a starting session, even with a settled override", () => {

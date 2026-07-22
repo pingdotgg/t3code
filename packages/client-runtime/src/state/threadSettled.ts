@@ -97,7 +97,10 @@ export function canSettle(
  * its turn completed, then the still-merged PR would snap it straight back
  * into the settled tail. An hour keeps the follow-up conversation visible
  * while it is warm; once the burst goes stale the merge signal settles it
- * again.
+ * again. Activity timestamps can originate on another device while `now` is
+ * this caller's clock: skew shortens or stretches the window by its size,
+ * the same exposure the inactivity auto-settle already accepts — worst case
+ * is a row changing lists early or late, never lost work.
  */
 export const CHANGE_REQUEST_SETTLE_IDLE_MS = 60 * 60 * 1_000;
 
