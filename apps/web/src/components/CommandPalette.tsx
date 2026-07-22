@@ -92,6 +92,7 @@ import {
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
+  buildProjectActionGroups,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
@@ -103,6 +104,7 @@ import {
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
+  prioritizeProjectGroupItem,
   RECENT_THREAD_LIMIT,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -684,10 +686,11 @@ function OpenCommandPaletteDialog(props: {
     [openProjectFromSearch, projects],
   );
 
-  const projectThreadItems = useMemo(
+  const projectThreadGroups = useMemo(
     () =>
-      buildProjectActionItems({
+      buildProjectActionGroups({
         projects,
+        environmentLabels: addProjectEnvironmentOptions,
         valuePrefix: "new-thread-in",
         shortcutCommand: "chat.new",
         icon: (project) => (
@@ -709,7 +712,14 @@ function OpenCommandPaletteDialog(props: {
           );
         },
       }),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
+    [
+      activeDraftThread,
+      activeThread,
+      addProjectEnvironmentOptions,
+      defaultProjectRef,
+      handleNewThread,
+      projects,
+    ],
   );
 
   const allThreadItems = useMemo(
@@ -978,33 +988,27 @@ function OpenCommandPaletteDialog(props: {
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
 
   useLayoutEffect(() => {
-    if (openIntent?.kind !== "new-thread-in" || projectThreadItems.length === 0) {
+    if (openIntent?.kind !== "new-thread-in" || projectThreadGroups.length === 0) {
       return;
     }
     clearOpenIntent();
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
-    const currentPrefix =
+    const currentItemValue =
       currentProjectEnvironmentId && currentProjectId
         ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
         : null;
-    const prioritized = currentPrefix
-      ? [
-          ...projectThreadItems.filter((item) => item.value === currentPrefix),
-          ...projectThreadItems.filter((item) => item.value !== currentPrefix),
-        ]
-      : projectThreadItems;
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: prioritized }],
+      groups: prioritizeProjectGroupItem(projectThreadGroups, currentItemValue),
     });
   }, [
     clearOpenIntent,
     currentProjectEnvironmentId,
     currentProjectId,
     openIntent,
-    projectThreadItems,
+    projectThreadGroups,
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
@@ -1044,7 +1048,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: projectThreadGroups,
     });
   }
 
