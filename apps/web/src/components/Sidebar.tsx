@@ -191,6 +191,7 @@ import {
   isTrailingDoubleClick,
   resolveNextActiveThreadIdAfterSettle,
   resolveProjectStatusIndicator,
+  resolveSidebarThreadGitCwd,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -318,9 +319,10 @@ function buildThreadJumpLabelMap(input: {
 
 function SidebarHiddenThreadChangeRequestStateReporter(props: {
   thread: SidebarThreadSummary;
+  projectCwd: string | null;
   onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
 }) {
-  const { thread, onChangeRequestState } = props;
+  const { thread, projectCwd, onChangeRequestState } = props;
   const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const threadProject = useProject(
     useMemo(
@@ -328,7 +330,11 @@ function SidebarHiddenThreadChangeRequestStateReporter(props: {
       [thread.environmentId, thread.projectId],
     ),
   );
-  const gitCwd = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd: threadProject?.workspaceRoot ?? null,
+    sidebarProjectCwd: projectCwd,
+  });
   const gitStatus = useEnvironmentQuery(
     thread.branch != null && gitCwd !== null
       ? vcsEnvironment.status({
@@ -453,7 +459,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     ),
   );
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
-  const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd,
+    sidebarProjectCwd: props.projectCwd,
+  });
   const gitStatus = useEnvironmentQuery(
     thread.branch != null && gitCwd !== null
       ? vcsEnvironment.status({
@@ -3264,6 +3274,21 @@ export default function Sidebar() {
     }
     return next;
   }, [sidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  const sidebarProjectCwdByThreadKey = useMemo(
+    () =>
+      new Map(
+        sidebarThreads.map((thread) => {
+          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          const scopedProject = scopedProjectKey(
+            scopeProjectRef(thread.environmentId, thread.projectId),
+          );
+          const physicalKey = projectPhysicalKeyByScopedRef.get(scopedProject) ?? scopedProject;
+          const logicalKey = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
+          return [threadKey, sidebarProjectByKey.get(logicalKey)?.workspaceRoot ?? null] as const;
+        }),
+      ),
+    [physicalToLogicalKey, projectPhysicalKeyByScopedRef, sidebarProjectByKey, sidebarThreads],
+  );
   const getCurrentSidebarShortcutContext = useCallback(
     () => ({
       terminalFocus: isTerminalFocused(),
@@ -3815,6 +3840,7 @@ export default function Sidebar() {
           <SidebarHiddenThreadChangeRequestStateReporter
             key={threadKey}
             thread={thread}
+            projectCwd={sidebarProjectCwdByThreadKey.get(threadKey) ?? null}
             onChangeRequestState={handleChangeRequestState}
           />
         ) : null;

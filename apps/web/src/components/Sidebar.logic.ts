@@ -70,6 +70,14 @@ export function getSidebarThreadKeysNeedingChangeRequestReporter<T>(
   return allThreadKeys.filter((threadKey) => !visibleThreadKeys.has(threadKey));
 }
 
+export function resolveSidebarThreadGitCwd(input: {
+  readonly worktreePath: string | null;
+  readonly threadProjectCwd: string | null;
+  readonly sidebarProjectCwd: string | null;
+}): string | null {
+  return input.worktreePath ?? input.threadProjectCwd ?? input.sidebarProjectCwd;
+}
+
 export function isSidebarThreadEffectivelySettled(input: {
   readonly thread: SidebarThreadSummary;
   readonly settlementSupported: boolean;

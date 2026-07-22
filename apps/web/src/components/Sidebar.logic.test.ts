@@ -17,6 +17,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarThreadGitCwd,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
@@ -755,6 +756,32 @@ describe("getSidebarThreadKeysNeedingChangeRequestReporter", () => {
         new Set(["visible"]),
       ),
     ).toEqual(["preview-hidden", "collapsed"]);
+  });
+});
+
+describe("resolveSidebarThreadGitCwd", () => {
+  it("uses the same fallback order for visible and hidden thread reporters", () => {
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: "/worktree",
+        threadProjectCwd: "/thread-project",
+        sidebarProjectCwd: "/sidebar-project",
+      }),
+    ).toBe("/worktree");
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: null,
+        threadProjectCwd: "/thread-project",
+        sidebarProjectCwd: "/sidebar-project",
+      }),
+    ).toBe("/thread-project");
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: null,
+        threadProjectCwd: null,
+        sidebarProjectCwd: "/sidebar-project",
+      }),
+    ).toBe("/sidebar-project");
   });
 });
 
