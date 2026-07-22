@@ -184,6 +184,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  getSidebarThreadKeysNeedingChangeRequestReporter,
   getSidebarThreadIdsToPrewarm,
   isContextMenuPointerDown,
   isSidebarThreadEffectivelySettled,
@@ -193,7 +194,6 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
-  registerMountedThreadChangeRequestState,
   shouldClearThreadSelectionOnMouseDown,
   shouldDismissThreadSettleConfirmation,
   sortProjectsForSidebar,
@@ -314,6 +314,36 @@ function buildThreadJumpLabelMap(input: {
     }
   }
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
+}
+
+function SidebarHiddenThreadChangeRequestStateReporter(props: {
+  thread: SidebarThreadSummary;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
+}) {
+  const { thread, onChangeRequestState } = props;
+  const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const threadProject = useProject(
+    useMemo(
+      () => scopeProjectRef(thread.environmentId, thread.projectId),
+      [thread.environmentId, thread.projectId],
+    ),
+  );
+  const gitCwd = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+  const gitStatus = useEnvironmentQuery(
+    thread.branch != null && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const prState = resolveThreadPr(thread.branch, gitStatus.data)?.state ?? null;
+
+  useEffect(() => {
+    onChangeRequestState(threadKey, prState);
+  }, [onChangeRequestState, prState, threadKey]);
+
+  return null;
 }
 
 interface SidebarThreadRowProps {
@@ -473,15 +503,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const prState = pr?.state ?? null;
-  useEffect(
-    () =>
-      registerMountedThreadChangeRequestState({
-        threadKey,
-        state: prState,
-        onChange: onChangeRequestState,
-      }),
-    [onChangeRequestState, prState, threadKey],
-  );
+  useEffect(() => {
+    onChangeRequestState(threadKey, prState);
+  }, [onChangeRequestState, prState, threadKey]);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -3485,6 +3509,25 @@ export default function Sidebar() {
       ),
     [sidebarThreadSortOrder, sortedProjects, threadsByProjectKey],
   );
+  const visibleSidebarThreadKeySet = useMemo(
+    () => new Set(visibleSidebarThreadKeys),
+    [visibleSidebarThreadKeys],
+  );
+  const changeRequestReporterThreadKeys = useMemo(
+    () =>
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        allUnarchivedSidebarThreadKeys,
+        visibleSidebarThreadKeySet,
+      ),
+    [allUnarchivedSidebarThreadKeys, visibleSidebarThreadKeySet],
+  );
+  useEffect(() => {
+    const liveThreadKeys = new Set(allUnarchivedSidebarThreadKeys);
+    setChangeRequestStateByThreadKey((current) => {
+      if ([...current.keys()].every((threadKey) => liveThreadKeys.has(threadKey))) return current;
+      return new Map([...current].filter(([threadKey]) => liveThreadKeys.has(threadKey)));
+    });
+  }, [allUnarchivedSidebarThreadKeys]);
   const prewarmedSidebarThreadKeys = useMemo(
     () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
     [visibleSidebarThreadKeys],
@@ -3766,6 +3809,16 @@ export default function Sidebar() {
 
   return (
     <>
+      {changeRequestReporterThreadKeys.map((threadKey) => {
+        const thread = sidebarThreadByKey.get(threadKey);
+        return thread ? (
+          <SidebarHiddenThreadChangeRequestStateReporter
+            key={threadKey}
+            thread={thread}
+            onChangeRequestState={handleChangeRequestState}
+          />
+        ) : null;
+      })}
       {prewarmedSidebarThreadRefs.map((threadRef) => (
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}

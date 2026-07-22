@@ -10,12 +10,12 @@ import {
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
+  getSidebarThreadKeysNeedingChangeRequestReporter,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
-  registerMountedThreadChangeRequestState,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -747,24 +747,14 @@ describe("shouldDismissThreadSettleConfirmation", () => {
   });
 });
 
-describe("registerMountedThreadChangeRequestState", () => {
-  it("removes a row's PR state when the row unmounts", () => {
-    const states = new Map<string, "open" | "closed" | "merged">();
-    const unregister = registerMountedThreadChangeRequestState({
-      threadKey: "thread-1",
-      state: "merged" as const,
-      onChange: (threadKey, state) => {
-        if (state === null) {
-          states.delete(threadKey);
-        } else {
-          states.set(threadKey, state);
-        }
-      },
-    });
-
-    expect(states.get("thread-1")).toBe("merged");
-    unregister();
-    expect(states.has("thread-1")).toBe(false);
+describe("getSidebarThreadKeysNeedingChangeRequestReporter", () => {
+  it("keeps live PR-state reporters for collapsed and preview-hidden rows", () => {
+    expect(
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        ["visible", "preview-hidden", "collapsed"],
+        new Set(["visible"]),
+      ),
+    ).toEqual(["preview-hidden", "collapsed"]);
   });
 });
 
