@@ -245,7 +245,11 @@ function normalizeRemoteUrl(value: string): string {
   // ensureRemote reuses an existing remote instead of adding an ssh/https
   // duplicate (git@host:owner/repo, ssh://git@host/owner/repo,
   // https://host/owner/repo all compare equal).
-  const scpLike = /^(?:ssh:\/\/)?(?:[^@/:]+@)([^:/]+)[:/](.+)$/.exec(normalized);
+  const sshUrl = /^ssh:\/\/(?:[^@/:]+@)?([^:/]+)(?::\d+)?\/(.+)$/.exec(normalized);
+  if (sshUrl) {
+    return `${sshUrl[1]}/${sshUrl[2]}`;
+  }
+  const scpLike = /^(?:[^@/:]+@)([^:/]+)[:/](.+)$/.exec(normalized);
   if (scpLike) {
     return `${scpLike[1]}/${scpLike[2]}`;
   }

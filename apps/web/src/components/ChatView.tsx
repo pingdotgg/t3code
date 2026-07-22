@@ -259,7 +259,8 @@ import {
   dismissVersionMismatch,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
-  resolveServerSelfUpdateMethod,
+  resolveServerSelfUpdateCapability,
+  serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 
@@ -1790,7 +1791,7 @@ function ChatViewContent(props: ChatViewProps) {
       : "server";
   const versionMismatchEnvironmentId =
     versionMismatch && activeThread ? activeThread.environmentId : null;
-  const versionMismatchSelfUpdateMethod = resolveServerSelfUpdateMethod(serverConfig);
+  const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
@@ -1844,19 +1845,20 @@ function ChatViewContent(props: ChatViewProps) {
           <>
             Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
             {versionMismatch.serverVersion}.{" "}
-            {versionMismatchSelfUpdateMethod
-              ? `Update the ${versionMismatchServerLabel} so they stay in sync.`
-              : `Relaunch the ${versionMismatchServerLabel} with the copied command to sync them.`}
+            {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
           </>
         ),
-        actions: (
-          <ServerUpdateAction
-            environmentId={versionMismatchEnvironmentId}
-            serverLabel={versionMismatchServerLabel}
-            selfUpdateMethod={versionMismatchSelfUpdateMethod}
-            targetVersion={versionMismatch.clientVersion}
-          />
-        ),
+        // The desktop-managed guidance is already the description; the action
+        // slot would only repeat it.
+        actions:
+          versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
+            <ServerUpdateAction
+              environmentId={versionMismatchEnvironmentId}
+              serverLabel={versionMismatchServerLabel}
+              selfUpdate={versionMismatchSelfUpdate}
+              targetVersion={versionMismatch.clientVersion}
+            />
+          ),
         dismissLabel: "Dismiss version mismatch warning",
         onDismiss: () => {
           dismissVersionMismatch(versionMismatchDismissKey);
@@ -1869,11 +1871,12 @@ function ChatViewContent(props: ChatViewProps) {
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     navigate,
+    setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
     versionMismatch,
     versionMismatchDismissKey,
     versionMismatchEnvironmentId,
-    versionMismatchSelfUpdateMethod,
+    versionMismatchSelfUpdate,
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;

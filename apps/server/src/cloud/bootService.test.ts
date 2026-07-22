@@ -108,6 +108,7 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
       "Type=simple",
       "WorkingDirectory=%h",
       "Environment=T3CODE_HOME=/home/theo/.t3",
+      "Environment=T3_BOOT_SERVICE_UNIT=t3code.service",
       "ExecStart=/usr/local/bin/node /home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
       "Restart=always",
       "RestartSec=5",

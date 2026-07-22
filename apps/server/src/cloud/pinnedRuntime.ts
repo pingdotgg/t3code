@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -16,6 +17,10 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+// Boot-service setup and remote self-update share this module but can be
+// constructed in separate layers. Serialize the complete check/install/
+// sentinel transaction across all callers in this process.
+const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
   readonly versionDir: string;
@@ -71,69 +76,77 @@ export const ensurePinnedRuntimeInstalled = Effect.fn("cloud.pinned_runtime.ensu
     const { fs, runner } = input;
     const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
 
-    const alreadyPinned = yield* Effect.all([
-      fs.exists(paths.sentinelPath),
-      fs.exists(paths.entryPath),
-    ]).pipe(
-      Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
-      Effect.mapError(
-        (cause) => new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
-      ),
+    return yield* pinnedRuntimeInstallLock.withPermit(
+      Effect.gen(function* () {
+        const alreadyPinned = yield* Effect.all([
+          fs.exists(paths.sentinelPath),
+          fs.exists(paths.entryPath),
+        ]).pipe(
+          Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
+          ),
+        );
+        if (alreadyPinned) {
+          return paths;
+        }
+
+        yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
+          Effect.andThen(fs.makeDirectory(paths.versionDir, { recursive: true })),
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({
+                step: "preparing the pinned runtime directory",
+                cause,
+              }),
+          ),
+        );
+
+        const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
+        yield* runner
+          .run({
+            command: "npm",
+            args: [
+              "install",
+              "--prefix",
+              paths.versionDir,
+              "--no-fund",
+              "--no-audit",
+              `t3@${input.version}`,
+            ],
+            // Native deps (node-pty) can compile from source on slow boxes; the
+            // ProcessRunner default of 60s would kill a healthy install.
+            timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
+          })
+          .pipe(
+            Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
+            Effect.filterOrFail(
+              (result) => result.code === 0,
+              (result) =>
+                new PinnedRuntimeInstallError({
+                  step: installStep,
+                  exitCode: Number(result.code),
+                  stdoutLength: result.stdout.length,
+                  stderrLength: result.stderr.length,
+                }),
+            ),
+            Effect.tapError(() =>
+              fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(Effect.ignore),
+            ),
+          );
+
+        yield* fs
+          .writeFileString(paths.sentinelPath, `${input.version}\n`)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
+            ),
+          );
+
+        return paths;
+      }),
     );
-    if (alreadyPinned) {
-      return paths;
-    }
-
-    yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-      Effect.andThen(fs.makeDirectory(paths.versionDir, { recursive: true })),
-      Effect.mapError(
-        (cause) =>
-          new PinnedRuntimeInstallError({ step: "preparing the pinned runtime directory", cause }),
-      ),
-    );
-
-    const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
-    yield* runner
-      .run({
-        command: "npm",
-        args: [
-          "install",
-          "--prefix",
-          paths.versionDir,
-          "--no-fund",
-          "--no-audit",
-          `t3@${input.version}`,
-        ],
-        // Native deps (node-pty) can compile from source on slow boxes; the
-        // ProcessRunner default of 60s would kill a healthy install.
-        timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
-      })
-      .pipe(
-        Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
-        Effect.filterOrFail(
-          (result) => result.code === 0,
-          (result) =>
-            new PinnedRuntimeInstallError({
-              step: installStep,
-              exitCode: Number(result.code),
-              stdoutLength: result.stdout.length,
-              stderrLength: result.stderr.length,
-            }),
-        ),
-        Effect.tapError(() =>
-          fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(Effect.ignore),
-        ),
-      );
-
-    yield* fs
-      .writeFileString(paths.sentinelPath, `${input.version}\n`)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
-        ),
-      );
-
-    return paths;
   },
 );

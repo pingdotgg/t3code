@@ -4,9 +4,9 @@
 // ChildProcessSpawner ties every child to a scope that kills it.
 import {
   ServerSelfUpdateError,
+  type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
   type ServerSelfUpdateResult,
-  type ServerSelfUpdateMethod,
 } from "@t3tools/contracts";
 import {
   HostProcessArguments,
@@ -24,8 +24,14 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { BOOT_SERVICE_UNIT_FILE, quoteSystemdValue, renderBootServiceUnit } from "./bootService.ts";
+import {
+  BOOT_SERVICE_UNIT_ENV,
+  BOOT_SERVICE_UNIT_FILE,
+  quoteSystemdValue,
+  renderBootServiceUnit,
+} from "./bootService.ts";
 import { ensurePinnedRuntimeInstalled } from "./pinnedRuntime.ts";
 
 /**
@@ -70,18 +76,25 @@ export function isPublishedCliEntry(entryPath: string): boolean {
 }
 
 /**
- * How this process can be restarted into another version, or null when it
- * cannot. "boot-service" — this is the systemd-supervised process from
+ * The update path this process can offer, or null when only a manual
+ * relaunch works. "desktop-managed" — the T3 Code desktop app spawned this
+ * backend and owns its version; only updating the app updates it.
+ * "boot-service" — this is the systemd-supervised process from
  * bootService.ts: rewrite the unit and let systemd swap it. "respawn" — a
  * foreground POSIX process running a published artifact: replace it with a
  * detached child. Windows foreground runs are unsupported for now (no
  * equivalent of the detach-and-exec handoff below).
  */
-export const resolveServerSelfUpdateMethod: Effect.Effect<
-  ServerSelfUpdateMethod | null,
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.gen(function* () {
+export const resolveServerSelfUpdateCapability = Effect.fn(
+  "cloud.server_self_update.resolve_capability",
+)(function* (input: {
+  /** True when the desktop app supervises this backend (mode "desktop"). */
+  readonly desktopManaged: boolean;
+}) {
+  if (input.desktopManaged) {
+    return "desktop-managed" as const;
+  }
+
   const platform = yield* HostProcessPlatform;
   const env = yield* HostProcessEnvironment;
   const hostArguments = yield* HostProcessArguments;
@@ -100,21 +113,31 @@ export const resolveServerSelfUpdateMethod: Effect.Effect<
       Effect.map((unit) => unit.includes(quoteSystemdValue(entryPath))),
       Effect.orElseSucceed(() => false),
     );
-    // INVOCATION_ID is set by systemd for the processes it spawns; requiring
-    // it distinguishes the unit's own process (restarting the unit replaces
-    // us) from a manual foreground run of the same pinned artifact (it would
-    // not).
-    if (unitReferencesEntry && (env.INVOCATION_ID ?? "") !== "") {
-      return "boot-service";
+    // INVOCATION_ID only proves that some systemd unit launched us. The
+    // explicit marker written into t3code.service identifies this unit as the
+    // supervisor that will replace the current process when restarted.
+    if (
+      unitReferencesEntry &&
+      (env.INVOCATION_ID ?? "") !== "" &&
+      env[BOOT_SERVICE_UNIT_ENV] === BOOT_SERVICE_UNIT_FILE
+    ) {
+      return "boot-service" as const;
+    }
+
+    // A process owned by another (or a legacy unmarked) systemd unit must not
+    // use the foreground respawn path: Restart=always could otherwise launch
+    // the old unit beside the detached replacement.
+    if ((env.INVOCATION_ID ?? "") !== "") {
+      return null;
     }
   }
 
   if ((platform === "linux" || platform === "darwin") && isPublishedCliEntry(entryPath)) {
-    return "respawn";
+    return "respawn" as const;
   }
 
   return null;
-}).pipe(Effect.withSpan("cloud.server_self_update.resolve_method"));
+});
 
 export class ServerSelfUpdate extends Context.Service<
   ServerSelfUpdate,
@@ -135,7 +158,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
   const env = yield* HostProcessEnvironment;
   const hostExecPath = yield* HostProcessExecutablePath;
   const hostArguments = yield* HostProcessArguments;
-  const method = yield* resolveServerSelfUpdateMethod;
+  const capability: ServerSelfUpdateCapability | null = yield* resolveServerSelfUpdateCapability({
+    desktopManaged: serverConfig.mode === "desktop",
+  });
 
   const host: ServerSelfUpdateHost = {
     execPath: options?.host?.execPath ?? hostExecPath,
@@ -164,16 +189,26 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
       Effect.andThen(restart),
       Effect.forkDetach({ startImmediately: true }),
     );
+  const writeUnitAtomically = (filePath: string, contents: string) =>
+    writeFileStringAtomically({ filePath, contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
 
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input) {
-    if (method === null) {
+    if (capability === "desktop-managed") {
+      return yield* failWith(
+        "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+      );
+    }
+    if (capability === null) {
       return yield* failWith(
         "This server cannot update itself; relaunch it manually with the new version.",
       );
     }
-    const activeMethod = method;
+    const activeMethod = capability;
     const targetVersion = input.targetVersion.trim();
     if (!EXACT_VERSION_PATTERN.test(targetVersion)) {
       return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
@@ -215,6 +250,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
       if (activeMethod === "boot-service") {
         const homeDir = env.HOME ?? "";
         const unitPath = path.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
+        const previousUnit = yield* fs
+          .readFileString(unitPath)
+          .pipe(
+            Effect.mapError((cause) => failWith("Could not read the current systemd unit.", cause)),
+          );
         // Same shape bootService.install writes, so the next `t3 connect`
         // still recognizes the unit as current.
         const unit = renderBootServiceUnit({
@@ -224,17 +264,38 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
           logPath: path.join(serverConfig.logsDir, "boot-service.log"),
           unitPath,
         });
-        yield* fs
-          .writeFileString(unitPath, unit)
-          .pipe(Effect.mapError((cause) => failWith("Could not update the systemd unit.", cause)));
-        const reload = yield* runner
-          .run({ command: "systemctl", args: ["--user", "daemon-reload"] })
-          .pipe(Effect.mapError((cause) => failWith("Could not reload systemd units.", cause)));
-        if (reload.code !== 0) {
-          return yield* failWith(
-            `Reloading systemd units failed (exit code ${String(reload.code)}).`,
-          );
-        }
+        yield* writeUnitAtomically(unitPath, unit).pipe(
+          Effect.mapError((cause) => failWith("Could not update the systemd unit.", cause)),
+        );
+
+        const reloadSystemd = Effect.fn("cloud.server_self_update.reload_systemd")(function* () {
+          const reload = yield* runner
+            .run({ command: "systemctl", args: ["--user", "daemon-reload"] })
+            .pipe(Effect.mapError((cause) => failWith("Could not reload systemd units.", cause)));
+          if (reload.code !== 0) {
+            return yield* failWith(
+              `Reloading systemd units failed (exit code ${String(reload.code)}).`,
+            );
+          }
+        });
+
+        yield* reloadSystemd().pipe(
+          Effect.catch((reloadError) =>
+            writeUnitAtomically(unitPath, previousUnit).pipe(
+              Effect.mapError((rollbackCause) =>
+                failWith("Could not restore the previous systemd unit.", {
+                  reloadError,
+                  rollbackCause,
+                }),
+              ),
+              // Systemd should still have the old unit in memory after the
+              // failed reload, but retry after restoring in case it applied a
+              // partial update before returning an error.
+              Effect.andThen(reloadSystemd().pipe(Effect.ignore)),
+              Effect.andThen(Effect.fail(reloadError)),
+            ),
+          ),
+        );
         yield* Effect.logInfo("Server self-update installed; restarting boot service.", {
           targetVersion,
         });
@@ -265,7 +326,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
       }
 
       return { targetVersion, method: activeMethod };
-    }).pipe(Effect.ensuring(Ref.set(inFlight, false)));
+    }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
   });
 
   return ServerSelfUpdate.of({ update });

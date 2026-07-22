@@ -106,7 +106,10 @@ import {
 } from "~/environments/primary";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
-import { resolveServerConfigVersionMismatch, resolveServerSelfUpdateMethod } from "~/versionSkew";
+import {
+  resolveServerConfigVersionMismatch,
+  resolveServerSelfUpdateCapability,
+} from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
@@ -1435,7 +1438,7 @@ function SavedBackendListRow({
               <ServerUpdateAction
                 environmentId={environmentId}
                 serverLabel={`${environment.label} server`}
-                selfUpdateMethod={resolveServerSelfUpdateMethod(environment.serverConfig)}
+                selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
                 targetVersion={versionMismatch.clientVersion}
               />
             </div>
@@ -2996,7 +2999,7 @@ export function ConnectionsSettings() {
                     <ServerUpdateAction
                       environmentId={primaryEnvironmentId}
                       serverLabel={primaryEnvironment?.label ?? "this server"}
-                      selfUpdateMethod={resolveServerSelfUpdateMethod(primaryServerConfig)}
+                      selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
                       targetVersion={primaryVersionMismatch.clientVersion}
                     />
                   ) : undefined

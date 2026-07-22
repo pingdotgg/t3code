@@ -17,7 +17,11 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { renderBootServiceUnit } from "./bootService.ts";
+import {
+  BOOT_SERVICE_UNIT_ENV,
+  BOOT_SERVICE_UNIT_FILE,
+  renderBootServiceUnit,
+} from "./bootService.ts";
 import * as SelfUpdate from "./selfUpdate.ts";
 
 const NODE_PATH = "/usr/local/bin/node";
@@ -79,7 +83,7 @@ it("recognizes published npm artifacts as swappable entry points", () => {
   assert.isFalse(SelfUpdate.isPublishedCliEntry(""));
 });
 
-it.layer(NodeServices.layer)("resolveServerSelfUpdateMethod", (it) => {
+it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
   const makeHome = Effect.fn("test.makeHome")(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -112,14 +116,38 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateMethod", (it) => {
       const { home, path } = yield* makeHome();
       const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
       yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateMethod.pipe(
+      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
+        provideHostRefs({
+          platform: "linux",
+          env: {
+            HOME: home,
+            INVOCATION_ID: "abc123",
+            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_UNIT_FILE,
+          },
+          entryPath,
+        }),
+      );
+      assert.equal(method, "boot-service");
+    }),
+  );
+
+  it.effect("does not claim a systemd process owned by another unit", () =>
+    Effect.gen(function* () {
+      const { home, path } = yield* makeHome();
+      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      yield* writeUnitReferencing(home, entryPath);
+      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
         provideHostRefs({
           platform: "linux",
           env: { HOME: home, INVOCATION_ID: "abc123" },
           entryPath,
         }),
       );
-      assert.equal(method, "boot-service");
+      assert.isNull(method);
     }),
   );
 
@@ -130,9 +158,9 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateMethod", (it) => {
       yield* writeUnitReferencing(home, entryPath);
       // Same unit on disk, but no INVOCATION_ID: restarting the unit would
       // not replace this process, so it must respawn itself instead.
-      const method = yield* SelfUpdate.resolveServerSelfUpdateMethod.pipe(
-        provideHostRefs({ platform: "linux", env: { HOME: home }, entryPath }),
-      );
+      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(provideHostRefs({ platform: "linux", env: { HOME: home }, entryPath }));
       assert.equal(method, "respawn");
     }),
   );
@@ -140,7 +168,9 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateMethod", (it) => {
   it.effect("reports respawn for a foreground npx artifact on darwin", () =>
     Effect.gen(function* () {
       const { home } = yield* makeHome();
-      const method = yield* SelfUpdate.resolveServerSelfUpdateMethod.pipe(
+      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
         provideHostRefs({
           platform: "darwin",
           env: { HOME: home },
@@ -151,10 +181,36 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateMethod", (it) => {
     }),
   );
 
+  it.effect("reports desktop-managed for desktop-supervised backends", () =>
+    Effect.gen(function* () {
+      const { home, path } = yield* makeHome();
+      // Desktop ownership wins over every process-shape heuristic: even a
+      // systemd-looking pinned artifact belongs to the app that spawned it.
+      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
+      yield* writeUnitReferencing(home, entryPath);
+      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: true,
+      }).pipe(
+        provideHostRefs({
+          platform: "linux",
+          env: {
+            HOME: home,
+            INVOCATION_ID: "abc123",
+            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_UNIT_FILE,
+          },
+          entryPath,
+        }),
+      );
+      assert.equal(method, "desktop-managed");
+    }),
+  );
+
   it.effect("reports no method for dev checkouts and Windows", () =>
     Effect.gen(function* () {
       const { home } = yield* makeHome();
-      const devMethod = yield* SelfUpdate.resolveServerSelfUpdateMethod.pipe(
+      const devMethod = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
         provideHostRefs({
           platform: "darwin",
           env: { HOME: home },
@@ -162,7 +218,9 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateMethod", (it) => {
         }),
       );
       assert.isNull(devMethod);
-      const windowsMethod = yield* SelfUpdate.resolveServerSelfUpdateMethod.pipe(
+      const windowsMethod = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
         provideHostRefs({
           platform: "win32",
           env: { HOME: home },
@@ -183,6 +241,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
   const makeContext = Effect.fn("test.makeContext")(function* (options?: {
     readonly platform?: NodeJS.Platform;
     readonly bootService?: boolean;
+    readonly desktopManaged?: boolean;
     readonly entryPath?: string;
     readonly failWhen?: (command: string) => boolean;
   }) {
@@ -194,7 +253,13 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       options?.entryPath ??
       path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
     const env: NodeJS.ProcessEnv =
-      options?.bootService === true ? { HOME: home, INVOCATION_ID: "abc123" } : { HOME: home };
+      options?.bootService === true
+        ? {
+            HOME: home,
+            INVOCATION_ID: "abc123",
+            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_UNIT_FILE,
+          }
+        : { HOME: home };
     if (options?.bootService === true) {
       const unitDir = path.join(home, ".config", "systemd", "user");
       yield* fs.makeDirectory(unitDir, { recursive: true });
@@ -213,6 +278,18 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     const commands: Array<RecordedCommand> = [];
     const spawns: Array<RecordedSpawn> = [];
     let exited = 0;
+    // layerTest always reports mode "web"; desktop-managed contexts overlay
+    // the mode the desktop app's bootstrap envelope would set.
+    const configLayer =
+      options?.desktopManaged === true
+        ? Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.gen(function* () {
+              const config = yield* ServerConfig.ServerConfig;
+              return { ...config, mode: "desktop" as const };
+            }),
+          ).pipe(Layer.provide(ServerConfig.layerTest(home, baseDir)))
+        : ServerConfig.layerTest(home, baseDir);
     const service = yield* SelfUpdate.make({
       host: {
         spawnDetached: (command, args) => {
@@ -226,7 +303,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       Effect.provide(
         Layer.mergeAll(
           makeRecordingRunnerLayer(commands, { failWhen: options?.failWhen }),
-          ServerConfig.layerTest(home, baseDir),
+          configLayer,
         ),
       ),
       provideHostRefs({ platform: options?.platform ?? "linux", env, entryPath }),
@@ -250,6 +327,16 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       const error = yield* context.service.update({ targetVersion: "latest" }).pipe(Effect.flip);
       assert.include(error.reason, "not an exact t3 version");
       assert.lengthOf(context.commands, 0);
+    }),
+  );
+
+  it.effect("refuses to update a desktop-managed backend and points at the app", () =>
+    Effect.gen(function* () {
+      const context = yield* makeContext({ desktopManaged: true, bootService: true });
+      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+      assert.include(error.reason, "desktop app");
+      assert.lengthOf(context.commands, 0);
+      assert.lengthOf(context.spawns, 0);
     }),
   );
 
@@ -280,6 +367,11 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       const context = yield* makeContext();
       const result = yield* context.service.update({ targetVersion: "0.0.29" });
       assert.deepEqual(result, { targetVersion: "0.0.29", method: "respawn" });
+
+      const concurrentError = yield* context.service
+        .update({ targetVersion: "0.0.30" })
+        .pipe(Effect.flip);
+      assert.include(concurrentError.reason, "already in progress");
 
       const pinnedEntry = context.path.join(
         context.baseDir,
@@ -331,6 +423,35 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
         { command: "systemctl", args: ["--user", "restart", "t3code.service"] },
       ]);
       // systemd replaces the process; the server must not exit itself.
+      assert.equal(context.exitCount(), 0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("restores the previous systemd unit when daemon-reload fails", () =>
+    Effect.gen(function* () {
+      const context = yield* makeContext({
+        bootService: true,
+        failWhen: (command) => command === "systemctl",
+      });
+      const unitPath = context.path.join(
+        context.home,
+        ".config",
+        "systemd",
+        "user",
+        BOOT_SERVICE_UNIT_FILE,
+      );
+      const previousUnit = yield* context.fs.readFileString(unitPath);
+
+      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+      assert.include(error.reason, "Reloading systemd units failed");
+      assert.equal(yield* context.fs.readFileString(unitPath), previousUnit);
+      assert.deepEqual(
+        context.commands.map((entry) => entry.command),
+        ["npm", NODE_PATH, "systemctl", "systemctl"],
+      );
+
+      yield* TestClock.adjust(Duration.seconds(10));
+      assert.lengthOf(context.spawns, 0);
       assert.equal(context.exitCount(), 0);
     }).pipe(Effect.provide(TestClock.layer())),
   );

@@ -26,6 +26,17 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
 export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 
+/** What update path a client should offer for a server: one of the RPC
+    self-update methods above, or "desktop-managed" when the backend's
+    version belongs to the T3 Code desktop app supervising it — updating the
+    app on that machine is the only way to update the server. */
+export const ServerSelfUpdateCapability = Schema.Literals([
+  "boot-service",
+  "respawn",
+  "desktop-managed",
+]);
+export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
+
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
@@ -33,10 +44,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
   threadSettlement: Schema.optionalKey(Schema.Boolean),
-  /** Server accepts server.updateServer and can restart into the requested
-      version. Absent on servers that must be relaunched manually (dev
-      checkouts, desktop-managed backends, pre-update servers). */
-  serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateMethod),
+  /** The update path clients should offer for this server. Absent on
+      servers that must be relaunched manually (dev checkouts, Windows
+      foreground runs, pre-update servers). */
+  serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
