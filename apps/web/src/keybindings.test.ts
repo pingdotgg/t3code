@@ -75,6 +75,7 @@ interface TestBinding {
   shortcut: KeybindingShortcut;
   command: KeybindingCommand;
   whenAst?: KeybindingWhenNode;
+  source?: "default" | "user";
 }
 
 function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
@@ -82,6 +83,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
     command: binding.command,
     shortcut: binding.shortcut,
     ...(binding.whenAst ? { whenAst: binding.whenAst } : {}),
+    ...(binding.source ? { source: binding.source } : {}),
   }));
 }
 
@@ -618,6 +620,19 @@ describe("resolveShortcutCommand", () => {
         platform: "Linux",
       }),
       "terminal.toggle",
+    );
+  });
+
+  it("honors an explicit user rule even when it is identical to a default", () => {
+    const defaultRule = DEFAULT_BINDINGS.find((binding) => binding.command === "sidebar.toggle");
+    assert.isDefined(defaultRule);
+    assert.strictEqual(
+      resolveCustomShortcutCommand(
+        event({ key: "b", ctrlKey: true }),
+        [{ ...defaultRule, source: "user" }],
+        { platform: "Linux" },
+      ),
+      "sidebar.toggle",
     );
   });
 

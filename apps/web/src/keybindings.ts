@@ -259,6 +259,7 @@ function keybindingShortcutsEqual(left: KeybindingShortcut, right: KeybindingSho
 }
 
 export function isDefaultResolvedKeybinding(binding: ResolvedKeybindingRule): boolean {
+  if (binding.source !== undefined) return binding.source === "default";
   return DEFAULT_RESOLVED_KEYBINDINGS.some(
     (candidate) =>
       candidate.command === binding.command &&

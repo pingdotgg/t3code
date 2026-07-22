@@ -38,11 +38,13 @@ const CANDIDATE_SURFACE_SELECTOR = [
 ].join(",");
 
 function keyLetter(event: KeyboardEvent): string {
-  return event.key.length === 1 ? event.key.toLowerCase() : "";
+  if (/^[a-z]$/iu.test(event.key)) return event.key.toLowerCase();
+  if (event.altKey) return event.code.match(/^Key([A-Z])$/)?.[1]?.toLowerCase() ?? "";
+  return "";
 }
 
-export function resolveEmacsReadlineAction(event: KeyboardEvent): EmacsReadlineAction | null {
-  if (event.defaultPrevented || event.isComposing || event.metaKey || event.shiftKey) return null;
+function resolveUnclaimedEmacsReadlineAction(event: KeyboardEvent): EmacsReadlineAction | null {
+  if (event.isComposing || event.metaKey || event.shiftKey) return null;
 
   const letter = keyLetter(event);
   if (event.ctrlKey && !event.altKey) {
@@ -92,6 +94,10 @@ export function resolveEmacsReadlineAction(event: KeyboardEvent): EmacsReadlineA
   }
 
   return null;
+}
+
+export function resolveEmacsReadlineAction(event: KeyboardEvent): EmacsReadlineAction | null {
+  return event.defaultPrevented ? null : resolveUnclaimedEmacsReadlineAction(event);
 }
 
 function lineStart(value: string, position: number): number {
@@ -395,11 +401,17 @@ function isKeybindingCaptureTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest("[data-keybinding-capture]") !== null;
 }
 
-function dispatchInputEvent(control: PlainTextControl, inputType: string): void {
+export function inputEventDataForPlainTextEdit(edit: PlainTextEdit): string | null {
+  return edit.inputType?.startsWith("insert") ? (edit.insertedText ?? "") : null;
+}
+
+function dispatchInputEvent(
+  control: PlainTextControl,
+  inputType: string,
+  data: string | null,
+): void {
   const InputEventConstructor = control.ownerDocument.defaultView?.InputEvent ?? InputEvent;
-  control.dispatchEvent(
-    new InputEventConstructor("input", { bubbles: true, inputType, data: null }),
-  );
+  control.dispatchEvent(new InputEventConstructor("input", { bubbles: true, inputType, data }));
 }
 
 function applyActionToPlainTextControl(
@@ -422,7 +434,7 @@ function applyActionToPlainTextControl(
   if (edit.inputType) {
     control.setRangeText(edit.value, 0, control.value.length, "end");
     control.setSelectionRange(edit.selectionStart, edit.selectionEnd);
-    dispatchInputEvent(control, edit.inputType);
+    dispatchInputEvent(control, edit.inputType, inputEventDataForPlainTextEdit(edit));
   } else {
     control.setSelectionRange(edit.selectionStart, edit.selectionEnd);
   }
@@ -599,9 +611,16 @@ export function applyEmacsReadlineActionToContentEditable(
 
 let killRingText = "";
 const applicationShortcutYieldEvents = new WeakSet<KeyboardEvent>();
+const managedEditorEvents = new WeakSet<KeyboardEvent>();
 
 export function didEmacsReadlineYieldToApplicationShortcut(event: KeyboardEvent): boolean {
   return applicationShortcutYieldEvents.has(event);
+}
+
+export function resolveManagedEmacsReadlineAction(
+  event: KeyboardEvent,
+): EmacsReadlineAction | null {
+  return managedEditorEvents.has(event) ? resolveUnclaimedEmacsReadlineAction(event) : null;
 }
 
 export function getEmacsReadlineKillRingText(): string {
@@ -642,6 +661,7 @@ export function createEmacsReadlineKeydownHandler(options?: {
     // claiming the chord, but allow the original keydown to keep propagating
     // to the editor plugin.
     if (editableHost?.hasAttribute("data-emacs-readline-managed")) {
+      managedEditorEvents.add(event);
       event.preventDefault();
       return;
     }

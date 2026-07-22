@@ -257,7 +257,10 @@ export function parseKeybindingWhenExpression(expression: string): KeybindingWhe
   return ast;
 }
 
-export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKeybindingRule | null {
+export function compileResolvedKeybindingRule(
+  rule: KeybindingRule,
+  source: "default" | "user" = "user",
+): ResolvedKeybindingRule | null {
   const shortcut = parseKeybindingShortcut(rule.key);
   if (!shortcut) return null;
 
@@ -268,21 +271,24 @@ export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKey
       command: rule.command,
       shortcut,
       whenAst,
+      source,
     };
   }
 
   return {
     command: rule.command,
     shortcut,
+    source,
   };
 }
 
 export function compileResolvedKeybindingsConfig(
   config: ReadonlyArray<KeybindingRule>,
+  source: "default" | "user" = "user",
 ): ResolvedKeybindingsConfig {
   const compiled: ResolvedKeybindingRule[] = [];
   for (const rule of config) {
-    const result = compileResolvedKeybindingRule(rule);
+    const result = compileResolvedKeybindingRule(rule, source);
     if (result) {
       compiled.push(result);
     }
@@ -290,4 +296,7 @@ export function compileResolvedKeybindingsConfig(
   return compiled.slice(-MAX_KEYBINDINGS_COUNT);
 }
 
-export const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
+export const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(
+  DEFAULT_KEYBINDINGS,
+  "default",
+);

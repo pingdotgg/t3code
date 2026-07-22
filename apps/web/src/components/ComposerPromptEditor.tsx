@@ -58,9 +58,10 @@ import {
   applyEmacsReadlineActionToPlainText,
   didEmacsReadlineYieldToApplicationShortcut,
   getEmacsReadlineKillRingText,
-  resolveEmacsReadlineAction,
+  resolveManagedEmacsReadlineAction,
   storeEmacsReadlineKilledText,
 } from "~/emacsReadlineBindings";
+import { resolveComposerReadlineReplacement } from "~/composerEmacsReadline";
 import { useClientSettings } from "~/hooks/useSettings";
 import {
   clampCollapsedComposerCursor,
@@ -1133,8 +1134,9 @@ function ComposerEmacsReadlinePlugin() {
     return editor.registerCommand(
       KEY_DOWN_COMMAND,
       (event) => {
+        if (!editor.isEditable()) return false;
         if (didEmacsReadlineYieldToApplicationShortcut(event)) return false;
-        const action = resolveEmacsReadlineAction(event);
+        const action = resolveManagedEmacsReadlineAction(event);
         if (!action) return false;
 
         const selection = $getSelection();
@@ -1180,16 +1182,24 @@ function ComposerEmacsReadlinePlugin() {
           if (!$isRangeSelection(replacementSelection)) return false;
 
           const removedTerminalContextIds = new Set<string>();
+          const removedTerminalContextTexts: string[] = [];
           for (const node of replacementSelection.getNodes()) {
             if (node instanceof ComposerTerminalContextNode) {
               removedTerminalContextIds.add(node.__context.id);
+              removedTerminalContextTexts.push(node.__context.text);
             }
           }
-          if (edit.killedText !== undefined) {
-            storeEmacsReadlineKilledText(replacementSelection.getTextContent());
+          const replacement = resolveComposerReadlineReplacement({
+            edit,
+            selectedText: replacementSelection.getTextContent(),
+            terminalContextTexts: removedTerminalContextTexts,
+          });
+          if (replacement.killedText !== undefined) {
+            storeEmacsReadlineKilledText(replacement.killedText);
           }
 
-          replacementSelection.insertRawText(edit.insertedText ?? "");
+          replacementSelection.insertRawText(replacement.insertedText);
+          $setSelectionAtComposerOffset(replacement.caretOffset);
           for (const contextId of removedTerminalContextIds) {
             onRemoveTerminalContext(contextId);
           }

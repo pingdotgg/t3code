@@ -88,6 +88,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.deepEqual(compiled, {
         command: "terminal.split",
+        source: "user",
         shortcut: {
           key: "d",
           metaKey: false,
@@ -219,7 +220,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.deepEqual(
         configState.keybindings,
-        Keybindings.compileResolvedKeybindingsConfig(Keybindings.DEFAULT_KEYBINDINGS),
+        Keybindings.compileResolvedKeybindingsConfig(Keybindings.DEFAULT_KEYBINDINGS, "default"),
       );
       assert.deepEqual(configState.issues, [
         {

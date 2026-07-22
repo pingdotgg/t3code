@@ -5,7 +5,9 @@ import {
   applyEmacsReadlineActionToPlainText,
   createEmacsReadlineKeydownHandler,
   didEmacsReadlineYieldToApplicationShortcut,
+  inputEventDataForPlainTextEdit,
   resolveEmacsReadlineAction,
+  resolveManagedEmacsReadlineAction,
 } from "./emacsReadlineBindings";
 
 function keyboardEvent(input: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key">): KeyboardEvent {
@@ -46,7 +48,7 @@ describe("resolveEmacsReadlineAction", () => {
     expect(resolveEmacsReadlineAction(keyboardEvent({ key, ctrlKey: true }))).toBe(action);
   });
 
-  it("uses the produced letter rather than the physical key position", () => {
+  it("uses produced letters, with a physical fallback for Option symbols", () => {
     expect(
       resolveEmacsReadlineAction(keyboardEvent({ ctrlKey: true, code: "KeyQ", key: "a" })),
     ).toBe("beginning-of-line");
@@ -55,7 +57,7 @@ describe("resolveEmacsReadlineAction", () => {
     ).toBe("backward-word");
     expect(
       resolveEmacsReadlineAction(keyboardEvent({ altKey: true, code: "KeyB", key: "∫" })),
-    ).toBeNull();
+    ).toBe("backward-word");
   });
 
   it("does not capture modified chords outside the mode", () => {
@@ -159,6 +161,9 @@ describe("resolveEmacsReadlineAction", () => {
     let defaultPrevented = false;
     const event = {
       ...keyboardEvent({ ctrlKey: true, key: "b" }),
+      get defaultPrevented() {
+        return defaultPrevented;
+      },
       preventDefault: vi.fn(() => {
         defaultPrevented = true;
       }),
@@ -176,6 +181,8 @@ describe("resolveEmacsReadlineAction", () => {
     expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
     expect(appShortcut).not.toHaveBeenCalled();
     expect(editorHandler).toHaveBeenCalledOnce();
+    expect(resolveEmacsReadlineAction(event)).toBeNull();
+    expect(resolveManagedEmacsReadlineAction(event)).toBe("backward-char");
   });
 
   it("leaves readline chords outside editable hosts available to app shortcuts", () => {
@@ -293,6 +300,12 @@ describe("applyEmacsReadlineActionToPlainText", () => {
       value: "abc",
       selectionStart: 3,
     });
+  });
+
+  it("reports inserted text through InputEvent data", () => {
+    expect(inputEventDataForPlainTextEdit(apply("yank", "one ", 4, 4, "two"))).toBe("two");
+    expect(inputEventDataForPlainTextEdit(apply("transpose-chars", "abdc", 3))).toBe("cd");
+    expect(inputEventDataForPlainTextEdit(apply("delete-forward", "abc", 1))).toBeNull();
   });
 
   it("moves, deletes, and transposes whole Unicode code points", () => {

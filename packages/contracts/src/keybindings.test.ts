@@ -138,8 +138,10 @@ it.effect("parses resolved keybinding rules", () =>
           node: { type: "identifier", name: "terminalFocus" },
         },
       },
+      source: "user",
     });
     assert.strictEqual(parsed.shortcut.key, "d");
+    assert.strictEqual(parsed.source, "user");
   }),
 );
 
