@@ -53,6 +53,13 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
   );
 }
 
+// Scans the read model's activities, which the projector caps at the most
+// recent 500. That bound is safe here: an OPEN approval/user-input request
+// blocks its turn, so the thread cannot accumulate hundreds of later
+// activities while one is outstanding — a request that has scrolled out of
+// the window is one whose turn kept running, i.e. it was resolved or went
+// stale. (The projection pipeline's pendingApprovalCount reads the same
+// capped stream and stays consistent with this view.)
 function hasOpenBlockingRequest(thread: {
   readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
 }): boolean {
@@ -77,6 +84,62 @@ function hasOpenBlockingRequest(thread: {
     }
   }
   return openRequestIds.size > 0;
+}
+
+/**
+ * A queued turn start — a user message no turn has picked up yet — is work
+ * in flight even though session is still null (turn.start emits
+ * message-sent + turn-start-requested; the session arrives later). Detection
+ * mirrors the client's hasQueuedTurnStart: the newest user message is
+ * strictly newer than every latestTurn timestamp (adoption stamps the new
+ * turn's requestedAt with the message time, clearing this), and only within
+ * the adoption grace window — historical threads whose last user message
+ * postdates their turn timestamps (older-server data, mid-turn messages)
+ * must not be blocked forever. A failed session start (status "error")
+ * clears the block immediately.
+ *
+ * The age check is bounded on BOTH sides: message timestamps are
+ * client-supplied, so a client clock ahead of the server yields a negative
+ * age. Without the lower bound that negative age satisfies `<= grace` for
+ * as long as the skew lasts, extending the block far past the intended two
+ * minutes.
+ */
+function threadHasQueuedTurnStart(
+  thread: {
+    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
+    readonly latestTurn: {
+      readonly requestedAt: string;
+      readonly startedAt: string | null;
+      readonly completedAt: string | null;
+    } | null;
+    readonly session: { readonly status: string } | null;
+  },
+  occurredAt: string,
+): boolean {
+  const latestUserMessageAtMs = thread.messages.reduce(
+    (latest, message) =>
+      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
+    Number.NEGATIVE_INFINITY,
+  );
+  const latestTurnAtMs =
+    thread.latestTurn === null
+      ? Number.NEGATIVE_INFINITY
+      : Math.max(
+          ...[
+            thread.latestTurn.requestedAt,
+            thread.latestTurn.startedAt,
+            thread.latestTurn.completedAt,
+          ].map((candidate) =>
+            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
+          ),
+        );
+  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
+  return (
+    thread.session?.status !== "error" &&
+    Number.isFinite(latestUserMessageAtMs) &&
+    latestUserMessageAtMs > latestTurnAtMs &&
+    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  );
 }
 
 function withEventBase(
@@ -411,46 +474,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         );
       }
       const occurredAt = yield* nowIso;
-      // A queued turn start — a user message no turn has picked up yet — is
-      // work in flight even though session is still null (turn.start emits
-      // message-sent + turn-start-requested; the session arrives later).
-      // Settling in that window would hide just-requested work. Detection
-      // mirrors the client's hasQueuedTurnStart: the newest user message is
-      // strictly newer than every latestTurn timestamp (adoption stamps the
-      // new turn's requestedAt with the message time, clearing this), and
-      // only within the adoption grace window — historical threads whose
-      // last user message postdates their turn timestamps (older-server
-      // data, mid-turn messages) must stay settleable. A failed session
-      // start (status "error") clears the block immediately.
-      const latestUserMessageAtMs = thread.messages.reduce(
-        (latest, message) =>
-          message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-        Number.NEGATIVE_INFINITY,
-      );
-      const latestTurnAtMs =
-        thread.latestTurn === null
-          ? Number.NEGATIVE_INFINITY
-          : Math.max(
-              ...[
-                thread.latestTurn.requestedAt,
-                thread.latestTurn.startedAt,
-                thread.latestTurn.completedAt,
-              ].map((candidate) =>
-                candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-              ),
-            );
-      // The age check is bounded on BOTH sides: message timestamps are
-      // client-supplied, so a client clock ahead of the server yields a
-      // negative age. Without the lower bound that negative age satisfies
-      // `<= grace` for as long as the skew lasts, extending the settle
-      // block far past the intended two minutes.
-      const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-      const hasQueuedTurnStart =
-        thread.session?.status !== "error" &&
-        Number.isFinite(latestUserMessageAtMs) &&
-        latestUserMessageAtMs > latestTurnAtMs &&
-        Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS;
-      if (hasQueuedTurnStart) {
+      // Settling inside the adoption window would hide just-requested work.
+      if (threadHasQueuedTurnStart(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -535,6 +560,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           new OrchestrationCommandInvariantError({
             commandType: command.type,
             detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed`,
+          }),
+        );
+      }
+      // A queued turn start — a user message no turn has adopted yet — is
+      // invisible pending work: no session, no pending flags. Snoozing in
+      // that window would hide a just-requested turn exactly the way settle
+      // would.
+      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a queued turn start and cannot be snoozed`,
           }),
         );
       }

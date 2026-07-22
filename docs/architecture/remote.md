@@ -331,6 +331,21 @@ In all of those cases, the `ExecutionEnvironment` is the same kind of thing.
 
 Only the launch and access paths differ.
 
+## Version Coordination
+
+Remote environments may stay online while web, desktop, or mobile clients move to a newer release.
+The environment descriptor therefore carries the running server version and may advertise a safe
+replacement path. The web and desktop UI use that information to show the appropriate action
+without making the connection transport responsible for process management.
+
+Published CLI servers on supported hosts can install and hand off to the client's exact version. A
+desktop-managed backend instead points the user to the desktop app on that machine, while older or
+unsupported servers fall back to a manual relaunch. The existing connection supervisor owns the
+disconnect and reconnect just as it would for any other involuntary socket close.
+
+See [Server Update Architecture](./server-updates.md) for capability detection, installation safety,
+and restart sequencing.
+
 ## Security model
 
 Remote support must assume that some environments will be reachable over untrusted networks.

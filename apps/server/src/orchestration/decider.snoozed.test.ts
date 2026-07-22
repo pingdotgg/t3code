@@ -26,6 +26,7 @@ function makeReadModel(input: {
   readonly snoozedAt?: string | null;
   readonly archivedAt?: string | null;
   readonly activities?: OrchestrationThread["activities"];
+  readonly messages?: OrchestrationThread["messages"];
 }): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -49,7 +50,7 @@ function makeReadModel(input: {
         snoozedUntil: input.snoozedUntil ?? null,
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
         deletedAt: null,
-        messages: [],
+        messages: input.messages ?? [],
         proposedPlans: [],
         activities: input.activities ?? [],
         checkpoints: [],
@@ -194,6 +195,32 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
         // No state change — keep the existing updatedAt.
         expect(awakeEvents[0].payload.updatedAt).toBe(NOW);
       }
+    }),
+  );
+
+  it.effect("rejects snoozing a thread with a queued turn start", () =>
+    Effect.gen(function* () {
+      // The decider clock is the Effect test clock pinned to the epoch: a
+      // user message 30s before it with no adopting turn is queued work.
+      const queuedMessage = {
+        id: MessageId.make("message-queued"),
+        role: "user",
+        text: "Continue",
+        turnId: null,
+        streaming: false,
+        createdAt: "1969-12-31T23:59:30.000Z",
+        updatedAt: "1969-12-31T23:59:30.000Z",
+      } as OrchestrationThread["messages"][number];
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-snooze-queued"),
+          threadId: ThreadId.make("thread-1"),
+          snoozedUntil: FUTURE_WAKE,
+        },
+        readModel: makeReadModel({ messages: [queuedMessage] }),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
 

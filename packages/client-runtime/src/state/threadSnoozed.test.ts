@@ -156,13 +156,42 @@ describe("threadRaisedHandWhileSnoozed", () => {
 
 describe("canSnooze", () => {
   it("allows snoozing quiet and working threads alike", () => {
-    expect(canSnooze(makeShell({}))).toBe(true);
-    expect(canSnooze(makeShell({ sessionStatus: "running" }))).toBe(true);
+    expect(canSnooze({ ...makeShell({}), latestUserMessageAt: null }, { now: NOW })).toBe(true);
+    expect(
+      canSnooze(
+        { ...makeShell({ sessionStatus: "running" }), latestUserMessageAt: null },
+        { now: NOW },
+      ),
+    ).toBe(true);
   });
 
   it("refuses blocked-on-you work", () => {
-    expect(canSnooze(makeShell({ pending: "approval" }))).toBe(false);
-    expect(canSnooze(makeShell({ pending: "user-input" }))).toBe(false);
+    expect(
+      canSnooze({ ...makeShell({ pending: "approval" }), latestUserMessageAt: null }, { now: NOW }),
+    ).toBe(false);
+    expect(
+      canSnooze(
+        { ...makeShell({ pending: "user-input" }), latestUserMessageAt: null },
+        { now: NOW },
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a queued turn start — same invisible-pending-work rule as settle", () => {
+    // Fresh user message, no turn has adopted it, within the grace window.
+    expect(
+      canSnooze(
+        { ...makeShell({}), latestUserMessageAt: "2026-04-10T11:59:30.000Z" },
+        { now: NOW },
+      ),
+    ).toBe(false);
+    // Outside the grace window the message is stale data, not queued work.
+    expect(
+      canSnooze(
+        { ...makeShell({}), latestUserMessageAt: "2026-04-10T11:00:00.000Z" },
+        { now: NOW },
+      ),
+    ).toBe(true);
   });
 });
 
@@ -191,5 +220,18 @@ describe("threadWokeAt", () => {
         now: NOW,
       }),
     ).toBe("2026-04-10T11:00:00.000Z");
+  });
+
+  it("keeps the early wake authoritative after the scheduled time passes", () => {
+    // Woke early at 10:30 via run-completed; the scheduled wake (PAST_WAKE
+    // 10:00 relative to a later now) has ALSO passed. Reporting the
+    // scheduled time would resurface a Woke pill the user already cleared
+    // by visiting between the early wake and now.
+    expect(
+      threadWokeAt(
+        makeShell({ snoozedUntil: PAST_WAKE, turnCompletedAt: "2026-04-10T09:30:00.000Z" }),
+        { now: NOW },
+      ),
+    ).toBe("2026-04-10T09:30:00.000Z");
   });
 });

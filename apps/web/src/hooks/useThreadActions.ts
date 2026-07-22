@@ -486,9 +486,10 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
-      // Blocked-on-you work can't be snoozed away — client-side twin of the
-      // server invariant so the UI rejects before a round trip.
-      if (resolved && !canSnooze(resolved.thread)) {
+      // Blocked-on-you work and queued turns can't be snoozed away —
+      // client-side twin of the server invariants so the UI rejects before
+      // a round trip.
+      if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadSnoozeBlockedError({

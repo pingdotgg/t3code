@@ -140,15 +140,22 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
 
 /**
  * A thread may be snoozed unless the agent is blocked on the user: hiding a
- * pending approval or user-input request defeats the request. A running
- * session IS snoozable — snooze only affects visibility, never the agent.
- * Client-side twin of the server invariant so the UI can reject before a
- * round trip.
+ * pending approval or user-input request defeats the request, and a queued
+ * turn start (a message no turn has adopted yet) is invisible pending work
+ * the same way it is for settle. A running session IS snoozable — snooze
+ * only affects visibility, never the agent. Client-side twin of the server
+ * invariants so the UI can reject before a round trip.
  */
 export function canSnooze(
-  shell: Pick<OrchestrationThreadShell, "hasPendingApprovals" | "hasPendingUserInput">,
+  shell: Pick<
+    OrchestrationThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "latestUserMessageAt" | "latestTurn" | "session"
+  >,
+  options: { readonly now: string },
 ): boolean {
-  return !shell.hasPendingApprovals && !shell.hasPendingUserInput;
+  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
+  if (hasQueuedTurnStart(shell, options)) return false;
+  return true;
 }
 
 /**
@@ -189,19 +196,25 @@ export function threadWokeAt(
   if (effectiveSnoozed(shell, options)) return null;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return null;
+  // An early hand-raise wake stays authoritative even after the scheduled
+  // wake time passes: reporting snoozedUntil then would resurface a Woke
+  // indicator the user already cleared by visiting (snoozedUntil is newer
+  // than that visit's lastVisitedAt).
+  if (threadRaisedHandWhileSnoozed(shell)) {
+    if (
+      shell.snoozedAt != null &&
+      shell.latestTurn?.state === "completed" &&
+      shell.latestTurn.completedAt != null &&
+      Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
+    ) {
+      return shell.latestTurn.completedAt;
+    }
+    return shell.session?.updatedAt ?? shell.snoozedAt ?? null;
+  }
   if (wakeAtMs <= Date.parse(options.now)) {
     return shell.snoozedUntil;
   }
-  // Woke early: the hand-raise moment is the best-known wake time.
-  if (
-    shell.snoozedAt != null &&
-    shell.latestTurn?.state === "completed" &&
-    shell.latestTurn.completedAt != null &&
-    Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
-    return shell.latestTurn.completedAt;
-  }
-  return shell.session?.updatedAt ?? shell.snoozedAt ?? null;
+  return null;
 }
 
 /**

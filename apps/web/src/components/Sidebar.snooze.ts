@@ -27,6 +27,15 @@ function atHour(base: Date, hour: number): Date {
   return next;
 }
 
+// Calendar-day advance instead of adding DAY_MS: fixed millisecond offsets
+// land on the wrong local day across DST transitions (a spring-forward day
+// is 23 hours, so 23:30 + 24h skips the whole next day).
+function addDays(base: Date, days: number): Date {
+  const next = new Date(base);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 /**
  * Presets for "snooze until", computed against local time. "This evening"
  * only appears while it is still meaningfully before evening; after that
@@ -48,12 +57,12 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     presets.push({ id: "evening", label: "This evening", snoozedUntil: evening.toISOString() });
   }
 
-  const tomorrow = atHour(new Date(now.getTime() + DAY_MS), MORNING_HOUR);
+  const tomorrow = atHour(addDays(now, 1), MORNING_HOUR);
   presets.push({ id: "tomorrow", label: "Tomorrow", snoozedUntil: tomorrow.toISOString() });
 
   // Next Monday 9:00 (a week out when today is Monday).
   const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
-  const nextWeek = atHour(new Date(now.getTime() + daysUntilMonday * DAY_MS), MORNING_HOUR);
+  const nextWeek = atHour(addDays(now, daysUntilMonday), MORNING_HOUR);
   presets.push({ id: "next-week", label: "Next week", snoozedUntil: nextWeek.toISOString() });
 
   return presets;
