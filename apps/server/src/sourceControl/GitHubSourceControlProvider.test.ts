@@ -109,27 +109,23 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
   }),
 );
 
-it.effect("uses gh json listing for non-open change request state queries", () =>
+it.effect("maps non-open change request state queries", () =>
   Effect.gen(function* () {
-    let executeArgs: ReadonlyArray<string> = [];
+    let listInput: Parameters<GitHubCli.GitHubCli["Service"]["listPullRequests"]>[0] | null = null;
     const provider = yield* makeProvider({
-      execute: (input) => {
-        executeArgs = input.args;
-        return Effect.succeed(
-          processResult(
-            JSON.stringify([
-              {
-                number: 7,
-                title: "Merged work",
-                url: "https://github.com/pingdotgg/t3code/pull/7",
-                baseRefName: "main",
-                headRefName: "feature/merged",
-                state: "merged",
-                updatedAt: "2026-01-02T00:00:00.000Z",
-              },
-            ]),
-          ),
-        );
+      listPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([
+          {
+            number: 7,
+            title: "Merged work",
+            url: "https://github.com/pingdotgg/t3code/pull/7",
+            baseRefName: "main",
+            headRefName: "feature/merged",
+            state: "merged",
+            updatedAt: Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
+          },
+        ]);
       },
     });
 
@@ -140,18 +136,12 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       limit: 10,
     });
 
-    assert.deepStrictEqual(executeArgs, [
-      "pr",
-      "list",
-      "--head",
-      "feature/merged",
-      "--state",
-      "all",
-      "--limit",
-      "10",
-      "--json",
-      "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-    ]);
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/merged",
+      state: "all",
+      limit: 10,
+    });
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
     assert.deepStrictEqual(
@@ -164,7 +154,7 @@ it.effect("uses gh json listing for non-open change request state queries", () =
 it.effect("treats empty non-open change request listing output as no results", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({
-      execute: () => Effect.succeed(processResult("")),
+      listPullRequests: () => Effect.succeed([]),
     });
 
     const changeRequests = yield* provider.listChangeRequests({

@@ -1,16 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
-import {
-  SourceControlProviderError,
-  type ChangeRequest,
-  type ChangeRequestState,
-} from "@t3tools/contracts";
+import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
-import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   combinedAuthOutput,
@@ -29,7 +23,7 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
-    updatedAt: Option.none(),
+    updatedAt: summary.updatedAt ?? Option.none(),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -98,75 +92,16 @@ export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
 
   const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
-    (input) => {
-      if (input.state === "open") {
-        return github
-          .listOpenPullRequests({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            ...(input.limit !== undefined ? { limit: input.limit } : {}),
-          })
-          .pipe(
-            Effect.map((items) => items.map(toChangeRequest)),
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
-                  provider: "github",
-                  operation: "listChangeRequests",
-                  command: error.command,
-                  cwd: input.cwd,
-                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                    input.headSelector,
-                  ),
-                  detail: error.detail,
-                  cause: error,
-                }),
-            ),
-          );
-      }
-
-      const stateArg: ChangeRequestState | "all" = input.state;
-      return github
-        .execute({
+    (input) =>
+      github
+        .listPullRequests({
           cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            input.headSelector,
-            "--state",
-            stateArg,
-            "--limit",
-            String(input.limit ?? 20),
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-          ],
+          headSelector: input.headSelector,
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
         .pipe(
-          Effect.flatMap((result) => {
-            const raw = result.stdout.trim();
-            if (raw.length === 0) {
-              return Effect.succeed([]);
-            }
-            return Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
-              Effect.flatMap((decoded) =>
-                Result.isSuccess(decoded)
-                  ? Effect.succeed(
-                      decoded.success.map((item) => ({
-                        ...toChangeRequest(item),
-                        updatedAt: item.updatedAt,
-                      })),
-                    )
-                  : Effect.fail(
-                      new GitHubCli.GitHubChangeRequestListDecodeError({
-                        command: "gh",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    ),
-              ),
-            );
-          }),
+          Effect.map((items) => items.map(toChangeRequest)),
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
@@ -182,7 +117,6 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-    };
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
@@ -242,6 +176,20 @@ export const make = Effect.gen(function* () {
               repository: SourceControlProvider.transportSafeSourceControlErrorValue(
                 input.repository,
               ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
+    getTargetRepositoryCloneUrls: (input) =>
+      github.getPullRequestBaseRepositoryCloneUrls(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "getRepositoryCloneUrls",
+              command: error.command,
+              cwd: input.cwd,
               detail: error.detail,
               cause: error,
             }),

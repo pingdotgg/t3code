@@ -164,6 +164,15 @@ function bindProviderContext(
         ...input,
         context: input.context ?? context,
       }),
+    ...(provider.getTargetRepositoryCloneUrls
+      ? {
+          getTargetRepositoryCloneUrls: (input) =>
+            provider.getTargetRepositoryCloneUrls!({
+              ...input,
+              context: input.context ?? context,
+            }),
+        }
+      : {}),
     getChangeRequest: (input) =>
       provider.getChangeRequest({
         ...input,

@@ -32,6 +32,8 @@ import {
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   mergeGitStatusParts,
+  normalizeGitRemoteUrl,
+  parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
@@ -93,6 +95,7 @@ const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
+const OPEN_PULL_REQUEST_CANDIDATE_LIMIT = 100;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 type StripProgressContext<T> = T extends any ? Omit<T, "actionId" | "cwd" | "action"> : never;
@@ -187,20 +190,6 @@ function resolvePullRequestWorktreeLocalBranchName(
   return `t3code/pr-${pullRequest.number}/${suffix}`;
 }
 
-function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
-}
-
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
   const trimmed = nameWithOwner?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -278,17 +267,10 @@ function matchesBranchHeadContext(
     if ((expectedHeadRepository || expectedHeadOwner) && !prHeadRepository && !prHeadOwner) {
       return false;
     }
-    if (expectedHeadRepository && prHeadRepository && expectedHeadRepository !== prHeadRepository) {
+  } else if (pr.isCrossRepository === true) {
+    if (!expectedHeadRepository || !prHeadRepository) {
       return false;
     }
-    if (expectedHeadOwner && prHeadOwner && expectedHeadOwner !== prHeadOwner) {
-      return false;
-    }
-    return true;
-  }
-
-  if (pr.isCrossRepository === true) {
-    return false;
   }
   if (expectedHeadRepository && prHeadRepository && expectedHeadRepository !== prHeadRepository) {
     return false;
@@ -937,7 +919,7 @@ export const make = Effect.gen(function* () {
         cwd,
         headSelector,
         state: "open",
-        limit: 1,
+        limit: OPEN_PULL_REQUEST_CANDIDATE_LIMIT,
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
@@ -1119,6 +1101,45 @@ export const make = Effect.gen(function* () {
     cwd: string,
     baseBranch: string,
   ) {
+    const provider = yield* sourceControlProvider(cwd);
+    const targetCloneUrls = provider.getTargetRepositoryCloneUrls
+      ? yield* provider.getTargetRepositoryCloneUrls({ cwd }).pipe(Effect.orElseSucceed(() => null))
+      : null;
+    if (targetCloneUrls) {
+      const originUrl = yield* readConfigValueNullable(cwd, "remote.origin.url");
+      const targetMatchesOrigin =
+        originUrl !== null &&
+        [targetCloneUrls.url, targetCloneUrls.sshUrl].some(
+          (targetUrl) => normalizeGitRemoteUrl(targetUrl) === normalizeGitRemoteUrl(originUrl),
+        );
+      const resolveTargetBaseRangeRef = Effect.gen(function* () {
+        const targetUrl = shouldPreferSshRemote(originUrl)
+          ? targetCloneUrls.sshUrl
+          : targetCloneUrls.url;
+        const remoteName = yield* gitCore.ensureRemote({
+          cwd,
+          preferredName: "upstream",
+          url: targetUrl,
+        });
+        yield* gitCore.fetchRemoteTrackingBranch({
+          cwd,
+          remoteName,
+          remoteBranch: baseBranch,
+        });
+        return yield* gitCore
+          .resolveRemoteTrackingCommit({
+            cwd,
+            refName: baseBranch,
+            fallbackRemoteName: remoteName,
+          })
+          .pipe(Effect.map((resolved) => resolved.commitSha));
+      });
+      const targetBaseRangeRef = targetMatchesOrigin
+        ? yield* resolveTargetBaseRangeRef.pipe(Effect.orElseSucceed(() => null))
+        : yield* resolveTargetBaseRangeRef;
+      if (targetBaseRangeRef) return targetBaseRangeRef;
+    }
+
     const remoteName = yield* gitCore
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));

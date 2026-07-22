@@ -135,16 +135,31 @@ export function normalizeGitRemoteUrl(value: string): string {
  */
 export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
   const trimmed = url?.trim() ?? "";
-  if (trimmed.length === 0) {
+  if (
+    trimmed.length === 0 ||
+    detectSourceControlProviderFromRemoteUrl(trimmed)?.kind !== "github"
+  ) {
     return null;
   }
 
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+  let repositoryPath = "";
+  if (/^(?:ssh|https?|git):\/\//i.test(trimmed)) {
+    try {
+      repositoryPath = new URL(trimmed).pathname;
+    } catch {
+      return null;
+    }
+  } else {
+    repositoryPath = /^git@[^:/\s]+[:/](.+)$/iu.exec(trimmed)?.[1] ?? "";
+  }
+
+  const parts = repositoryPath
+    .replace(/\/+$/gu, "")
+    .replace(/\.git$/iu, "")
+    .split("/");
+  const owner = parts.at(-2)?.trim() ?? "";
+  const repository = parts.at(-1)?.trim() ?? "";
+  return owner && repository ? `${owner}/${repository}` : null;
 }
 
 function deriveLocalBranchNameCandidatesFromRemoteRef(
