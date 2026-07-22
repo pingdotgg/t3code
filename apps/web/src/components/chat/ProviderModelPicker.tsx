@@ -3,14 +3,14 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
-import { Kbd } from "../ui/kbd";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { ComposerControlShortcutHint } from "./ComposerControlShortcutHint";
 import { ModelPickerContent } from "./ModelPickerContent";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
@@ -46,6 +46,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
 
   // Resolve the active instance entry by exact routing key. The composer
@@ -148,6 +149,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverTrigger
         render={
           <Button
+            ref={triggerRef}
             size="sm"
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"
@@ -183,11 +185,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
         </span>
-        {props.shortcutHintLabel ? (
-          <Kbd className="h-4 min-w-0 shrink-0 rounded-sm px-1.5 text-[10px]">
-            {props.shortcutHintLabel}
-          </Kbd>
-        ) : null}
         <span aria-hidden="true" className="flex items-center">
           <ChevronDownIcon aria-hidden="true" className="!ms-0 !-me-1 size-3 shrink-0 opacity-60" />
         </span>
@@ -213,6 +210,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           onInstanceModelChange={handleInstanceModelChange}
         />
       </PopoverPopup>
+      <ComposerControlShortcutHint anchorRef={triggerRef} label={props.shortcutHintLabel ?? null} />
     </Popover>
   );
 });

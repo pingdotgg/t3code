@@ -197,7 +197,7 @@ import {
   shouldShowComposerControlHintsForModifiers,
 } from "../../keybindings";
 import { useShortcutModifierState } from "../../shortcutModifierState";
-import { Kbd } from "../ui/kbd";
+import { ComposerControlShortcutHint } from "./ComposerControlShortcutHint";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -285,6 +285,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
+  const interactionModeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const runtimeModeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const interactionModeTooltip =
     props.interactionMode === "plan"
       ? "Plan mode — click to return to normal build mode"
@@ -300,6 +302,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         <TooltipTrigger
           render={
             <Button
+              ref={interactionModeTriggerRef}
               variant="ghost"
               className={cn(
                 "shrink-0 whitespace-nowrap px-2 sm:px-3",
@@ -322,14 +325,13 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           <span className="sr-only sm:not-sr-only">
             {props.interactionMode === "plan" ? "Plan" : "Build"}
           </span>
-          {props.interactionModeShortcutHintLabel ? (
-            <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
-              {props.interactionModeShortcutHintLabel}
-            </Kbd>
-          ) : null}
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
       </Tooltip>
+      <ComposerControlShortcutHint
+        anchorRef={interactionModeTriggerRef}
+        label={props.interactionModeShortcutHintLabel}
+      />
     </>
   ) : null;
 
@@ -347,6 +349,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           <TooltipTrigger
             render={
               <SelectTrigger
+                ref={runtimeModeTriggerRef}
                 variant="ghost"
                 size="sm"
                 className="font-medium"
@@ -356,11 +359,6 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           >
             <RuntimeModeIcon className="size-4" />
             <SelectValue>{runtimeModeOption.label}</SelectValue>
-            {props.runtimeModeShortcutHintLabel ? (
-              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
-                {props.runtimeModeShortcutHintLabel}
-              </Kbd>
-            ) : null}
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false}>
             {runtimeModeOptions.map((mode) => {
@@ -386,6 +384,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </Select>
         <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
       </Tooltip>
+      <ComposerControlShortcutHint
+        anchorRef={runtimeModeTriggerRef}
+        label={props.runtimeModeShortcutHintLabel}
+      />
 
       {interactionModeToggle}
 
