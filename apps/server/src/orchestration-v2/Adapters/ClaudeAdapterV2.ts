@@ -67,6 +67,7 @@ import {
   makeEventNdjsonLogger,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -688,6 +689,15 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    ...(input.mcpServers === undefined
+      ? {}
+      : {
+          systemPrompt: {
+            type: "preset" as const,
+            preset: "claude_code" as const,
+            append: T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+          },
+        }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   return input.cwd === null ? options : { ...options, cwd: input.cwd };

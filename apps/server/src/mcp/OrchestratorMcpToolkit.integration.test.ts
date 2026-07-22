@@ -668,6 +668,27 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
 
+            // OpenCode 1.15 has emitted this exact nested-object-as-JSON-string
+            // shape. Decode it at the MCP boundary rather than failing a task
+            // the model otherwise specified correctly.
+            const serializedScheduleCall = yield* invoke("schedule_task", {
+              prompt: "check for new pull requests",
+              schedule: '{"type":"interval","everyMs":3600000}',
+              clientRequestId: "schedule-opencode-compat-1",
+            });
+            expect(serializedScheduleCall.isError).toBe(false);
+            expect(serializedScheduleCall.structuredContent).toMatchObject({
+              schedule: { type: "interval", everyMs: 3_600_000 },
+              boundThreadId: parentThreadId,
+            });
+            const serializedScheduledTaskId = (
+              serializedScheduleCall.structuredContent as { scheduledTaskId: string }
+            ).scheduledTaskId;
+            yield* invoke("delete_scheduled_task", {
+              scheduledTaskId: serializedScheduledTaskId,
+            });
+            expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
             const delegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
               target: {

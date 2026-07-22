@@ -49,7 +49,7 @@ export const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities
 
 export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Create a T3-owned child agent thread and run it with only the supplied task prompt, without copying parent conversation history. Provider, model, model options (e.g. reasoning effort — see orchestrator_capabilities for valid ids), runtime mode, and interaction mode inherit from the parent unless overridden via target. Prefer mode='async' and poll task_status for long work; mode='wait' blocks until completion or timeout.",
+    "Delegate one task to a T3-owned child agent/subagent of THIS thread and run it with only the supplied task prompt, without copying parent conversation history. Use this whenever the user asks for an agent, subagent, worker, delegated task, or parallel help—including cross-provider work. The childThreadId is backing storage, not an ordinary top-level thread. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. Prefer mode='async' and poll task_status for long work; mode='wait' blocks until completion or timeout.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -88,7 +88,7 @@ export const TaskCancelTool = Tool.make("task_cancel", {
 
 export const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
-    "Create a recurring scheduled task that automatically runs a prompt on a schedule. Use this to set up autonomous recurring work — the app's scheduler fires it even when no turn is active. By default (bindToCurrentThread=true) each run posts into THIS thread, which is how you 'wake up' and continue here on an interval or at a fixed time; set bindToCurrentThread=false to launch a fresh thread each run instead. Provider, model, and runtime settings inherit from the calling thread. Schedule is either {type:'interval', everyMs} (e.g. everyMs=60000 for every minute) or {type:'fixed_time', timeOfDay:'HH:MM', weekdays?:[0-6] where 0=Sunday}.",
+    "Create persistent recurring work in the app scheduler, which runs even when no turn is active. Pass schedule as a STRUCTURED OBJECT, never JSON text: {type:'interval', everyMs:3600000} means hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} means weekday mornings. By default (bindToCurrentThread=true) each run posts into THIS thread; use false only when the user wants a fresh top-level thread per run. Provider, model, and runtime settings inherit from this thread. Report the returned schedule and nextRunAt after success.",
   parameters: OrchestratorMcpScheduleTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
@@ -138,7 +138,7 @@ export const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
-    "Create one or more ordinary top-level T3 V2 threads. Each entry may have its own prompt, title, provider instance or driver, model, model options (e.g. reasoning effort), runtime mode, and interaction mode. Omitted provider/model/settings inherit from the calling thread; entries without prompts create empty threads.",
+    "Create one or more ORDINARY TOP-LEVEL T3 conversations. This is not delegation and does not create child agents/subagents. If the user asks for agents, subagents, workers, delegation, or parallel help, call delegate_task once per child instead—even when selecting different providers. Use create_threads only when the user explicitly asks for separate/new/top-level threads or conversations. Each entry may override provider, model, options, runtime mode, and interaction mode; omitted settings inherit.",
   parameters: OrchestratorMcpCreateThreadsInput,
   success: OrchestratorMcpCreateThreadsResult,
   failure: OrchestratorMcpFailure,
@@ -151,7 +151,7 @@ export const CreateThreadsTool = Tool.make("create_threads", {
 
 export const ThreadStartTool = Tool.make("t3_thread_start", {
   description:
-    "Create an ordinary top-level T3 thread and immediately start its first turn. The new thread inherits this thread's project, checkout, provider, model, and runtime settings unless overridden. Use t3_thread_wait and t3_thread_read to collect its result.",
+    "Create an ordinary TOP-LEVEL T3 conversation and immediately start its first turn. This is not a child agent/subagent; use delegate_task for delegated work. The new thread inherits this thread's project, checkout, provider, model, and runtime settings unless overridden. Use t3_thread_wait and t3_thread_read to collect its result.",
   parameters: OrchestratorMcpThreadStartInput,
   success: OrchestratorMcpCreatedThread,
   failure: OrchestratorMcpFailure,

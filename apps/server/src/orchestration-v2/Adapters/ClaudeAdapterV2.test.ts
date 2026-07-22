@@ -519,6 +519,15 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
         cwd: "/workspace",
         ...overrides,
       });
+      assert.isObject(options.systemPrompt);
+      const systemPrompt = options.systemPrompt as {
+        readonly type: string;
+        readonly preset: string;
+        readonly append?: string;
+      };
+      assert.equal(systemPrompt.type, "preset");
+      assert.equal(systemPrompt.preset, "claude_code");
+      assert.include(systemPrompt.append ?? "", "use `delegate_task`");
       const logged = loggedClaudeQueryOptions(options);
       assert.equal(logged.hasMcpServers, true);
       assert.notInclude(JSON.stringify(logged), "secret-claude-token");
