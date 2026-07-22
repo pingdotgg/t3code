@@ -20,6 +20,12 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
 });
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
+/** How a server can replace itself with another version when asked over RPC:
+    "boot-service" rewrites the systemd user unit and restarts it; "respawn"
+    installs the target version and respawns the foreground process. */
+export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn"]);
+export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
+
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
@@ -27,6 +33,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
   threadSettlement: Schema.optionalKey(Schema.Boolean),
+  /** Server accepts server.updateServer and can restart into the requested
+      version. Absent on servers that must be relaunched manually (dev
+      checkouts, desktop-managed backends, pre-update servers). */
+  serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateMethod),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

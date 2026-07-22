@@ -253,11 +253,13 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
+import { ServerUpdateAction } from "./ServerUpdateAction";
 import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
+  resolveServerSelfUpdateMethod,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 
@@ -1786,6 +1788,9 @@ function ChatViewContent(props: ChatViewProps) {
     hasMultipleRegisteredEnvironments && activeThread
       ? `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`
       : "server";
+  const versionMismatchEnvironmentId =
+    versionMismatch && activeThread ? activeThread.environmentId : null;
+  const versionMismatchSelfUpdateMethod = resolveServerSelfUpdateMethod(serverConfig);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
@@ -1824,7 +1829,12 @@ function ChatViewContent(props: ChatViewProps) {
         ),
       });
     }
-    if (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey) {
+    if (
+      showVersionMismatchBanner &&
+      versionMismatch &&
+      versionMismatchDismissKey &&
+      versionMismatchEnvironmentId
+    ) {
       items.push({
         id: `version-mismatch:${versionMismatchDismissKey}`,
         variant: "warning",
@@ -1833,8 +1843,19 @@ function ChatViewContent(props: ChatViewProps) {
         description: (
           <>
             Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
-            {versionMismatch.serverVersion}. Sync them if RPC calls or reconnects fail.
+            {versionMismatch.serverVersion}.{" "}
+            {versionMismatchSelfUpdateMethod
+              ? `Update the ${versionMismatchServerLabel} so they stay in sync.`
+              : `Relaunch the ${versionMismatchServerLabel} with the copied command to sync them.`}
           </>
+        ),
+        actions: (
+          <ServerUpdateAction
+            environmentId={versionMismatchEnvironmentId}
+            serverLabel={versionMismatchServerLabel}
+            selfUpdateMethod={versionMismatchSelfUpdateMethod}
+            targetVersion={versionMismatch.clientVersion}
+          />
         ),
         dismissLabel: "Dismiss version mismatch warning",
         onDismiss: () => {
@@ -1851,6 +1872,8 @@ function ChatViewContent(props: ChatViewProps) {
     showVersionMismatchBanner,
     versionMismatch,
     versionMismatchDismissKey,
+    versionMismatchEnvironmentId,
+    versionMismatchSelfUpdateMethod,
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;

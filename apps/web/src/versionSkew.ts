@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentId, ServerConfig, ServerSelfUpdateMethod } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -47,6 +47,19 @@ export function resolveServerConfigVersionMismatch(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
 ): VersionMismatch | null {
   return resolveVersionMismatch(serverConfig?.environment.serverVersion);
+}
+
+/** How the connected server can update itself over RPC, or null when it only
+    supports a manual relaunch (older servers, dev checkouts, desktop). */
+export function resolveServerSelfUpdateMethod(
+  serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+): ServerSelfUpdateMethod | null {
+  return serverConfig?.environment.capabilities.serverSelfUpdate ?? null;
+}
+
+/** The command to hand users whose server cannot update itself. */
+export function manualServerUpdateCommand(targetVersion: string): string {
+  return `npx t3@${targetVersion}`;
 }
 
 export function buildVersionMismatchDismissalKey(

@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/hostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { ensurePinnedRuntimeInstalled, pinnedRuntimePaths } from "./pinnedRuntime.ts";
 
 /**
  * Installs T3 Code as a per-user boot service so a connected machine stays
@@ -27,10 +28,8 @@ import * as ProcessRunner from "../processRunner.ts";
  */
 
 const BOOT_SERVICE_NAME = "t3code";
-const BOOT_RUNTIME_DIR = "runtime";
 
-const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 
 const EPHEMERAL_CACHE_SEGMENTS = [
   "/_npx/", // npx
@@ -206,14 +205,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const unitDir = path.join(homeDir, ".config", "systemd", "user");
   const unitPath = path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
   const logPath = path.join(input.logsDir, "boot-service.log");
-  const runtimeVersionDir = path.join(
-    input.baseDir,
-    BOOT_RUNTIME_DIR,
-    "versions",
-    input.cliVersion,
-  );
-  const runtimeEntryPath = path.join(runtimeVersionDir, "node_modules", "t3", "dist", "bin.mjs");
-  const runtimeSentinelPath = path.join(runtimeVersionDir, ".install-complete");
+  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
 
   const requireSystemdLinux = Effect.gen(function* () {
     if (platform !== "linux" || homeDir === "") {
@@ -263,52 +255,41 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!isEphemeralCacheEntry(host.cliEntryPath)) {
       return;
     }
-    // The sentinel is written only after npm exits 0. Checking the entry
-    // file alone is not enough: npm extracts files before running native
-    // builds (node-pty), so a killed install leaves a plausible-looking but
-    // broken tree behind.
-    const alreadyPinned = yield* Effect.all([
-      fs.exists(runtimeSentinelPath),
-      fs.exists(runtimeEntryPath),
-    ]).pipe(
-      Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-    if (alreadyPinned) {
-      return;
-    }
-    yield* fs.remove(runtimeVersionDir, { recursive: true, force: true }).pipe(
-      Effect.andThen(fs.makeDirectory(runtimeVersionDir, { recursive: true })),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-    yield* runStep(
-      "installing the pinned t3 runtime (this can take a few minutes)",
-      "npm",
-      [
-        "install",
-        "--prefix",
-        runtimeVersionDir,
-        "--no-fund",
-        "--no-audit",
-        `t3@${input.cliVersion}`,
-      ],
-      // Native deps (node-pty) can compile from source on slow boxes; the
-      // ProcessRunner default of 60s would kill a healthy install.
-      { timeout: PINNED_RUNTIME_INSTALL_TIMEOUT },
-    ).pipe(
-      Effect.tapError(() =>
-        fs.remove(runtimeVersionDir, { recursive: true, force: true }).pipe(Effect.ignore),
+    yield* ensurePinnedRuntimeInstalled({
+      baseDir: input.baseDir,
+      version: input.cliVersion,
+      fs,
+      path,
+      runner,
+    }).pipe(
+      Effect.mapError((error) =>
+        error.step.startsWith("installing")
+          ? new BootServiceCommandError({
+              step: error.step,
+              exitCode: error.exitCode,
+              stdoutLength: error.stdoutLength,
+              stderrLength: error.stderrLength,
+              cause: error.cause,
+            })
+          : new BootServiceInstallError({ cause: error }),
+      ),
+      Effect.tapError((error) =>
+        DateTime.now.pipe(
+          Effect.flatMap((now) =>
+            fs.writeFileString(logPath, `${DateTime.formatIso(now)} ${error.message}\n`, {
+              flag: "a",
+            }),
+          ),
+          Effect.ignore,
+        ),
       ),
     );
-    yield* fs
-      .writeFileString(runtimeSentinelPath, `${input.cliVersion}\n`)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   });
 
   // Where the unit will point: derivable without touching the network, so
   // status can compare units purely; install materializes it first.
   const plannedEntryPath = isEphemeralCacheEntry(host.cliEntryPath)
-    ? runtimeEntryPath
+    ? runtimePaths.entryPath
     : host.cliEntryPath;
   const plan: BootServicePlan = {
     nodePath: host.execPath,
