@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -24,7 +25,66 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 
+type ScopedSidebarProject = SidebarProject & {
+  environmentId: string;
+};
+
+type ScopedSidebarThread = ThreadSortInput & {
+  environmentId: string;
+  projectId: string;
+  archivedAt: string | null;
+};
+
 export type ThreadTraversalDirection = "previous" | "next";
+
+export async function archiveSelectedThreadEntries<
+  TEntry extends { readonly threadKey: string },
+  TResult extends { readonly _tag: "Success" | "Failure" },
+>(input: {
+  entries: readonly TEntry[];
+  archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
+}): Promise<{
+  archivedThreadKeys: readonly string[];
+  mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
+  followupFailures: readonly Extract<TResult, { readonly _tag: "Failure" }>[];
+}> {
+  const archivedThreadKeys: string[] = [];
+  const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
+
+  for (const entry of input.entries) {
+    let didArchive = false;
+    const result = await input.archive(entry, () => {
+      didArchive = true;
+    });
+    if (didArchive || result._tag === "Success") {
+      archivedThreadKeys.push(entry.threadKey);
+    }
+    if (result._tag === "Success") continue;
+    const failure = result as Extract<TResult, { readonly _tag: "Failure" }>;
+    if (didArchive) {
+      followupFailures.push(failure);
+      continue;
+    }
+    return { archivedThreadKeys, mutationFailure: failure, followupFailures };
+  }
+
+  return { archivedThreadKeys, mutationFailure: null, followupFailures };
+}
+
+export function buildMultiSelectThreadContextMenuItems(input: {
+  count: number;
+  hasRunningThread: boolean;
+}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
+  return [
+    { id: "mark-unread", label: `Mark unread (${input.count})` },
+    {
+      id: "archive",
+      label: `Archive (${input.count})`,
+      disabled: input.hasRunningThread,
+    },
+    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+  ];
+}
 
 export interface ThreadStatusPill {
   label:
@@ -534,6 +594,25 @@ export function getProjectSortTimestamp(
   return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
+function sortProjectsByActivity<TProject extends SidebarProject>(
+  projects: readonly TProject[],
+  sortOrder: SidebarProjectSortOrder,
+  getProjectThreads: (project: TProject) => readonly ThreadSortInput[],
+  compareTies: (left: TProject, right: TProject) => number,
+): TProject[] {
+  if (sortOrder === "manual") {
+    return [...projects];
+  }
+
+  return [...projects].toSorted((left, right) => {
+    const rightTimestamp = getProjectSortTimestamp(right, getProjectThreads(right), sortOrder);
+    const leftTimestamp = getProjectSortTimestamp(left, getProjectThreads(left), sortOrder);
+    const byTimestamp =
+      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+    return byTimestamp || compareTies(left, right);
+  });
+}
+
 export function sortProjectsForSidebar<
   TProject extends SidebarProject,
   TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
@@ -542,10 +621,6 @@ export function sortProjectsForSidebar<
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
 ): TProject[] {
-  if (sortOrder === "manual") {
-    return [...projects];
-  }
-
   const threadsByProjectId = new Map<string, TThread[]>();
   for (const thread of threads) {
     const existing = threadsByProjectId.get(thread.projectId) ?? [];
@@ -553,20 +628,47 @@ export function sortProjectsForSidebar<
     threadsByProjectId.set(thread.projectId, existing);
   }
 
-  return [...projects].toSorted((left, right) => {
-    const rightTimestamp = getProjectSortTimestamp(
-      right,
-      threadsByProjectId.get(right.id) ?? [],
-      sortOrder,
-    );
-    const leftTimestamp = getProjectSortTimestamp(
-      left,
-      threadsByProjectId.get(left.id) ?? [],
-      sortOrder,
-    );
-    const byTimestamp =
-      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
-    if (byTimestamp !== 0) return byTimestamp;
-    return left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
-  });
+  return sortProjectsByActivity(
+    projects,
+    sortOrder,
+    (project) => threadsByProjectId.get(project.id) ?? [],
+    (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+  );
+}
+
+/**
+ * Sorts the cross-environment project collection used by landing surfaces.
+ * Project ids are only unique within an environment, and archived threads
+ * must not make a project appear recently active.
+ */
+export function sortScopedProjectsForSidebar<
+  TProject extends ScopedSidebarProject,
+  TThread extends ScopedSidebarThread,
+>(
+  projects: readonly TProject[],
+  threads: readonly TThread[],
+  sortOrder: SidebarProjectSortOrder,
+): TProject[] {
+  const scopedKey = (environmentId: string, projectId: string) =>
+    `${environmentId}\u0000${projectId}`;
+  const threadsByProject = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) {
+      continue;
+    }
+    const key = scopedKey(thread.environmentId, thread.projectId);
+    const existing = threadsByProject.get(key) ?? [];
+    existing.push(thread);
+    threadsByProject.set(key, existing);
+  }
+
+  return sortProjectsByActivity(
+    projects,
+    sortOrder,
+    (project) => threadsByProject.get(scopedKey(project.environmentId, project.id)) ?? [],
+    (left, right) =>
+      left.title.localeCompare(right.title) ||
+      left.environmentId.localeCompare(right.environmentId) ||
+      left.id.localeCompare(right.id),
+  );
 }
