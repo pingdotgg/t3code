@@ -81,7 +81,7 @@ describe("threadRoutes", () => {
     });
   });
 
-  it("uses a draft's reserved thread ref before promotion is recorded", () => {
+  it("does not treat a draft's reserved thread ref as an active sidebar thread", () => {
     const target = resolveThreadRouteTarget({ draftId: "draft-1" });
 
     expect(
@@ -90,9 +90,6 @@ describe("threadRoutes", () => {
         threadId: ThreadId.make("draft-thread"),
         promotedTo: null,
       }),
-    ).toEqual({
-      environmentId: "env-1",
-      threadId: "draft-thread",
-    });
+    ).toBeNull();
   });
 });

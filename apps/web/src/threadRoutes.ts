@@ -65,9 +65,8 @@ export function resolveThreadRouteTarget(
 }
 
 /**
- * Resolves the thread represented by either a canonical thread route or the
- * draft route that temporarily remains mounted while its first send is being
- * promoted to a server thread.
+ * Resolves the thread represented by either a canonical thread route or a
+ * draft route whose promotion to a server thread has been recorded.
  */
 export function resolveActiveThreadRouteRef(
   target: ThreadRouteTarget | null,
@@ -76,8 +75,8 @@ export function resolveActiveThreadRouteRef(
   if (target?.kind === "server") {
     return target.threadRef;
   }
-  if (target?.kind !== "draft" || !draftThread) {
+  if (target?.kind !== "draft" || !draftThread?.promotedTo) {
     return null;
   }
-  return draftThread.promotedTo ?? scopeThreadRef(draftThread.environmentId, draftThread.threadId);
+  return draftThread.promotedTo;
 }
