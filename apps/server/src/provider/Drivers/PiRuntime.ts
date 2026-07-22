@@ -12,6 +12,16 @@ export type PiLaunchPlan =
     }
   | { readonly _tag: "Failure"; readonly message: string };
 
+export function validatePiLaunchArgs(launchArgs: string): string | undefined {
+  const managedFlag = tokenizeCliArgs(launchArgs).find((arg) => {
+    if (!arg.startsWith("--")) return false;
+    return MANAGED_FLAGS.has(arg.slice(2).split("=", 1)[0]!);
+  });
+  return managedFlag
+    ? `${managedFlag} is managed by T3 Code and cannot be set in Pi launch arguments.`
+    : undefined;
+}
+
 export function buildPiLaunchPlan(input: {
   readonly configDirectory: string;
   readonly launchArgs: string;
@@ -19,14 +29,11 @@ export function buildPiLaunchPlan(input: {
   readonly sessionId: string;
 }): PiLaunchPlan {
   const userArgs = tokenizeCliArgs(input.launchArgs);
-  const managedFlag = userArgs.find((arg) => {
-    if (!arg.startsWith("--")) return false;
-    return MANAGED_FLAGS.has(arg.slice(2).split("=", 1)[0]!);
-  });
-  if (managedFlag) {
+  const validationError = validatePiLaunchArgs(input.launchArgs);
+  if (validationError) {
     return {
       _tag: "Failure",
-      message: `${managedFlag} is managed by T3 Code and cannot be set in Pi launch arguments.`,
+      message: validationError,
     };
   }
 

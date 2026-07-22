@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 
 import { ProcessRunner } from "../../processRunner.ts";
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
-import { parsePiVersion, PI_MINIMUM_VERSION } from "./PiRuntime.ts";
+import { parsePiVersion, PI_MINIMUM_VERSION, validatePiLaunchArgs } from "./PiRuntime.ts";
 
 const PI_DRIVER = ProviderDriverKind.make("pi");
 const PI_PRESENTATION = {
@@ -55,9 +55,33 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
+  const launchArgsValidationError = validatePiLaunchArgs(settings.launchArgs);
+  if (launchArgsValidationError) {
+    return buildServerProvider({
+      driver: PI_DRIVER,
+      presentation: PI_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models: [],
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: launchArgsValidationError,
+      },
+    });
+  }
+
   const processRunner = yield* ProcessRunner;
   const result = yield* processRunner
-    .run({ command: settings.binaryPath || "pi", args: ["--version"], env: environment })
+    .run({
+      command: settings.binaryPath || "pi",
+      args: ["--version"],
+      env: settings.configDirectory
+        ? { ...environment, PI_AGENT_DIR: settings.configDirectory }
+        : environment,
+    })
     .pipe(Effect.either);
   if (result._tag === "Left") {
     return buildServerProvider({

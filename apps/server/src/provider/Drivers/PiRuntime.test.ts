@@ -4,6 +4,7 @@ import {
   buildPiLaunchPlan,
   parsePiVersion,
   PI_MINIMUM_VERSION,
+  validatePiLaunchArgs,
 } from "./PiRuntime.ts";
 
 describe("Pi runtime launch plan", () => {
@@ -58,6 +59,14 @@ describe("Pi runtime launch plan", () => {
       ).toEqual({ _tag: "Failure", message: expect.stringContaining("managed by T3 Code") });
     },
   );
+});
+
+describe("validatePiLaunchArgs", () => {
+  it("rejects T3 Code managed flags before launching Pi", () => {
+    expect(validatePiLaunchArgs("--mode json")).toContain("managed by T3 Code");
+    expect(validatePiLaunchArgs("--session-dir=/tmp/other")).toContain("managed by T3 Code");
+    expect(validatePiLaunchArgs("--verbose")).toBeUndefined();
+  });
 });
 
 describe("parsePiVersion", () => {

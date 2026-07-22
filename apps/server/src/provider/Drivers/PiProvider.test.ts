@@ -43,6 +43,54 @@ describe("checkPiProviderStatus", () => {
     ),
   );
 
+  it.effect("passes the selected Pi config directory to the status probe", () => {
+    let receivedEnvironment: NodeJS.ProcessEnv | undefined;
+    return checkPiProviderStatus(
+      settings({ configDirectory: "/Users/example/.pi-work" }),
+      { EXAMPLE: "value" },
+    ).pipe(
+      Effect.provideService(
+        ProcessRunner,
+        ProcessRunner.of({
+          run: (input) => {
+            receivedEnvironment = input.env;
+            return Effect.succeed({
+              stdout: "pi 0.81.1\n",
+              stderr: "",
+              code: 0,
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          },
+        }),
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(receivedEnvironment).toMatchObject({
+            EXAMPLE: "value",
+            PI_AGENT_DIR: "/Users/example/.pi-work",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects protected launch arguments before probing Pi", () =>
+    checkPiProviderStatus(settings({ launchArgs: "--mode json" }), process.env).pipe(
+      Effect.provideService(
+        ProcessRunner,
+        ProcessRunner.of({ run: () => Effect.die("must not run") }),
+      ),
+      Effect.tap((snapshot) =>
+        Effect.sync(() => {
+          expect(snapshot.status).toBe("error");
+          expect(snapshot.message).toContain("managed by T3 Code");
+        }),
+      ),
+    ),
+  );
+
   it.effect("reports an upgrade requirement for an old Pi binary", () =>
     withProcessResult(
       Effect.succeed({
