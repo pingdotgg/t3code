@@ -6,6 +6,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
@@ -35,6 +36,14 @@ function provider(input: {
     skills: [],
   };
 }
+
+const model = (slug: string, isCustom = false, isDefault = false) => ({
+  slug,
+  name: slug,
+  isCustom,
+  ...(isDefault ? { isDefault: true } : {}),
+  capabilities: {},
+});
 
 describe("isProviderInstancePickerReady", () => {
   it("rejects a disabled instance even while its last probe status is ready", () => {
@@ -197,7 +206,7 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, requested)).toBe(requested);
   });
 
-  it("still falls back to an enabled instance when nothing is ready", () => {
+  it("does not invent an errored instance as a new-user default", () => {
     const notInstalled = ProviderInstanceId.make("codex");
     const providers = [
       provider({
@@ -207,7 +216,7 @@ describe("resolveSelectableProviderInstance", () => {
       }),
     ];
 
-    expect(resolveSelectableProviderInstance(providers, undefined)).toBe(notInstalled);
+    expect(resolveSelectableProviderInstance(providers, undefined)).toBeUndefined();
   });
 
   it("does not return disabled, unavailable, or unknown instances when none are sendable", () => {
@@ -272,13 +281,6 @@ describe("resolveProviderDriverKindForInstanceSelection", () => {
 });
 
 describe("getDefaultProviderInstanceModel", () => {
-  const model = (slug: string, isCustom = false) => ({
-    slug,
-    name: slug,
-    isCustom,
-    capabilities: {},
-  });
-
   it("uses the instance's own models, not the default instance of the kind", () => {
     const providers = [
       provider({
@@ -311,9 +313,150 @@ describe("getDefaultProviderInstanceModel", () => {
     expect(resolved?.length).toBeGreaterThan(0);
   });
 
+  it("honors the instance's declared default before model-list order", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: [model("claude-sonnet-5"), model("claude-opus-4-8", false, true)],
+      }),
+    ];
+
+    expect(getDefaultProviderInstanceModel(providers, ProviderInstanceId.make("claudeAgent"))).toBe(
+      "claude-opus-4-8",
+    );
+  });
+
   it("returns undefined for an unknown instance", () => {
     expect(
       getDefaultProviderInstanceModel([], ProviderInstanceId.make("removed_instance")),
     ).toBeUndefined();
+  });
+});
+
+describe("resolveDefaultProviderModelSelection", () => {
+  it.each([
+    ["codex", "codex", "gpt-5.6"],
+    ["claudeAgent", "claudeAgent", "claude-fable-5"],
+    ["cursor", "cursor", "composer-2"],
+  ])("uses the only available %s instance", (driver, instanceId, modelSlug) => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make(driver),
+        instanceId,
+        models: [model(modelSlug, false, true)],
+      }),
+    ];
+
+    expect(resolveDefaultProviderModelSelection(providers, null)).toEqual({
+      instanceId,
+      model: modelSlug,
+    });
+  });
+
+  it("preserves a valid stored selection including its options", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: [model("claude-opus-4-8")],
+      }),
+    ];
+    const stored = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "custom-model",
+      options: [{ id: "effort", value: "high" }],
+    };
+
+    expect(resolveDefaultProviderModelSelection(providers, stored)).toBe(stored);
+  });
+
+  it("replaces a stale stored instance with the first ready instance and its model", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        status: "warning",
+        models: [model("gpt-5.6")],
+      }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: [model("claude-opus-4-8", false, true)],
+      }),
+    ];
+
+    expect(
+      resolveDefaultProviderModelSelection(providers, {
+        instanceId: ProviderInstanceId.make("removed-provider"),
+        model: "stale-model",
+      }),
+    ).toEqual({ instanceId: "claudeAgent", model: "claude-opus-4-8" });
+  });
+
+  it.each([{ enabled: false }, { availability: "unavailable" as const }])(
+    "replaces an unavailable stored instance deterministically",
+    (requestedState) => {
+      const providers = [
+        provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: "codex",
+          models: [model("gpt-5.6")],
+          ...requestedState,
+        }),
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId: "claudeAgent",
+          models: [model("claude-opus-4-8", false, true)],
+        }),
+      ];
+
+      expect(
+        resolveDefaultProviderModelSelection(providers, {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6",
+        }),
+      ).toEqual({ instanceId: "claudeAgent", model: "claude-opus-4-8" });
+    },
+  );
+
+  it("returns no selection for empty, disabled, unavailable, or error-only profiles", () => {
+    expect(resolveDefaultProviderModelSelection([], null)).toBeNull();
+    expect(
+      resolveDefaultProviderModelSelection(
+        [
+          provider({
+            provider: ProviderDriverKind.make("codex"),
+            instanceId: "codex",
+            enabled: false,
+          }),
+        ],
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      resolveDefaultProviderModelSelection(
+        [
+          provider({
+            provider: ProviderDriverKind.make("codex"),
+            instanceId: "codex",
+            availability: "unavailable",
+          }),
+        ],
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      resolveDefaultProviderModelSelection(
+        [
+          provider({
+            provider: ProviderDriverKind.make("codex"),
+            instanceId: "codex",
+            status: "error",
+          }),
+        ],
+        null,
+      ),
+    ).toBeNull();
   });
 });
