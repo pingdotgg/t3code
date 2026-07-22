@@ -115,6 +115,7 @@ patchedDependencies:
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
   effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
   expo-modules-jsi@56.0.10: patches/expo-modules-jsi@56.0.10.patch
+  lexical@0.41.0: patches/lexical@0.41.0.patch
   react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

@@ -39,6 +39,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as ElectronSpelling from "../electron/ElectronSpelling.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
@@ -63,6 +64,7 @@ function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContents = {
     copyImageAt: vi.fn(),
+    focus: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
@@ -115,8 +117,10 @@ function makeFakeBrowserWindow() {
     maximize: window.maximize,
     openDevTools: webContents.openDevTools,
     reload: webContents.reload,
+    replaceMisspelling: webContents.replaceMisspelling,
     send: webContents.send,
     setAutoHideCursor: window.setAutoHideCursor,
+    webContentsFocus: webContents.focus,
     webContentsListeners,
     windowListeners,
   };
@@ -186,6 +190,8 @@ function makeTestLayer(input: {
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
+  readonly electronMenu?: ElectronMenu.ElectronMenu["Service"];
+  readonly electronSpelling?: ElectronSpelling.ElectronSpelling["Service"];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -248,7 +254,9 @@ function makeTestLayer(input: {
         desktopAppSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
-        electronMenuLayer,
+        input.electronMenu
+          ? Layer.succeed(ElectronMenu.ElectronMenu, input.electronMenu)
+          : electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
@@ -257,6 +265,10 @@ function makeTestLayer(input: {
             }),
           copyText: () => Effect.void,
         } satisfies ElectronShell.ElectronShell["Service"]),
+        Layer.succeed(
+          ElectronSpelling.ElectronSpelling,
+          input.electronSpelling ?? { platformSuggestionsFor: () => Effect.succeed([]) },
+        ),
         electronThemeLayer,
         electronWindowLayer,
         Layer.mock(PreviewManager.PreviewManager)({
@@ -346,6 +358,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           DesktopAppSettings.layerTest(),
           desktopServerExposureLayer,
           electronMenuLayer,
+          Layer.succeed(ElectronSpelling.ElectronSpelling, {
+            platformSuggestionsFor: () => Effect.succeed([]),
+          }),
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
             copyText: () => Effect.void,
@@ -432,6 +447,78 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("recovers native spelling suggestions when Chromium provides none", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popupShown = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const platformSuggestionsFor = vi.fn((_word: string) =>
+        Effect.succeed<ReadonlyArray<string>>([
+          "texting",
+          "testing",
+          "toting",
+          "teeing",
+          "tenting",
+        ]),
+      );
+      const popupTemplate = vi.fn((input: ElectronMenu.ElectronMenuTemplateInput) =>
+        Deferred.succeed(popupShown, input).pipe(Effect.asVoid),
+      );
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        electronMenu: {
+          setApplicationMenu: () => Effect.void,
+          popupTemplate,
+          showContextMenu: () => Effect.succeed(Option.none()),
+        },
+        electronSpelling: { platformSuggestionsFor },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        assert.isDefined(contextMenu);
+        const preventDefault = vi.fn();
+        contextMenu({ preventDefault }, {
+          misspelledWord: "teting",
+          dictionarySuggestions: [],
+          linkURL: "",
+          mediaType: "none",
+          editFlags: {
+            canUndo: false,
+            canRedo: false,
+            canCut: true,
+            canCopy: true,
+            canPaste: true,
+            canDelete: false,
+            canSelectAll: true,
+            canEditRichly: false,
+          },
+        } satisfies Partial<Electron.ContextMenuParams>);
+
+        const popupInput = yield* Deferred.await(popupShown);
+        assert.deepEqual(platformSuggestionsFor.mock.calls, [["teting"]]);
+        assert.deepEqual(
+          popupInput.template.slice(0, 5).map((item) => item.label),
+          ["texting", "testing", "toting", "teeing", "tenting"],
+        );
+        assert.isFalse(popupInput.template.some((item) => item.label === "No suggestions"));
+
+        const acceptFirstSuggestion = popupInput.template[0]?.click;
+        assert.isDefined(acceptFirstSuggestion);
+        acceptFirstSuggestion({} as Electron.MenuItem, fakeWindow.window, {} as KeyboardEvent);
+        assert.deepEqual(fakeWindow.replaceMisspelling.mock.calls, [["texting"]]);
+        assert.equal(fakeWindow.webContentsFocus.mock.calls.length, 1);
+        assert.equal(preventDefault.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );
