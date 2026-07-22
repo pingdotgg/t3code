@@ -31,6 +31,7 @@ import {
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { filterUnifiedDiffFiles } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -78,6 +79,32 @@ function buildTurnDiffResult(
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+  // Drop file sections attributed to pre-existing git history from a patch
+  // unless the caller opted in. Attribution failures degrade to the
+  // unfiltered patch — never block the diff on attribution.
+  const applyAttributionFilter = Effect.fn("applyAttributionFilter")(function* (input: {
+    readonly cwd: string;
+    readonly fromCheckpointRef: CheckpointRef;
+    readonly toCheckpointRef: CheckpointRef;
+    readonly diff: string;
+    readonly includeGitChanges: boolean;
+  }) {
+    if (input.includeGitChanges || input.diff.trim().length === 0) {
+      return input.diff;
+    }
+    const attribution = yield* checkpointStore
+      .attributeCheckpointDiff({
+        cwd: input.cwd,
+        fromCheckpointRef: input.fromCheckpointRef,
+        toCheckpointRef: input.toCheckpointRef,
+      })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (attribution === null) {
+      return input.diff;
+    }
+    return filterUnifiedDiffFiles(input.diff, (path) => attribution.get(path) !== "git");
+  });
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -164,7 +191,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const diff = yield* checkpointStore
+      const rawDiff = yield* checkpointStore
         .diffCheckpoints({
           cwd: workspaceCwd,
           fromCheckpointRef,
@@ -173,6 +200,13 @@ export const make = Effect.gen(function* () {
           ignoreWhitespace,
         })
         .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+      const diff = yield* applyAttributionFilter({
+        cwd: workspaceCwd,
+        fromCheckpointRef,
+        toCheckpointRef,
+        diff: rawDiff,
+        includeGitChanges: input.includeGitChanges ?? false,
+      });
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {
@@ -254,15 +288,24 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const diff = yield* checkpointStore
+    const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, 0);
+    const toCheckpointRef = threadContext.value.toCheckpointRef as CheckpointRef;
+    const rawDiff = yield* checkpointStore
       .diffCheckpoints({
         cwd: workspaceCwd,
-        fromCheckpointRef: checkpointRefForThreadTurn(input.threadId, 0),
-        toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
+        fromCheckpointRef,
+        toCheckpointRef,
         fallbackFromToHead: false,
         ignoreWhitespace,
       })
       .pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
+    const diff = yield* applyAttributionFilter({
+      cwd: workspaceCwd,
+      fromCheckpointRef,
+      toCheckpointRef,
+      diff: rawDiff,
+      includeGitChanges: input.includeGitChanges ?? false,
+    });
 
     const turnDiff = buildTurnDiffResult(
       {

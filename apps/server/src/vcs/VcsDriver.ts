@@ -38,6 +38,24 @@ export interface VcsDeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+export interface VcsAttributeCheckpointDiffInput {
+  readonly cwd: string;
+  readonly fromCheckpointRef: CheckpointRef;
+  readonly toCheckpointRef: CheckpointRef;
+}
+
+/**
+ * Per-path attribution of a checkpoint-to-checkpoint tree delta.
+ *
+ * Paths mapped to "git" are byte-for-byte explained by pre-existing commits
+ * that moved through HEAD during the turn (pull, checkout, cherry-pick,
+ * rebase). Paths mapped to "agent" — and paths absent from the map — were
+ * authored during the turn. `null` means attribution is unavailable (HEAD
+ * metadata missing on either snapshot); callers must treat every path as
+ * agent-authored.
+ */
+export type VcsCheckpointAttribution = ReadonlyMap<string, "agent" | "git"> | null;
+
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
@@ -50,6 +68,9 @@ export interface VcsCheckpointOps {
   readonly deleteCheckpointRefs: (
     input: VcsDeleteCheckpointRefsInput,
   ) => Effect.Effect<void, VcsError>;
+  readonly attributeCheckpointDiff: (
+    input: VcsAttributeCheckpointDiffInput,
+  ) => Effect.Effect<VcsCheckpointAttribution, VcsError>;
 }
 
 export class VcsDriver extends Context.Service<

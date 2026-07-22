@@ -222,4 +222,169 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
   });
+
+  describe("attributeCheckpointDiff", () => {
+    it.effect("returns an empty map when HEAD did not move", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-no-head-move");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        yield* writeTextFile(NodePath.join(tmp, "edited.ts"), "export const edited = true;\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).not.toBe(null);
+        expect(attribution!.size).toBe(0);
+      }),
+    );
+
+    it.effect("attributes a branch switch to git while keeping tool edits as agent work", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const defaultBranch = yield* git(tmp, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        // A second branch with a pre-existing commit, created before the turn.
+        yield* git(tmp, ["checkout", "-b", "feature"]);
+        yield* writeTextFile(NodePath.join(tmp, "feature.ts"), "export const feature = 1;\n");
+        yield* git(tmp, ["add", "."]);
+        // Author date in the past: pre-existing commits are authored before
+        // the turn starts (timestamps here have 1s granularity).
+        yield* git(tmp, ["commit", "-m", "feature work", "--date", "2020-01-01T00:00:00Z"]);
+        yield* git(tmp, ["checkout", defaultBranch]);
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-branch-switch");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        // The "turn": switch branches (history-driven) and also edit a file.
+        yield* git(tmp, ["checkout", "feature"]);
+        yield* writeTextFile(NodePath.join(tmp, "edited.ts"), "export const edited = true;\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).not.toBe(null);
+        expect(attribution!.get("feature.ts")).toBe("git");
+        expect(attribution!.get("edited.ts")).toBe("agent");
+      }),
+    );
+
+    it.effect("keeps files committed during the turn as agent work", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-own-commit");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        // The "turn": edit and commit — HEAD moves, but by a turn-authored commit.
+        yield* writeTextFile(NodePath.join(tmp, "committed.ts"), "export const done = true;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "agent commit"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).not.toBe(null);
+        expect(attribution!.get("committed.ts")).toBe("agent");
+      }),
+    );
+
+    it.effect("attributes a cherry-pick of a pre-existing commit to git", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const defaultBranch = yield* git(tmp, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        // Pre-existing commit on another branch, authored before the turn.
+        yield* git(tmp, ["checkout", "-b", "source"]);
+        yield* writeTextFile(NodePath.join(tmp, "picked.ts"), "export const picked = 1;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, [
+          "-c",
+          "user.email=other@test.com",
+          "-c",
+          "user.name=Other",
+          "commit",
+          "-m",
+          "source work",
+          "--date",
+          "2020-01-01T00:00:00Z",
+        ]);
+        const pickedOid = yield* git(tmp, ["rev-parse", "HEAD"]);
+        yield* git(tmp, ["checkout", defaultBranch]);
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-cherry-pick");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        yield* git(tmp, ["cherry-pick", pickedOid]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).not.toBe(null);
+        expect(attribution!.get("picked.ts")).toBe("git");
+      }),
+    );
+
+    it.effect("returns null for legacy checkpoints without head metadata", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-legacy");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        // Simulate a pre-attribution checkpoint: commit the tree with the old
+        // single-line message format.
+        const treeOid = yield* git(tmp, ["write-tree"]);
+        const legacyCommit = yield* git(tmp, [
+          "commit-tree",
+          treeOid,
+          "-m",
+          `t3 checkpoint ref=${fromCheckpointRef}`,
+        ]);
+        yield* git(tmp, ["update-ref", fromCheckpointRef, legacyCommit]);
+        yield* writeTextFile(NodePath.join(tmp, "edited.ts"), "export const edited = true;\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).toBe(null);
+      }),
+    );
+  });
 });

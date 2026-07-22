@@ -29,6 +29,12 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
+import {
+  classifyCheckpointPaths,
+  formatCheckpointCommitMessage,
+  parseCheckpointCommitMessage,
+  parseRawDiffEntries,
+} from "./CheckpointAttribution.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -636,6 +642,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
+  const resolveHeadBranch = (cwd: string) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.resolveHeadBranch",
+      cwd,
+      args: ["symbolic-ref", "--short", "--quiet", "HEAD"],
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => {
+        if (result.exitCode !== 0) {
+          return null;
+        }
+        const branch = result.stdout.trim();
+        return branch.length > 0 ? branch : null;
+      }),
+    );
+
   const resolveGitCommonDir = (cwd: string) =>
     Effect.gen(function* () {
       const result = yield* execute({
@@ -669,8 +691,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         .pipe(Effect.ignore);
 
       yield* Effect.gen(function* () {
-        const headExists = yield* hasHeadCommit(input.cwd);
-        if (headExists) {
+        const headCommit = yield* resolveHeadCommit(input.cwd);
+        const headBranch = yield* resolveHeadBranch(input.cwd);
+        if (headCommit) {
           yield* execute({
             operation,
             cwd: input.cwd,
@@ -703,7 +726,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const message = formatCheckpointCommitMessage({
+          checkpointRef: input.checkpointRef,
+          headOid: headCommit,
+          branch: headBranch,
+        });
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
@@ -846,6 +873,157 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
           { discard: true },
         );
+      },
+    ),
+
+    attributeCheckpointDiff: Effect.fn("GitVcsDriver.checkpoints.attributeCheckpointDiff")(
+      function* (input) {
+        const operation = "GitVcsDriver.checkpoints.attributeCheckpointDiff";
+
+        const readCommitField = (revision: string, format: string) =>
+          execute({
+            operation,
+            cwd: input.cwd,
+            args: ["log", "-1", `--format=${format}`, revision, "--"],
+            allowNonZeroExit: true,
+          }).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trimEnd() : null)));
+
+        const fromMessage = yield* readCommitField(`${input.fromCheckpointRef}^{commit}`, "%B");
+        const toMessage = yield* readCommitField(`${input.toCheckpointRef}^{commit}`, "%B");
+        if (fromMessage === null || toMessage === null) {
+          return null;
+        }
+        const fromMetadata = parseCheckpointCommitMessage(fromMessage);
+        const toMetadata = parseCheckpointCommitMessage(toMessage);
+        // Checkpoints captured before attribution metadata existed: unavailable.
+        if (fromMetadata === null || toMetadata === null) {
+          return null;
+        }
+
+        // HEAD did not move during the turn (or the repo has no commits):
+        // every tree change is agent-authored. An empty map means "classified,
+        // no git-origin paths".
+        if (fromMetadata.headOid === toMetadata.headOid || fromMetadata.headOid === null) {
+          return new Map<string, "agent" | "git">();
+        }
+        if (toMetadata.headOid === null) {
+          // HEAD disappeared mid-turn (e.g. re-init); fail toward "agent".
+          return new Map<string, "agent" | "git">();
+        }
+
+        const rawDiff = (fromRevision: string, toRevision: string) =>
+          execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "diff-tree",
+              "-r",
+              "-z",
+              "--no-abbrev",
+              "--no-renames",
+              fromRevision,
+              toRevision,
+            ],
+            allowNonZeroExit: true,
+            maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          }).pipe(
+            Effect.map((result) =>
+              result.exitCode === 0 && !result.stdoutTruncated
+                ? parseRawDiffEntries(result.stdout)
+                : null,
+            ),
+          );
+
+        const treeDelta = yield* rawDiff(
+          `${input.fromCheckpointRef}^{commit}`,
+          `${input.toCheckpointRef}^{commit}`,
+        );
+        const historyDelta = yield* rawDiff(fromMetadata.headOid, toMetadata.headOid);
+        if (treeDelta === null || historyDelta === null) {
+          return null;
+        }
+
+        // The baseline checkpoint commit is created at turn start, so its
+        // committer timestamp is the turn-start time. Commits in the HEAD
+        // range authored at or after it were made during the turn and count
+        // as agent work; commits authored before it carried pre-existing
+        // content (pull, checkout — and, because cherry-pick and rebase
+        // preserve author dates, replayed foreign commits too).
+        const fromCommitTimeRaw = yield* readCommitField(
+          `${input.fromCheckpointRef}^{commit}`,
+          "%ct",
+        );
+        const fromCommitTime = fromCommitTimeRaw === null ? NaN : Number(fromCommitTimeRaw);
+        if (!Number.isFinite(fromCommitTime)) {
+          return null;
+        }
+
+        const headRangeResult = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            "log",
+            "--format=%H %at %p",
+            `${fromMetadata.headOid}..${toMetadata.headOid}`,
+            "--",
+          ],
+          allowNonZeroExit: true,
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        });
+        if (headRangeResult.exitCode !== 0 || headRangeResult.stdoutTruncated) {
+          return null;
+        }
+
+        const turnAuthoredCommits: Array<{ readonly oid: string; readonly isMerge: boolean }> = [];
+        for (const line of headRangeResult.stdout.split("\n")) {
+          const [oid, authorTime, ...parents] = line.trim().split(" ");
+          if (!oid || !authorTime) {
+            continue;
+          }
+          const authoredAt = Number(authorTime);
+          if (Number.isFinite(authoredAt) && authoredAt >= fromCommitTime) {
+            turnAuthoredCommits.push({ oid, isMerge: parents.length > 1 });
+          }
+        }
+        // A pathological number of turn-authored commits (e.g. clock skew
+        // misclassifying a pulled range) would mean one diff-tree call per
+        // commit; skip attribution instead — the diff renders unfiltered.
+        if (turnAuthoredCommits.length > 100) {
+          return null;
+        }
+
+        const turnAuthoredPaths = new Set<string>();
+        for (const commit of turnAuthoredCommits) {
+          const pathsResult = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "diff-tree",
+              "-r",
+              "-z",
+              "--no-commit-id",
+              "--name-only",
+              // For merges, the combined diff lists only paths whose result
+              // differs from every parent — i.e. conflict resolutions the
+              // agent authored. Paths taken wholesale from one side are
+              // pre-existing content and stay attributable to history.
+              ...(commit.isMerge ? ["-c"] : []),
+              commit.oid,
+            ],
+            allowNonZeroExit: true,
+            maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          });
+          if (pathsResult.exitCode !== 0 || pathsResult.stdoutTruncated) {
+            return null;
+          }
+          for (const pathValue of pathsResult.stdout.split("\0")) {
+            if (pathValue.length > 0) {
+              turnAuthoredPaths.add(pathValue);
+            }
+          }
+        }
+
+        return classifyCheckpointPaths({ treeDelta, historyDelta, turnAuthoredPaths });
       },
     ),
   };

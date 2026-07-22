@@ -32,7 +32,7 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
-import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import { partitionTurnDiffFiles, summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -49,6 +49,7 @@ import {
   CircleAlertIcon,
   EyeIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -1249,13 +1250,17 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   if (!turnSummary) return null;
-  const checkpointFiles = turnSummary.files;
-  if (checkpointFiles.length === 0) return null;
+  if (turnSummary.files.length === 0) return null;
+  // Changes explained by pre-existing git history (pull, checkout,
+  // cherry-pick, rebase) collapse into a single summary row instead of
+  // being listed as agent work.
+  const { agentFiles, gitFiles } = partitionTurnDiffFiles(turnSummary.files);
 
   return (
     <AssistantChangedFilesSectionInner
       turnSummary={turnSummary}
-      checkpointFiles={checkpointFiles}
+      checkpointFiles={agentFiles}
+      gitFiles={gitFiles}
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
       onOpenTurnDiff={onOpenTurnDiff}
@@ -1268,12 +1273,14 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
 function AssistantChangedFilesSectionInner({
   turnSummary,
   checkpointFiles,
+  gitFiles,
   routeThreadKey,
   resolvedTheme,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
+  gitFiles: TurnDiffSummary["files"];
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -1283,6 +1290,7 @@ function AssistantChangedFilesSectionInner({
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const summaryStat = summarizeTurnDiffStats(checkpointFiles);
+  const gitSummaryStat = summarizeTurnDiffStats(gitFiles);
 
   return (
     <div className="mt-4 rounded-2xl border border-border/70 bg-secondary p-2 pt-4 dark:border-transparent dark:bg-input/32">
@@ -1346,14 +1354,32 @@ function AssistantChangedFilesSectionInner({
           </Tooltip>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`changed-files-tree:${turnSummary.turnId}`}
-        turnId={turnSummary.turnId}
-        files={checkpointFiles}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
+      {checkpointFiles.length > 0 && (
+        <ChangedFilesTree
+          key={`changed-files-tree:${turnSummary.turnId}`}
+          turnId={turnSummary.turnId}
+          files={checkpointFiles}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onOpenTurnDiff={onOpenTurnDiff}
+        />
+      )}
+      {gitFiles.length > 0 && (
+        <div className="flex items-center gap-1.5 rounded-xl px-2 py-1 text-muted-foreground/80">
+          <GitBranchIcon aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="truncate font-mono text-[11px]">
+            Updated via git — {gitFiles.length} file{gitFiles.length === 1 ? "" : "s"}
+          </span>
+          {hasNonZeroStat(gitSummaryStat) && (
+            <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+              <DiffStatLabel
+                additions={gitSummaryStat.additions}
+                deletions={gitSummaryStat.deletions}
+              />
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -194,6 +194,7 @@ export default function DiffPanel({
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const [includeGitChanges, setIncludeGitChanges] = useState(false);
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
@@ -311,6 +312,12 @@ export default function DiffPanel({
         : null,
     [selectedCheckpointTurnCount],
   );
+  // Number of files in the selected turn whose change came from pre-existing
+  // git history rather than agent work; drives the hidden-changes banner.
+  const selectedTurnGitFileCount = useMemo(
+    () => selectedTurn?.files.filter((file) => file.origin === "git").length ?? 0,
+    [selectedTurn],
+  );
   const activeCheckpointDiff = useCheckpointDiff(
     {
       environmentId: activeThread?.environmentId ?? null,
@@ -318,6 +325,7 @@ export default function DiffPanel({
       fromTurnCount: selectedCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: selectedCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
+      includeGitChanges,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : null,
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
@@ -781,6 +789,36 @@ export default function DiffPanel({
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are
                 incomplete.
+              </p>
+            )}
+            {selectedTurn && selectedTurnGitFileCount > 0 && (
+              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+                {includeGitChanges ? (
+                  <>
+                    Showing {selectedTurnGitFileCount} file
+                    {selectedTurnGitFileCount === 1 ? "" : "s"} changed via git (pull, checkout,
+                    rebase, …).{" "}
+                    <button
+                      type="button"
+                      className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+                      onClick={() => setIncludeGitChanges(false)}
+                    >
+                      Hide them
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {selectedTurnGitFileCount} file{selectedTurnGitFileCount === 1 ? "" : "s"}{" "}
+                    changed via git (pull, checkout, rebase, …) are hidden.{" "}
+                    <button
+                      type="button"
+                      className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+                      onClick={() => setIncludeGitChanges(true)}
+                    >
+                      Show them
+                    </button>
+                  </>
+                )}
               </p>
             )}
             {selectedPatchError && !renderablePatch && (

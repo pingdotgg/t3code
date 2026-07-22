@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseTurnDiffFilesFromUnifiedDiff } from "./Diffs.ts";
+import { filterUnifiedDiffFiles, parseTurnDiffFilesFromUnifiedDiff } from "./Diffs.ts";
 
 describe("parseTurnDiffFilesFromUnifiedDiff", () => {
   it("returns empty list for empty diff", () => {
@@ -64,5 +64,61 @@ describe("parseTurnDiffFilesFromUnifiedDiff", () => {
     expect(parseTurnDiffFilesFromUnifiedDiff(diff)).toEqual([
       { path: "a.txt", additions: 2, deletions: 1 },
     ]);
+  });
+});
+
+describe("filterUnifiedDiffFiles", () => {
+  const twoFileDiff = [
+    "diff --git a/kept.ts b/kept.ts",
+    "index 1111111..2222222 100644",
+    "--- a/kept.ts",
+    "+++ b/kept.ts",
+    "@@ -1,1 +1,1 @@",
+    "-old",
+    "+new",
+    "diff --git a/dropped.ts b/dropped.ts",
+    "index 3333333..4444444 100644",
+    "--- a/dropped.ts",
+    "+++ b/dropped.ts",
+    "@@ -1,1 +1,1 @@",
+    "-before",
+    "+after",
+    "",
+  ].join("\n");
+
+  it("removes sections whose path is rejected", () => {
+    const filtered = filterUnifiedDiffFiles(twoFileDiff, (path) => path !== "dropped.ts");
+    expect(filtered).toContain("kept.ts");
+    expect(filtered).not.toContain("dropped.ts");
+    expect(parseTurnDiffFilesFromUnifiedDiff(filtered)).toEqual([
+      { path: "kept.ts", additions: 1, deletions: 1 },
+    ]);
+  });
+
+  it("returns the diff unchanged when everything is kept", () => {
+    expect(filterUnifiedDiffFiles(twoFileDiff, () => true)).toBe(twoFileDiff);
+  });
+
+  it("filters deleted files via the --- a/ path", () => {
+    const deletionDiff = [
+      "diff --git a/removed.ts b/removed.ts",
+      "deleted file mode 100644",
+      "index 1111111..0000000",
+      "--- a/removed.ts",
+      "+++ /dev/null",
+      "@@ -1,1 +0,0 @@",
+      "-gone",
+      "",
+    ].join("\n");
+    expect(filterUnifiedDiffFiles(deletionDiff, (path) => path !== "removed.ts").trim()).toBe("");
+  });
+
+  it("keeps unparseable sections", () => {
+    const oddDiff = ["diff --git a/x b/x", "Binary files differ", ""].join("\n");
+    expect(filterUnifiedDiffFiles(oddDiff, () => false)).toBe(oddDiff);
+  });
+
+  it("returns empty diff unchanged", () => {
+    expect(filterUnifiedDiffFiles("", () => false)).toBe("");
   });
 });

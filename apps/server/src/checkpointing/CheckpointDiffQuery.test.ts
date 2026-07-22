@@ -69,6 +69,7 @@ describe("CheckpointDiffQuery.layer", () => {
             return "full thread diff patch";
           }),
         deleteCheckpointRefs: () => Effect.void,
+        attributeCheckpointDiff: () => Effect.succeed(null),
       };
 
       const layer = CheckpointDiffQuery.layer.pipe(
@@ -177,6 +178,7 @@ describe("CheckpointDiffQuery.layer", () => {
             return "diff patch";
           }),
         deleteCheckpointRefs: () => Effect.void,
+        attributeCheckpointDiff: () => Effect.succeed(null),
       };
 
       const layer = CheckpointDiffQuery.layer.pipe(
@@ -260,6 +262,7 @@ describe("CheckpointDiffQuery.layer", () => {
             return "diff patch";
           }),
         deleteCheckpointRefs: () => Effect.void,
+        attributeCheckpointDiff: () => Effect.succeed(null),
       };
 
       const layer = CheckpointDiffQuery.layer.pipe(
@@ -328,6 +331,7 @@ describe("CheckpointDiffQuery.layer", () => {
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: () => Effect.succeed("diff patch"),
         deleteCheckpointRefs: () => Effect.void,
+        attributeCheckpointDiff: () => Effect.succeed(null),
       };
 
       const layer = CheckpointDiffQuery.layer.pipe(
@@ -381,6 +385,7 @@ describe("CheckpointDiffQuery.layer", () => {
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: () => Effect.succeed(""),
         deleteCheckpointRefs: () => Effect.void,
+        attributeCheckpointDiff: () => Effect.succeed(null),
       };
 
       const layer = CheckpointDiffQuery.layer.pipe(

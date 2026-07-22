@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildTurnDiffTree, summarizeTurnDiffStats } from "./turnDiffTree";
+import { buildTurnDiffTree, partitionTurnDiffFiles, summarizeTurnDiffStats } from "./turnDiffTree";
 
 describe("summarizeTurnDiffStats", () => {
   it("sums only files with numeric additions/deletions", () => {
@@ -164,5 +164,35 @@ describe("buildTurnDiffTree", () => {
     );
     expect(directoryNodes.map((node) => node.name).toSorted()).toEqual([" a", "a"]);
     expect(directoryNodes.map((node) => node.path).toSorted()).toEqual([" a", "a"]);
+  });
+});
+
+describe("partitionTurnDiffFiles", () => {
+  it("splits files by origin, defaulting missing origin to agent", () => {
+    const agentEdit = { path: "edited.ts", kind: "modified", additions: 1, deletions: 0 } as const;
+    const legacy = { path: "legacy.ts", kind: "modified", additions: 2, deletions: 0 } as const;
+    const pulled = {
+      path: "pulled.ts",
+      kind: "modified",
+      additions: 3,
+      deletions: 1,
+      origin: "git",
+    } as const;
+    const explicitAgent = {
+      path: "explicit.ts",
+      kind: "modified",
+      additions: 4,
+      deletions: 0,
+      origin: "agent",
+    } as const;
+
+    const { agentFiles, gitFiles } = partitionTurnDiffFiles([
+      agentEdit,
+      legacy,
+      pulled,
+      explicitAgent,
+    ]);
+    expect(agentFiles.map((file) => file.path)).toEqual(["edited.ts", "legacy.ts", "explicit.ts"]);
+    expect(gitFiles.map((file) => file.path)).toEqual(["pulled.ts"]);
   });
 });

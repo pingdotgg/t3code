@@ -256,6 +256,27 @@ const make = Effect.gen(function* () {
     // reflects files created or deleted during this turn.
     yield* workspaceEntries.refresh(input.cwd);
 
+    // Best-effort per-path attribution: paths whose change is fully explained
+    // by pre-existing history moving through HEAD (pull, checkout,
+    // cherry-pick, rebase) are tagged origin "git" so the UI can demote them.
+    // Attribution must never block the checkpoint pipeline — any failure
+    // degrades to unattributed files (all shown as agent work).
+    const attribution = yield* checkpointStore
+      .attributeCheckpointDiff({
+        cwd: input.cwd,
+        fromCheckpointRef,
+        toCheckpointRef: targetCheckpointRef,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to attribute checkpoint diff", {
+            threadId: input.threadId,
+            turnId: input.turnId,
+            detail: error.message,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+
     const files = yield* checkpointStore
       .diffCheckpoints({
         cwd: input.cwd,
@@ -271,6 +292,7 @@ const make = Effect.gen(function* () {
             kind: "modified" as const,
             additions: file.additions,
             deletions: file.deletions,
+            ...(attribution ? { origin: attribution.get(file.path) ?? "agent" } : {}),
           })),
         ),
         Effect.tapError((error) =>
