@@ -107,6 +107,7 @@ export type BrowseTabCompletion =
   | { readonly kind: "entry"; readonly entry: FilesystemBrowseEntry };
 
 export function resolveBrowseTabCompletion(input: {
+  allowFirstEntryFallback?: boolean;
   exactEntry: FilesystemBrowseEntry | null;
   filteredEntries: ReadonlyArray<FilesystemBrowseEntry>;
   highlightedItemValue: string | null;
@@ -125,11 +126,11 @@ export function resolveBrowseTabCompletion(input: {
     }
   }
 
-  if (input.highlightedItemValue === null && input.exactEntry) {
+  if (input.exactEntry) {
     return { kind: "entry", entry: input.exactEntry };
   }
 
-  const firstEntry = input.filteredEntries[0];
+  const firstEntry = input.allowFirstEntryFallback === false ? undefined : input.filteredEntries[0];
   return firstEntry ? { kind: "entry", entry: firstEntry } : null;
 }
 
