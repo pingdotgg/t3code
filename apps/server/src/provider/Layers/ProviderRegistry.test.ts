@@ -1489,6 +1489,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities(),
+            // Explicit clean env so the OAuth-gated re-auth descriptor does not
+            // depend on ambient ANTHROPIC_API_KEY/backend vars in CI.
+            {},
           );
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
@@ -1521,6 +1524,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const status = yield* checkClaudeProviderStatus(
             { ...defaultClaudeSettings, homePath: "/tmp/t3-claude-home" },
             claudeCapabilities(),
+            {},
           );
           assert.strictEqual(status.reauthentication?.command, "claude setup-token");
           assert.deepStrictEqual(status.reauthentication?.env, {
@@ -1537,6 +1541,54 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   stderr: "",
                   code: 0,
                 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("honors an instance-env CLAUDE_CONFIG_DIR in the re-auth descriptor", () =>
+        Effect.gen(function* () {
+          // No custom homePath, but the instance environment supplies a config
+          // dir directly — setup-token must target it, not the default dir.
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+            {
+              CLAUDE_CONFIG_DIR: "/tmp/env-claude-cfg",
+            },
+          );
+          assert.deepStrictEqual(status.reauthentication?.env, {
+            CLAUDE_CONFIG_DIR: "/tmp/env-claude-cfg",
+          });
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("omits re-authentication for a Bedrock-backed Claude instance", () =>
+        Effect.gen(function* () {
+          // Bedrock authenticates via external AWS credentials; `setup-token`
+          // (OAuth) cannot fix its auth, so no re-authenticate action is offered.
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ apiProvider: "bedrock" }),
+            { CLAUDE_CODE_USE_BEDROCK: "1" },
+          );
+          assert.strictEqual(status.reauthentication, undefined);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
@@ -1958,6 +2010,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities(),
+            {},
           );
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);

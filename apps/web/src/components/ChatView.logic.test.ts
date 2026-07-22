@@ -544,5 +544,8 @@ describe("isProviderAuthError", () => {
     expect(isProviderAuthError("Tool execution failed: exit code 1")).toBe(false);
     expect(isProviderAuthError("Configured OAuth provider settings")).toBe(false);
     expect(isProviderAuthError("Set your api key in settings")).toBe(false);
+    // API-key auth problems are not fixed by the OAuth `setup-token` flow, so
+    // they must not trigger the re-authenticate action.
+    expect(isProviderAuthError("API Error: 401 Invalid API key")).toBe(false);
   });
 });

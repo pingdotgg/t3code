@@ -178,7 +178,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingClaudeProvider(settings.provider).pipe(
+          makePendingClaudeProvider(settings.provider, processEnv).pipe(
             Effect.map(stampIdentity),
             Effect.provideService(Path.Path, path),
           ),

@@ -38,16 +38,17 @@ export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.
  *   - "Failed to authenticate. API Error: 401 Invalid authentication
  *      credentials"
  *
- * It stays deliberately narrow: it keys off credential-specific phrasing
+ * It stays deliberately narrow: it keys off OAuth-credential-specific phrasing
  * ("failed to authenticate", "invalid authentication", expired/invalid token
  * or credentials, re-authenticate, please sign in) rather than bare tokens
- * like `401`/`403`/`oauth`/`api key`, which also appear in generic tool or HTTP
- * failures and would otherwise surface a misleading recovery action. Covered by
- * regression tests in ChatView.logic.test.ts.
+ * like `401`/`403`/`oauth`, which also appear in generic tool or HTTP failures.
+ * It intentionally does NOT match "api key" phrasing: an invalid Anthropic API
+ * key is not fixed by the OAuth `claude setup-token` flow this action runs.
+ * Covered by regression tests in ChatView.logic.test.ts.
  */
 export function isProviderAuthError(message: string | null | undefined): boolean {
   if (!message) return false;
-  return /(re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|api key|access token|token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
+  return /(?:re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|access token|token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
     message,
   );
 }

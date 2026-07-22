@@ -397,9 +397,41 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
 
 const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
 
+function isTruthyEnvFlag(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized !== undefined && normalized !== "" && normalized !== "0" && normalized !== "false"
+  );
+}
+
+/**
+ * Whether `claude setup-token` (interactive first-party OAuth login) is a valid
+ * recovery for this instance's credentials.
+ *
+ * OAuth login only applies to first-party Anthropic auth. When the instance is
+ * configured for a non-OAuth backend, `setup-token` cannot fix a credential
+ * failure and offering it would be misleading, so we skip the re-authenticate
+ * action entirely. Detected from the resolved instance environment (the same
+ * env Claude Code itself reads to select a backend):
+ *   - AWS Bedrock (`CLAUDE_CODE_USE_BEDROCK`) or Google Vertex
+ *     (`CLAUDE_CODE_USE_VERTEX`) — credentials come from AWS/GCP, not OAuth.
+ *   - An explicit API key (`ANTHROPIC_API_KEY`) or auth token
+ *     (`ANTHROPIC_AUTH_TOKEN`, e.g. OpenRouter / gateways) — the fix is to
+ *     correct that key/token, not to run an OAuth login.
+ * The default (none of these set) is first-party OAuth, so the action is shown.
+ */
+function claudeUsesOAuthLogin(environment: NodeJS.ProcessEnv): boolean {
+  if (isTruthyEnvFlag(environment.CLAUDE_CODE_USE_BEDROCK)) return false;
+  if (isTruthyEnvFlag(environment.CLAUDE_CODE_USE_VERTEX)) return false;
+  if (nonEmptyProbeString(environment.ANTHROPIC_API_KEY ?? "")) return false;
+  if (nonEmptyProbeString(environment.ANTHROPIC_AUTH_TOKEN ?? "")) return false;
+  return true;
+}
+
 /**
  * Build the in-app re-authentication descriptor for a Claude provider
- * instance.
+ * instance, or `undefined` when OAuth re-authentication does not apply (see
+ * {@link claudeUsesOAuthLogin} — Bedrock/Vertex/API-key/auth-token instances).
  *
  * Runs `claude setup-token`, which performs the interactive OAuth login
  * (prints a URL, then accepts the pasted authorization code) and stores a
@@ -410,10 +442,11 @@ const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
  *
  * The configured `binaryPath` is preserved so custom Claude installs
  * re-authenticate the same binary they run, and `CLAUDE_CONFIG_DIR` is
- * propagated for instances with a custom home so `setup-token` refreshes the
- * credentials of that exact instance rather than the default config dir
- * (mirroring {@link makeClaudeEnvironment} used by every other Claude
- * invocation).
+ * propagated so `setup-token` refreshes the credentials of that exact instance
+ * rather than the default config dir. The dir is resolved with the same
+ * precedence {@link makeClaudeEnvironment} uses: a custom `homePath` wins;
+ * otherwise a `CLAUDE_CONFIG_DIR` supplied via the instance's own environment
+ * is honored.
  *
  * `command` is a plain space-join intended for the common case (`claude` on
  * PATH, or a path without spaces) and to stay portable across the integrated
@@ -425,14 +458,17 @@ const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
  */
 export const resolveClaudeReauthentication = Effect.fn("resolveClaudeReauthentication")(function* (
   claudeSettings: ClaudeSettings,
-): Effect.fn.Return<ServerProviderReauthentication, never, Path.Path> {
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ServerProviderReauthentication | undefined, never, Path.Path> {
+  if (!claudeUsesOAuthLogin(environment)) return undefined;
   const executable = claudeSettings.binaryPath?.trim() || "claude";
   const args = [...CLAUDE_REAUTHENTICATION_ARGS];
   const command = [executable, ...args].join(" ");
-  const hasCustomHome = claudeSettings.homePath.trim().length > 0;
-  const env = hasCustomHome
-    ? { CLAUDE_CONFIG_DIR: yield* resolveClaudeHomePath(claudeSettings) }
-    : undefined;
+  const configDir =
+    claudeSettings.homePath.trim().length > 0
+      ? yield* resolveClaudeHomePath(claudeSettings)
+      : nonEmptyProbeString(environment.CLAUDE_CONFIG_DIR ?? "");
+  const env = configDir ? { CLAUDE_CONFIG_DIR: configDir } : undefined;
   return {
     command,
     executable,
@@ -751,7 +787,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const reauthentication = yield* resolveClaudeReauthentication(claudeSettings);
+  const reauthentication = yield* resolveClaudeReauthentication(
+    claudeSettings,
+    resolvedEnvironment,
+  );
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
     claudeSettings.customModels,
@@ -915,6 +954,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.Effect<ServerProviderDraft, never, Path.Path> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
@@ -943,7 +983,10 @@ export const makePendingClaudeProvider = (
     // Expose re-authentication even on the pre-probe snapshot so a turn that
     // fails with an auth error before the first status check completes can
     // still offer the in-app recovery action.
-    const reauthentication = yield* resolveClaudeReauthentication(claudeSettings);
+    const reauthentication = yield* resolveClaudeReauthentication(
+      claudeSettings,
+      environment ?? process.env,
+    );
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: true,

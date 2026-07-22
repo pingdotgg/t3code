@@ -216,7 +216,7 @@ export function buildServerProvider(input: {
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
-  reauthentication?: ServerProviderReauthentication;
+  reauthentication?: ServerProviderReauthentication | undefined;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
