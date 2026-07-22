@@ -15,6 +15,7 @@ import {
   isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  registerMountedThreadChangeRequestState,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -584,6 +585,22 @@ describe("resolveNextActiveThreadIdAfterSettle", () => {
     ).toBe("logical-next-active");
   });
 
+  it("finds an active full-list target when V2's scoped order excludes the current route", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["scoped-settled"],
+        fallbackThreadIds: [
+          "full-list-before",
+          "hidden-current",
+          "hidden-settled",
+          "hidden-active",
+        ],
+        settledThreadId: "hidden-current",
+        isActive: (threadId) => threadId === "hidden-active",
+      }),
+    ).toBe("hidden-active");
+  });
+
   it("rotates hidden fallbacks after exhausting visible active threads", () => {
     expect(
       resolveNextActiveThreadIdAfterSettle({
@@ -677,7 +694,7 @@ describe("shouldDismissThreadSettleConfirmation", () => {
         confirmationThreadKey: "thread-1",
         routeThreadKey: "thread-2",
         targetExists: true,
-        targetSettled: false,
+        targetExplicitlySettled: false,
       }),
     ).toBe(true);
   });
@@ -688,9 +705,66 @@ describe("shouldDismissThreadSettleConfirmation", () => {
         confirmationThreadKey: "thread-1",
         routeThreadKey: "thread-1",
         targetExists: true,
-        targetSettled: false,
+        targetExplicitlySettled: false,
       }),
     ).toBe(false);
+  });
+
+  it("keeps a confirmation open when inactivity only makes the target effectively settled", () => {
+    const target = makeThreadShell({
+      latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+      settledOverride: null,
+    });
+
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: target,
+        settlementSupported: true,
+        now: "2026-03-15T12:00:00.000Z",
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: target.settledOverride === "settled",
+      }),
+    ).toBe(false);
+  });
+
+  it("dismisses a confirmation after the server explicitly settles its target", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("registerMountedThreadChangeRequestState", () => {
+  it("removes a row's PR state when the row unmounts", () => {
+    const states = new Map<string, "open" | "closed" | "merged">();
+    const unregister = registerMountedThreadChangeRequestState({
+      threadKey: "thread-1",
+      state: "merged" as const,
+      onChange: (threadKey, state) => {
+        if (state === null) {
+          states.delete(threadKey);
+        } else {
+          states.set(threadKey, state);
+        }
+      },
+    });
+
+    expect(states.get("thread-1")).toBe("merged");
+    unregister();
+    expect(states.has("thread-1")).toBe(false);
   });
 });
 

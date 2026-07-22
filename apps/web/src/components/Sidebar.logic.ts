@@ -53,14 +53,25 @@ export function shouldDismissThreadSettleConfirmation<T>(input: {
   readonly confirmationThreadKey: T | null;
   readonly routeThreadKey: T | null;
   readonly targetExists: boolean;
-  readonly targetSettled: boolean;
+  readonly targetExplicitlySettled: boolean;
 }): boolean {
   return (
     input.confirmationThreadKey !== null &&
     (input.confirmationThreadKey !== input.routeThreadKey ||
       !input.targetExists ||
-      input.targetSettled)
+      input.targetExplicitlySettled)
   );
+}
+
+export function registerMountedThreadChangeRequestState<TState>(input: {
+  readonly threadKey: string;
+  readonly state: TState | null;
+  readonly onChange: (threadKey: string, state: TState | null) => void;
+}): () => void {
+  input.onChange(input.threadKey, input.state);
+  return () => {
+    input.onChange(input.threadKey, null);
+  };
 }
 
 export function isSidebarThreadEffectivelySettled(input: {

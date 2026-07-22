@@ -193,6 +193,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  registerMountedThreadChangeRequestState,
   shouldClearThreadSelectionOnMouseDown,
   shouldDismissThreadSettleConfirmation,
   sortProjectsForSidebar,
@@ -472,9 +473,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const prState = pr?.state ?? null;
-  useEffect(() => {
-    onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+  useEffect(
+    () =>
+      registerMountedThreadChangeRequestState({
+        threadKey,
+        state: prState,
+        onChange: onChangeRequestState,
+      }),
+    [onChangeRequestState, prState, threadKey],
+  );
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -3633,18 +3640,12 @@ export default function Sidebar() {
         confirmationThreadKey: settleConfirmationThreadKey,
         routeThreadKey,
         targetExists: settleConfirmationThread !== null,
-        targetSettled:
-          settleConfirmationThread !== null && isThreadEffectivelySettled(settleConfirmationThread),
+        targetExplicitlySettled: settleConfirmationThread?.settledOverride === "settled",
       })
     ) {
       setSettleConfirmationThreadKey(null);
     }
-  }, [
-    isThreadEffectivelySettled,
-    routeThreadKey,
-    settleConfirmationThread,
-    settleConfirmationThreadKey,
-  ]);
+  }, [routeThreadKey, settleConfirmationThread, settleConfirmationThreadKey]);
 
   useEffect(() => {
     const onMouseDown = (event: globalThis.MouseEvent) => {

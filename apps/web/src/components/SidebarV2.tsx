@@ -118,6 +118,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveSettledTimestamp,
+  resolveNextActiveThreadIdAfterSettle,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
@@ -1377,6 +1378,8 @@ export default function SidebarV2() {
     },
     [autoSettleAfterDays, changeRequestStateByKey, nowMinute, serverConfigs],
   );
+  const isThreadEffectivelySettledRef = useRef(isThreadEffectivelySettled);
+  isThreadEffectivelySettledRef.current = isThreadEffectivelySettled;
   const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
     // Snooze classification uses a REAL clock, not the quantized minute:
     // wake times are second-precise and a woken thread must not linger on
@@ -1525,20 +1528,31 @@ export default function SidebarV2() {
   // rendered at click time.
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   orderedThreadKeysRef.current = orderedThreadKeys;
-  // Route actions are independent of the selected project chip. Keep a map
-  // of every live shell for eligibility and confirmation; rendered traversal
-  // continues to use the scoped map below.
+  // Route actions are independent of the selected project chip. Keep every
+  // live shell in stable creation order for eligibility, confirmation, and
+  // post-settle fallback; rendered keyboard traversal stays scoped below.
+  const allUnarchivedThreads = useMemo(
+    () => sortThreadsForSidebarV2(threads.filter((thread) => thread.archivedAt === null)),
+    [threads],
+  );
+  const allUnarchivedThreadKeys = useMemo(
+    () =>
+      allUnarchivedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    [allUnarchivedThreads],
+  );
+  const allUnarchivedThreadKeysRef = useRef(allUnarchivedThreadKeys);
+  allUnarchivedThreadKeysRef.current = allUnarchivedThreadKeys;
   const allThreadByKey = useMemo(
     () =>
       new Map(
-        threads
-          .filter((thread) => thread.archivedAt === null)
-          .map(
-            (thread) =>
-              [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
-          ),
+        allUnarchivedThreads.map(
+          (thread) =>
+            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+        ),
       ),
-    [threads],
+    [allUnarchivedThreads],
   );
   const allThreadByKeyRef = useRef(allThreadByKey);
   allThreadByKeyRef.current = allThreadByKey;
@@ -1720,7 +1734,37 @@ export default function SidebarV2() {
         settlingThreadKeysRef.current.add(threadKey);
         setSettleConfirmationThreadKey((current) => (current === threadKey ? null : current));
         try {
-          const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
+          // Settling the thread you're looking at moves you forward: the next
+          // remaining card (never a settled row, never one settling in the
+          // same batch), or a fresh draft in this project when it was the
+          // last active one. Snapshot the target before the settle mutates
+          // the partition. Background settles never navigate.
+          const shell = allThreadByKeyRef.current.get(threadKey);
+          let navigateAfterSettle: (() => void) | null = null;
+          if (routeThreadKey === threadKey) {
+            const nextThreadKey = resolveNextActiveThreadIdAfterSettle({
+              threadIds: orderedThreadKeysRef.current,
+              fallbackThreadIds: allUnarchivedThreadKeysRef.current,
+              settledThreadId: threadKey,
+              isActive: (candidateKey) => {
+                const candidate = allThreadByKeyRef.current.get(candidateKey);
+                return (
+                  candidate !== undefined &&
+                  !opts.coSettlingKeys?.has(candidateKey) &&
+                  !isThreadEffectivelySettledRef.current(candidate)
+                );
+              },
+            });
+            const nextThread = nextThreadKey ? allThreadByKeyRef.current.get(nextThreadKey) : null;
+            navigateAfterSettle = nextThread
+              ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
+              : shell
+                ? () =>
+                    void handleNewThreadRef.current(
+                      scopeProjectRef(shell.environmentId, shell.projectId),
+                    )
+                : () => void router.navigate({ to: "/" });
+          }
           const result = await settleThread(threadRef);
           if (result._tag === "Failure") {
             // Never navigate away from a thread that did not settle.
@@ -2222,18 +2266,12 @@ export default function SidebarV2() {
         confirmationThreadKey: settleConfirmationThreadKey,
         routeThreadKey,
         targetExists: settleConfirmationThread !== null,
-        targetSettled:
-          settleConfirmationThread !== null && isThreadEffectivelySettled(settleConfirmationThread),
+        targetExplicitlySettled: settleConfirmationThread?.settledOverride === "settled",
       })
     ) {
       setSettleConfirmationThreadKey(null);
     }
-  }, [
-    isThreadEffectivelySettled,
-    routeThreadKey,
-    settleConfirmationThread,
-    settleConfirmationThreadKey,
-  ]);
+  }, [routeThreadKey, settleConfirmationThread, settleConfirmationThreadKey]);
 
   // Same predicate as v1: hints show only while the held modifiers exactly
   // match a thread-jump binding. Adding Shift (screenshots) or Alt no
