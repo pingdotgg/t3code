@@ -34,6 +34,7 @@ const TREE_UNSAFE_CSS = `
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
     --trees-font-family-override: var(--font-sans);
     --trees-font-size-override: 12px;
+    --trees-padding-inline-override: 12px;
   }
   button[data-type='item'] { border-radius: 5px; }
 `;
