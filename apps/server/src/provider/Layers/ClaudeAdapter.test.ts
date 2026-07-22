@@ -9,6 +9,7 @@ import type {
   PermissionMode,
   PermissionResult,
   SDKMessage,
+  SessionMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -37,7 +38,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapter,
+  resolveClaudeAssistantForkPoint,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -156,6 +161,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly getSessionMessages?: (sessionId: string) => Promise<SessionMessage[]>;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -171,6 +177,7 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.getSessionMessages ? { getSessionMessages: config.getSessionMessages } : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -220,6 +227,30 @@ function makeDeterministicRandomService(seed = 0x1234_5678): {
     nextDoubleUnsafe: () => nextIntUnsafe() / 0x1_0000_0000,
   };
 }
+
+describe("resolveClaudeAssistantForkPoint", () => {
+  it("selects the terminal assistant message for a human turn", () => {
+    const message = (type: SessionMessage["type"], uuid: string, content: unknown) => ({
+      type,
+      uuid,
+      session_id: "session-1",
+      message: { content },
+      parent_tool_use_id: null,
+    });
+    const messages = [
+      message("user", "user-1", [{ type: "text", text: "first" }]),
+      message("assistant", "assistant-1a", [{ type: "tool_use" }]),
+      message("user", "tool-result-1", [{ type: "tool_result" }]),
+      message("assistant", "assistant-1b", [{ type: "text" }]),
+      message("user", "user-2", [{ type: "text", text: "second" }]),
+      message("assistant", "assistant-2", [{ type: "text" }]),
+    ] satisfies SessionMessage[];
+
+    assert.equal(resolveClaudeAssistantForkPoint(messages, 0), "assistant-1b");
+    assert.equal(resolveClaudeAssistantForkPoint(messages, 1), "assistant-2");
+    assert.equal(resolveClaudeAssistantForkPoint(messages, undefined), "assistant-2");
+  });
+});
 
 async function readFirstPromptText(
   input:
@@ -2815,6 +2846,79 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(createInput?.options.resume, "550e8400-e29b-41d4-a716-446655440000");
       assert.equal(createInput?.options.sessionId, undefined);
       assert.equal(createInput?.options.resumeSessionAt, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forks a Claude session at the selected assistant response", () => {
+    const sourceSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const readCalls: string[] = [];
+    const harness = makeHarness({
+      getSessionMessages: async (sessionId) => {
+        readCalls.push(sessionId);
+        return [
+          {
+            type: "user",
+            uuid: "user-1",
+            session_id: sessionId,
+            message: { content: [{ type: "text", text: "first" }] },
+            parent_tool_use_id: null,
+          },
+          {
+            type: "assistant",
+            uuid: "assistant-1",
+            session_id: sessionId,
+            message: {},
+            parent_tool_use_id: null,
+          },
+          {
+            type: "user",
+            uuid: "user-2",
+            session_id: sessionId,
+            message: { content: [{ type: "text", text: "second" }] },
+            parent_tool_use_id: null,
+          },
+          {
+            type: "assistant",
+            uuid: "assistant-2",
+            session_id: sessionId,
+            message: { content: [{ type: "text", text: "response" }] },
+            parent_tool_use_id: null,
+          },
+        ];
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: ThreadId.make("thread-claude-fork"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        forkFrom: {
+          threadId: RESUME_THREAD_ID,
+          sourceTurnIndex: 1,
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: sourceSessionId,
+            turnCount: 2,
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(readCalls, [sourceSessionId]);
+      assert.equal(createInput?.options.resume, sourceSessionId);
+      assert.equal(createInput?.options.forkSession, true);
+      assert.equal(createInput?.options.resumeSessionAt, "assistant-2");
+      assert.equal(typeof createInput?.options.sessionId, "string");
+      assert.notEqual(createInput?.options.sessionId, sourceSessionId);
+      assert.equal(
+        (session.resumeCursor as { resume?: string }).resume,
+        createInput?.options.sessionId,
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

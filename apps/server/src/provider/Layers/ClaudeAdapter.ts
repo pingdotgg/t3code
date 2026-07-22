@@ -14,6 +14,8 @@ import {
   type PermissionResult,
   type PermissionUpdate,
   type SDKMessage,
+  getSessionMessages,
+  type SessionMessage,
   type SDKControlGetContextUsageResponse,
   type SDKResultMessage,
   type SettingSource,
@@ -219,6 +221,10 @@ export interface ClaudeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly getSessionMessages?: (
+    sessionId: string,
+    options?: { readonly dir?: string },
+  ) => Promise<SessionMessage[]>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -596,6 +602,52 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
       ? { turnCount: turnCountValue }
       : {}),
   };
+}
+
+function sessionUserMessageStartsHumanTurn(message: SessionMessage): boolean {
+  if (message.type !== "user") {
+    return false;
+  }
+  const content = (message.message as { readonly content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) {
+    return true;
+  }
+  return content.some(
+    (block) =>
+      typeof block !== "object" ||
+      block === null ||
+      (block as { readonly type?: unknown }).type !== "tool_result",
+  );
+}
+
+export function resolveClaudeAssistantForkPoint(
+  messages: ReadonlyArray<SessionMessage>,
+  sourceTurnIndex: number | undefined,
+): string | undefined {
+  const terminalAssistantUuids: string[] = [];
+  let currentTurnAssistantUuid: string | undefined;
+  let hasHumanTurn = false;
+
+  for (const message of messages) {
+    if (sessionUserMessageStartsHumanTurn(message)) {
+      if (hasHumanTurn && currentTurnAssistantUuid !== undefined) {
+        terminalAssistantUuids.push(currentTurnAssistantUuid);
+      }
+      hasHumanTurn = true;
+      currentTurnAssistantUuid = undefined;
+      continue;
+    }
+    if (message.type === "assistant" && hasHumanTurn) {
+      currentTurnAssistantUuid = message.uuid;
+    }
+  }
+  if (hasHumanTurn && currentTurnAssistantUuid !== undefined) {
+    terminalAssistantUuids.push(currentTurnAssistantUuid);
+  }
+
+  return sourceTurnIndex === undefined
+    ? terminalAssistantUuids.at(-1)
+    : terminalAssistantUuids[sourceTurnIndex];
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
@@ -1370,6 +1422,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         prompt: input.prompt,
         options: input.options,
       }) as ClaudeQueryRuntime);
+  const readSessionMessages = options?.getSessionMessages ?? getSessionMessages;
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -3093,11 +3146,50 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const startedAt = yield* nowIso;
-      const resumeState = readClaudeResumeState(input.resumeCursor);
+      const isFork = input.forkFrom !== undefined;
+      const resumeState = readClaudeResumeState(
+        isFork ? input.forkFrom?.resumeCursor : input.resumeCursor,
+      );
+      if (isFork && resumeState?.resume === undefined) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: "Claude forks require a valid persisted source session id.",
+        });
+      }
+      const forkAtAssistantUuid = isFork
+        ? yield* Effect.tryPromise({
+            try: async () => {
+              const messages = await readSessionMessages(resumeState!.resume!, {
+                ...(input.cwd ? { dir: input.cwd } : {}),
+              });
+              const sourceTurnIndex = input.forkFrom?.sourceTurnIndex;
+              const assistantUuid = resolveClaudeAssistantForkPoint(messages, sourceTurnIndex);
+              if (!assistantUuid) {
+                throw new Error(
+                  sourceTurnIndex === undefined
+                    ? `Claude source session '${resumeState!.resume}' has no assistant response to fork.`
+                    : `Claude source session '${resumeState!.resume}' has no assistant response at position ${sourceTurnIndex}.`,
+                );
+              }
+              return assistantUuid;
+            },
+            catch: (cause) =>
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/fork",
+                detail:
+                  cause instanceof Error ? cause.message : "Failed to resolve Claude fork point.",
+                cause,
+              }),
+          })
+        : undefined;
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
-      const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
+      const newSessionId =
+        isFork || existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
+      const effectiveSessionId = isFork ? newSessionId : sessionId;
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -3465,6 +3557,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
+        ...(isFork ? { forkSession: true } : {}),
+        ...(forkAtAssistantUuid ? { resumeSessionAt: forkAtAssistantUuid } : {}),
         includePartialMessages: true,
         canUseTool,
         env: claudeEnvironment,
@@ -3536,8 +3630,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(threadId ? { threadId } : {}),
         resumeCursor: {
           ...(threadId ? { threadId } : {}),
-          ...(sessionId ? { resume: sessionId } : {}),
-          ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
+          ...(effectiveSessionId ? { resume: effectiveSessionId } : {}),
+          ...(!isFork && resumeState?.resumeSessionAt
+            ? { resumeSessionAt: resumeState.resumeSessionAt }
+            : {}),
           turnCount: resumeState?.turnCount ?? 0,
         },
         createdAt: startedAt,
@@ -3552,7 +3648,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
-        resumeSessionId: sessionId,
+        resumeSessionId: effectiveSessionId,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
@@ -3562,7 +3658,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
-        lastAssistantUuid: resumeState?.resumeSessionAt,
+        lastAssistantUuid: isFork ? undefined : resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
       };
@@ -3855,6 +3951,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      sessionFork: "native",
     },
     startSession,
     sendTurn,

@@ -1191,6 +1191,14 @@ export function makeOpenCodeAdapter(
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        const forkSessionId = parseOpenCodeResume(input.forkFrom?.resumeCursor)?.sessionId;
+        if (input.forkFrom !== undefined && forkSessionId === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "OpenCode forks require a valid persisted source session id.",
+          });
+        }
         const existing = sessions.get(input.threadId);
         if (existing) {
           yield* stopOpenCodeContext(existing);
@@ -1235,6 +1243,51 @@ export function makeOpenCodeAdapter(
               // a confirmed not-found (start fresh); transport/auth/server
               // errors propagate instead of masking as a new empty session.
               const resolved = yield* Effect.gen(function* () {
+                if (forkSessionId !== undefined) {
+                  const sourceMessages = yield* runOpenCodeSdk("session.messages", () =>
+                    client.session.messages({ sessionID: forkSessionId }),
+                  );
+                  const assistantMessages = (sourceMessages.data ?? []).filter(
+                    (entry) => entry.info.role === "assistant",
+                  );
+                  const sourceTurnIndex = input.forkFrom?.sourceTurnIndex;
+                  const sourceMessage =
+                    sourceTurnIndex === undefined
+                      ? assistantMessages.at(-1)
+                      : assistantMessages[sourceTurnIndex];
+                  if (!sourceMessage) {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "session.fork",
+                      detail:
+                        sourceTurnIndex === undefined
+                          ? `OpenCode source session '${forkSessionId}' has no assistant response to fork.`
+                          : `OpenCode source session '${forkSessionId}' has no assistant response at position ${sourceTurnIndex}.`,
+                    });
+                  }
+
+                  const forkedResponse = yield* runOpenCodeSdk("session.fork", () =>
+                    client.session.fork({
+                      sessionID: forkSessionId,
+                      directory,
+                      messageID: sourceMessage.info.id,
+                    }),
+                  );
+                  const forked = forkedResponse.data;
+                  if (!forked) {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "session.fork",
+                      detail: "OpenCode session.fork returned no session payload.",
+                    });
+                  }
+                  yield* runOpenCodeSdk("session.update", () =>
+                    client.session.update({
+                      sessionID: forked.id,
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    }),
+                  );
+                  return { openCodeSession: forked, created: true };
+                }
+
                 const adopted = resumeSessionId
                   ? yield* runOpenCodeSdk("session.get", () =>
                       client.session.get({ sessionID: resumeSessionId }),
@@ -1701,6 +1754,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        sessionFork: "native",
       },
       startSession,
       sendTurn,

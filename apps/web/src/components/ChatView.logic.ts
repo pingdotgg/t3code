@@ -27,6 +27,20 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+const SELECTED_RESPONSE_FORK_DRIVERS = new Set<ProviderDriverKind>([
+  "codex" as ProviderDriverKind,
+  "claudeAgent" as ProviderDriverKind,
+  "opencode" as ProviderDriverKind,
+]);
+
+export function supportsSelectedResponseFork(
+  driverKind: ProviderDriverKind | null | undefined,
+): boolean {
+  return driverKind !== null && driverKind !== undefined
+    ? SELECTED_RESPONSE_FORK_DRIVERS.has(driverKind)
+    : false;
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,

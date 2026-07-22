@@ -48,6 +48,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import {
+  findCompletedTurnIndex,
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
@@ -65,6 +66,24 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+describe("findCompletedTurnIndex", () => {
+  it("maps a selected T3 turn to its provider response position", () => {
+    const first = asTurnId("turn-1");
+    const second = asTurnId("turn-2");
+    expect(
+      findCompletedTurnIndex(
+        [
+          { role: "assistant", turnId: first, streaming: false },
+          { role: "assistant", turnId: first, streaming: false },
+          { role: "assistant", turnId: second, streaming: true },
+          { role: "assistant", turnId: second, streaming: false },
+        ],
+        second,
+      ),
+    ).toBe(1);
+  });
+});
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
