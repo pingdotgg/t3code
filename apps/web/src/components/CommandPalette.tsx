@@ -982,12 +982,13 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     clearOpenIntent();
-    if (currentView !== null) return;
+    setViewStack([]);
+    setQuery("");
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
-  }, [clearOpenIntent, currentView, openIntent, projectThreadItems]);
+  }, [clearOpenIntent, openIntent, projectThreadItems]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
