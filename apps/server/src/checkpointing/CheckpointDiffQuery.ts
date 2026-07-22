@@ -31,7 +31,7 @@ import {
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
-import { filterUnifiedDiffFiles } from "./Diffs.ts";
+import { filterUnifiedDiffFiles, listUnifiedDiffPaths } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -108,9 +108,13 @@ export const make = Effect.gen(function* () {
     if (attribution === null) {
       return { diff: input.diff, gitFileCount: undefined };
     }
+    // Count only git-attributed paths with a section in THIS patch. The
+    // attribution map can include paths absent from the patch (e.g.
+    // whitespace-only changes elided by ignoreWhitespace) — counting those
+    // would advertise hidden files the toggle can never reveal.
     let gitFileCount = 0;
-    for (const origin of attribution.values()) {
-      if (origin === "git") {
+    for (const path of listUnifiedDiffPaths(input.diff)) {
+      if (attribution.get(path) === "git") {
         gitFileCount += 1;
       }
     }

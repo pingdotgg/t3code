@@ -196,10 +196,9 @@ describe("filterUnifiedDiffFiles fallback paths", () => {
       "+new",
       "",
     ].join("\n");
-    // git octal-escapes UTF-8 bytes; our decoder maps each escaped byte to a
-    // char code, so the filter key uses the same byte-per-char convention.
-    const decodedPath = "spÃ¤ce.ts";
-    expect(filterUnifiedDiffFiles(quotedDiff, (path) => path !== decodedPath).trim()).toBe("");
+    // git octal-escapes the raw UTF-8 bytes (`ä` = \303\244); the decoder
+    // must reassemble them into the real character, not per-byte mojibake.
+    expect(filterUnifiedDiffFiles(quotedDiff, (path) => path !== "späce.ts").trim()).toBe("");
   });
 
   it("filters rename-only sections without hunks via rename metadata", () => {

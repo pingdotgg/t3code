@@ -26,35 +26,51 @@ export function parseTurnDiffFilesFromUnifiedDiff(
   return files.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
+const SIMPLE_ESCAPES: Record<string, number> = {
+  "\\": 0x5c,
+  '"': 0x22,
+  a: 0x07,
+  b: 0x08,
+  f: 0x0c,
+  n: 0x0a,
+  r: 0x0d,
+  t: 0x09,
+  v: 0x0b,
+};
+
 function stripGitPathQuoting(value: string): string {
   if (!(value.startsWith('"') && value.endsWith('"') && value.length >= 2)) {
     return value;
   }
-  // Git C-style quoting: decode the escapes it emits for unusual paths.
-  return value.slice(1, -1).replace(/\\([\\"abfnrtv]|[0-7]{1,3})/g, (_, escape: string) => {
-    switch (escape) {
-      case "\\":
-        return "\\";
-      case '"':
-        return '"';
-      case "a":
-        return "\x07";
-      case "b":
-        return "\b";
-      case "f":
-        return "\f";
-      case "n":
-        return "\n";
-      case "r":
-        return "\r";
-      case "t":
-        return "\t";
-      case "v":
-        return "\v";
-      default:
-        return String.fromCharCode(parseInt(escape, 8));
+  // Git C-style quoting: octal escapes are raw UTF-8 BYTES (e.g. `ä` is
+  // `\303\244`), so decode into a byte buffer first and UTF-8-decode the
+  // whole path at the end — per-escape String.fromCharCode would yield
+  // mojibake that never matches attribution map keys.
+  const inner = value.slice(1, -1);
+  const bytes: Array<number> = [];
+  const encoder = new TextEncoder();
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index]!;
+    if (char !== "\\" || index === inner.length - 1) {
+      bytes.push(...encoder.encode(char));
+      continue;
     }
-  });
+    const next = inner[index + 1]!;
+    const simple = SIMPLE_ESCAPES[next];
+    if (simple !== undefined) {
+      bytes.push(simple);
+      index += 1;
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(inner.slice(index + 1))?.[0];
+    if (octal) {
+      bytes.push(parseInt(octal, 8) & 0xff);
+      index += octal.length;
+      continue;
+    }
+    bytes.push(...encoder.encode(char));
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
 }
 
 /**
@@ -124,20 +140,11 @@ function resolveDiffSectionPath(section: string): string | null {
   return fallbackSource ?? renameTarget ?? headerPath;
 }
 
-/**
- * Remove file sections from a unified diff by path.
- *
- * Sections whose path cannot be determined are kept (fail toward showing).
- */
-export function filterUnifiedDiffFiles(
-  diff: string,
-  shouldKeepPath: (path: string) => boolean,
-): string {
+function splitUnifiedDiffSections(diff: string): ReadonlyArray<string> {
   const normalized = diff.replace(/\r\n/g, "\n");
   if (normalized.trim().length === 0) {
-    return diff;
+    return [];
   }
-
   const sections: Array<string> = [];
   let currentStart = -1;
   const lines = normalized.split("\n");
@@ -153,6 +160,34 @@ export function filterUnifiedDiffFiles(
     }
   }
   flush(lines.length);
+  return sections;
+}
+
+/**
+ * List the resolvable post-image paths of a unified diff's file sections.
+ * Unparseable sections are omitted.
+ */
+export function listUnifiedDiffPaths(diff: string): ReadonlyArray<string> {
+  const paths: Array<string> = [];
+  for (const section of splitUnifiedDiffSections(diff)) {
+    const path = resolveDiffSectionPath(section);
+    if (path !== null) {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+/**
+ * Remove file sections from a unified diff by path.
+ *
+ * Sections whose path cannot be determined are kept (fail toward showing).
+ */
+export function filterUnifiedDiffFiles(
+  diff: string,
+  shouldKeepPath: (path: string) => boolean,
+): string {
+  const sections = splitUnifiedDiffSections(diff);
   if (sections.length === 0) {
     return diff;
   }

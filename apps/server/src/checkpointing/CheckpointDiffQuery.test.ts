@@ -304,6 +304,102 @@ describe("CheckpointDiffQuery.layer", () => {
     }),
   );
 
+  it.effect("filters git-attributed sections and reports gitFileCount from patch sections", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-attribution");
+      const threadId = ThreadId.make("thread-attribution");
+      const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+      const patch = [
+        "diff --git a/agent.ts b/agent.ts",
+        "index 1111111..2222222 100644",
+        "--- a/agent.ts",
+        "+++ b/agent.ts",
+        "@@ -1,1 +1,1 @@",
+        "-old",
+        "+new",
+        "diff --git a/pulled.ts b/pulled.ts",
+        "index 3333333..4444444 100644",
+        "--- a/pulled.ts",
+        "+++ b/pulled.ts",
+        "@@ -1,1 +1,1 @@",
+        "-before",
+        "+after",
+        "",
+      ].join("\n");
+      // Attribution also tags a path that has no section in this patch
+      // (e.g. whitespace-only change elided by ignoreWhitespace) — it must
+      // not count toward gitFileCount.
+      const attribution = new Map<string, "agent" | "git">([
+        ["agent.ts", "agent"],
+        ["pulled.ts", "git"],
+        ["whitespace-only.ts", "git"],
+      ]);
+
+      const threadCheckpointContext = makeThreadCheckpointContext({
+        projectId,
+        threadId,
+        workspaceRoot: "/tmp/workspace",
+        worktreePath: null,
+        checkpointTurnCount: 1,
+        checkpointRef: toCheckpointRef,
+      });
+
+      const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
+        isGitRepository: () => Effect.succeed(true),
+        captureCheckpoint: () => Effect.void,
+        hasCheckpointRef: () => Effect.succeed(true),
+        restoreCheckpoint: () => Effect.succeed(true),
+        diffCheckpoints: () => Effect.succeed(patch),
+        deleteCheckpointRefs: () => Effect.void,
+        attributeCheckpointDiff: () => Effect.succeed(attribution),
+      };
+
+      const layer = CheckpointDiffQuery.layer.pipe(
+        Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+            getCommandReadModel: () => Effect.die("unused"),
+            getSnapshot: () => Effect.die("unused"),
+            getShellSnapshot: () => Effect.die("unused"),
+            getArchivedShellSnapshot: () => Effect.die("unused"),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+            getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+            getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            getProjectShellById: () => Effect.succeed(Option.none()),
+            getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+            getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+            getFullThreadDiffContext: () => Effect.die("unused"),
+            getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          }),
+        ),
+      );
+
+      const { filtered, revealed } = yield* Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        const filtered = yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+        const revealed = yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+          includeGitChanges: true,
+        });
+        return { filtered, revealed };
+      }).pipe(Effect.provide(layer));
+
+      expect(filtered.diff).toContain("agent.ts");
+      expect(filtered.diff).not.toContain("pulled.ts");
+      expect(filtered.gitFileCount).toBe(1);
+      expect(revealed.diff).toBe(patch);
+      expect(revealed.gitFileCount).toBe(1);
+    }),
+  );
+
   it.effect("does not preflight checkpoint refs before diffing", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-no-preflight");
