@@ -36,11 +36,13 @@ import {
 } from "react";
 import {
   clampCollapsedComposerCursor,
+  type ComposerCommandKey,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
+  shouldInterruptRunningThreadFromComposerKey,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -1769,10 +1771,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: command key
   // ------------------------------------------------------------------
-  const onComposerCommandKey = (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
-    event: KeyboardEvent,
-  ) => {
+  const onComposerCommandKey = (key: ComposerCommandKey, event: KeyboardEvent) => {
+    if (shouldInterruptRunningThreadFromComposerKey({ key, isRunning: phase === "running" })) {
+      onInterrupt();
+      return true;
+    }
     if (key === "Tab" && event.shiftKey) {
       toggleInteractionMode();
       return true;

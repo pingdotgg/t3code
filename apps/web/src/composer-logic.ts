@@ -3,6 +3,7 @@ import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerCommandKey = "ArrowDown" | "ArrowUp" | "Enter" | "Escape" | "Tab";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -16,6 +17,13 @@ export function shouldSubmitComposerOnEnter(input: {
   shiftKey: boolean;
 }): boolean {
   return !input.isMobileViewport && !input.shiftKey;
+}
+
+export function shouldInterruptRunningThreadFromComposerKey(input: {
+  key: ComposerCommandKey;
+  isRunning: boolean;
+}): boolean {
+  return input.key === "Escape" && input.isRunning;
 }
 
 const isInlineTokenSegment = (

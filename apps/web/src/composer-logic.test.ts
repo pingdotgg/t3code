@@ -8,6 +8,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  shouldInterruptRunningThreadFromComposerKey,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -23,6 +24,27 @@ describe("shouldSubmitComposerOnEnter", () => {
 
   it("inserts a newline for Shift+Enter", () => {
     expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("shouldInterruptRunningThreadFromComposerKey", () => {
+  it("interrupts a running thread on Escape", () => {
+    expect(shouldInterruptRunningThreadFromComposerKey({ key: "Escape", isRunning: true })).toBe(
+      true,
+    );
+  });
+
+  it.each(["ArrowDown", "ArrowUp", "Enter", "Tab"] as const)(
+    "does not interrupt a running thread on %s",
+    (key) => {
+      expect(shouldInterruptRunningThreadFromComposerKey({ key, isRunning: true })).toBe(false);
+    },
+  );
+
+  it("leaves Escape available when the thread is not running", () => {
+    expect(shouldInterruptRunningThreadFromComposerKey({ key: "Escape", isRunning: false })).toBe(
+      false,
+    );
   });
 });
 
