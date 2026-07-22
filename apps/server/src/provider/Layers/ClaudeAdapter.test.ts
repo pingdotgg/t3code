@@ -1705,24 +1705,78 @@ describe("ClaudeAdapterLive", () => {
         );
         assert.equal(progressEvent.payload.description, "Running background teammate");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
 
-      // The undeclared background_tasks_changed roster snapshot is consumed
-      // silently — it must not surface as an unknown-subtype warning row.
+  it.effect("consumes undeclared and UX-internal system subtypes without warning rows", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // Undeclared wire-only roster snapshot + typed UX-internal subtypes:
+      // all consumed silently, none may surface as unknown-subtype warnings.
+      for (const message of [
+        {
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "t1", task_type: "local_agent", description: "Say hi" }],
+          session_id: "session",
+          uuid: "roster",
+        },
+        { type: "system", subtype: "commands_changed", session_id: "session", uuid: "cc" },
+        {
+          type: "system",
+          subtype: "notification",
+          key: "context",
+          text: "low priority note",
+          priority: "low",
+          session_id: "session",
+          uuid: "notif",
+        },
+      ]) {
+        harness.query.emit(message as unknown as SDKMessage);
+      }
+      // api_retry maps to a session heartbeat, not a warning row.
       harness.query.emit({
         type: "system",
-        subtype: "background_tasks_changed",
-        tasks: [{ task_id: "workflow-1", task_type: "local_workflow", description: "Run checks" }],
+        subtype: "api_retry",
+        attempt: 3,
+        max_retries: 10,
+        retry_delay_ms: 1000,
+        error_status: 502,
+        error: { type: "api_error" },
         session_id: "session",
-        uuid: "roster",
+        uuid: "retry",
       } as unknown as SDKMessage);
       yield* Effect.yieldNow;
-      const rosterWarnings = runtimeEvents.filter(
-        (event) =>
-          event.type === "runtime.warning" &&
-          typeof event.payload.message === "string" &&
-          event.payload.message.includes("background_tasks_changed"),
+      yield* Effect.yieldNow;
+
+      const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
+      assert.deepEqual(
+        warnings.map((event) => event.payload.message),
+        [],
       );
-      assert.equal(rosterWarnings.length, 0);
+      const heartbeat = runtimeEvents.find(
+        (event) =>
+          event.type === "session.state.changed" &&
+          typeof event.payload.reason === "string" &&
+          event.payload.reason.startsWith("api_retry:"),
+      );
+      assert.equal(heartbeat?.type, "session.state.changed");
+      runtimeEventsFiber.interruptUnsafe();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
