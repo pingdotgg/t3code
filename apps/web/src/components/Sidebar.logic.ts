@@ -418,10 +418,12 @@ export function resolveThreadRowClassName(input: {
 }
 
 // ── Sidebar v2 status model ─────────────────────────────────────────
-// Four visual states, three colors: color is reserved for "act now"
+// Five visual states, three colors: color is reserved for "act now"
 // (approval), "in motion" (working), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan.
+// Unread completion is tracked separately: it describes whether a ready
+// thread needs attention, not what the thread is currently doing.
 export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
 
 type SidebarV2StatusInput = Pick<
