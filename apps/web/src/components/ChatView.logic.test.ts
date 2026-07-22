@@ -3,6 +3,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -27,7 +28,19 @@ import {
   resolveSendEnvMode,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
+  supportsSelectedResponseFork,
 } from "./ChatView.logic";
+
+describe("supportsSelectedResponseFork", () => {
+  it("only enables providers with an exact historical fork primitive", () => {
+    expect(supportsSelectedResponseFork(ProviderDriverKind.make("codex"))).toBe(true);
+    expect(supportsSelectedResponseFork(ProviderDriverKind.make("claudeAgent"))).toBe(true);
+    expect(supportsSelectedResponseFork(ProviderDriverKind.make("opencode"))).toBe(true);
+    expect(supportsSelectedResponseFork(ProviderDriverKind.make("cursor"))).toBe(false);
+    expect(supportsSelectedResponseFork(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(supportsSelectedResponseFork(null)).toBe(false);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");

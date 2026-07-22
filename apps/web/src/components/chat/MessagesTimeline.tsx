@@ -45,6 +45,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  GitForkIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -69,6 +70,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveAssistantMessageForkState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
@@ -131,6 +133,8 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onForkToSide: ((turnId: TurnId) => void) | null;
+  isForkingToSide: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -169,6 +173,8 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
+  onForkToSide?: ((turnId: TurnId) => void) | undefined;
+  isForkingToSide?: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
@@ -204,6 +210,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
+  onForkToSide,
+  isForkingToSide = false,
   onImageExpand,
   activeThreadEnvironmentId,
   markdownCwd,
@@ -426,6 +434,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onForkToSide: onForkToSide ?? null,
+      isForkingToSide,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -440,6 +450,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onForkToSide,
+      isForkingToSide,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -1038,6 +1050,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
+            <AssistantForkButton row={row} />
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
@@ -1069,6 +1082,42 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
   }
 
   return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+}
+
+function AssistantForkButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const forkState = resolveAssistantMessageForkState({
+    turnId: row.message.turnId,
+    showForkButton: row.showAssistantMeta,
+    streaming: row.assistantCopyStreaming,
+  });
+
+  if (ctx.onForkToSide === null || !forkState.visible || forkState.turnId === null) {
+    return null;
+  }
+
+  const turnId = forkState.turnId;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground"
+            aria-label="Fork from this message"
+            disabled={ctx.isForkingToSide}
+            onClick={() => ctx.onForkToSide?.(turnId)}
+          />
+        }
+      >
+        <GitForkIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Fork to side chat</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 function ProposedPlanTimelineRow({

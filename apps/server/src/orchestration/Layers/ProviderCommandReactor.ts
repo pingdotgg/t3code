@@ -88,6 +88,32 @@ const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 
+export function findCompletedTurnIndex(
+  messages: ReadonlyArray<{
+    readonly role: string;
+    readonly turnId: TurnId | null;
+    readonly streaming: boolean;
+  }>,
+  sourceTurnId: TurnId,
+): number | undefined {
+  const completedTurnIds: TurnId[] = [];
+  for (const message of messages) {
+    if (
+      message.role !== "assistant" ||
+      message.turnId === null ||
+      message.streaming ||
+      completedTurnIds.some((turnId) => turnId === message.turnId)
+    ) {
+      continue;
+    }
+    completedTurnIds.push(message.turnId);
+    if (message.turnId === sourceTurnId) {
+      return completedTurnIds.length - 1;
+    }
+  }
+  return undefined;
+}
+
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : "unknown";
@@ -493,19 +519,40 @@ const make = Effect.gen(function* () {
       projects: project ? [project] : [],
     });
 
-    const startProviderSession = (input?: {
+    const startProviderSession = Effect.fn("startProviderSession")(function* (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
-    }) =>
-      providerService.startSession(threadId, {
+      readonly includeForkSource?: boolean;
+    }) {
+      const forkedFrom = input?.includeForkSource === true ? thread.forkedFrom : null;
+      const forkSource =
+        forkedFrom != null
+          ? yield* Effect.gen(function* () {
+              const sourceThread = yield* resolveThread(forkedFrom.threadId);
+              const sourceTurnId = forkedFrom.turnId;
+              const sourceTurnIndex =
+                sourceThread != null && sourceTurnId !== null
+                  ? findCompletedTurnIndex(sourceThread.messages, sourceTurnId)
+                  : undefined;
+              return {
+                threadId: forkedFrom.threadId,
+                ...(sourceTurnId !== null ? { sourceTurnId } : {}),
+                ...(sourceTurnIndex !== undefined ? { sourceTurnIndex } : {}),
+              };
+            })
+          : undefined;
+
+      return yield* providerService.startSession(threadId, {
         threadId,
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+        ...(forkSource !== undefined ? { forkFrom: forkSource } : {}),
         runtimeMode: desiredRuntimeMode,
       });
+    });
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -603,7 +650,7 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    const startedSession = yield* startProviderSession({ includeForkSource: true });
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });

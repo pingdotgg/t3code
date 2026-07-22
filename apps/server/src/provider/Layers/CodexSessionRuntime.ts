@@ -105,6 +105,10 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly forkFrom?: {
+    readonly providerThreadId: string;
+    readonly sourceTurnId?: TurnId;
+  };
   readonly appServerArgs?: ReadonlyArray<string>;
 }
 
@@ -443,9 +447,10 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
 
 type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
-  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
+  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"]
+  | CodexRpc.ClientRequestResponsesByMethod["thread/fork"];
 
-type CodexThreadOpenMethod = "thread/start" | "thread/resume";
+type CodexThreadOpenMethod = "thread/start" | "thread/resume" | "thread/fork";
 
 interface CodexThreadOpenClient {
   readonly request: <M extends CodexThreadOpenMethod>(
@@ -462,6 +467,12 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly forkFrom?:
+    | {
+        readonly providerThreadId: string;
+        readonly sourceTurnId?: TurnId;
+      }
+    | undefined;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -470,6 +481,22 @@ export const openCodexThread = (input: {
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
+
+  if (input.forkFrom !== undefined) {
+    const config = runtimeModeToThreadConfig(input.runtimeMode);
+    return input.client.request("thread/fork", {
+      threadId: input.forkFrom.providerThreadId,
+      cwd: input.cwd,
+      approvalPolicy: config.approvalPolicy,
+      sandbox: config.sandbox,
+      ...(startParams.model ? { model: startParams.model } : {}),
+      ...(startParams.serviceTier ? { serviceTier: startParams.serviceTier } : {}),
+      ...(input.forkFrom.sourceTurnId !== undefined
+        ? { lastTurnId: input.forkFrom.sourceTurnId }
+        : {}),
+      threadSource: "t3-code",
+    });
+  }
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);
@@ -1227,6 +1254,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        forkFrom: options.forkFrom,
       });
 
       const providerThreadId = opened.thread.id;

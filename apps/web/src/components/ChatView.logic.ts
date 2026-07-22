@@ -54,6 +54,20 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
   };
 }
 
+const SELECTED_RESPONSE_FORK_DRIVERS = new Set<ProviderDriverKind>([
+  "codex" as ProviderDriverKind,
+  "claudeAgent" as ProviderDriverKind,
+  "opencode" as ProviderDriverKind,
+]);
+
+export function supportsSelectedResponseFork(
+  driverKind: ProviderDriverKind | null | undefined,
+): boolean {
+  return driverKind !== null && driverKind !== undefined
+    ? SELECTED_RESPONSE_FORK_DRIVERS.has(driverKind)
+    : false;
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,

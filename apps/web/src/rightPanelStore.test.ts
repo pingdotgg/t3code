@@ -292,6 +292,25 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens a forked thread as a peer surface and refreshes its title", () => {
+    const forkId = ThreadId.make("thread-fork");
+    useRightPanelStore.getState().openThread(refA, forkId, "Initial fork");
+    useRightPanelStore.getState().openThread(refA, forkId, "Renamed fork");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "thread:thread-fork",
+      surfaces: [
+        {
+          id: "thread:thread-fork",
+          kind: "thread",
+          threadId: forkId,
+          title: "Renamed fork",
+        },
+      ],
+    });
+  });
+
   it("tracks one surface per terminal session", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().openTerminal(refA, "term-2");

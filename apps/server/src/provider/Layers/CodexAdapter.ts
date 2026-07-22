@@ -1406,6 +1406,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
+          ...(input.forkFrom !== undefined && isCodexResumeCursorSchema(input.forkFrom.resumeCursor)
+            ? {
+                forkFrom: {
+                  providerThreadId: input.forkFrom.resumeCursor.threadId,
+                  ...(input.forkFrom.sourceTurnId !== undefined
+                    ? { sourceTurnId: input.forkFrom.sourceTurnId }
+                    : {}),
+                },
+              }
+            : {}),
           runtimeMode: input.runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
@@ -1703,6 +1713,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      sessionFork: "native",
     },
     startSession,
     sendTurn,
