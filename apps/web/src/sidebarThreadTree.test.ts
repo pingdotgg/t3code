@@ -149,6 +149,38 @@ describe("buildSidebarThreadRows", () => {
     expect(result.rowViews[0]).toMatchObject({ hasChildren: true, isExpanded: false });
   });
 
+  it("keeps an unseen completed nested chat visible", () => {
+    const parent = thread("thread-1");
+    const child = thread("thread-2", { parentThreadId: parent.id });
+    const completedStatus: ThreadStatusPill = {
+      label: "Completed",
+      colorClass: "text-emerald-600",
+      dotClass: "bg-emerald-500",
+      pulse: false,
+    };
+
+    const result = buildSidebarThreadRows({
+      threads: [parent, child],
+      pinnedThreadKeys: [],
+      expandedOverrideByThreadKey: new Map(),
+      sortOrder: "created_at",
+      resolveThreadStatus: (candidate) => (candidate.id === child.id ? completedStatus : null),
+    });
+
+    expect(result.rowViews.map((row) => row.thread.id)).toEqual([parent.id, child.id]);
+    expect(result.rowViews[0]).toMatchObject({ hasChildren: true, isExpanded: true });
+
+    const manuallyCollapsed = buildSidebarThreadRows({
+      threads: [parent, child],
+      pinnedThreadKeys: [],
+      expandedOverrideByThreadKey: new Map([[key(parent.id), false]]),
+      sortOrder: "created_at",
+      resolveThreadStatus: (candidate) => (candidate.id === child.id ? completedStatus : null),
+    });
+
+    expect(manuallyCollapsed.rowViews.map((row) => row.thread.id)).toEqual([parent.id]);
+  });
+
   it("keeps the active settled child and its ancestors visible", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });

@@ -3,6 +3,7 @@ import {
   MessageId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EventId,
   ProjectId,
   ThreadId,
   type OrchestrationCommand,
@@ -17,6 +18,7 @@ import {
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
+  threadHasInFlightTurn,
 } from "./commandInvariants.ts";
 
 const now = new Date().toISOString();
@@ -197,6 +199,42 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  it("does not keep legacy pre-acknowledgement failures in flight", () => {
+    const thread = readModel.threads[0]!;
+    const withPendingMessage = {
+      ...thread,
+      messages: [
+        {
+          id: MessageId.make("msg-offline"),
+          role: "user" as const,
+          text: "sent while offline",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    };
+    expect(threadHasInFlightTurn(withPendingMessage)).toBe(true);
+    expect(
+      threadHasInFlightTurn({
+        ...withPendingMessage,
+        activities: [
+          {
+            id: EventId.make("provider-failure"),
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { detail: "network unavailable" },
+            turnId: null,
+            createdAt: now,
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("requires non-negative integers", async () => {

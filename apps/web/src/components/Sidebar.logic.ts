@@ -409,11 +409,10 @@ export function resolveThreadStatusPill(input: {
 /**
  * A parent chat is treated as "active" (and so auto-expanded in the sidebar)
  * when it, or any nested descendant, is doing something the user likely wants
- * to keep visible: working, connecting, or awaiting a decision. A settled
- * "Completed" pill does not count, so finished parents collapse by default.
+ * to keep visible, including an unseen completion.
  */
 export function isActiveThreadStatus(status: ThreadStatusPill | null): boolean {
-  return status !== null && status.label !== "Completed";
+  return status !== null;
 }
 
 export function resolveProjectStatusIndicator(

@@ -493,6 +493,78 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("allows a follow-up turn after the provider rejects a turn before acknowledgement", async () => {
+    const harness = await createHarness();
+    const firstTurnAt = new Date().toISOString();
+    const secondTurnAt = new Date(Date.parse(firstTurnAt) + 1).toISOString();
+    harness.sendTurn.mockImplementationOnce(
+      (_: unknown) =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "sendTurn",
+            detail: "network unavailable",
+          }),
+        ) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-offline"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-offline"),
+          role: "user",
+          text: "first attempt while offline",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: firstTurnAt,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+    const failedReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      failedReadModel.threads
+        .find((entry) => entry.id === ThreadId.make("thread-1"))
+        ?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toMatchObject({
+      payload: {
+        detail: "network unavailable",
+        messageId: "user-message-offline",
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-online"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-online"),
+          role: "user",
+          text: "retry after reconnecting",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: secondTurnAt,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+  });
+
   it("captures the pre-turn checkpoint before sending the provider turn", async () => {
     const harness = await createHarness({ checkpointIsGitRepository: true });
     const now = new Date().toISOString();

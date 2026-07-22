@@ -102,6 +102,25 @@ export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
   if (latestMessage?.role !== "user") {
     return false;
   }
+  const failedTurnStart = thread.activities.some((activity) => {
+    if (
+      activity.kind !== "provider.turn.start.failed" ||
+      activity.createdAt < latestMessage.createdAt
+    ) {
+      return false;
+    }
+    const messageId =
+      typeof activity.payload === "object" &&
+      activity.payload !== null &&
+      "messageId" in activity.payload &&
+      typeof activity.payload.messageId === "string"
+        ? activity.payload.messageId
+        : null;
+    return messageId === null || messageId === latestMessage.id;
+  });
+  if (failedTurnStart) {
+    return false;
+  }
   if (thread.latestTurn === null || thread.latestTurn.completedAt === null) {
     return true;
   }

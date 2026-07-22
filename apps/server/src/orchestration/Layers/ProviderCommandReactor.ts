@@ -212,6 +212,7 @@ const make = Effect.gen(function* () {
     readonly turnId: TurnId | null;
     readonly createdAt: string;
     readonly requestId?: string;
+    readonly messageId?: string;
   }) =>
     orchestrationEngine.dispatch({
       type: "thread.activity.append",
@@ -225,6 +226,7 @@ const make = Effect.gen(function* () {
         payload: {
           detail: input.detail,
           ...(input.requestId ? { requestId: input.requestId } : {}),
+          ...(input.messageId ? { messageId: input.messageId } : {}),
         },
         turnId: input.turnId,
         createdAt: input.createdAt,
@@ -926,6 +928,7 @@ const make = Effect.gen(function* () {
         detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
         turnId: null,
         createdAt: event.payload.createdAt,
+        messageId: event.payload.messageId,
       });
       return;
     }
@@ -978,6 +981,7 @@ const make = Effect.gen(function* () {
             detail,
             turnId: null,
             createdAt: event.payload.createdAt,
+            messageId: event.payload.messageId,
           }),
         ),
         Effect.asVoid,
