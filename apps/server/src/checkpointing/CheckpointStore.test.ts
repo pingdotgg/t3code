@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -112,9 +113,247 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
       }),
     );
+
+    it.effect("recognizes an owned Git repository through a symbolic path alias", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const repositoryPath = NodePath.join(tmp, "repository");
+        const aliasPath = NodePath.join(tmp, "repository-alias");
+        yield* fileSystem.makeDirectory(repositoryPath);
+        yield* initRepoWithCommit(repositoryPath);
+        yield* fileSystem.symlink(repositoryPath, aliasPath);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* checkpointStore.isGitRepository(aliasPath)).toBe(true);
+      }),
+    );
+
+    it.effect("treats a standalone project nested under another repository as non-Git", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const project = NodePath.join(tmp, "project");
+        yield* git(tmp, ["init"]);
+        yield* fileSystem.makeDirectory(project);
+
+        expect(yield* checkpointStore.isGitRepository(project)).toBe(false);
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {
+    it.effect("captures and restores an initialized repository before its first commit", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-unborn-git-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-unborn-git-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const sourcePath = NodePath.join(tmp, "source.txt");
+
+        yield* git(tmp, ["init"]);
+        yield* writeTextFile(sourcePath, "before\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(sourcePath, "after\n");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        const fileSystem = yield* FileSystem.FileSystem;
+        expect(yield* fileSystem.readFileString(sourcePath)).toBe("before\n");
+      }),
+    );
+
+    it.effect("restores an empty checkpoint in a repository before its first commit", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-unborn-empty-test-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const baselineRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-unborn-empty-checkpoint-store"),
+          0,
+        );
+        const createdPath = NodePath.join(tmp, "created.txt");
+        const postCheckpointIgnorePath = NodePath.join(tmp, ".gitignore");
+        const ignoredCreatedPath = NodePath.join(tmp, "state.cache");
+
+        yield* git(tmp, ["init"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(createdPath, "created after baseline\n");
+        yield* writeTextFile(postCheckpointIgnorePath, "*.cache\n");
+        yield* writeTextFile(ignoredCreatedPath, "ignored after baseline\n");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        expect(yield* fileSystem.exists(createdPath)).toBe(false);
+        expect(yield* fileSystem.exists(postCheckpointIgnorePath)).toBe(false);
+        expect(yield* fileSystem.exists(ignoredCreatedPath)).toBe(false);
+      }),
+    );
+
+    it.effect("preserves files ignored by the restored checkpoint", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-unborn-ignored-test-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const baselineRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-unborn-ignored-checkpoint-store"),
+          0,
+        );
+        const ignorePath = NodePath.join(tmp, ".gitignore");
+        const ignoredPath = NodePath.join(tmp, "local.cache");
+
+        yield* git(tmp, ["init"]);
+        yield* writeTextFile(ignorePath, "*.cache\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(ignoredPath, "local-only data\n");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        expect(yield* fileSystem.readFileString(ignorePath)).toBe("*.cache\n");
+        expect(yield* fileSystem.readFileString(ignoredPath)).toBe("local-only data\n");
+      }),
+    );
+
+    it.effect("uses shadow checkpoints for a project nested under an unrelated repository", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-nested-project-test-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const project = NodePath.join(tmp, "project");
+        const threadId = ThreadId.make("thread-nested-project-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const changedRef = checkpointRefForThreadTurn(threadId, 1);
+        const createdPath = NodePath.join(project, "created.txt");
+
+        yield* git(tmp, ["init"]);
+        yield* fileSystem.makeDirectory(project);
+        yield* checkpointStore.captureCheckpoint({ cwd: project, checkpointRef: baselineRef });
+        yield* writeTextFile(createdPath, "created\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: project, checkpointRef: changedRef });
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: project,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        expect(yield* fileSystem.exists(createdPath)).toBe(false);
+        expect(yield* checkpointStore.isGitRepository(project)).toBe(false);
+      }),
+    );
+
+    it.effect("captures and restores files without initializing Git in the workspace", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-shadow-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-shadow-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const changedRef = checkpointRefForThreadTurn(threadId, 1);
+        const sourcePath = NodePath.join(tmp, "source.txt");
+        const createdPath = NodePath.join(tmp, "created.txt");
+
+        yield* writeTextFile(sourcePath, "before\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(sourcePath, "after\n");
+        yield* writeTextFile(createdPath, "new\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: changedRef });
+
+        const diff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef: baselineRef,
+          toCheckpointRef: changedRef,
+          ignoreWhitespace: false,
+        });
+        expect(diff).toContain("+after");
+        expect(diff).toContain("created.txt");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        const fileSystem = yield* FileSystem.FileSystem;
+        expect(yield* fileSystem.readFileString(sourcePath)).toBe("before\n");
+        expect(yield* fileSystem.exists(createdPath)).toBe(false);
+        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+      }),
+    );
+
+    it.effect("fails shadow checkpoint diffs when a ref is unavailable", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-shadow-invalid-ref-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-shadow-invalid-ref-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const missingRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        const error = yield* Effect.flip(
+          checkpointStore.diffCheckpoints({
+            cwd: tmp,
+            fromCheckpointRef: baselineRef,
+            toCheckpointRef: missingRef,
+            ignoreWhitespace: false,
+          }),
+        );
+
+        expect(error._tag).toBe("VcsProcessExitError");
+        expect(error.message).toContain("git diff");
+      }),
+    );
+
+    it.effect("surfaces corrupted shadow checkpoint refs instead of treating them as missing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-shadow-corrupt-ref-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-shadow-corrupt-ref-checkpoint-store"),
+          0,
+        );
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        const shadowRepositoryPath = NodePath.join(
+          config.stateDir,
+          "checkpoints",
+          NodeCrypto.createHash("sha256").update(NodePath.resolve(tmp)).digest("hex"),
+        );
+        yield* fileSystem.writeFileString(
+          NodePath.join(shadowRepositoryPath, checkpointRef),
+          "not-a-commit\n",
+        );
+
+        const error = yield* Effect.flip(
+          checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef }),
+        );
+        expect(error._tag).toBe("VcsProcessExitError");
+        expect(error.message).toContain("git for-each-ref");
+
+        const captureError = yield* Effect.flip(
+          checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef }),
+        );
+        expect(captureError._tag).toBe("VcsProcessExitError");
+        expect(
+          yield* Effect.flip(checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef })),
+        ).toMatchObject({ _tag: "VcsProcessExitError" });
+      }),
+    );
+
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

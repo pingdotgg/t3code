@@ -9,7 +9,8 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { type ChatMessage, type SessionPhase, type Thread } from "../types";
+import { type ChatMessage, type SessionPhase, type Thread, type TurnDiffSummary } from "../types";
+import type { TimelineEntry } from "../session-logic";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -26,6 +27,62 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export function deriveRevertTurnCountByUserMessageId(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  checkpoints: ReadonlyArray<TurnDiffSummary>;
+}): Map<ChatMessage["id"], number> {
+  const result = new Map<ChatMessage["id"], number>();
+  const checkpointByAssistantMessageId = new Map(
+    input.checkpoints.flatMap((checkpoint) =>
+      checkpoint.assistantMessageId === null
+        ? []
+        : ([[checkpoint.assistantMessageId, checkpoint]] as const),
+    ),
+  );
+  const checkpointByTurnId = new Map(
+    input.checkpoints.map((checkpoint) => [checkpoint.turnId, checkpoint] as const),
+  );
+  let userTurnIndex = 0;
+
+  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+    const entry = input.timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
+      const nextEntry = input.timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      if (nextEntry.message.role !== "assistant") {
+        continue;
+      }
+
+      const checkpoint =
+        checkpointByAssistantMessageId.get(nextEntry.message.id) ??
+        (nextEntry.message.turnId === null
+          ? undefined
+          : checkpointByTurnId.get(nextEntry.message.turnId));
+      if (checkpoint) {
+        result.set(entry.message.id, userTurnIndex);
+        break;
+      }
+      if (!nextEntry.message.streaming) {
+        result.set(entry.message.id, userTurnIndex);
+        break;
+      }
+    }
+
+    userTurnIndex += 1;
+  }
+
+  return result;
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

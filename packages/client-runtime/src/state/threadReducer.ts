@@ -441,8 +441,11 @@ export function applyThreadDetailEvent(
         Arr.sort(checkpointOrder),
       );
 
-      const retainedTurnIds = new Set(Arr.map(checkpoints, (entry) => entry.turnId));
-      const messages = retainMessagesAfterRevert(thread.messages, retainedTurnIds);
+      const messages = retainMessagesAfterRevert(thread.messages, event.payload.turnCount);
+      const retainedTurnIds = new Set([
+        ...Arr.map(checkpoints, (checkpoint) => checkpoint.turnId),
+        ...messages.flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
+      ]);
       const proposedPlans = pipe(
         thread.proposedPlans,
         Arr.filter((plan) => plan.turnId === null || retainedTurnIds.has(plan.turnId)),
@@ -555,17 +558,21 @@ function rebindCheckpointAssistantMessage(
 
 function retainMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
-  retainedTurnIds: ReadonlySet<string>,
+  turnCount: number,
 ): OrchestrationMessage[] {
-  // Keep messages that belong to a retained turn, plus system messages and
-  // messages without a turn binding (pre-turn-0 user messages).
+  let userMessageIndex = 0;
+  let reachedTargetUser = false;
   return Arr.filter(messages, (message) => {
     if (message.role === "system") {
       return true;
     }
-    if (message.turnId === null) {
-      return true;
+    if (reachedTargetUser) {
+      return false;
     }
-    return retainedTurnIds.has(message.turnId);
+    if (message.role === "user") {
+      reachedTargetUser = userMessageIndex === turnCount;
+      userMessageIndex += 1;
+    }
+    return true;
   });
 }

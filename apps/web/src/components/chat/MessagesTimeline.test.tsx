@@ -271,6 +271,21 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
+  it("renders a disabled revert action while a user turn has no checkpoint yet", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        timelineEntries={[buildUserTimelineEntry("Current prompt.")]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Revert to this message"');
+    expect(markup).toContain("disabled");
+  });
+
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,

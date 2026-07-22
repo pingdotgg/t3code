@@ -84,65 +84,23 @@ function decodeForEvent<A>(
 
 function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
-  retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
 ): ReadonlyArray<OrchestrationMessage> {
-  const retainedMessageIds = new Set<string>();
-  for (const message of messages) {
+  let userMessageIndex = 0;
+  let reachedTargetUser = false;
+  return messages.filter((message) => {
     if (message.role === "system") {
-      retainedMessageIds.add(message.id);
-      continue;
+      return true;
     }
-    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
-      retainedMessageIds.add(message.id);
+    if (reachedTargetUser) {
+      return false;
     }
-  }
-
-  const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.id),
-  ).length;
-  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
-  if (missingUserCount > 0) {
-    const fallbackUserMessages = messages
-      .filter(
-        (message) =>
-          message.role === "user" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-      )
-      .slice(0, missingUserCount);
-    for (const message of fallbackUserMessages) {
-      retainedMessageIds.add(message.id);
+    if (message.role === "user") {
+      reachedTargetUser = userMessageIndex === turnCount;
+      userMessageIndex += 1;
     }
-  }
-
-  const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  return messages.filter((message) => retainedMessageIds.has(message.id));
+    return true;
+  });
 }
 
 function retainThreadActivitiesAfterRevert(
@@ -651,12 +609,14 @@ export function projectEvent(
             .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
             .slice(-MAX_THREAD_CHECKPOINTS);
-          const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
           const messages = retainThreadMessagesAfterRevert(
             thread.messages,
-            retainedTurnIds,
             payload.turnCount,
           ).slice(-MAX_THREAD_MESSAGES);
+          const retainedTurnIds = new Set([
+            ...checkpoints.map((checkpoint) => checkpoint.turnId),
+            ...messages.flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
+          ]);
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,
             retainedTurnIds,

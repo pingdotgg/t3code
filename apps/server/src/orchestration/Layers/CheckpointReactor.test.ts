@@ -35,7 +35,7 @@ import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
-import { CheckpointReactorLive } from "./CheckpointReactor.ts";
+import { CheckpointReactorLive, conversationTurnCountForTurn } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -229,6 +229,24 @@ function gitShowFileAtRef(cwd: string, ref: string, filePath: string): string {
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
+describe("conversationTurnCountForTurn", () => {
+  it("counts steering prompts through the last assistant message for the same turn", () => {
+    const steeredTurnId = asTurnId("steered-turn");
+    const laterTurnId = asTurnId("later-turn");
+    const messages = [
+      { role: "user", turnId: null },
+      { role: "assistant", turnId: steeredTurnId },
+      { role: "user", turnId: null },
+      { role: "assistant", turnId: steeredTurnId },
+      { role: "user", turnId: null },
+      { role: "assistant", turnId: laterTurnId },
+    ];
+
+    expect(conversationTurnCountForTurn(messages, steeredTurnId)).toBe(2);
+    expect(conversationTurnCountForTurn(messages, laterTurnId)).toBe(3);
+  });
+});
+
 async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async (): Promise<void> => {
@@ -413,6 +431,7 @@ describe("CheckpointReactor", () => {
 
     return {
       engine,
+      runPromise: <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect),
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
@@ -424,7 +443,7 @@ describe("CheckpointReactor", () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-capture"),
@@ -786,6 +805,81 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("keeps the authoritative turn count when a placeholder is processed late", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    for (const turnNumber of [1, 2]) {
+      const turnId = asTurnId(`late-placeholder-turn-${turnNumber}`);
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-late-placeholder-user-${turnNumber}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`late-placeholder-user-${turnNumber}`),
+            role: "user",
+            text: `User ${turnNumber}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-late-placeholder-assistant-delta-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`late-placeholder-assistant-${turnNumber}`),
+          delta: `Assistant ${turnNumber}`,
+          turnId,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-late-placeholder-assistant-complete-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`late-placeholder-assistant-${turnNumber}`),
+          turnId,
+          createdAt,
+        }),
+      );
+    }
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-late-placeholder-diff"),
+        threadId,
+        turnId: asTurnId("late-placeholder-turn-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 1) &&
+        entry.activities.some((activity) => activity.kind === "checkpoint.captured"),
+    );
+    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 1)).toBe(
+      true,
+    );
+    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 2)).toBe(
+      false,
+    );
+  });
+
   it("ignores non-v2 checkpoint.captured runtime events", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -828,7 +922,7 @@ describe("CheckpointReactor", () => {
     );
   });
 
-  it("continues processing runtime events after a single checkpoint runtime failure", async () => {
+  it("captures completed turns in a non-Git workspace and continues processing", async () => {
     const nonRepositorySessionCwd = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
     );
@@ -879,12 +973,12 @@ describe("CheckpointReactor", () => {
       turnId: asTurnId("turn-after-runtime-failure"),
     });
 
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 1),
     );
+    expect(thread.checkpoints).toHaveLength(1);
     expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+      thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
     ).toBe(true);
   });
 
@@ -967,6 +1061,247 @@ describe("CheckpointReactor", () => {
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(false);
+  });
+
+  it("reverts legacy predecessor turns in mixed checkpoint history", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-legacy-session-set"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    for (const turnNumber of [1, 2, 3]) {
+      const turnId = asTurnId(`legacy-turn-${turnNumber}`);
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-legacy-user-${turnNumber}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`legacy-user-${turnNumber}`),
+            role: "user",
+            text: `User ${turnNumber}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-legacy-assistant-delta-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-assistant-${turnNumber}`),
+          delta: `Assistant ${turnNumber}`,
+          turnId,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-legacy-assistant-complete-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-assistant-${turnNumber}`),
+          turnId,
+          createdAt,
+        }),
+      );
+    }
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-mixed-checkpoint"),
+        threadId,
+        turnId: asTurnId("legacy-turn-3"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-legacy-revert-request"),
+        threadId,
+        turnCount: 2,
+        createdAt,
+      }),
+    );
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId,
+      numTurns: 1,
+    });
+  });
+
+  it("rewinds legacy conversation history when no filesystem checkpoints exist", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-legacy-only-session-set"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    for (const turnNumber of [1, 2]) {
+      const turnId = asTurnId(`legacy-only-turn-${turnNumber}`);
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-legacy-only-user-${turnNumber}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`legacy-only-user-${turnNumber}`),
+            role: "user",
+            text: `User ${turnNumber}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-legacy-only-assistant-delta-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-only-assistant-${turnNumber}`),
+          delta: `Assistant ${turnNumber}`,
+          turnId,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-legacy-only-assistant-complete-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-only-assistant-${turnNumber}`),
+          turnId,
+          createdAt,
+        }),
+      );
+    }
+
+    runGit(harness.cwd, ["update-ref", "-d", checkpointRefForThreadTurn(threadId, 1)]);
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-legacy-only-revert"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId,
+      numTurns: 1,
+    });
+  });
+
+  it("does not rewind conversation when a shadow filesystem checkpoint is missing", async () => {
+    const workspace = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-shadow-revert-"));
+    tempDirs.push(workspace);
+    NodeFS.writeFileSync(NodePath.join(workspace, "keep.txt"), "unchanged\n", "utf8");
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      projectWorkspaceRoot: workspace,
+      threadWorktreePath: workspace,
+      providerSessionCwd: workspace,
+    });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-shadow-missing-session-set"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-shadow-missing-checkpoint-summary"),
+        threadId,
+        turnId: asTurnId("shadow-missing-turn"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-shadow-missing-revert"),
+        threadId,
+        turnCount: 0,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    );
+    expect(thread.checkpoints).toHaveLength(1);
+    expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+    expect(NodeFS.readFileSync(NodePath.join(workspace, "keep.txt"), "utf8")).toBe("unchanged\n");
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {

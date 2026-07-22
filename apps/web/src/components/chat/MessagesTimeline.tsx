@@ -328,6 +328,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  const timelineViewportWidthRef = useRef<number | null>(null);
+  const [timelineLayoutGeneration, setTimelineLayoutGeneration] = useState(0);
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const handleAnchorReady = useCallback(
@@ -395,25 +397,62 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
 
-    const measure = () => {
-      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
+    let layoutRefreshTimeout: number | undefined;
+
+    const measure = (forceLayoutRefresh = false) => {
+      const viewportWidth = Math.round(timelineViewportElement.getBoundingClientRect().width);
       const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth));
+
+      if (viewportWidth <= 0) {
+        return;
+      }
+      if (timelineViewportWidthRef.current === null) {
+        timelineViewportWidthRef.current =
+          viewportWidth > 0 ? viewportWidth : timelineViewportWidthRef.current;
+        return;
+      }
+      if (!forceLayoutRefresh && viewportWidth === timelineViewportWidthRef.current) {
+        return;
+      }
+
+      timelineViewportWidthRef.current = viewportWidth;
+      if (layoutRefreshTimeout !== undefined) {
+        window.clearTimeout(layoutRefreshTimeout);
+      }
+      layoutRefreshTimeout = window.setTimeout(() => {
+        // LegendList caches both row measurements and recycled container widths. A desktop
+        // window resize can briefly make the chat only a few pixels wide. Clearing sizes alone
+        // leaves some recycled rows one-character-wide, so remount the list after resize settles.
+        flushSync(() => {
+          setTimelineLayoutGeneration((generation) => generation + 1);
+        });
+      }, 120);
     };
+    const handleViewportResize = () => measure(true);
 
-    const frame = requestAnimationFrame(measure);
+    const frame = requestAnimationFrame(() => measure());
 
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(() => measure());
     observer.observe(timelineViewportElement);
+    window.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("resize", handleViewportResize);
+    const pollId = window.setInterval(() => measure(), 250);
 
     return () => {
       cancelAnimationFrame(frame);
+      if (layoutRefreshTimeout !== undefined) {
+        window.clearTimeout(layoutRefreshTimeout);
+      }
       observer.disconnect();
+      window.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.clearInterval(pollId);
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [timelineViewportElement]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -482,8 +521,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+        <div
+          ref={setTimelineViewportElement}
+          className="relative h-full min-h-0"
+          data-timeline-layout-generation={timelineLayoutGeneration}
+        >
           <LegendList<MessagesTimelineRow>
+            key={timelineLayoutGeneration}
             ref={listRef}
             data={rows}
             keyExtractor={keyExtractor}
@@ -955,7 +999,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
-            {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+            <RevertUserMessageButton messageId={row.message.id} canRevert={canRevertAgentWork} />
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -966,27 +1010,37 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 }
 
-function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
+function RevertUserMessageButton({
+  messageId,
+  canRevert,
+}: {
+  messageId: MessageId;
+  canRevert: boolean;
+}) {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
+  const disabled = activity.isRevertingCheckpoint || activity.isWorking || !canRevert;
+  const tooltip = activity.isWorking
+    ? "Stop the current turn before reverting"
+    : canRevert
+      ? "Revert to this message"
+      : "Revert is unavailable until this turn finishes";
 
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
-            onClick={() => ctx.onRevertUserMessage(messageId)}
-            aria-label="Revert to this message"
-          />
-        }
-      >
-        <Undo2Icon className="size-3" />
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          disabled={disabled}
+          onClick={() => ctx.onRevertUserMessage(messageId)}
+          aria-label="Revert to this message"
+        >
+          <Undo2Icon className="size-3" />
+        </Button>
       </TooltipTrigger>
-      <TooltipPopup side="top">Revert to this message</TooltipPopup>
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }

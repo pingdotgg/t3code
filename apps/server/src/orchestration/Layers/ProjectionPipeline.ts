@@ -205,86 +205,47 @@ function deriveHasActionableProposedPlan(input: {
 
 function retainProjectionMessagesAfterRevert(
   messages: ReadonlyArray<ProjectionThreadMessage>,
-  turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadMessage> {
-  const retainedMessageIds = new Set<string>();
-  const retainedTurnIds = new Set<string>();
-  const keptTurns = turns.filter(
-    (turn) =>
-      turn.turnId !== null &&
-      turn.checkpointTurnCount !== null &&
-      turn.checkpointTurnCount <= turnCount,
-  );
-  for (const turn of keptTurns) {
-    if (turn.turnId !== null) {
-      retainedTurnIds.add(turn.turnId);
-    }
-    if (turn.pendingMessageId !== null) {
-      retainedMessageIds.add(turn.pendingMessageId);
-    }
-    if (turn.assistantMessageId !== null) {
-      retainedMessageIds.add(turn.assistantMessageId);
-    }
-  }
-
-  for (const message of messages) {
+  let userMessageIndex = 0;
+  let reachedTargetUser = false;
+  return messages.filter((message) => {
     if (message.role === "system") {
-      retainedMessageIds.add(message.messageId);
-      continue;
+      return true;
     }
-    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
-      retainedMessageIds.add(message.messageId);
+    if (reachedTargetUser) {
+      return false;
     }
-  }
+    if (message.role === "user") {
+      reachedTargetUser = userMessageIndex === turnCount;
+      userMessageIndex += 1;
+    }
+    return true;
+  });
+}
 
-  const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.messageId),
-  ).length;
-  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
-  if (missingUserCount > 0) {
-    const fallbackUserMessages = messages
-      .filter(
-        (message) =>
-          message.role === "user" &&
-          !retainedMessageIds.has(message.messageId) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
+function retainProjectionTurnsAfterRevert(
+  turns: ReadonlyArray<ProjectionTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionTurn> {
+  const sortedTurns = turns
+    .filter((turn) => turn.turnId !== null)
+    .toSorted(
+      (left, right) =>
+        left.requestedAt.localeCompare(right.requestedAt) ||
+        (left.turnId ?? "").localeCompare(right.turnId ?? ""),
+    );
+  const retainedTurnIds = new Set(
+    sortedTurns
+      .slice(0, turnCount)
+      .concat(
+        sortedTurns.filter(
+          (turn) => turn.checkpointTurnCount !== null && turn.checkpointTurnCount <= turnCount,
+        ),
       )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          left.messageId.localeCompare(right.messageId),
-      )
-      .slice(0, missingUserCount);
-    for (const message of fallbackUserMessages) {
-      retainedMessageIds.add(message.messageId);
-    }
-  }
-
-  const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.messageId),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.messageId) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          left.messageId.localeCompare(right.messageId),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
-      retainedMessageIds.add(message.messageId);
-    }
-  }
-
-  return messages.filter((message) => retainedMessageIds.has(message.messageId));
+      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+  );
+  return sortedTurns.filter((turn) => turn.turnId !== null && retainedTurnIds.has(turn.turnId));
 }
 
 function retainProjectionActivitiesAfterRevert(
@@ -293,14 +254,9 @@ function retainProjectionActivitiesAfterRevert(
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadActivity> {
   const retainedTurnIds = new Set<string>(
-    turns
-      .filter(
-        (turn) =>
-          turn.turnId !== null &&
-          turn.checkpointTurnCount !== null &&
-          turn.checkpointTurnCount <= turnCount,
-      )
-      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+    retainProjectionTurnsAfterRevert(turns, turnCount).flatMap((turn) =>
+      turn.turnId === null ? [] : [turn.turnId],
+    ),
   );
   return activities.filter(
     (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
@@ -313,14 +269,9 @@ function retainProjectionProposedPlansAfterRevert(
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadProposedPlan> {
   const retainedTurnIds = new Set<string>(
-    turns
-      .filter(
-        (turn) =>
-          turn.turnId !== null &&
-          turn.checkpointTurnCount !== null &&
-          turn.checkpointTurnCount <= turnCount,
-      )
-      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+    retainProjectionTurnsAfterRevert(turns, turnCount).flatMap((turn) =>
+      turn.turnId === null ? [] : [turn.turnId],
+    ),
   );
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
@@ -806,19 +757,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
-          const retainedTurns = yield* projectionTurnRepository.listByThreadId({
+          const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
+          const retainedTurns = retainProjectionTurnsAfterRevert(
+            existingTurns,
+            event.payload.turnCount,
+          );
           let latestTurnId: ProjectionTurn["turnId"] = null;
           let latestCheckpointTurnCount = -1;
           for (let index = 0; index < retainedTurns.length; index += 1) {
             const turn = retainedTurns[index];
-            if (
-              !turn ||
-              turn.turnId === null ||
-              turn.checkpointTurnCount === null ||
-              turn.checkpointTurnCount > event.payload.turnCount
-            ) {
+            if (!turn || turn.turnId === null) {
+              continue;
+            }
+            if (turn.checkpointTurnCount === null) {
+              latestTurnId = turn.turnId;
               continue;
             }
             if (turn.checkpointTurnCount > latestCheckpointTurnCount) {
@@ -890,12 +844,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
-          const existingTurns = yield* projectionTurnRepository.listByThreadId({
-            threadId: event.payload.threadId,
-          });
           const keptRows = retainProjectionMessagesAfterRevert(
             existingRows,
-            existingTurns,
             event.payload.turnCount,
           );
           if (keptRows.length === existingRows.length) {
@@ -1339,11 +1289,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const keptTurns = existingTurns.filter(
-            (turn) =>
-              turn.turnId !== null &&
-              turn.checkpointTurnCount !== null &&
-              turn.checkpointTurnCount <= event.payload.turnCount,
+          const keptTurns = retainProjectionTurnsAfterRevert(
+            existingTurns,
+            event.payload.turnCount,
           );
           yield* projectionTurnRepository.deleteByThreadId({
             threadId: event.payload.threadId,

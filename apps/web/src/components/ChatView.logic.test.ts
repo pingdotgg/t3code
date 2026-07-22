@@ -1,4 +1,5 @@
 import {
+  CheckpointRef,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -16,6 +17,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveRevertTurnCountByUserMessageId,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
@@ -23,6 +25,101 @@ import {
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+function timelineMessage(
+  id: string,
+  role: "user" | "assistant",
+  turnId: TurnId | null,
+  createdAt: string,
+) {
+  return {
+    id: `entry-${id}`,
+    kind: "message" as const,
+    createdAt,
+    message: {
+      id: MessageId.make(id),
+      role,
+      text: id,
+      turnId,
+      createdAt,
+      updatedAt: createdAt,
+      streaming: false,
+    },
+  };
+}
+
+describe("deriveRevertTurnCountByUserMessageId", () => {
+  const user = timelineMessage("user-1", "user", null, "2026-03-29T00:00:00.000Z");
+  const assistant = timelineMessage(
+    "assistant-1",
+    "assistant",
+    TurnId.make("turn-1"),
+    "2026-03-29T00:00:01.000Z",
+  );
+
+  it("falls back to the stable turn id when the assistant message id is absent", () => {
+    const result = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [user, assistant],
+      checkpoints: [
+        {
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: assistant.createdAt,
+        },
+      ],
+    });
+
+    expect(result.get(user.message.id)).toBe(0);
+  });
+
+  it("uses conversation order for completed legacy turns without checkpoints", () => {
+    const secondUser = timelineMessage("user-2", "user", null, "2026-03-29T00:00:02.000Z");
+    const secondAssistant = timelineMessage(
+      "assistant-2",
+      "assistant",
+      TurnId.make("turn-2"),
+      "2026-03-29T00:00:03.000Z",
+    );
+    const result = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [user, assistant, secondUser, secondAssistant],
+      checkpoints: [],
+    });
+
+    expect(result.get(user.message.id)).toBe(0);
+    expect(result.get(secondUser.message.id)).toBe(1);
+  });
+
+  it("uses conversation order for unmatched legacy turns in mixed checkpoint histories", () => {
+    const secondUser = timelineMessage("user-2", "user", null, "2026-03-29T00:00:02.000Z");
+    const secondAssistant = timelineMessage(
+      "assistant-2",
+      "assistant",
+      TurnId.make("turn-2"),
+      "2026-03-29T00:00:03.000Z",
+    );
+    const result = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [user, assistant, secondUser, secondAssistant],
+      checkpoints: [
+        {
+          turnId: TurnId.make("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/2"),
+          status: "ready",
+          files: [],
+          assistantMessageId: secondAssistant.message.id,
+          completedAt: secondAssistant.createdAt,
+        },
+      ],
+    });
+
+    expect(result.get(user.message.id)).toBe(0);
+    expect(result.get(secondUser.message.id)).toBe(1);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");

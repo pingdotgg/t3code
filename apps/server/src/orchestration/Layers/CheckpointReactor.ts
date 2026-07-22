@@ -32,7 +32,6 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
-import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 
@@ -57,6 +56,39 @@ function sameId(left: string | null | undefined, right: string | null | undefine
     return false;
   }
   return left === right;
+}
+
+export function countConversationTurns(messages: ReadonlyArray<{ readonly role: string }>): number {
+  return messages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0);
+}
+
+export function conversationTurnCountForTurn(
+  messages: ReadonlyArray<{
+    readonly role: string;
+    readonly turnId: TurnId | null;
+  }>,
+  turnId: TurnId,
+): number | undefined {
+  let turnCount = 0;
+  let matchedTurnCount: number | undefined;
+  for (const message of messages) {
+    if (message.role === "user") {
+      turnCount += 1;
+    }
+    if (message.role === "assistant" && sameId(message.turnId, turnId)) {
+      matchedTurnCount = turnCount > 0 ? turnCount : undefined;
+    }
+  }
+  return matchedTurnCount;
+}
+
+function maxCheckpointTurnCount(
+  checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>,
+): number {
+  return checkpoints.reduce(
+    (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+    0,
+  );
 }
 
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
@@ -174,12 +206,10 @@ const make = Effect.gen(function* () {
     return project ? [project] : [];
   });
 
-  const isGitWorkspace = (cwd: string) => isGitRepository(cwd);
-
   // Resolves the workspace CWD for checkpoint operations, preferring the
   // active provider session CWD and falling back to the thread/project config.
-  // Returns undefined when no CWD can be determined or the workspace is not
-  // a git repository.
+  // CheckpointStore supports both user Git repositories and T3-managed shadow
+  // repositories, so a project does not need to initialize Git first.
   const resolveCheckpointCwd = Effect.fn("resolveCheckpointCwd")(function* (input: {
     readonly threadId: ThreadId;
     readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
@@ -204,9 +234,6 @@ const make = Effect.gen(function* () {
         }));
 
     if (!cwd) {
-      return undefined;
-    }
-    if (!isGitWorkspace(cwd)) {
       return undefined;
     }
     return cwd;
@@ -235,10 +262,21 @@ const make = Effect.gen(function* () {
     const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
 
-    const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: input.cwd,
-      checkpointRef: fromCheckpointRef,
-    });
+    const fromCheckpointExists = yield* checkpointStore
+      .hasCheckpointRef({
+        cwd: input.cwd,
+        checkpointRef: fromCheckpointRef,
+      })
+      .pipe(
+        Effect.catchTags({
+          VcsProcessExitError: (error) =>
+            Effect.logWarning("previous checkpoint ref probe failed", {
+              checkpointRef: fromCheckpointRef,
+              cwd: input.cwd,
+              detail: error.message,
+            }).pipe(Effect.as(false)),
+        }),
+      );
     if (!fromCheckpointExists) {
       yield* Effect.logWarning("checkpoint capture missing pre-turn baseline", {
         threadId: input.threadId,
@@ -393,13 +431,10 @@ const make = Effect.gen(function* () {
       const existingPlaceholder = thread.checkpoints.find(
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
       );
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
+      const currentTurnCount = maxCheckpointTurnCount(thread.checkpoints);
       const nextTurnCount = existingPlaceholder
         ? existingPlaceholder.checkpointTurnCount
-        : currentTurnCount + 1;
+        : (conversationTurnCountForTurn(thread.messages, turnId) ?? currentTurnCount + 1);
 
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
@@ -499,9 +534,9 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
+      const currentTurnCount = Math.max(
+        maxCheckpointTurnCount(thread.checkpoints),
+        Math.max(0, countConversationTurns(thread.messages) - 1),
       );
       const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
       const baselineExists = yield* checkpointStore.hasCheckpointRef({
@@ -581,9 +616,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
+    const projectedConversationTurnCount = countConversationTurns(thread.messages);
+    const currentTurnCount = Math.max(
+      maxCheckpointTurnCount(thread.checkpoints),
+      event.type === "thread.message-sent" &&
+        thread.messages.some((message) => message.id === event.payload.messageId)
+        ? Math.max(0, projectedConversationTurnCount - 1)
+        : projectedConversationTurnCount,
     );
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
     const baselineExists = yield* checkpointStore.hasCheckpointRef({
@@ -633,20 +672,8 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
-    if (!isGitWorkspace(sessionRuntime.value.cwd)) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const checkpointTurnCount = maxCheckpointTurnCount(thread.checkpoints);
+    const currentTurnCount = Math.max(checkpointTurnCount, countConversationTurns(thread.messages));
 
     if (event.payload.turnCount > currentTurnCount) {
       yield* appendRevertFailureActivity({
@@ -658,41 +685,36 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const targetCheckpointRef =
-      event.payload.turnCount === 0
-        ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-        : thread.checkpoints.find(
-            (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-          )?.checkpointRef;
+    // Legacy/imported threads can predate filesystem checkpoints entirely. They
+    // still support conversation-only rewind. Once a thread has checkpoint
+    // summaries, however, fail closed if the matching filesystem state cannot
+    // be restored so conversation and workspace never diverge silently.
+    if (checkpointTurnCount > 0) {
+      const summarizedCheckpoint = thread.checkpoints.find(
+        (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+      );
+      const targetCheckpointRef =
+        summarizedCheckpoint?.checkpointRef ??
+        checkpointRefForThreadTurn(event.payload.threadId, event.payload.turnCount);
+      const restored = yield* checkpointStore.restoreCheckpoint({
+        cwd: sessionRuntime.value.cwd,
+        checkpointRef: targetCheckpointRef,
+        fallbackToHead: event.payload.turnCount === 0,
+      });
+      if (!restored) {
+        yield* appendRevertFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}. Conversation history was not changed.`,
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
 
-    if (!targetCheckpointRef) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Checkpoint ref for turn ${event.payload.turnCount} is unavailable in read model.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
+      // Refresh the workspace entry index so the @-mention file picker reflects
+      // the reverted filesystem state before conversation history is rewound.
+      yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
     }
-
-    const restored = yield* checkpointStore.restoreCheckpoint({
-      cwd: sessionRuntime.value.cwd,
-      checkpointRef: targetCheckpointRef,
-      fallbackToHead: event.payload.turnCount === 0,
-    });
-    if (!restored) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects the reverted filesystem state.
-    yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
