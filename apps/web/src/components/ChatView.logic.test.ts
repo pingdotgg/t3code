@@ -370,6 +370,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: completedTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        latestQueuedMessageId: localDispatch.latestQueuedMessageId,
         session: readySession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -396,6 +397,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: newerTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        latestQueuedMessageId: localDispatch.latestQueuedMessageId,
         session: { ...readySession, updatedAt: newerTurn.completedAt },
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -423,6 +425,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        latestQueuedMessageId: localDispatch.latestQueuedMessageId,
         session: {
           ...readySession,
           status: "running",
@@ -439,6 +442,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        latestQueuedMessageId: localDispatch.latestQueuedMessageId,
         session: {
           ...readySession,
           status: "running",
@@ -486,6 +490,24 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         latestUserMessageId: MessageId.make("message-steer"),
+        latestQueuedMessageId: localDispatch.latestQueuedMessageId,
+        session: runningSession,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+
+    // A send during a running turn can also land as a queued message
+    // instead of a steered timeline message; that projection must clear
+    // the composer's local "Sending" state too.
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        latestUserMessageId: localDispatch.latestUserMessageId,
+        latestQueuedMessageId: MessageId.make("message-queued"),
         session: runningSession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -501,6 +523,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       phase: "ready" as const,
       latestTurn: null,
       latestUserMessageId: localDispatch.latestUserMessageId,
+      latestQueuedMessageId: localDispatch.latestQueuedMessageId,
       session: null,
       hasPendingApproval: false,
       hasPendingUserInput: false,

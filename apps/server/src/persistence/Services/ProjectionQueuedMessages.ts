@@ -47,10 +47,6 @@ export interface ProjectionQueuedMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionQueuedMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionQueuedMessage>, ProjectionRepositoryError>;
-  readonly listAll: () => Effect.Effect<
-    ReadonlyArray<ProjectionQueuedMessage>,
-    ProjectionRepositoryError
-  >;
   readonly deleteByMessageId: (
     input: DeleteProjectionQueuedMessageInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;

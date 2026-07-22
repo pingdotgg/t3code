@@ -391,6 +391,7 @@ export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
   latestUserMessageId: ChatMessage["id"] | null;
+  latestQueuedMessageId: ChatMessage["id"] | null;
   latestTurnTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
@@ -410,6 +411,7 @@ export function createLocalDispatchSnapshot(
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
     latestUserMessageId: latestUserMessage?.id ?? null,
+    latestQueuedMessageId: activeThread?.queuedMessages.at(-1)?.messageId ?? null,
     latestTurnTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
@@ -424,6 +426,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
   latestUserMessageId: ChatMessage["id"] | null;
+  latestQueuedMessageId: ChatMessage["id"] | null;
   session: Thread["session"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
@@ -439,7 +442,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
   const latestUserMessageChanged =
-    input.localDispatch.latestUserMessageId !== input.latestUserMessageId;
+    input.localDispatch.latestUserMessageId !== input.latestUserMessageId ||
+    input.localDispatch.latestQueuedMessageId !== input.latestQueuedMessageId;
   const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
@@ -447,10 +451,11 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
 
   if (input.phase === "running") {
-    // Steering adds a user message to the current running turn without
-    // necessarily changing any of the turn timestamps. Treat that projected
-    // message as the server acknowledgment so the composer does not remain
-    // stuck in its local "Sending" state until the turn settles.
+    // A send during a running turn lands as either a steered user message or
+    // a queued message, without necessarily changing any turn timestamps.
+    // Treat either projection as the server acknowledgment so the composer
+    // does not remain stuck in its local "Sending" state until the turn
+    // settles.
     if (latestUserMessageChanged) {
       return true;
     }
