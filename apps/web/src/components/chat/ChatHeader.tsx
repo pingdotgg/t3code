@@ -84,17 +84,16 @@ export const ChatHeader = memo(function ChatHeader({
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone
-            doesn't answer it. Mirrors the sidebar cards' title bar —
-            favicon + mono uppercase name. */}
+            doesn't answer it. */}
         {activeProjectName ? (
           <span className="inline-flex shrink-0 items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 border border-black/12 py-0.5 pl-1.5 pr-2 dark:border-white/12">
+            <span className="inline-flex min-w-0 items-center gap-1.5">
               <ProjectFavicon
                 environmentId={activeThreadEnvironmentId}
                 cwd={activeProjectCwd ?? ""}
-                className="size-3"
+                className="size-3.5"
               />
-              <span className="max-w-40 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              <span className="max-w-40 truncate text-sm font-medium text-muted-foreground">
                 {activeProjectName}
               </span>
             </span>

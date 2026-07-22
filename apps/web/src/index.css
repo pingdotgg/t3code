@@ -108,11 +108,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
-  /* Duty-cycled indicator animations: long opacity holds with short stepped
-     ramps, so the compositor only produces frames while the value changes
-     (~20% of the cycle) instead of every vsync. Keep flat holds dominant. */
+  /* Duty-cycled indicator animations: long holds with stepped ramps, so the
+     compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
+  --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
   --font-sans:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
@@ -183,6 +183,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     100% {
       opacity: 0;
       scale: 2;
+    }
+  }
+  @keyframes sidebar-working-text {
+    0%,
+    36% {
+      opacity: 1;
+      animation-timing-function: steps(10);
+    }
+    50%,
+    86% {
+      opacity: 0.75;
+      animation-timing-function: steps(10);
+    }
+    100% {
+      opacity: 1;
     }
   }
 }
@@ -451,6 +466,37 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
   }
+}
+
+/* Give the navigation rail its own cool graphite surface instead of borrowing
+   the workspace card color. The scoped semantic tokens keep sidebar v2's
+   controls in the same palette without changing v1 or the settings nav. */
+.app-sidebar {
+  --background: oklch(0.965 0.009 265);
+  --foreground: oklch(0.27 0.025 265);
+  --card: oklch(0.945 0.014 265);
+  --card-foreground: var(--foreground);
+  --accent: oklch(0.875 0.008 265);
+  --accent-foreground: oklch(0.24 0.012 265);
+  --muted: oklch(0.9 0.018 265);
+  --muted-foreground: oklch(0.49 0.03 265);
+  --border: oklch(0.72 0.025 265 / 28%);
+  --input: oklch(0.62 0.03 265 / 28%);
+  --sidebar-stage-fade: var(--card);
+  background-color: var(--card);
+}
+
+.dark .app-sidebar {
+  --background: #000;
+  --foreground: #f1f3f7;
+  --card: #000;
+  --card-foreground: var(--foreground);
+  --accent: #191a1d;
+  --accent-foreground: #f7f9ff;
+  --muted: #0a0a0a;
+  --muted-foreground: #a3a3a3;
+  --border: rgb(255 255 255 / 14%);
+  --input: rgb(255 255 255 / 18%);
 }
 
 body {
