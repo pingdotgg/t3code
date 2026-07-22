@@ -7,7 +7,9 @@ import * as Schema from "effect/Schema";
 import type { SQLiteDatabase } from "expo-sqlite";
 
 const DATABASE_NAME = "t3code-client.db";
-const DATABASE_SCHEMA_VERSION = 1;
+const LEGACY_FILE_CACHE_DATABASE_SCHEMA_VERSION = 1;
+const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_SCHEMA_VERSION = 2;
+const DATABASE_SCHEMA_VERSION = ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_SCHEMA_VERSION;
 const LEGACY_CACHE_DIRECTORIES = [
   "connection-shell-snapshots",
   "shell-snapshots",
@@ -262,11 +264,18 @@ const makeAvailable = Effect.gen(function* () {
               );
             `);
       });
-      if ((schema?.user_version ?? 0) < DATABASE_SCHEMA_VERSION) {
-        const migrated = await migrateLegacyFileCaches(database);
-        if (migrated) {
-          await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
-        }
+      const previousSchemaVersion = schema?.user_version ?? 0;
+      const legacyCachesMigrated =
+        previousSchemaVersion < LEGACY_FILE_CACHE_DATABASE_SCHEMA_VERSION
+          ? await migrateLegacyFileCaches(database)
+          : true;
+      if (legacyCachesMigrated && previousSchemaVersion < DATABASE_SCHEMA_VERSION) {
+        await database.withExclusiveTransactionAsync(async (transaction) => {
+          if (previousSchemaVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_SCHEMA_VERSION) {
+            await transaction.runAsync("DELETE FROM client_cache WHERE kind = ?", "thread");
+          }
+          await transaction.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
+        });
       }
     },
     catch: databaseError("migrate"),
