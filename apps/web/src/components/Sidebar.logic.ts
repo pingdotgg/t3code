@@ -569,15 +569,22 @@ export function resolveProjectStatusIndicator(
 
 export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
   threads: readonly T[];
-  activeThreadId: T["id"] | undefined;
+  activeThreadId: string | undefined;
   isThreadListExpanded: boolean;
   previewLimit: number;
+  getThreadId?: (thread: T) => string;
 }): {
   hasHiddenThreads: boolean;
   visibleThreads: T[];
   hiddenThreads: T[];
 } {
-  const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
+  const {
+    activeThreadId,
+    getThreadId = (thread) => thread.id,
+    isThreadListExpanded,
+    previewLimit,
+    threads,
+  } = input;
   const hasHiddenThreads = threads.length > previewLimit;
 
   if (!hasHiddenThreads || isThreadListExpanded) {
@@ -589,7 +596,7 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   }
 
   const previewThreads = threads.slice(0, previewLimit);
-  if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
+  if (!activeThreadId || previewThreads.some((thread) => getThreadId(thread) === activeThreadId)) {
     return {
       hasHiddenThreads: true,
       hiddenThreads: threads.slice(previewLimit),
@@ -597,7 +604,7 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     };
   }
 
-  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const activeThread = threads.find((thread) => getThreadId(thread) === activeThreadId);
   if (!activeThread) {
     return {
       hasHiddenThreads: true,
@@ -606,12 +613,14 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     };
   }
 
-  const visibleThreadIds = new Set([...previewThreads, activeThread].map((thread) => thread.id));
+  const visibleThreadIds = new Set(
+    [...previewThreads, activeThread].map((thread) => getThreadId(thread)),
+  );
 
   return {
     hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
-    visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
+    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(getThreadId(thread))),
+    visibleThreads: threads.filter((thread) => visibleThreadIds.has(getThreadId(thread))),
   };
 }
 
