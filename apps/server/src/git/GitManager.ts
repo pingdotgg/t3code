@@ -846,16 +846,25 @@ export const make = Effect.gen(function* () {
     }
 
     // The normalized URL catches both remote-alias changes and an existing
-    // alias being repointed. It also lets an upstream appear after `push -u`
-    // without invalidating the fallback when it still targets the same repo.
-    if (lastKnown.headRemoteUrlKey !== null || current.headRemoteUrlKey !== null) {
+    // alias being repointed. Both sides must be resolved before treating a
+    // mismatch as real: `readConfigValueNullable` swallows any git-config
+    // read failure into `null`, so a transient failure to resolve the
+    // *current* remote URL must read as "unknown", not as "no remote" — the
+    // latter would otherwise drop an already-known PR badge on every hiccup.
+    if (lastKnown.headRemoteUrlKey !== null && current.headRemoteUrlKey !== null) {
       return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown.pr : null;
     }
 
-    // If neither remote URL is available, fall back to the remote identity
-    // encoded by tracked branches. A null-to-non-null transition is allowed
-    // because that is the expected first-push case.
-    if (lastKnown.upstreamRef !== null && current.upstreamRef !== null) {
+    // If the remote URL can't be compared, fall back to the remote identity
+    // encoded by tracked branches — same "both sides known" requirement, for
+    // the same reason. A null-to-non-null transition (upstream/remoteName)
+    // is allowed because that is the expected first-push case.
+    if (
+      lastKnown.upstreamRef !== null &&
+      current.upstreamRef !== null &&
+      lastKnown.remoteName !== null &&
+      current.remoteName !== null
+    ) {
       return lastKnown.remoteName === current.remoteName ? lastKnown.pr : null;
     }
     return lastKnown.pr;
