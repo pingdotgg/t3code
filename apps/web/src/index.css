@@ -144,6 +144,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-surface-raised: var(--surface-raised);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
@@ -322,7 +323,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-glass {
-    background: var(--card);
+    background: var(--surface-raised);
   }
 
   /* Mix from --background (not --card): the lower chrome is a full-width
@@ -353,7 +354,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dark .chat-composer-glass {
-    background: var(--card);
+    background: var(--surface-raised);
   }
 
   .dark .chat-composer-lower-chrome {
@@ -431,6 +432,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius: 0.625rem;
   --background: var(--color-zinc-25);
   --app-chrome-background: var(--background);
+  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
   --card-foreground: var(--color-zinc-800);
@@ -455,9 +457,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
-  /* Generic defaults preserve the existing sidebar primitive. Sidebar V2
-     overrides these roles on its own root so its stronger surface hierarchy
-     cannot leak into settings or the legacy sidebar. */
+  /* Fallbacks for standalone sidebar primitives. App sidebars override these
+     roles on their own root so the surface hierarchy stays out of page content. */
   --sidebar: var(--card);
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
@@ -471,6 +472,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     color-scheme: dark;
     --background: var(--color-zinc-950);
     --app-chrome-background: var(--background);
+    --surface-raised: color-mix(in srgb, var(--card) 45%, transparent);
     --foreground: var(--color-zinc-100);
     --card: var(--color-zinc-900);
     --card-foreground: var(--color-zinc-100);
@@ -498,7 +500,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-[data-sidebar-version="v2"] {
+[data-app-sidebar] {
   --sidebar: var(--color-zinc-50);
   --sidebar-foreground: var(--color-zinc-800);
   --sidebar-muted-foreground: var(--color-zinc-500);
@@ -510,7 +512,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-stage-fade: var(--sidebar);
 }
 
-.dark [data-sidebar-version="v2"] {
+.dark [data-app-sidebar] {
   --sidebar: var(--color-zinc-950);
   --sidebar-foreground: var(--color-zinc-100);
   --sidebar-muted-foreground: var(--color-zinc-400);
