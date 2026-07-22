@@ -274,6 +274,8 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
+      NodeAssert.match(instructions, /thread_read/);
+      NodeAssert.match(instructions, /t3-thread/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
   });

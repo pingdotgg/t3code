@@ -1,7 +1,7 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-export type ComposerTriggerKind = "path" | "slash-command" | "skill";
+export type ComposerTriggerKind = "path" | "slash-command" | "skill" | "thread";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -22,6 +22,7 @@ const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }
     | { type: "mention" }
+    | { type: "thread" }
     | { type: "skill" }
     | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -60,7 +61,7 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   let expandedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention") {
+    if (segment.type === "mention" || segment.type === "thread") {
       const expandedLength = segment.source.length;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
@@ -102,6 +103,7 @@ function collapsedSegmentLength(
   segment:
     | { type: "text"; text: string }
     | { type: "mention" }
+    | { type: "thread" }
     | { type: "skill" }
     | { type: "terminal-context" },
 ): number {
@@ -115,6 +117,7 @@ function clampCollapsedComposerCursorForSegments(
   segments: ReadonlyArray<
     | { type: "text"; text: string }
     | { type: "mention" }
+    | { type: "thread" }
     | { type: "skill" }
     | { type: "terminal-context" }
   >,
@@ -148,7 +151,7 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
   let collapsedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention") {
+    if (segment.type === "mention" || segment.type === "thread") {
       const expandedLength = segment.source.length;
       if (remaining === 0) {
         return collapsedCursor;
@@ -245,6 +248,14 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   if (token.startsWith("$")) {
     return {
       kind: "skill",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
+  if (token.startsWith("#")) {
+    return {
+      kind: "thread",
       query: token.slice(1),
       rangeStart: tokenStart,
       rangeEnd: cursor,

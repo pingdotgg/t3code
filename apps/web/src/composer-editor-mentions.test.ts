@@ -71,6 +71,24 @@ describe("splitPromptIntoComposerSegments", () => {
     ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
   });
 
+  it("splits T3 thread links into thread segments", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "Continue from [Prior chat](t3-thread:///environment-1/thread-2) please",
+      ),
+    ).toEqual([
+      { type: "text", text: "Continue from " },
+      {
+        type: "thread",
+        environmentId: "environment-1",
+        threadId: "thread-2",
+        title: "Prior chat",
+        source: "[Prior chat](t3-thread:///environment-1/thread-2)",
+      },
+      { type: "text", text: " please" },
+    ]);
+  });
+
   it("decodes reserved path characters from generated links", () => {
     expect(
       splitPromptIntoComposerSegments(

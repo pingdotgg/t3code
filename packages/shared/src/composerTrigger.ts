@@ -1,4 +1,4 @@
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
+export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill" | "thread";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -33,6 +33,42 @@ function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
     .replaceAll("\\", "%5C");
+}
+
+export interface ComposerThreadReference {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly title: string;
+}
+
+export const COMPOSER_THREAD_REFERENCE_SCHEME = "t3-thread:";
+
+export function parseComposerThreadLink(
+  destination: string,
+): Pick<ComposerThreadReference, "environmentId" | "threadId"> | null {
+  try {
+    const url = new URL(destination);
+    const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const [environmentId, threadId] = segments;
+    if (
+      url.protocol !== COMPOSER_THREAD_REFERENCE_SCHEME ||
+      !environmentId ||
+      !threadId ||
+      segments.length !== 2
+    ) {
+      return null;
+    }
+    return { environmentId, threadId };
+  } catch {
+    return null;
+  }
+}
+
+export function serializeComposerThreadLink(reference: ComposerThreadReference): string {
+  const label = escapeMarkdownLinkLabel(reference.title);
+  const environmentId = encodeURIComponent(reference.environmentId);
+  const threadId = encodeURIComponent(reference.threadId);
+  return `[${label}](${COMPOSER_THREAD_REFERENCE_SCHEME}///${environmentId}/${threadId})`;
 }
 
 export function serializeComposerFileLink(path: string): string {
@@ -107,6 +143,14 @@ export function detectComposerTrigger(
   if (token.startsWith("$")) {
     return {
       kind: "skill",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
+  if (token.startsWith("#")) {
+    return {
+      kind: "thread",
       query: token.slice(1),
       rangeStart: tokenStart,
       rangeEnd: cursor,

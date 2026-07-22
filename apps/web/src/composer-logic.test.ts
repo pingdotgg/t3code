@@ -106,6 +106,17 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects #thread trigger at cursor", () => {
+    const text = "Continue from #auth";
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "thread",
+      query: "auth",
+      rangeStart: "Continue from ".length,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";

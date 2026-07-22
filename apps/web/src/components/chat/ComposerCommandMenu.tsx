@@ -1,10 +1,12 @@
 import {
+  type EnvironmentId,
   type ProjectEntry,
   type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { BotIcon } from "lucide-react";
+import { BotIcon, MessagesSquareIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -51,6 +53,15 @@ export type ComposerCommandItem =
       skill: ServerProviderSkill;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "thread";
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      title: string;
+      label: string;
+      description: string;
     };
 
 type ComposerCommandGroup = {
@@ -85,6 +96,9 @@ function groupCommandItems(
 ): ComposerCommandGroup[] {
   if (triggerKind === "skill") {
     return items.length > 0 ? [{ id: "skills", label: "Skills", items }] : [];
+  }
+  if (triggerKind === "thread") {
+    return items.length > 0 ? [{ id: "threads", label: "Threads", items }] : [];
   }
   if (triggerKind !== "slash-command" || !groupSlashCommandSections) {
     return [{ id: "default", label: null, items }];
@@ -170,16 +184,20 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           </CommandList>
         ) : (
           <div className="px-5 py-3.5">
-            {props.triggerKind === "skill" ? (
+            {props.triggerKind === "skill" || props.triggerKind === "thread" ? (
               <CommandGroup>
                 <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
-                  Skills
+                  {props.triggerKind === "thread" ? "Threads" : "Skills"}
                 </CommandGroupLabel>
                 <p className="text-muted-foreground/70 text-xs">
                   {props.isLoading
-                    ? "Searching workspace skills..."
+                    ? props.triggerKind === "thread"
+                      ? "Searching threads..."
+                      : "Searching workspace skills..."
                     : (props.emptyStateText ??
-                      "No skills found. Try / to browse provider commands.")}
+                      (props.triggerKind === "thread"
+                        ? "No matching threads."
+                        : "No skills found. Try / to browse provider commands."))}
                 </p>
               </CommandGroup>
             ) : (
@@ -246,6 +264,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>
+      ) : null}
+      {props.item.type === "thread" ? (
+        <MessagesSquareIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="shrink-0">{props.item.label}</span>

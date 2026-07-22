@@ -6,7 +6,11 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { type ServerProviderSkill } from "@t3tools/contracts";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  serializeComposerFileLink,
+  serializeComposerThreadLink,
+} from "@t3tools/shared/composerTrigger";
+import { MessagesSquareIcon } from "lucide-react";
 import {
   $applyNodeReplacement,
   $createRangeSelectionFromDom,
@@ -114,6 +118,17 @@ type SerializedComposerSkillNode = Spread<
     skillLabel?: string;
     skillDescription?: string;
     type: "composer-skill";
+    version: 1;
+  },
+  SerializedLexicalNode
+>;
+
+type SerializedComposerThreadNode = Spread<
+  {
+    environmentId: string;
+    threadId: string;
+    title: string;
+    type: "composer-thread";
     version: 1;
   },
   SerializedLexicalNode
@@ -360,6 +375,103 @@ function $createComposerSkillNode(
   return $applyNodeReplacement(new ComposerSkillNode(skillName, skillLabel, skillDescription));
 }
 
+function ComposerThreadDecorator(props: { title: string; threadId: string }) {
+  const chip = (
+    <span
+      className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
+      contentEditable={false}
+      spellCheck={false}
+      data-composer-thread-chip="true"
+    >
+      <MessagesSquareIcon className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} aria-hidden="true" />
+      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.title}</span>
+    </span>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipPopup side="top" className="max-w-120 whitespace-normal leading-tight">
+        Thread reference · {props.threadId}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+class ComposerThreadNode extends DecoratorNode<React.ReactElement> {
+  __environmentId: string;
+  __threadId: string;
+  __title: string;
+
+  static override getType(): string {
+    return "composer-thread";
+  }
+
+  static override clone(node: ComposerThreadNode): ComposerThreadNode {
+    return new ComposerThreadNode(node.__environmentId, node.__threadId, node.__title, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerThreadNode): ComposerThreadNode {
+    return $createComposerThreadNode(
+      serializedNode.environmentId,
+      serializedNode.threadId,
+      serializedNode.title,
+    ).updateFromJSON(serializedNode);
+  }
+
+  constructor(environmentId: string, threadId: string, title: string, key?: NodeKey) {
+    super(key);
+    this.__environmentId = environmentId;
+    this.__threadId = threadId;
+    this.__title = title;
+  }
+
+  override exportJSON(): SerializedComposerThreadNode {
+    return {
+      ...super.exportJSON(),
+      environmentId: this.__environmentId,
+      threadId: this.__threadId,
+      title: this.__title,
+      type: "composer-thread",
+      version: 1,
+    };
+  }
+
+  override createDOM(): HTMLElement {
+    const dom = document.createElement("span");
+    dom.className = "inline-flex align-middle leading-none";
+    return dom;
+  }
+
+  override updateDOM(): false {
+    return false;
+  }
+
+  override getTextContent(): string {
+    return serializeComposerThreadLink({
+      environmentId: this.__environmentId,
+      threadId: this.__threadId,
+      title: this.__title,
+    });
+  }
+
+  override isInline(): true {
+    return true;
+  }
+
+  override decorate(): React.ReactElement {
+    return <ComposerThreadDecorator title={this.__title} threadId={this.__threadId} />;
+  }
+}
+
+function $createComposerThreadNode(
+  environmentId: string,
+  threadId: string,
+  title: string,
+): ComposerThreadNode {
+  return $applyNodeReplacement(new ComposerThreadNode(environmentId, threadId, title));
+}
+
 function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
   return <ComposerPendingTerminalContextChip context={props.context} />;
 }
@@ -427,12 +539,14 @@ function $createComposerTerminalContextNode(
 type ComposerInlineTokenNode =
   | ComposerMentionNode
   | ComposerSkillNode
+  | ComposerThreadNode
   | ComposerTerminalContextNode;
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
     candidate instanceof ComposerMentionNode ||
     candidate instanceof ComposerSkillNode ||
+    candidate instanceof ComposerThreadNode ||
     candidate instanceof ComposerTerminalContextNode
   );
 }
@@ -841,6 +955,12 @@ function $setComposerEditorPrompt(
           metadata?.label ?? formatProviderSkillDisplayName({ name: segment.name }),
           metadata?.description ?? null,
         ),
+      );
+      continue;
+    }
+    if (segment.type === "thread") {
+      paragraph.append(
+        $createComposerThreadNode(segment.environmentId, segment.threadId, segment.title),
       );
       continue;
     }
@@ -1806,7 +1926,12 @@ export function ComposerPromptEditor({
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode, ComposerSkillNode, ComposerTerminalContextNode],
+      nodes: [
+        ComposerMentionNode,
+        ComposerSkillNode,
+        ComposerThreadNode,
+        ComposerTerminalContextNode,
+      ],
       editorState: () => {
         $setComposerEditorPrompt(
           initialValueRef.current,
