@@ -155,6 +155,11 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
 });
+const ProjectionTurnSnapshotBoundsRowSchema = Schema.Struct({
+  snapshotMaxRequestedAt: Schema.NullOr(IsoDateTime),
+  snapshotMaxStartedAt: Schema.NullOr(IsoDateTime),
+  snapshotMaxCompletedAt: Schema.NullOr(IsoDateTime),
+});
 const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
@@ -568,18 +573,40 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          state,
-          requested_at AS "requestedAt",
-          started_at AS "startedAt",
-          completed_at AS "completedAt",
-          assistant_message_id AS "assistantMessageId",
-          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
-          source_proposed_plan_id AS "sourceProposedPlanId"
+          turns.thread_id AS "threadId",
+          turns.turn_id AS "turnId",
+          turns.state,
+          turns.requested_at AS "requestedAt",
+          turns.started_at AS "startedAt",
+          turns.completed_at AS "completedAt",
+          turns.assistant_message_id AS "assistantMessageId",
+          turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          turns.source_proposed_plan_id AS "sourceProposedPlanId"
+        FROM projection_threads AS threads
+        INNER JOIN projection_turns AS turns
+          ON turns.row_id = (
+            SELECT candidate.row_id
+            FROM projection_turns AS candidate
+            WHERE candidate.thread_id = threads.thread_id
+              AND candidate.turn_id IS NOT NULL
+            ORDER BY candidate.requested_at DESC, candidate.turn_id DESC
+            LIMIT 1
+          )
+        ORDER BY turns.thread_id ASC
+      `,
+  });
+
+  const readTurnSnapshotBounds = SqlSchema.findOne({
+    Request: Schema.Void,
+    Result: ProjectionTurnSnapshotBoundsRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          MAX(requested_at) AS "snapshotMaxRequestedAt",
+          MAX(started_at) AS "snapshotMaxStartedAt",
+          MAX(completed_at) AS "snapshotMaxCompletedAt"
         FROM projection_turns
         WHERE turn_id IS NOT NULL
-        ORDER BY thread_id ASC, requested_at DESC, turn_id DESC
       `,
   });
 
@@ -984,6 +1011,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          readTurnSnapshotBounds(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:readTurnSnapshotBounds:query",
+                "ProjectionSnapshotQuery.getSnapshot:readTurnSnapshotBounds:decodeRow",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1007,6 +1042,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sessionRows,
             checkpointRows,
             latestTurnRows,
+            turnSnapshotBounds,
             stateRows,
             workflowRuns,
           ]) =>
@@ -1105,17 +1141,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 checkpointsByThread.set(row.threadId, threadCheckpoints);
               }
 
+              if (turnSnapshotBounds.snapshotMaxRequestedAt !== null) {
+                updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxRequestedAt);
+              }
+              if (turnSnapshotBounds.snapshotMaxStartedAt !== null) {
+                updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxStartedAt);
+              }
+              if (turnSnapshotBounds.snapshotMaxCompletedAt !== null) {
+                updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxCompletedAt);
+              }
               for (const row of latestTurnRows) {
-                updatedAt = maxIso(updatedAt, row.requestedAt);
-                if (row.startedAt !== null) {
-                  updatedAt = maxIso(updatedAt, row.startedAt);
-                }
-                if (row.completedAt !== null) {
-                  updatedAt = maxIso(updatedAt, row.completedAt);
-                }
-                if (latestTurnByThread.has(row.threadId)) {
-                  continue;
-                }
                 latestTurnByThread.set(row.threadId, {
                   turnId: row.turnId,
                   state:
@@ -1274,6 +1309,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          readTurnSnapshotBounds(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:readTurnSnapshotBounds:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:readTurnSnapshotBounds:decodeRow",
+              ),
+            ),
+          ),
           listBackgroundAgentActivityRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1300,6 +1343,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             threadRows,
             sessionRows,
             latestTurnRows,
+            turnSnapshotBounds,
             backgroundAgentActivityRows,
             stateRows,
             workflowSnapshot,
@@ -1316,14 +1360,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               for (const row of sessionRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
               }
-              for (const row of latestTurnRows) {
-                updatedAt = maxIso(updatedAt, row.requestedAt);
-                if (row.startedAt !== null) {
-                  updatedAt = maxIso(updatedAt, row.startedAt);
-                }
-                if (row.completedAt !== null) {
-                  updatedAt = maxIso(updatedAt, row.completedAt);
-                }
+              if (turnSnapshotBounds.snapshotMaxRequestedAt !== null) {
+                updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxRequestedAt);
+              }
+              if (turnSnapshotBounds.snapshotMaxStartedAt !== null) {
+                updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxStartedAt);
+              }
+              if (turnSnapshotBounds.snapshotMaxCompletedAt !== null) {
+                updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxCompletedAt);
               }
               for (const row of stateRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -1347,9 +1391,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               );
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
               for (const row of latestTurnRows) {
-                if (latestTurnByThread.has(row.threadId)) {
-                  continue;
-                }
                 latestTurnByThread.set(row.threadId, mapLatestTurn(row));
               }
               const sessionByThread = new Map(
@@ -1806,7 +1847,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getSnapshotSequence,
     getCounts,
     getActiveProjectByWorkspaceRoot,
-    getSnapshotSequence,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,

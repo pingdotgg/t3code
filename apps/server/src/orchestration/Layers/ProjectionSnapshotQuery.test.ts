@@ -1142,7 +1142,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'completed',
             '2026-04-02T00:00:05.000Z',
             '2026-04-02T00:00:06.000Z',
-            '2026-04-02T00:00:20.000Z',
+            '2026-04-02T00:01:00.000Z',
             5,
             'checkpoint-5',
             'ready',
@@ -1215,6 +1215,43 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (shellThread?.latestTurn) {
         assert.equal(shellThread.latestTurn.startedAt, "2026-04-02T00:00:30.000Z");
       }
+      assert.equal(shellSnapshot.updatedAt, "2026-04-02T00:01:00.000Z");
+    }),
+  );
+
+  it.effect("preserves snapshot update time when only orphan turns remain", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_files_json
+        )
+        VALUES (
+          'orphan-thread',
+          'orphan-turn',
+          'completed',
+          '2026-04-03T00:00:00.000Z',
+          '2026-04-03T00:00:01.000Z',
+          '2026-04-03T00:00:02.000Z',
+          '[]'
+        )
+      `;
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+
+      assert.deepStrictEqual(shellSnapshot.threads, []);
+      assert.equal(shellSnapshot.updatedAt, "2026-04-03T00:00:02.000Z");
     }),
   );
 });

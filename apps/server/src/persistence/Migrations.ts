@@ -51,6 +51,7 @@ import Migration0036 from "./Migrations/036_RepairRoleAuthTablesAfterScopeMigrat
 import Migration0041 from "./Migrations/041_ProjectionThreadReviewResult.ts";
 import Migration0042 from "./Migrations/042_ProjectionWorkflows.ts";
 import Migration0043 from "./Migrations/043_ProjectionWorkflowWorkerConfig.ts";
+import Migration0044 from "./Migrations/044_ProjectionTurnsLatestByThreadIndex.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -101,6 +102,7 @@ export const migrationEntries = [
   [41, "ProjectionThreadReviewResult", Migration0041],
   [42, "ProjectionWorkflows", Migration0042],
   [43, "ProjectionWorkflowWorkerConfig", Migration0043],
+  [44, "ProjectionTurnsLatestByThreadIndex", Migration0044],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
