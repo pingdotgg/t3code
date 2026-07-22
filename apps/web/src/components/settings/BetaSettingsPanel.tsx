@@ -32,9 +32,12 @@ function AutoSettleDaysInput({
       value={draft}
       onChange={(event) => {
         setDraft(event.target.value);
-        const parsed = Number.parseInt(event.target.value, 10);
+        // Number(), not parseInt: "3.5" must be rejected (not truncated to a
+        // committed 3 while the field shows 3.5) — commit only when the
+        // persisted value matches the displayed one.
+        const parsed = Number(event.target.value);
         if (
-          Number.isFinite(parsed) &&
+          Number.isInteger(parsed) &&
           parsed >= AUTO_SETTLE_MIN_DAYS &&
           parsed <= AUTO_SETTLE_MAX_DAYS
         ) {
