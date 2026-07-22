@@ -107,6 +107,7 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  PlusIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -422,6 +423,8 @@ export interface ChatComposerHandle {
   }) => void;
   /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
+  /** Attach image files (e.g. from a view-level drop zone). */
+  addImages: (files: File[]) => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     prompt: string;
@@ -919,6 +922,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
+  const attachFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1840,8 +1844,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removeComposerImageFromDraft(imageId);
   };
 
+  const openAttachFilePicker = () => {
+    attachFileInputRef.current?.click();
+  };
+
+  const onAttachFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) return;
+    addComposerImages(files);
+    focusComposer();
+  };
+
   // ------------------------------------------------------------------
-  // Callbacks: paste / drag
+  // Callbacks: paste
   // ------------------------------------------------------------------
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
@@ -1850,41 +1866,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (imageFiles.length === 0) return;
     event.preventDefault();
     addComposerImages(imageFiles);
-  };
-
-  const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    dragDepthRef.current += 1;
-    setIsDragOverComposer(true);
-  };
-
-  const onComposerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setIsDragOverComposer(true);
-  };
-
-  const onComposerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) {
-      setIsDragOverComposer(false);
-    }
-  };
-
-  const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    dragDepthRef.current = 0;
-    setIsDragOverComposer(false);
-    const files = Array.from(event.dataTransfer.files);
-    addComposerImages(files);
-    focusComposer();
   };
 
   const insertComposerTextAtEnd = (
@@ -1946,6 +1927,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     window.addEventListener("dragend", onWindowDragEnd);
     return () => window.removeEventListener("dragend", onWindowDragEnd);
   }, [isDragOverComposer]);
+
   const handleInterruptPrimaryAction = useCallback(() => {
     void onInterrupt();
   }, [onInterrupt]);
@@ -2038,6 +2020,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : null,
         );
       },
+      addImages: (files: File[]) => {
+        if (environmentUnavailable !== null || projectSelectionRequired) return;
+        addComposerImages(files);
+        if (isComposerCollapsedMobile) {
+          expandMobileComposer();
+        } else {
+          focusComposer();
+        }
+      },
       addTerminalContext: (selection: TerminalContextSelection) => {
         if (!activeThread) return;
         const snapshot = composerEditorRef.current?.readSnapshot() ?? {
@@ -2105,6 +2096,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       pendingUserInputs.length,
       projectSelectionRequired,
       applyPromptReplacement,
+      isComposerCollapsedMobile,
+      expandMobileComposer,
       isComposerModelPickerOpen,
       readComposerSnapshot,
       selectedModel,
@@ -2130,10 +2123,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           "group rounded-[22px] p-px transition-colors duration-200",
           composerProviderState.composerFrameClassName,
         )}
-        onDragEnter={onComposerDragEnter}
-        onDragOver={onComposerDragOver}
-        onDragLeave={onComposerDragLeave}
-        onDrop={onComposerDrop}
         onDragEnterCapture={composerMentionDragHandlers.onDragEnter}
         onDragOverCapture={composerMentionDragHandlers.onDragOver}
         onDragLeaveCapture={onComposerMentionDragLeaveCapture}
@@ -2556,6 +2545,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <input
+                  ref={attachFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={onAttachFileInputChange}
+                />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        type="button"
+                        className="shrink-0 text-muted-foreground/70 hover:text-foreground/80"
+                        disabled={environmentUnavailable !== null || projectSelectionRequired}
+                        onClick={openAttachFilePicker}
+                        aria-label="Attach images"
+                      />
+                    }
+                  >
+                    <PlusIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Attach images</TooltipPopup>
+                </Tooltip>
                 <ProviderModelPicker
                   compact={isComposerFooterCompact}
                   activeInstanceId={selectedInstanceId}
