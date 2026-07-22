@@ -1850,6 +1850,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           const fable5 = status.models.find((model) => model.slug === "claude-fable-5");
           assert.strictEqual(fable5?.name, "Claude Fable 5");
+          assert.strictEqual(fable5?.shortName, "Fable 5");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

@@ -1,12 +1,8 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
-import {
-  getDisplayModelName,
-  getTriggerDisplayModelLabel,
-  type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
-} from "./providerIconUtils";
+import { getDisplayModelName, type ModelEsque } from "./modelDisplayNames";
+import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -26,12 +22,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
    * "Codex Personal" render with their user-authored label.
    */
   providerDisplayName: string;
-  providerAccentColor?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
   showProvider: boolean;
   preferShortName?: boolean;
-  useTriggerLabel?: boolean;
   showNewBadge?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
@@ -50,26 +44,24 @@ export const ModelListRow = memo(function ModelListRow(props: {
       disabled={Boolean(props.disabledReason)}
       contentClassName="flex w-full items-center gap-3"
       className={cn(
-        "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-2.5 transition-[background-color,box-shadow,color]",
-        "data-highlighted:bg-muted/56 data-selected:bg-transparent data-selected:text-foreground data-selected:ring-0",
+        "group relative my-0.5 w-full !min-w-0 max-w-full cursor-pointer rounded-sm px-2 py-2 transition-[background-color,box-shadow,color]",
+        "data-highlighted:bg-muted/56 data-selected:bg-blue-500/10 data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-blue-500/15",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
       )}
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-xs font-medium leading-snug">
-            {props.useTriggerLabel
-              ? getTriggerDisplayModelLabel(props.model)
-              : getDisplayModelName(
-                  props.model,
-                  props.preferShortName ? { preferShortName: true } : undefined,
-                )}
+          <div className="min-w-0 truncate text-sm font-medium leading-snug">
+            {getDisplayModelName(
+              props.model,
+              props.preferShortName ? { preferShortName: true } : undefined,
+            )}
           </div>
           {props.isSelected ? <CheckIcon className="size-3.5 shrink-0 text-blue-400" /> : null}
           {props.showNewBadge ? (
             <span
-              className="shrink-0 rounded border border-amber-500/35 bg-amber-500/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/12 dark:text-amber-200"
+              className="shrink-0 rounded-sm border border-amber-500/35 bg-amber-500/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/12 dark:text-amber-200"
               aria-label="New model"
             >
               New
@@ -97,7 +89,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 size="icon-xs"
                 variant="ghost"
                 className={cn(
-                  "-mr-1 shrink-0 text-muted-foreground/70 opacity-64 transition-[color,opacity] hover:text-foreground hover:opacity-100 group-hover:opacity-100",
+                  "-mr-1 shrink-0 rounded-sm text-muted-foreground/70 opacity-64 transition-[color,opacity] before:rounded-[calc(var(--radius-sm)-1px)] hover:text-foreground hover:opacity-100 group-hover:opacity-100",
                   props.isFavorite && "text-foreground opacity-100",
                 )}
                 onClick={(event) => {

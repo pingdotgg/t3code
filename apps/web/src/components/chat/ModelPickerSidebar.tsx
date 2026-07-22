@@ -102,10 +102,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
       data-model-picker-sidebar="true"
     >
       <div className="h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div
-          ref={sidebarContentRef}
-          className="relative flex min-h-full flex-col gap-1 px-1 pb-1 pt-0.5"
-        >
+        <div ref={sidebarContentRef} className="relative flex min-h-full flex-col gap-1 p-1">
           {selectedIndicatorTop !== null ? (
             <div
               data-model-picker-selected-indicator="true"
@@ -125,7 +122,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     render={
                       <button
                         className={cn(
-                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-muted",
+                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-sm transition-colors hover:bg-muted",
                         )}
                         onClick={() => handleSelect("favorites")}
                         type="button"
@@ -172,7 +169,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               <button
                 data-model-picker-provider={entry.instanceId}
                 className={cn(
-                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-muted",
+                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-sm transition-colors hover:bg-muted",
                   isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                 )}
                 data-provider-accent-color={entry.accentColor}

@@ -1099,26 +1099,36 @@ label:has(> select#reasoning-effort) select {
   animation: ultrathink-rainbow 10s linear infinite;
 }
 
-/* Thin scrollbar for model picker */
+/* Center a narrow model-picker thumb inside a forgiving interaction gutter.
+   Colors track the theme's border token so light/dark follow automatically. */
 .model-picker-list::-webkit-scrollbar {
-  width: 4px;
+  width: 8px;
+}
+
+.model-picker-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 2px;
+  background-color: color-mix(in srgb, var(--border) 78%, transparent);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
 }
 
 .model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
+  background-color: var(--border);
+  background-clip: content-box;
 }
 
-.dark .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+/* Firefox has no ::-webkit-scrollbar; give it the shared thin treatment.
+   Guarded so Chromium keeps the inset pill above — setting scrollbar-width
+   on the same element would disable the ::-webkit-scrollbar styling. */
+@supports not selector(::-webkit-scrollbar) {
+  .model-picker-list {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+  }
 }
 
 /* Composer chips are non-editable decorators, so the browser skips them when

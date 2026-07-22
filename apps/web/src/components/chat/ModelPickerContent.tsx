@@ -12,7 +12,7 @@ import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxListVirtualized } from "../ui/combobox";
-import { ModelEsque } from "./providerIconUtils";
+import { ModelEsque } from "./modelDisplayNames";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -37,7 +37,6 @@ type ModelPickerItem = {
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   instanceDisplayName: string;
-  instanceAccentColor?: string | undefined;
   continuationGroupKey?: string | undefined;
 };
 
@@ -210,7 +209,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
-          ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
@@ -472,6 +470,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
 
+  const showProviderForEveryRow = isSearching || selectedInstanceId === "favorites";
+  // Rows with a sub-provider render the taller two-line layout even in
+  // single-provider tabs, so size the estimate for them or the list
+  // mis-measures on first paint.
+  const hasSubProviderRows = useMemo(
+    () => filteredModels.some((model) => Boolean(model.subProvider)),
+    [filteredModels],
+  );
+
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) {
@@ -503,6 +510,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       window.removeEventListener("keydown", onWindowKeyDown, true);
     };
   }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
+
+  // LegendList only re-renders a row when its data item or `extraData`
+  // changes — a new `renderItem` closure alone is ignored. Everything the
+  // row render reads from surrounding state must therefore be represented
+  // here, or rows that keep their list position render stale output.
+  const listExtraData = useMemo(
+    () => ({
+      favoritesSet,
+      isSearching,
+      selectedInstanceId,
+      activeModelKey: `${props.activeInstanceId}:${props.model}`,
+      filteredModelByKey,
+      getModelDisabledReason,
+      modelJumpLabelByKey,
+      toggleFavorite,
+    }),
+    [
+      favoritesSet,
+      isSearching,
+      selectedInstanceId,
+      props.activeInstanceId,
+      props.model,
+      filteredModelByKey,
+      getModelDisabledReason,
+      modelJumpLabelByKey,
+      toggleFavorite,
+    ],
+  );
 
   useLayoutEffect(() => {
     setShowTopScrollFade(false);
@@ -619,11 +654,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden">
-              <ComboboxListVirtualized className="model-picker-list size-full min-w-0 p-0">
+              <ComboboxListVirtualized className="not-empty:p-0 size-full min-w-0">
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredModelKeys}
-                  extraData={favoritesSet}
+                  extraData={listExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
                     const model = filteredModelByKey.get(modelKey);
@@ -640,12 +675,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         instanceId={model.instanceId}
                         driverKind={model.driverKind}
                         providerDisplayName={model.instanceDisplayName}
-                        providerAccentColor={model.instanceAccentColor}
                         isFavorite={favoritesSet.has(modelKey)}
-                        isSelected={modelKey === `${props.activeInstanceId}:${props.model}`}
-                        showProvider
-                        preferShortName={!isLocked}
-                        useTriggerLabel={false}
+                        isSelected={modelKey === listExtraData.activeModelKey}
+                        showProvider={
+                          // When browsing a single provider's tab the sidebar
+                          // already says which provider these models belong
+                          // to, so the per-row provider line is redundant.
+                          // Keep it in mixed-provider views (favorites,
+                          // search) and for models that carry a sub-provider
+                          // distinction (e.g. "Claude · Bedrock").
+                          showProviderForEveryRow || Boolean(model.subProvider)
+                        }
+                        preferShortName
                         showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
@@ -653,13 +694,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       />
                     );
                   }}
-                  estimatedItemSize={60}
+                  estimatedItemSize={showProviderForEveryRow || hasSubProviderRows ? 60 : 40}
                   drawDistance={480}
                   recycleItems
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
                   className={cn(
-                    "scrollbar-gutter-both h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
+                    "model-picker-list scrollbar-gutter-both h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
                     showTopScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
                     showBottomScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
                   )}
