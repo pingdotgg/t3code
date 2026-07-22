@@ -138,6 +138,40 @@ describe("T3 Codex dynamic tools", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("immediately cancels waits registered after their turn was interrupted", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeT3CodexDynamicToolWaitRegistry();
+      yield* registry.cancelTurn("provider-turn-1");
+
+      const response = yield* registry.handle(
+        waitCall({ durationMs: T3_CODEX_WAIT_MAX_DURATION_MS }, { turnId: "provider-turn-1" }),
+      );
+
+      NodeAssert.equal(response.success, false);
+      NodeAssert.match(
+        response.contentItems[0]?.type === "inputText" ? response.contentItems[0].text : "",
+        /Wait cancelled/,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("immediately cancels waits registered after session shutdown", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeT3CodexDynamicToolWaitRegistry();
+      yield* registry.cancelAll;
+
+      const response = yield* registry.handle(
+        waitCall({ durationMs: T3_CODEX_WAIT_MAX_DURATION_MS }),
+      );
+
+      NodeAssert.equal(response.success, false);
+      NodeAssert.match(
+        response.contentItems[0]?.type === "inputText" ? response.contentItems[0].text : "",
+        /Wait cancelled/,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("rejects malformed and out-of-range arguments without sleeping", () =>
     Effect.gen(function* () {
       for (const arguments_ of [

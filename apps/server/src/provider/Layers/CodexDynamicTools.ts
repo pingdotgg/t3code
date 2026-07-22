@@ -97,6 +97,12 @@ interface PendingWait {
   readonly cancelled: Deferred.Deferred<void>;
 }
 
+interface WaitRegistryState {
+  readonly pending: Map<string, PendingWait>;
+  readonly cancelledTurnIds: Set<string>;
+  readonly closed: boolean;
+}
+
 export interface T3CodexDynamicToolWaitRegistry {
   readonly handle: (
     payload: EffectCodexSchema.DynamicToolCallParams,
@@ -107,44 +113,61 @@ export interface T3CodexDynamicToolWaitRegistry {
 
 export const makeT3CodexDynamicToolWaitRegistry = Effect.fn("makeT3CodexDynamicToolWaitRegistry")(
   function* (): Effect.fn.Return<T3CodexDynamicToolWaitRegistry> {
-    const pendingRef = yield* Ref.make(new Map<string, PendingWait>());
+    const stateRef = yield* Ref.make<WaitRegistryState>({
+      pending: new Map(),
+      cancelledTurnIds: new Set(),
+      closed: false,
+    });
 
-    const cancelWhere = (predicate: (pending: PendingWait) => boolean) =>
-      Ref.get(pendingRef).pipe(
-        Effect.flatMap((pendingWaits) =>
-          Effect.forEach(
-            Array.from(pendingWaits.values()),
-            (pending) =>
-              predicate(pending)
-                ? Deferred.succeed(pending.cancelled, undefined).pipe(Effect.ignore)
-                : Effect.void,
-            { discard: true },
-          ),
-        ),
+    const completeCancellations = (pendingWaits: ReadonlyArray<PendingWait>) =>
+      Effect.forEach(
+        pendingWaits,
+        (pending) => Deferred.succeed(pending.cancelled, undefined).pipe(Effect.ignore),
+        { discard: true },
       );
 
     return {
       handle: (payload) =>
         Effect.gen(function* () {
           const cancelled = yield* Deferred.make<void>();
-          yield* Ref.update(pendingRef, (current) => {
-            const next = new Map(current);
-            next.set(payload.callId, { turnId: payload.turnId, cancelled });
-            return next;
+          const registered = yield* Ref.modify(stateRef, (current) => {
+            if (current.closed || current.cancelledTurnIds.has(payload.turnId)) {
+              return [false, current] as const;
+            }
+            const pending = new Map(current.pending);
+            pending.set(payload.callId, { turnId: payload.turnId, cancelled });
+            return [true, { ...current, pending }] as const;
           });
 
-          return yield* handleT3CodexDynamicToolCall(payload, Deferred.await(cancelled)).pipe(
+          return yield* handleT3CodexDynamicToolCall(
+            payload,
+            registered ? Deferred.await(cancelled) : Effect.void,
+          ).pipe(
             Effect.ensuring(
-              Ref.update(pendingRef, (current) => {
-                const next = new Map(current);
-                next.delete(payload.callId);
-                return next;
+              Ref.update(stateRef, (current) => {
+                if (!current.pending.has(payload.callId)) {
+                  return current;
+                }
+                const pending = new Map(current.pending);
+                pending.delete(payload.callId);
+                return { ...current, pending };
               }),
             ),
           );
         }),
-      cancelTurn: (turnId) => cancelWhere((pending) => pending.turnId === turnId),
-      cancelAll: cancelWhere(() => true),
+      cancelTurn: (turnId) =>
+        Ref.modify(stateRef, (current) => {
+          const cancelledTurnIds = new Set(current.cancelledTurnIds);
+          cancelledTurnIds.add(turnId);
+          const pending = Array.from(current.pending.values()).filter(
+            (wait) => wait.turnId === turnId,
+          );
+          return [pending, { ...current, cancelledTurnIds }] as const;
+        }).pipe(Effect.flatMap(completeCancellations)),
+      cancelAll: Ref.modify(stateRef, (current) => [
+        Array.from(current.pending.values()),
+        { ...current, closed: true },
+      ]).pipe(Effect.flatMap(completeCancellations)),
     };
   },
 );
