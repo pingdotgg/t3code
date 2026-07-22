@@ -968,6 +968,32 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("rejects unsupported goal mutations without recovering a stale session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-unsupported-goal");
+
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project-unsupported-goal",
+        runtimeMode: "full-access",
+      });
+      yield* routing.codex.stopAll();
+      routing.codex.startSession.mockClear();
+
+      const setFailure = yield* provider
+        .setThreadGoal({ threadId, objective: "Should not recover" })
+        .pipe(Effect.flip);
+      const clearFailure = yield* provider.clearThreadGoal({ threadId }).pipe(Effect.flip);
+
+      assert.instanceOf(setFailure, ProviderValidationError);
+      assert.instanceOf(clearFailure, ProviderValidationError);
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("preserves the persisted binding when stopping a session", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

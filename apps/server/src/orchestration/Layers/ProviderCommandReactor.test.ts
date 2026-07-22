@@ -224,6 +224,8 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
+    const setThreadGoal = vi.fn<ProviderServiceShape["setThreadGoal"]>(() => Effect.void);
+    const clearThreadGoal = vi.fn<ProviderServiceShape["clearThreadGoal"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const threadId =
@@ -301,8 +303,8 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
-      setThreadGoal: () => unsupported(),
-      clearThreadGoal: () => unsupported(),
+      setThreadGoal,
+      clearThreadGoal,
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (_provider) =>
         Effect.succeed({
@@ -418,6 +420,8 @@ describe("ProviderCommandReactor", () => {
       interruptTurn,
       respondToRequest,
       respondToUserInput,
+      setThreadGoal,
+      clearThreadGoal,
       stopSession,
       renameBranch,
       refreshStatus,
@@ -466,6 +470,47 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("uses the first-turn model selection when setting a goal before the turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const modelSelection = createModelSelection(
+      ProviderInstanceId.make("claudeAgent"),
+      "claude-opus-4-6",
+      [{ id: "effort", value: "max" }],
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-goal-turn-model-selection"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-goal-model-selection"),
+          role: "user",
+          text: "Ship goal support",
+          attachments: [],
+        },
+        goal: { objective: "Ship goal support", tokenBudget: 50_000 },
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.setThreadGoal.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls).toHaveLength(1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ modelSelection });
+    expect(harness.setThreadGoal.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      objective: "Ship goal support",
+      status: "active",
+      tokenBudget: 50_000,
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ modelSelection });
   });
 
   it("generates a thread title on the first turn", async () => {

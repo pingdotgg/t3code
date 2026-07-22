@@ -893,11 +893,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "At least one goal field must be provided.",
         );
       }
-      const routed = yield* resolveRoutableSession({
+      const preflight = yield* resolveRoutableSession({
         threadId: input.threadId,
         operation: "ProviderService.setThreadGoal",
-        allowRecovery: true,
+        allowRecovery: false,
       });
+      if (!preflight.adapter.setThreadGoal) {
+        return yield* toValidationError(
+          "ProviderService.setThreadGoal",
+          `Provider '${preflight.adapter.provider}' does not support persisted thread goals.`,
+        );
+      }
+      const routed = preflight.isActive
+        ? preflight
+        : yield* resolveRoutableSession({
+            threadId: input.threadId,
+            operation: "ProviderService.setThreadGoal",
+            allowRecovery: true,
+          });
       if (!routed.adapter.setThreadGoal) {
         return yield* toValidationError(
           "ProviderService.setThreadGoal",
@@ -915,11 +928,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         schema: ProviderClearThreadGoalInput,
         payload: rawInput,
       });
-      const routed = yield* resolveRoutableSession({
+      const preflight = yield* resolveRoutableSession({
         threadId: input.threadId,
         operation: "ProviderService.clearThreadGoal",
-        allowRecovery: true,
+        allowRecovery: false,
       });
+      if (!preflight.adapter.clearThreadGoal) {
+        return yield* toValidationError(
+          "ProviderService.clearThreadGoal",
+          `Provider '${preflight.adapter.provider}' does not support persisted thread goals.`,
+        );
+      }
+      const routed = preflight.isActive
+        ? preflight
+        : yield* resolveRoutableSession({
+            threadId: input.threadId,
+            operation: "ProviderService.clearThreadGoal",
+            allowRecovery: true,
+          });
       if (!routed.adapter.clearThreadGoal) {
         return yield* toValidationError(
           "ProviderService.clearThreadGoal",

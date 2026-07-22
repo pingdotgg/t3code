@@ -51,6 +51,10 @@ it.layer(NodeServices.layer)("goal decider", (it) => {
             attachments: [],
           },
           goal: { objective: "Ship goal support", tokenBudget: 50_000 },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-opus-4-6",
+          },
           runtimeMode: "full-access",
           interactionMode: "default",
           createdAt: now,
@@ -72,6 +76,10 @@ it.layer(NodeServices.layer)("goal decider", (it) => {
         objective: "Ship goal support",
         status: "active",
         tokenBudget: 50_000,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-6",
+        },
       });
     }),
   );

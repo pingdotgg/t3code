@@ -752,7 +752,16 @@ const make = Effect.gen(function* () {
     event: Extract<ProviderIntentEvent, { type: "thread.goal-set-requested" }>,
   ) {
     const run = Effect.gen(function* () {
-      yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt);
+      yield* ensureSessionForThread(
+        event.payload.threadId,
+        event.payload.createdAt,
+        event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {},
+      );
+      if (event.payload.modelSelection !== undefined) {
+        threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+      }
       yield* providerService.setThreadGoal({
         threadId: event.payload.threadId,
         ...(event.payload.objective !== undefined ? { objective: event.payload.objective } : {}),
