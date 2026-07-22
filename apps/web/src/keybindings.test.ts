@@ -126,7 +126,14 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   {
-    shortcut: modShortcut("a", { altKey: true }),
+    shortcut: {
+      key: "a",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: true,
+      modKey: false,
+    },
     command: "project.add",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
@@ -332,7 +339,7 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "commandPalette.toggle", "MacIntel"),
       "⌘K",
     );
-    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⌥⌘A");
+    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⌥A");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "modelPicker.toggle", "Linux"),
       "Ctrl+Shift+M",
@@ -522,14 +529,14 @@ describe("chat/editor shortcuts", () => {
 
   it("matches project.add shortcut outside terminal focus", () => {
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "a", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "å", code: "KeyA", altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
       "project.add",
     );
     assert.notStrictEqual(
-      resolveShortcutCommand(event({ key: "a", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "å", code: "KeyA", altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),

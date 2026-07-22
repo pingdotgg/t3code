@@ -66,7 +66,7 @@ it.effect("parses keybinding rules", () =>
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
     const parsedAddProject = yield* decode(KeybindingRule, {
-      key: "mod+alt+a",
+      key: "alt+a",
       command: "project.add",
     });
     assert.strictEqual(parsedAddProject.command, "project.add");
