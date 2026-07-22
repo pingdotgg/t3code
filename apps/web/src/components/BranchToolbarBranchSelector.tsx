@@ -717,16 +717,23 @@ export function BranchToolbarBranchSelector({
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
-        <ComboboxTrigger
-          render={<Button variant="ghost" size="xs" />}
-          className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
-          disabled={isInitialBranchesLoadPending || isBranchActionPending}
+        {/* Context menu lives on the wrapper: the disabled Button has
+            pointer-events-none, so the trigger itself never sees right-clicks
+            while refs are loading or a branch action is pending. */}
+        <span
+          className="flex min-w-0"
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
-          <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-          <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-        </ComboboxTrigger>
+          <ComboboxTrigger
+            render={<Button variant="ghost" size="xs" />}
+            className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
+            disabled={isInitialBranchesLoadPending || isBranchActionPending}
+          >
+            <GitBranchIcon className="size-3 shrink-0 opacity-70" />
+            <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+            <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+          </ComboboxTrigger>
+        </span>
       </div>
       <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
         <div className="shrink-0 px-3 pt-2.5">
