@@ -2,6 +2,7 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  getThreadChangedFilesExpanded,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -15,6 +16,7 @@ import {
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
+  useUiStateStore,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
@@ -116,9 +118,17 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
-  it("stores only collapsed changed-file turns", () => {
+  it("uses the setting default until a turn is manually overridden", () => {
     const threadId = ThreadId.make("thread-1");
-    const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
+    const initialState = makeUiState();
+
+    expect(getThreadChangedFilesExpanded(initialState, threadId, "turn-1", true)).toBe(true);
+    expect(getThreadChangedFilesExpanded(initialState, threadId, "turn-1", false)).toBe(false);
+  });
+
+  it("stores per-turn overrides relative to either setting default", () => {
+    const threadId = ThreadId.make("thread-1");
+    const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false, true);
 
     expect(collapsed.threadChangedFilesExpandedById).toEqual({
       [threadId]: {
@@ -126,9 +136,32 @@ describe("uiStateStore pure functions", () => {
       },
     });
     expect(
-      setThreadChangedFilesExpanded(collapsed, threadId, "turn-1", true)
+      setThreadChangedFilesExpanded(collapsed, threadId, "turn-1", true, true)
         .threadChangedFilesExpandedById,
     ).toEqual({});
+
+    const expanded = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", true, false);
+    expect(expanded.threadChangedFilesExpandedById).toEqual({
+      [threadId]: {
+        "turn-1": true,
+      },
+    });
+    expect(getThreadChangedFilesExpanded(expanded, threadId, "turn-1", false)).toBe(true);
+    expect(getThreadChangedFilesExpanded(expanded, threadId, "turn-2", false)).toBe(false);
+  });
+
+  it("keeps an explicit turn override when the setting default changes", () => {
+    const threadId = ThreadId.make("thread-1");
+    const overridden = setThreadChangedFilesExpanded(
+      makeUiState(),
+      threadId,
+      "turn-1",
+      false,
+      true,
+    );
+
+    expect(getThreadChangedFilesExpanded(overridden, threadId, "turn-1", false)).toBe(false);
+    expect(getThreadChangedFilesExpanded(overridden, threadId, "turn-1", true)).toBe(false);
   });
 
   it("stores the endpoint preference by stable key", () => {
@@ -175,6 +208,7 @@ describe("parsePersistedState", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+          "turn-2": true,
         },
       },
     });
@@ -210,6 +244,24 @@ describe("parsePersistedState", () => {
         legacyProjectCwdPreferenceKey("/repo/b"),
       ]),
     ).toBe(false);
+  });
+
+  it("ignores obsolete thread-wide and malformed changed-files preferences", () => {
+    const parsed = parsePersistedState({
+      threadChangedFilesExpandedById: {
+        "legacy-thread": false as unknown as Record<string, boolean>,
+        "valid-thread": {
+          "valid-turn": true,
+          "invalid-turn": "yes" as unknown as boolean,
+        },
+      },
+    });
+
+    expect(parsed.threadChangedFilesExpandedById).toEqual({
+      "valid-thread": {
+        "valid-turn": true,
+      },
+    });
   });
 });
 
@@ -281,17 +333,11 @@ describe("uiStateStore persistence", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+          "turn-2": true,
         },
       },
     });
-    expect(parsePersistedState(persisted)).toEqual({
-      ...state,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-        },
-      },
-    });
+    expect(parsePersistedState(persisted)).toEqual(state);
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {
@@ -305,5 +351,26 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
+  });
+
+  it("persists both changed-files override values immediately", () => {
+    useUiStateStore.setState(makeUiState());
+
+    useUiStateStore
+      .getState()
+      .setThreadChangedFilesExpanded("environment:thread-1", "turn-collapsed", false, true);
+    useUiStateStore
+      .getState()
+      .setThreadChangedFilesExpanded("environment:thread-1", "turn-expanded", true, false);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.threadChangedFilesExpandedById).toEqual({
+      "environment:thread-1": {
+        "turn-collapsed": false,
+        "turn-expanded": true,
+      },
+    });
   });
 });

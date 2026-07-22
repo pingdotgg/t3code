@@ -172,8 +172,8 @@ function sanitizePersistedThreadChangedFilesExpanded(
 
     const nextTurns: Record<string, boolean> = {};
     for (const [turnId, expanded] of Object.entries(turns)) {
-      if (turnId && typeof expanded === "boolean" && expanded === false) {
-        nextTurns[turnId] = false;
+      if (turnId && typeof expanded === "boolean") {
+        nextTurns[turnId] = expanded;
       }
     }
 
@@ -195,14 +195,7 @@ export function persistState(state: UiState): void {
         ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
       ),
     );
-    const threadChangedFilesExpandedById = Object.fromEntries(
-      Object.entries(state.threadChangedFilesExpandedById).flatMap(([threadId, turns]) => {
-        const nextTurns = Object.fromEntries(
-          Object.entries(turns).filter(([, expanded]) => expanded === false),
-        );
-        return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
-      }),
-    );
+    const threadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -279,14 +272,15 @@ export function setThreadChangedFilesExpanded(
   threadId: string,
   turnId: string,
   expanded: boolean,
+  defaultExpanded: boolean,
 ): UiState {
   const currentThreadState = state.threadChangedFilesExpandedById[threadId] ?? {};
-  const currentExpanded = currentThreadState[turnId] ?? true;
+  const currentExpanded = getThreadChangedFilesExpanded(state, threadId, turnId, defaultExpanded);
   if (currentExpanded === expanded) {
     return state;
   }
 
-  if (expanded) {
+  if (expanded === defaultExpanded) {
     if (!(turnId in currentThreadState)) {
       return state;
     }
@@ -317,10 +311,19 @@ export function setThreadChangedFilesExpanded(
       ...state.threadChangedFilesExpandedById,
       [threadId]: {
         ...currentThreadState,
-        [turnId]: false,
+        [turnId]: expanded,
       },
     },
   };
+}
+
+export function getThreadChangedFilesExpanded(
+  state: UiState,
+  threadId: string,
+  turnId: string,
+  defaultExpanded: boolean,
+): boolean {
+  return state.threadChangedFilesExpandedById[threadId]?.[turnId] ?? defaultExpanded;
 }
 
 export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | null): UiState {
@@ -414,7 +417,12 @@ export function reorderProjects(
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
-  setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  setThreadChangedFilesExpanded: (
+    threadId: string,
+    turnId: string,
+    expanded: boolean,
+    defaultExpanded: boolean,
+  ) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -424,14 +432,27 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
-  setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
-    set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  setThreadChangedFilesExpanded: (threadId, turnId, expanded, defaultExpanded) => {
+    const previousState = get();
+    const nextState = setThreadChangedFilesExpanded(
+      previousState,
+      threadId,
+      turnId,
+      expanded,
+      defaultExpanded,
+    );
+    if (nextState === previousState) {
+      return;
+    }
+    set(nextState);
+    persistState(nextState);
+  },
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
