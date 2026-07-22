@@ -28,6 +28,8 @@ const thread: OrchestrationThread = {
   updatedAt: now,
   archivedAt: null,
   deletedAt: null,
+  settledOverride: null,
+  settledAt: null,
   messages: [],
   proposedPlans: [],
   activities: [],
