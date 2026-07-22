@@ -248,6 +248,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               ) : (
                 <View className="flex-1" />
               )}
+              {pr ? (
+                <Text
+                  accessibilityLabel={pr.accessibilityLabel}
+                  className={cn("text-xs", pr.textClassName)}
+                  style={{ fontFamily: MONO_FONT }}
+                >
+                  #{pr.label}
+                </Text>
+              ) : null}
               {props.providerDriver ? (
                 <View className="opacity-60">
                   <ProviderIcon provider={props.providerDriver} size={14} />
