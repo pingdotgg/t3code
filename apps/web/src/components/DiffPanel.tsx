@@ -317,12 +317,6 @@ export default function DiffPanel({
         : null,
     [selectedCheckpointTurnCount],
   );
-  // Number of files in the selected turn whose change came from pre-existing
-  // git history rather than agent work; drives the hidden-changes banner.
-  const selectedTurnGitFileCount = useMemo(
-    () => selectedTurn?.files.filter((file) => file.origin === "git").length ?? 0,
-    [selectedTurn],
-  );
   const includeGitChanges =
     includeGitChangesState.scopeKey === collapseScopeKey && includeGitChangesState.value;
   const setIncludeGitChanges = useCallback(
@@ -341,6 +335,12 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
+  // Number of files in the selected turn whose change came from pre-existing
+  // git history; drives the hidden-changes banner. Comes from the diff
+  // response so it reflects the same attribution pass that produced (or
+  // deliberately kept) the rendered patch — the turn summary's origin tags
+  // are computed by a separate pass and could disagree after failures.
+  const selectedTurnGitFileCount = activeCheckpointDiff.data?.gitFileCount ?? 0;
   const primaryBranchDiffPreview = useEnvironmentQuery(
     selectedTurnId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({

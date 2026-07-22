@@ -953,10 +953,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         //    history-editing command. Cherry-pick and rebase preserve author
         //    dates while re-committing, and so does `commit --amend` — but an
         //    amend carries NEW agent content while a replay carries old
-        //    content. Disambiguated below by patch-id: a rewritten commit
-        //    whose exact patch exists elsewhere in the repo (branches,
-        //    remotes, or reflog — the latter catches pre-rebase originals) is
-        //    a replay → demote; otherwise treat as agent work → show.
+        //    content. Disambiguated below by patch-id (--verbatim, so
+        //    whitespace-only amends don't collide with their pre-amend
+        //    original): a rewritten commit whose byte-exact patch exists
+        //    elsewhere in the repo (branches, remotes, or reflog — the
+        //    latter catches pre-rebase originals) is a replay → demote;
+        //    otherwise treat as agent work → show.
         const fromCommitTimeRaw = yield* readCommitField(
           `${input.fromCheckpointRef}^{commit}`,
           "%ct",
@@ -1032,7 +1034,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             const ids = yield* execute({
               operation,
               cwd: input.cwd,
-              args: ["patch-id", "--stable"],
+              args: ["patch-id", "--verbatim"],
               stdin: patches.stdout,
               allowNonZeroExit: true,
               maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,

@@ -67,12 +67,14 @@ function buildTurnDiffResult(
     readonly toTurnCount: number;
   },
   diff: string,
+  gitFileCount?: number,
 ): OrchestrationGetTurnDiffResultType {
   return {
     threadId: input.threadId,
     fromTurnCount: input.fromTurnCount,
     toTurnCount: input.toTurnCount,
     diff,
+    ...(gitFileCount !== undefined ? { gitFileCount } : {}),
   };
 }
 
@@ -82,16 +84,19 @@ export const make = Effect.gen(function* () {
 
   // Drop file sections attributed to pre-existing git history from a patch
   // unless the caller opted in. Attribution failures degrade to the
-  // unfiltered patch — never block the diff on attribution.
+  // unfiltered patch — never block the diff on attribution. The returned
+  // gitFileCount comes from the SAME attribution pass that produced the
+  // patch, so UI driven by it always agrees with what is rendered;
+  // undefined means attribution was unavailable and nothing was filtered.
   const applyAttributionFilter = Effect.fn("applyAttributionFilter")(function* (input: {
     readonly cwd: string;
     readonly fromCheckpointRef: CheckpointRef;
     readonly toCheckpointRef: CheckpointRef;
     readonly diff: string;
     readonly includeGitChanges: boolean;
-  }) {
-    if (input.includeGitChanges || input.diff.trim().length === 0) {
-      return input.diff;
+  }): Effect.fn.Return<{ readonly diff: string; readonly gitFileCount: number | undefined }> {
+    if (input.diff.trim().length === 0) {
+      return { diff: input.diff, gitFileCount: undefined };
     }
     const attribution = yield* checkpointStore
       .attributeCheckpointDiff({
@@ -101,9 +106,21 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.catch(() => Effect.succeed(null)));
     if (attribution === null) {
-      return input.diff;
+      return { diff: input.diff, gitFileCount: undefined };
     }
-    return filterUnifiedDiffFiles(input.diff, (path) => attribution.get(path) !== "git");
+    let gitFileCount = 0;
+    for (const origin of attribution.values()) {
+      if (origin === "git") {
+        gitFileCount += 1;
+      }
+    }
+    if (input.includeGitChanges || gitFileCount === 0) {
+      return { diff: input.diff, gitFileCount };
+    }
+    return {
+      diff: filterUnifiedDiffFiles(input.diff, (path) => attribution.get(path) !== "git"),
+      gitFileCount,
+    };
   });
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
@@ -200,7 +217,7 @@ export const make = Effect.gen(function* () {
           ignoreWhitespace,
         })
         .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
-      const diff = yield* applyAttributionFilter({
+      const filtered = yield* applyAttributionFilter({
         cwd: workspaceCwd,
         fromCheckpointRef,
         toCheckpointRef,
@@ -208,7 +225,7 @@ export const make = Effect.gen(function* () {
         includeGitChanges: input.includeGitChanges ?? false,
       });
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const turnDiff = buildTurnDiffResult(input, filtered.diff, filtered.gitFileCount);
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,
@@ -299,7 +316,7 @@ export const make = Effect.gen(function* () {
         ignoreWhitespace,
       })
       .pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
-    const diff = yield* applyAttributionFilter({
+    const filtered = yield* applyAttributionFilter({
       cwd: workspaceCwd,
       fromCheckpointRef,
       toCheckpointRef,
@@ -313,7 +330,8 @@ export const make = Effect.gen(function* () {
         fromTurnCount: 0,
         toTurnCount: input.toTurnCount,
       },
-      diff,
+      filtered.diff,
+      filtered.gitFileCount,
     );
     if (!isTurnDiffResult(turnDiff)) {
       return yield* new CheckpointDiffResultInvalidError({

@@ -1248,6 +1248,14 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    /**
+     * Number of files in this range whose change is attributed to
+     * pre-existing git history. Reflects the same attribution pass that
+     * filtered (or, with includeGitChanges, deliberately kept) the patch in
+     * `diff`, so banners driven by it always agree with the rendered patch.
+     * Absent when attribution was unavailable.
+     */
+    gitFileCount: Schema.optionalKey(NonNegativeInt),
   }),
   { unsafePreserveChecks: true },
 );

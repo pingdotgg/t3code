@@ -396,6 +396,41 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("keeps a whitespace-only amend of a pre-turn commit as agent work", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        // Pre-turn commit; its pre-amend state stays reachable via reflog,
+        // which is exactly the patch-id collision candidate.
+        yield* writeTextFile(NodePath.join(tmp, "style.ts"), "export const x = 1;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "pre-turn work"], PRE_EXISTING_COMMIT_ENV);
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-ws-amend");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        // The "turn": whitespace-only reformat amended into the pre-turn
+        // commit. `git patch-id --stable` would hash this identically to the
+        // original (it strips whitespace); --verbatim must not.
+        yield* writeTextFile(NodePath.join(tmp, "style.ts"), "export const x  =  1;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "--amend", "--no-edit"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).not.toBe(null);
+        expect(attribution!.get("style.ts")).toBe("agent");
+      }),
+    );
+
     it.effect("returns null for legacy checkpoints without head metadata", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
