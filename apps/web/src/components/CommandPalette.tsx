@@ -985,17 +985,27 @@ function OpenCommandPaletteDialog(props: {
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
-    const prioritized = currentProjectId
+    const currentPrefix =
+      currentProjectEnvironmentId && currentProjectId
+        ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
+        : null;
+    const prioritized = currentPrefix
       ? [
-          ...projectThreadItems.filter((item) => item.value.endsWith(`:${currentProjectId}`)),
-          ...projectThreadItems.filter((item) => !item.value.endsWith(`:${currentProjectId}`)),
+          ...projectThreadItems.filter((item) => item.value === currentPrefix),
+          ...projectThreadItems.filter((item) => item.value !== currentPrefix),
         ]
       : projectThreadItems;
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: prioritized }],
     });
-  }, [clearOpenIntent, currentProjectId, openIntent, projectThreadItems]);
+  }, [
+    clearOpenIntent,
+    currentProjectEnvironmentId,
+    currentProjectId,
+    openIntent,
+    projectThreadItems,
+  ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
