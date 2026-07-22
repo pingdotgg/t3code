@@ -198,8 +198,8 @@ function ThreadListV2ProjectScope(props: {
           className={cn(
             "min-h-8 items-center justify-center rounded-lg border px-3",
             props.selectedKey === null
-              ? "border-border bg-subtle-strong"
-              : "border-black/15 dark:border-white/15",
+              ? "border-black/20 bg-white dark:border-border dark:bg-subtle-strong"
+              : "border-black/10 dark:border-white/15",
           )}
         >
           <Text className="text-sm font-t3-medium text-foreground">All</Text>
@@ -218,7 +218,9 @@ function ThreadListV2ProjectScope(props: {
             onPress={() => props.onChange(selected ? null : key)}
             className={cn(
               "min-h-8 flex-row items-center gap-1.5 rounded-lg border py-1 pl-2 pr-3",
-              selected ? "border-border bg-subtle-strong" : "border-black/15 dark:border-white/15",
+              selected
+                ? "border-black/20 bg-white dark:border-border dark:bg-subtle-strong"
+                : "border-black/10 dark:border-white/15",
             )}
           >
             <ProjectFavicon

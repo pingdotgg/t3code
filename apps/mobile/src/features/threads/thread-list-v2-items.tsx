@@ -187,12 +187,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
       >
         <View className="bg-screen px-4 py-1">
+          {/* Light cards lift OFF the gray screen as white surfaces (iOS
+              grouped-list convention — a darker gray tint on the gray screen
+              reads dingy); quiet ready rows sit at partial opacity so active
+              work pops. Dark keeps the original graphite tints. */}
           <View
             className={cn(
               "overflow-hidden",
               status === "ready"
-                ? "bg-black/[0.025] dark:bg-white/[0.025]"
-                : "bg-black/[0.04] dark:bg-white/[0.04]",
+                ? "bg-white/65 dark:bg-white/[0.025]"
+                : "bg-white dark:bg-white/[0.04]",
             )}
             style={{ borderRadius: 12, borderCurve: "continuous", minHeight: 84 }}
           >
