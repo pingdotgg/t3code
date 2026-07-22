@@ -3,7 +3,7 @@
 const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
-  readonly query?: string;
+  readonly open?: "new-thread-in";
 }
 
 export function openCommandPalette(detail?: CommandPaletteOpenDetail): void {

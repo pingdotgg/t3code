@@ -84,7 +84,7 @@ function ChatRouteGlobalShortcuts() {
         // there is a real choice to make; v1 (and single-project setups)
         // keep the immediate contextual create.
         if (sidebarV2Enabled && projectCount > 1) {
-          openCommandPalette();
+          openCommandPalette({ open: "new-thread-in" });
           return;
         }
         void startNewThreadFromContext({

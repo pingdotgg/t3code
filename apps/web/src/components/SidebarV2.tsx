@@ -1318,7 +1318,7 @@ export default function SidebarV2() {
       });
       return;
     }
-    openCommandPalette();
+    openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projects.length, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
