@@ -772,17 +772,24 @@ const make = Effect.gen(function* () {
           : {}),
       });
     });
-    return yield* run.pipe(
-      Effect.as(true),
+    yield* run.pipe(
       Effect.catchCause((cause) =>
-        appendProviderFailureActivity({
-          threadId: event.payload.threadId,
-          kind: "provider.goal.set.failed",
-          summary: "Goal update failed",
-          detail: formatFailureDetail(cause),
-          turnId: null,
-          createdAt: event.payload.createdAt,
-        }).pipe(Effect.as(false)),
+        Effect.sync(() => {
+          if (event.payload.blocksTurnStart === true && event.commandId !== null) {
+            blockedTurnStartCommandIds.add(event.commandId);
+          }
+        }).pipe(
+          Effect.andThen(
+            appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.goal.set.failed",
+              summary: "Goal update failed",
+              detail: formatFailureDetail(cause),
+              turnId: null,
+              createdAt: event.payload.createdAt,
+            }),
+          ),
+        ),
       ),
     );
   });
@@ -1092,10 +1099,7 @@ const make = Effect.gen(function* () {
         return;
       }
       case "thread.goal-set-requested": {
-        const succeeded = yield* processGoalSetRequested(event);
-        if (!succeeded && event.payload.blocksTurnStart === true && event.commandId !== null) {
-          blockedTurnStartCommandIds.add(event.commandId);
-        }
+        yield* processGoalSetRequested(event);
         return;
       }
       case "thread.goal-clear-requested":
