@@ -308,6 +308,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
           deletedAt: null,
           messages: [
             {
@@ -418,6 +420,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -559,6 +563,115 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+    }),
+  );
+
+  it.effect("keeps settled threads in the shell snapshot with non-null settlement fields", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-settled-test',
+          'Settled Test',
+          '/tmp/settled-test',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          settled_override,
+          settled_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-settled',
+          'project-settled-test',
+          'Settled Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-04-06T00:00:02.000Z',
+          '2026-04-06T00:00:05.000Z',
+          NULL,
+          'settled',
+          '2026-04-06T00:00:04.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES
+          (${ORCHESTRATION_PROJECTOR_NAMES.projects}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threads}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
+      `;
+
+      // Settled ≠ archived: the thread must appear in the LIVE shell
+      // snapshot, carrying its settlement fields through the row aliases.
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.deepEqual(
+        shellSnapshot.threads.map((thread) => thread.id),
+        [ThreadId.make("thread-settled")],
+      );
+      assert.equal(shellSnapshot.threads[0]?.settledOverride, "settled");
+      assert.equal(shellSnapshot.threads[0]?.settledAt, "2026-04-06T00:00:04.000Z");
+
+      // And the full command read model carries them too.
+      const readModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = readModel.threads.find(
+        (candidate) => candidate.id === ThreadId.make("thread-settled"),
+      );
+      assert.equal(thread?.settledOverride, "settled");
+      assert.equal(thread?.settledAt, "2026-04-06T00:00:04.000Z");
     }),
   );
 

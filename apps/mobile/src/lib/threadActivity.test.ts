@@ -50,6 +50,8 @@ function makeThread(
     checkpoints: [],
     session: null,
     ...input,
+    settledOverride: input.settledOverride ?? null,
+    settledAt: input.settledAt ?? null,
   };
 }
 

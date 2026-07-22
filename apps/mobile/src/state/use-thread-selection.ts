@@ -58,6 +58,8 @@ function threadDetailToShell(
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
+    settledOverride: thread.settledOverride,
+    settledAt: thread.settledAt,
     session: thread.session,
     latestUserMessageAt: latestUserMessageAt(thread),
     hasPendingApprovals: false,

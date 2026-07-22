@@ -6,6 +6,7 @@ import {
   resolveNewDraftStartFromOrigin,
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
+  startNewThreadInProjectFromContext,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
 
@@ -115,6 +116,26 @@ describe("chatThreadActions", () => {
       envMode: "worktree",
       startFromOrigin: false,
     });
+  });
+
+  it("does not carry branch or worktree context into a different project", async () => {
+    const handleNewThread = vi.fn<ChatThreadActionContext["handleNewThread"]>(async () => {});
+    const targetProjectRef = scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID);
+
+    await startNewThreadInProjectFromContext(
+      createContext({
+        activeThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          branch: "feature/refactor",
+          worktreePath: "/tmp/worktree",
+        },
+        handleNewThread,
+      }),
+      targetProjectRef,
+    );
+
+    expect(handleNewThread).toHaveBeenCalledWith(targetProjectRef);
   });
 
   it("delegates the target environment defaults to the new-thread handler", async () => {

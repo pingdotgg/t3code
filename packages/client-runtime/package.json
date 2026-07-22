@@ -127,6 +127,10 @@
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
     },
+    "./state/thread-settled": {
+      "types": "./src/state/threadSettled.ts",
+      "default": "./src/state/threadSettled.ts"
+    },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"

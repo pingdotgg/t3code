@@ -36,6 +36,8 @@ export const ProjectionThread = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
+  settledAt: Schema.NullOr(IsoDateTime),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
