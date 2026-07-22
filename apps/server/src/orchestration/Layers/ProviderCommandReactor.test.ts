@@ -541,6 +541,55 @@ describe("ProviderCommandReactor", () => {
     ).toBe(true);
   });
 
+  it("does not record a native goal setup failure when the request is interrupted", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.setThreadGoal.mockImplementation(() => Effect.interrupt);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.goal.set",
+        commandId: CommandId.make("cmd-goal-turn-interrupted"),
+        threadId: ThreadId.make("thread-1"),
+        objective: "Ship goal support",
+        status: "active",
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5-codex"),
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.setThreadGoal).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.some((activity) => activity.kind === "provider.goal.set.failed"),
+    ).toBe(false);
+  });
+
+  it("does not record a native goal clear failure when the request is interrupted", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.clearThreadGoal.mockImplementation(() => Effect.interrupt);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.goal.clear",
+        commandId: CommandId.make("cmd-goal-clear-interrupted"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.clearThreadGoal).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.some((activity) => activity.kind === "provider.goal.clear.failed"),
+    ).toBe(false);
+  });
+
   it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

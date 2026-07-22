@@ -772,16 +772,19 @@ const make = Effect.gen(function* () {
       });
     });
     yield* run.pipe(
-      Effect.catchCause((cause) =>
-        appendProviderFailureActivity({
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return appendProviderFailureActivity({
           threadId: event.payload.threadId,
           kind: "provider.goal.set.failed",
           summary: "Goal update failed",
           detail: formatFailureDetail(cause),
           turnId: null,
           createdAt: event.payload.createdAt,
-        }),
-      ),
+        });
+      }),
     );
   });
 
@@ -793,16 +796,19 @@ const make = Effect.gen(function* () {
       yield* providerService.clearThreadGoal({ threadId: event.payload.threadId });
     });
     yield* run.pipe(
-      Effect.catchCause((cause) =>
-        appendProviderFailureActivity({
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return appendProviderFailureActivity({
           threadId: event.payload.threadId,
           kind: "provider.goal.clear.failed",
           summary: "Goal clear failed",
           detail: formatFailureDetail(cause),
           turnId: null,
           createdAt: event.payload.createdAt,
-        }).pipe(Effect.asVoid),
-      ),
+        }).pipe(Effect.asVoid);
+      }),
     );
   });
 
