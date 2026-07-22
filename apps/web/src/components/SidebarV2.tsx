@@ -126,7 +126,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
-  // Adds a little breathing room where active work transitions into history.
+  // Marks where active work transitions into history: a quiet labeled
+  // rule above the first settled row, so the tail reads as a named zone
+  // rather than an unexplained gap.
   showSettledGap?: boolean;
   isActive: boolean;
   jumpLabel: string | null;
@@ -391,11 +393,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     return (
       <li
         data-thread-item
-        className={cn(
-          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]",
-          props.showSettledGap && "mt-2",
-        )}
+        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
+        {props.showSettledGap ? (
+          <div aria-hidden className="mb-1 mt-3 flex items-center gap-2 px-2.5">
+            <span className="text-[10px] font-medium text-muted-foreground/50">Settled</span>
+            <span className="h-px flex-1 bg-border/60" />
+          </div>
+        ) : null}
         <div
           role="button"
           tabIndex={0}
