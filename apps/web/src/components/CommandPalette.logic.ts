@@ -107,6 +107,7 @@ export type BrowseTabCompletion =
   | { readonly kind: "entry"; readonly entry: FilesystemBrowseEntry };
 
 export function resolveBrowseTabCompletion(input: {
+  exactEntry: FilesystemBrowseEntry | null;
   filteredEntries: ReadonlyArray<FilesystemBrowseEntry>;
   highlightedItemValue: string | null;
 }): BrowseTabCompletion | null {
@@ -122,6 +123,10 @@ export function resolveBrowseTabCompletion(input: {
     if (highlightedEntry) {
       return { kind: "entry", entry: highlightedEntry };
     }
+  }
+
+  if (input.highlightedItemValue === null && input.exactEntry) {
+    return { kind: "entry", entry: input.exactEntry };
   }
 
   const firstEntry = input.filteredEntries[0];

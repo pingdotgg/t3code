@@ -48,6 +48,7 @@ describe("resolveBrowseTabCompletion", () => {
   it("uses the highlighted directory", () => {
     expect(
       resolveBrowseTabCompletion({
+        exactEntry: null,
         filteredEntries: entries,
         highlightedItemValue: "browse:/workspace/alpine",
       }),
@@ -57,6 +58,7 @@ describe("resolveBrowseTabCompletion", () => {
   it("uses the first directory when none is highlighted", () => {
     expect(
       resolveBrowseTabCompletion({
+        exactEntry: null,
         filteredEntries: entries,
         highlightedItemValue: null,
       }),
@@ -66,6 +68,7 @@ describe("resolveBrowseTabCompletion", () => {
   it("preserves the highlighted parent-directory action", () => {
     expect(
       resolveBrowseTabCompletion({
+        exactEntry: null,
         filteredEntries: entries,
         highlightedItemValue: "browse:up",
       }),
@@ -75,10 +78,41 @@ describe("resolveBrowseTabCompletion", () => {
   it("returns null when there are no matching directories", () => {
     expect(
       resolveBrowseTabCompletion({
+        exactEntry: null,
         filteredEntries: [],
         highlightedItemValue: null,
       }),
     ).toBeNull();
+  });
+
+  it("uses the case-sensitive exact entry before the first prefix match", () => {
+    const caseVariants = [
+      { name: "Docs", fullPath: "/workspace/Docs" },
+      { name: "docs", fullPath: "/workspace/docs" },
+    ];
+
+    expect(
+      resolveBrowseTabCompletion({
+        exactEntry: caseVariants[1] ?? null,
+        filteredEntries: caseVariants,
+        highlightedItemValue: null,
+      }),
+    ).toEqual({ kind: "entry", entry: caseVariants[1] });
+  });
+
+  it("keeps a highlighted row ahead of a different exact entry", () => {
+    const caseVariants = [
+      { name: "Docs", fullPath: "/workspace/Docs" },
+      { name: "docs", fullPath: "/workspace/docs" },
+    ];
+
+    expect(
+      resolveBrowseTabCompletion({
+        exactEntry: caseVariants[1] ?? null,
+        filteredEntries: caseVariants,
+        highlightedItemValue: "browse:/workspace/Docs",
+      }),
+    ).toEqual({ kind: "entry", entry: caseVariants[0] });
   });
 });
 

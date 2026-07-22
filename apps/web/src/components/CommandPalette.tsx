@@ -1711,6 +1711,7 @@ function OpenCommandPaletteDialog(props: {
       }
 
       const completion = resolveBrowseTabCompletion({
+        exactEntry: exactBrowseEntry,
         filteredEntries: filteredBrowseEntries,
         highlightedItemValue,
       });
