@@ -85,7 +85,7 @@ import {
   resolveSidebarV2Status,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
-import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
+import { prStatusIndicator, resolveThreadPr, ThreadStatusText } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -185,8 +185,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       ? {
           label: "Working",
           icon: "working" as const,
-          className:
-            "animate-sidebar-working-text font-semibold text-blue-600 motion-reduce:animate-none dark:text-blue-400",
+          className: "font-semibold text-blue-600 dark:text-blue-400",
         }
       : status === "approval"
         ? {
@@ -518,17 +517,21 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 ) : topStatus ? (
                   <span
                     role="status"
+                    aria-label={topStatus.label}
                     className={cn(
                       "inline-flex items-center gap-1 text-[11px]",
                       topStatus.className,
                     )}
                   >
                     {topStatus.icon === "working" ? (
-                      <CircleDashedIcon aria-hidden className="size-3" />
+                      <CircleDashedIcon
+                        aria-hidden
+                        className="size-3 animate-spin motion-reduce:animate-none"
+                      />
                     ) : topStatus.icon === "done" ? (
                       <CircleCheckIcon aria-hidden className="size-3" />
                     ) : null}
-                    {topStatus.label}
+                    <ThreadStatusText label={topStatus.label} className="inline whitespace-pre" />
                   </span>
                 ) : (
                   threadTimeLabel(thread)

@@ -6,6 +6,16 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import Animated, {
+  cancelAnimation,
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -37,6 +47,93 @@ const STATUS_LABEL_BY_STATUS: Partial<
   working: { label: "Working", className: "text-blue-600 dark:text-blue-400" },
   failed: { label: "Failed", className: "text-red-700 dark:text-red-300" },
 };
+
+const WORKING_WAVE_CYCLE_MS = 4000;
+const WORKING_WAVE_STAGGER_MS = 60;
+const WORKING_WAVE_OFFSET = 1.1;
+const WORKING_WAVE_EASING = Easing.bezierFn(0.42, 0, 0.58, 1);
+
+function WorkingStatusLetter(props: {
+  readonly letter: string;
+  readonly index: number;
+  readonly progress: SharedValue<number>;
+  readonly className: string;
+}) {
+  const style = useAnimatedStyle(() => {
+    const phase =
+      (props.progress.value - (props.index * WORKING_WAVE_STAGGER_MS) / WORKING_WAVE_CYCLE_MS + 1) %
+      1;
+    let translateY = 0;
+
+    if (phase < 0.04) {
+      translateY = -WORKING_WAVE_OFFSET * WORKING_WAVE_EASING(phase / 0.04);
+    } else if (phase < 0.08) {
+      translateY =
+        -WORKING_WAVE_OFFSET + WORKING_WAVE_OFFSET * 2 * WORKING_WAVE_EASING((phase - 0.04) / 0.04);
+    } else if (phase < 0.12) {
+      translateY = WORKING_WAVE_OFFSET * (1 - WORKING_WAVE_EASING((phase - 0.08) / 0.04));
+    }
+
+    return { transform: [{ translateY }] };
+  });
+
+  return (
+    <Animated.View style={style}>
+      <Text className={props.className}>{props.letter}</Text>
+    </Animated.View>
+  );
+}
+
+function WorkingStatusText({ className }: { readonly className: string }) {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = 0;
+    progress.value = withRepeat(
+      withTiming(1, {
+        duration: WORKING_WAVE_CYCLE_MS,
+        easing: Easing.linear,
+        reduceMotion: ReduceMotion.System,
+      }),
+      -1,
+      false,
+      undefined,
+      ReduceMotion.System,
+    );
+
+    return () => {
+      cancelAnimation(progress);
+    };
+  }, [progress]);
+
+  return (
+    <View accessible accessibilityLabel="Working" className="flex-row items-center">
+      {Array.from("Working", (letter, index) => (
+        <WorkingStatusLetter
+          key={`${letter}-${index}`}
+          letter={letter}
+          index={index}
+          progress={progress}
+          className={className}
+        />
+      ))}
+    </View>
+  );
+}
+
+function ThreadListV2StatusText({
+  label,
+  className,
+}: {
+  readonly label: string;
+  readonly className: string;
+}) {
+  if (label === "Working") {
+    return <WorkingStatusText className={className} />;
+  }
+
+  return <Text className={className}>{label}</Text>;
+}
 
 function threadTimeLabel(thread: EnvironmentThreadShell): string {
   return relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt);
@@ -212,14 +309,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 >
                   {props.project?.title ?? ""}
                 </Text>
-                <Text
+                <ThreadListV2StatusText
+                  label={statusLabel?.label ?? timeLabel}
                   className={cn(
                     "text-xs tabular-nums",
                     statusLabel?.className ?? "text-foreground-tertiary",
                   )}
-                >
-                  {statusLabel?.label ?? timeLabel}
-                </Text>
+                />
               </View>
               <Text className="mt-1 text-base font-t3-medium text-foreground" numberOfLines={2}>
                 {thread.title}

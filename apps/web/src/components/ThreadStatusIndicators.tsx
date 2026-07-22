@@ -173,10 +173,36 @@ export function ThreadStatusLabel({
             status.pulse ? "animate-status-pulse" : ""
           }`}
         />
-        <span className="hidden md:inline">{status.label}</span>
+        <ThreadStatusText label={status.label} />
       </TooltipTrigger>
       <TooltipPopup side="top">{status.label}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+export function ThreadStatusText({
+  label,
+  className = "hidden md:inline whitespace-pre",
+}: {
+  label: string;
+  className?: string;
+}) {
+  if (label !== "Working") {
+    return <span className={className}>{label}</span>;
+  }
+
+  return (
+    <span aria-hidden="true" className={className}>
+      {Array.from(label, (letter, index) => (
+        <span
+          key={`${letter}-${index}`}
+          className="inline-block animate-working-wave motion-reduce:animate-none"
+          style={{ animationDelay: `${index * 60}ms` }}
+        >
+          {letter}
+        </span>
+      ))}
+    </span>
   );
 }
 

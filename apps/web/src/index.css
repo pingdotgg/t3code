@@ -55,7 +55,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
   }
 }
 
-html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
+html[data-mobile-composer-route-transition="true"]::view-transition-group(
+    t3-mobile-draft-headline
+  ) {
   animation-duration: 130ms;
 }
 
@@ -112,7 +114,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
-  --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
+  --animate-working-wave: working-wave 4s ease-in-out infinite;
   --font-sans:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
@@ -185,19 +187,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       scale: 2;
     }
   }
-  @keyframes sidebar-working-text {
+  @keyframes working-wave {
     0%,
-    36% {
-      opacity: 1;
-      animation-timing-function: steps(10);
-    }
-    50%,
-    86% {
-      opacity: 0.75;
-      animation-timing-function: steps(10);
-    }
+    15%,
     100% {
-      opacity: 1;
+      transform: translateY(0);
+    }
+    4% {
+      transform: translateY(-0.1em);
+    }
+    8% {
+      transform: translateY(0.1em);
+    }
+    12% {
+      transform: translateY(0);
     }
   }
 }
