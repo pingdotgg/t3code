@@ -126,6 +126,11 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  {
+    shortcut: modShortcut("enter", { shiftKey: true }),
+    command: "thread.settle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
@@ -147,6 +152,29 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("modelPickerOpen"),
   },
 ]);
+
+describe("thread settle shortcut", () => {
+  it("resolves Mod+Shift+Enter outside the terminal", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Enter", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+      "thread.settle",
+    );
+  });
+
+  it("does not resolve while the terminal owns focus", () => {
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "Enter", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Linux", context: { terminalFocus: true } },
+      ),
+    );
+  });
+});
 
 describe("isTerminalToggleShortcut", () => {
   it("matches Cmd+J on macOS", () => {
