@@ -18,7 +18,10 @@ export type EmacsReadlineAction =
 
 export interface PlainTextEdit {
   readonly inputType?: string;
+  readonly insertedText?: string;
   readonly killedText?: string;
+  readonly replacementEnd?: number;
+  readonly replacementStart?: number;
   readonly selectionEnd: number;
   readonly selectionStart: number;
   readonly value: string;
@@ -35,7 +38,6 @@ const CANDIDATE_SURFACE_SELECTOR = [
 ].join(",");
 
 function keyLetter(event: KeyboardEvent): string {
-  if (event.code.startsWith("Key")) return event.code.slice(3).toLowerCase();
   return event.key.length === 1 ? event.key.toLowerCase() : "";
 }
 
@@ -162,6 +164,9 @@ function replacement(
     selectionStart: nextPosition,
     selectionEnd: nextPosition,
     inputType,
+    insertedText,
+    replacementStart: start,
+    replacementEnd: end,
     ...(killedText === undefined ? {} : { killedText }),
   };
 }
@@ -252,9 +257,22 @@ export function applyEmacsReadlineActionToPlainText(input: {
       );
     }
     case "yank":
+      if (!input.yankText) {
+        return {
+          value,
+          selectionStart: input.selectionStart,
+          selectionEnd: input.selectionEnd,
+        };
+      }
       return replacement(value, start, end, input.yankText ?? "", "insertText");
     case "transpose-chars": {
-      if (start !== end || value.length < 2 || start === 0) return movement(value, end);
+      if (start !== end || value.length < 2 || start === 0) {
+        return {
+          value,
+          selectionStart: input.selectionStart,
+          selectionEnd: input.selectionEnd,
+        };
+      }
       const left = start === value.length ? start - 2 : start - 1;
       const right = left + 1;
       const transposed = value.slice(0, left) + value[right] + value[left] + value.slice(right + 1);
@@ -264,6 +282,9 @@ export function applyEmacsReadlineActionToPlainText(input: {
         selectionStart: nextPosition,
         selectionEnd: nextPosition,
         inputType: "insertTranspose",
+        insertedText: `${value[right]}${value[left]}`,
+        replacementStart: left,
+        replacementEnd: right + 1,
       };
     }
   }
@@ -317,6 +338,10 @@ function getContentEditableHost(target: EventTarget | null): HTMLElement | null 
   );
 }
 
+function isKeybindingCaptureTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-keybinding-capture]") !== null;
+}
+
 function dispatchInputEvent(control: PlainTextControl, inputType: string): void {
   const InputEventConstructor = control.ownerDocument.defaultView?.InputEvent ?? InputEvent;
   control.dispatchEvent(
@@ -362,10 +387,16 @@ type SelectionWithModify = Selection & {
 
 function selectionBelongsToHost(selection: Selection, host: HTMLElement): boolean {
   const anchor = selection.anchorNode;
-  return anchor !== null && (anchor === host || host.contains(anchor));
+  const focus = selection.focusNode;
+  return (
+    anchor !== null &&
+    focus !== null &&
+    (anchor === host || host.contains(anchor)) &&
+    (focus === host || host.contains(focus))
+  );
 }
 
-function applyActionToContentEditable(
+export function applyEmacsReadlineActionToContentEditable(
   host: HTMLElement,
   action: EmacsReadlineAction,
   yankText: string,
@@ -388,6 +419,7 @@ function applyActionToContentEditable(
     if (selection.isCollapsed && direction === "forward" && granularity === "lineboundary") {
       selection.modify("extend", "forward", "character");
     }
+    if (selection.isCollapsed) return "";
     const killedText = selection.toString();
     document.execCommand("delete");
     return killedText;
@@ -421,11 +453,11 @@ function applyActionToContentEditable(
       break;
     case "delete-backward":
       if (selection.isCollapsed) selection.modify("extend", "backward", "character");
-      document.execCommand("delete");
+      if (!selection.isCollapsed) document.execCommand("delete");
       break;
     case "delete-forward":
       if (selection.isCollapsed) selection.modify("extend", "forward", "character");
-      document.execCommand("delete");
+      if (!selection.isCollapsed) document.execCommand("delete");
       break;
     case "kill-line":
       killedText = extendAndDelete("forward", "lineboundary");
@@ -440,24 +472,41 @@ function applyActionToContentEditable(
       killedText = extendAndDelete("forward", "word");
       break;
     case "yank":
+      if (!yankText) break;
       document.execCommand("insertText", false, yankText);
       break;
     case "transpose-chars":
-      // Native contenteditable does not expose a reliable atomic transpose
-      // operation. Consume the browser shortcut here; plain inputs and
-      // textareas implement the full readline behavior above.
-      break;
+      // Rich editors need to own this operation so their internal document
+      // model and undo history stay synchronized.
+      return { handled: false };
   }
 
   return { handled: true, ...(killedText === undefined ? {} : { killedText }) };
 }
 
-export function createEmacsReadlineKeydownHandler(): (event: KeyboardEvent) => void {
-  let killRingText = "";
+let killRingText = "";
 
+export function getEmacsReadlineKillRingText(): string {
+  return killRingText;
+}
+
+export function storeEmacsReadlineKilledText(text: string): void {
+  if (text) killRingText = text;
+}
+
+export function createEmacsReadlineKeydownHandler(options?: {
+  readonly shouldYieldToApplicationShortcut?: (event: KeyboardEvent) => boolean;
+}): (event: KeyboardEvent) => void {
   return (event) => {
     const action = resolveEmacsReadlineAction(event);
-    if (!action || isTerminalTarget(event.target)) return;
+    if (
+      !action ||
+      isTerminalTarget(event.target) ||
+      isKeybindingCaptureTarget(event.target) ||
+      options?.shouldYieldToApplicationShortcut?.(event)
+    ) {
+      return;
+    }
 
     const document = (event.target as Node | null)?.ownerDocument ?? globalThis.document;
     if (
@@ -470,15 +519,18 @@ export function createEmacsReadlineKeydownHandler(): (event: KeyboardEvent) => v
 
     const control = getPlainTextControl(event.target);
     const editableHost = control ? null : getContentEditableHost(event.target);
+    // Managed editors such as Lexical must update their own selection and
+    // document state. Their editor plugin handles the original keydown.
+    if (editableHost?.hasAttribute("data-emacs-readline-managed")) return;
     const result = control
       ? applyActionToPlainTextControl(control, action, killRingText)
       : editableHost
-        ? applyActionToContentEditable(editableHost, action, killRingText)
+        ? applyEmacsReadlineActionToContentEditable(editableHost, action, killRingText)
         : { handled: false };
 
     if (!result.handled) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (result.killedText) killRingText = result.killedText;
+    if (result.killedText) storeEmacsReadlineKilledText(result.killedText);
   };
 }

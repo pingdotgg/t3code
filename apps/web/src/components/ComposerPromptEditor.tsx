@@ -55,6 +55,13 @@ import {
 } from "react";
 
 import {
+  applyEmacsReadlineActionToPlainText,
+  getEmacsReadlineKillRingText,
+  resolveEmacsReadlineAction,
+  storeEmacsReadlineKilledText,
+} from "~/emacsReadlineBindings";
+import { useClientSettings } from "~/hooks/useSettings";
+import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
@@ -719,6 +726,28 @@ function $getComposerRootLength(): number {
   return children.reduce((sum, child) => sum + getComposerNodeTextLength(child), 0);
 }
 
+const COMPOSER_INLINE_TOKEN_LOGICAL_CHARACTER = "\uFFFC";
+
+function getComposerNodeLogicalText(node: LexicalNode): string {
+  if (isComposerInlineTokenNode(node)) {
+    return COMPOSER_INLINE_TOKEN_LOGICAL_CHARACTER;
+  }
+  if ($isTextNode(node)) {
+    return node.getTextContent();
+  }
+  if ($isLineBreakNode(node)) {
+    return "\n";
+  }
+  if ($isElementNode(node)) {
+    return node.getChildren().map(getComposerNodeLogicalText).join("");
+  }
+  return "";
+}
+
+function $getComposerLogicalText(): string {
+  return $getRoot().getChildren().map(getComposerNodeLogicalText).join("");
+}
+
 function $setSelectionAtComposerOffset(nextOffset: number): void {
   const root = $getRoot();
   const composerLength = $getComposerRootLength();
@@ -756,6 +785,23 @@ function $setSelectionRangeAtComposerOffsets(startOffset: number, endOffset: num
   selection.anchor.set(anchorPoint.key, anchorPoint.offset, anchorPoint.type);
   selection.focus.set(focusPoint.key, focusPoint.offset, focusPoint.type);
   $setSelection(selection);
+}
+
+function getSelectionRangeForComposerOffsets(selection: ReturnType<typeof $getSelection>): {
+  start: number;
+  end: number;
+} | null {
+  if (!$isRangeSelection(selection)) {
+    return null;
+  }
+  const anchorNode = selection.anchor.getNode();
+  const focusNode = selection.focus.getNode();
+  const anchorOffset = getAbsoluteOffsetForPoint(anchorNode, selection.anchor.offset);
+  const focusOffset = getAbsoluteOffsetForPoint(focusNode, selection.focus.offset);
+  return {
+    start: Math.min(anchorOffset, focusOffset),
+    end: Math.max(anchorOffset, focusOffset),
+  };
 }
 
 function getSelectionRangeForExpandedComposerOffsets(selection: ReturnType<typeof $getSelection>): {
@@ -1071,6 +1117,89 @@ function ComposerHomeEndKeyPlugin() {
       COMMAND_PRIORITY_HIGH,
     );
   }, [editor]);
+
+  return null;
+}
+
+function ComposerEmacsReadlinePlugin() {
+  const [editor] = useLexicalComposerContext();
+  const enabled = useClientSettings((settings) => settings.keyboardEditingMode === "emacs");
+  const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        const action = resolveEmacsReadlineAction(event);
+        if (!action) return false;
+
+        const selection = $getSelection();
+        const range = getSelectionRangeForComposerOffsets(selection);
+        if (!$isRangeSelection(selection) || !range) return false;
+
+        const logicalText = $getComposerLogicalText();
+        const edit = applyEmacsReadlineActionToPlainText({
+          action,
+          value: logicalText,
+          selectionStart: range.start,
+          selectionEnd: range.end,
+          yankText: getEmacsReadlineKillRingText(),
+        });
+
+        if (edit.inputType) {
+          const replacementStart = edit.replacementStart;
+          const replacementEnd = edit.replacementEnd;
+          if (replacementStart === undefined || replacementEnd === undefined) return false;
+
+          // Inline chips represent one logical cursor unit but serialize to
+          // longer prompt text. Transposing across one would corrupt that
+          // representation, so keep the chord as an intentional no-op there.
+          if (
+            action === "transpose-chars" &&
+            logicalText
+              .slice(replacementStart, replacementEnd)
+              .includes(COMPOSER_INLINE_TOKEN_LOGICAL_CHARACTER)
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            return true;
+          }
+
+          $setSelectionRangeAtComposerOffsets(replacementStart, replacementEnd);
+          const replacementSelection = $getSelection();
+          if (!$isRangeSelection(replacementSelection)) return false;
+
+          const removedTerminalContextIds = new Set<string>();
+          for (const node of replacementSelection.getNodes()) {
+            if (node instanceof ComposerTerminalContextNode) {
+              removedTerminalContextIds.add(node.__context.id);
+            }
+          }
+          if (edit.killedText !== undefined) {
+            storeEmacsReadlineKilledText(replacementSelection.getTextContent());
+          }
+
+          replacementSelection.insertRawText(edit.insertedText ?? "");
+          for (const contextId of removedTerminalContextIds) {
+            onRemoveTerminalContext(contextId);
+          }
+        } else if (
+          edit.selectionStart !== range.start ||
+          edit.selectionEnd !== range.end ||
+          range.start === range.end
+        ) {
+          $setSelectionRangeAtComposerOffsets(edit.selectionStart, edit.selectionEnd);
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor, enabled, onRemoveTerminalContext]);
 
   return null;
 }
@@ -1756,6 +1885,7 @@ function ComposerPromptEditorInner({
                 className,
               )}
               data-testid="composer-editor"
+              data-emacs-readline-managed=""
               aria-placeholder={placeholder}
               placeholder={<span />}
               onPaste={onPaste}
@@ -1773,6 +1903,7 @@ function ComposerPromptEditorInner({
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+        <ComposerEmacsReadlinePlugin />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />

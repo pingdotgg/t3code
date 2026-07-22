@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  applyEmacsReadlineActionToContentEditable,
   applyEmacsReadlineActionToPlainText,
+  createEmacsReadlineKeydownHandler,
   resolveEmacsReadlineAction,
 } from "./emacsReadlineBindings";
 
@@ -21,6 +23,10 @@ function keyboardEvent(input: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key"
 }
 
 describe("resolveEmacsReadlineAction", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it.each([
     ["a", "beginning-of-line"],
     ["b", "backward-char"],
@@ -39,10 +45,16 @@ describe("resolveEmacsReadlineAction", () => {
     expect(resolveEmacsReadlineAction(keyboardEvent({ key, ctrlKey: true }))).toBe(action);
   });
 
-  it("uses physical letter codes for Alt bindings on macOS keyboard events", () => {
+  it("uses the produced letter rather than the physical key position", () => {
+    expect(
+      resolveEmacsReadlineAction(keyboardEvent({ ctrlKey: true, code: "KeyQ", key: "a" })),
+    ).toBe("beginning-of-line");
+    expect(
+      resolveEmacsReadlineAction(keyboardEvent({ altKey: true, code: "KeyN", key: "b" })),
+    ).toBe("backward-word");
     expect(
       resolveEmacsReadlineAction(keyboardEvent({ altKey: true, code: "KeyB", key: "∫" })),
-    ).toBe("backward-word");
+    ).toBeNull();
   });
 
   it("does not capture modified chords outside the mode", () => {
@@ -50,6 +62,30 @@ describe("resolveEmacsReadlineAction", () => {
     expect(
       resolveEmacsReadlineAction(keyboardEvent({ key: "a", ctrlKey: true, shiftKey: true })),
     ).toBeNull();
+  });
+
+  it("yields before editing for app shortcuts and keybinding capture fields", () => {
+    class TestElement {
+      closest(selector: string): TestElement | null {
+        return selector === "[data-keybinding-capture]" ? this : null;
+      }
+    }
+    vi.stubGlobal("Element", TestElement);
+
+    const yieldToAppShortcut = vi.fn(() => true);
+    createEmacsReadlineKeydownHandler({
+      shouldYieldToApplicationShortcut: yieldToAppShortcut,
+    })(keyboardEvent({ key: "b", ctrlKey: true }));
+    expect(yieldToAppShortcut).toHaveBeenCalledOnce();
+
+    const captureYield = vi.fn(() => false);
+    createEmacsReadlineKeydownHandler({
+      shouldYieldToApplicationShortcut: captureYield,
+    })({
+      ...keyboardEvent({ key: "a", ctrlKey: true }),
+      target: new TestElement(),
+    } as unknown as KeyboardEvent);
+    expect(captureYield).not.toHaveBeenCalled();
   });
 });
 
@@ -111,6 +147,27 @@ describe("applyEmacsReadlineActionToPlainText", () => {
     expect(apply("delete-forward", "abc", 1).value).toBe("ac");
   });
 
+  it("does not replace a selection when the kill ring is empty", () => {
+    expect(apply("yank", "selected text", 0, 8)).toEqual({
+      value: "selected text",
+      selectionStart: 0,
+      selectionEnd: 8,
+    });
+  });
+
+  it("represents boundary deletions as empty replacement ranges", () => {
+    expect(apply("delete-forward", "abc", 3)).toMatchObject({
+      value: "abc",
+      replacementStart: 3,
+      replacementEnd: 3,
+    });
+    expect(apply("unix-line-discard", "one\ntwo", 4)).toMatchObject({
+      value: "one\ntwo",
+      replacementStart: 4,
+      replacementEnd: 4,
+    });
+  });
+
   it("transposes the characters around point", () => {
     expect(apply("transpose-chars", "abdc", 3)).toMatchObject({
       value: "abcd",
@@ -120,5 +177,65 @@ describe("applyEmacsReadlineActionToPlainText", () => {
       value: "abc",
       selectionStart: 3,
     });
+  });
+});
+
+describe("applyEmacsReadlineActionToContentEditable", () => {
+  function harness(input?: { readonly focusOutside?: boolean; readonly isCollapsed?: boolean }) {
+    const inside = {} as Node;
+    const outside = {} as Node;
+    const modify = vi.fn();
+    const selection = {
+      anchorNode: inside,
+      focusNode: input?.focusOutside ? outside : inside,
+      isCollapsed: input?.isCollapsed ?? true,
+      modify,
+      toString: () => "selected",
+    } as unknown as Selection & {
+      modify(
+        alter: "extend" | "move",
+        direction: "backward" | "forward",
+        granularity: string,
+      ): void;
+    };
+    const execCommand = vi.fn(() => true);
+    const document = {
+      execCommand,
+      getSelection: () => selection,
+    } as unknown as Document;
+    const host = {
+      contains: (node: Node) => node === inside,
+      ownerDocument: document,
+    } as unknown as HTMLElement;
+    return { execCommand, host, modify };
+  }
+
+  it("rejects selections whose focus endpoint escapes the host", () => {
+    const { execCommand, host, modify } = harness({ focusOutside: true });
+    expect(applyEmacsReadlineActionToContentEditable(host, "delete-forward", "")).toEqual({
+      handled: false,
+    });
+    expect(modify).not.toHaveBeenCalled();
+    expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["delete-forward", "kill-line", "unix-line-discard", "forward-kill-word"] as const)(
+    "does not turn a collapsed boundary %s into a backward deletion",
+    (action) => {
+      const { execCommand, host } = harness({ isCollapsed: true });
+      expect(applyEmacsReadlineActionToContentEditable(host, action, "").handled).toBe(true);
+      expect(execCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves the selection for an empty yank and yields unsupported transpose", () => {
+    const { execCommand, host } = harness({ isCollapsed: false });
+    expect(applyEmacsReadlineActionToContentEditable(host, "yank", "")).toEqual({
+      handled: true,
+    });
+    expect(applyEmacsReadlineActionToContentEditable(host, "transpose-chars", "")).toEqual({
+      handled: false,
+    });
+    expect(execCommand).not.toHaveBeenCalled();
   });
 });
