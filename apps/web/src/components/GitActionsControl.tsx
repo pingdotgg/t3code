@@ -1736,7 +1736,7 @@ export default function GitActionsControl({
     <>
       {!isRepo ? (
         <InitializeGitControl
-          key={gitCwd}
+          key={`${activeEnvironmentId ?? "no-environment"}:${gitCwd}`}
           environmentId={activeEnvironmentId}
           gitCwd={gitCwd}
           threadToastData={threadToastData}
