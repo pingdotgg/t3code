@@ -26,6 +26,7 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
+  resolveCuaDriverMacAsset,
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
@@ -520,6 +521,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.t3tools.t3code");
+      assert.deepStrictEqual(config.extraResources, [
+        { from: "apps/desktop/prod-resources/cua-driver", to: "cua-driver" },
+      ]);
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.deepStrictEqual(mac.protocols, [
@@ -567,6 +571,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
     assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
   });
+
+  it("pins Cua Driver executable assets for each macOS architecture", () => {
+    assert.deepInclude(resolveCuaDriverMacAsset("arm64"), {
+      archiveName: "cua-driver-rs-0.12.2-darwin-arm64.tar.gz",
+      executablePath: "cua-driver-rs-0.12.2-darwin-arm64/cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverMacAsset("x64"), {
+      archiveName: "cua-driver-rs-0.12.2-darwin-x86_64.tar.gz",
+      executablePath: "cua-driver-rs-0.12.2-darwin-x86_64/cua-driver",
+    });
+    assert.deepInclude(resolveCuaDriverMacAsset("universal"), {
+      archiveName: "cua-driver-rs-0.12.2-darwin-universal-binary.tar.gz",
+      executablePath: "cua-driver",
+    });
+  });
+
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",

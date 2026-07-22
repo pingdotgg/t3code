@@ -74,6 +74,13 @@ minimumReleaseAgeExclude:
   - "@effect/vitest@4.0.0-beta.102"
   - alchemy@2.0.0-beta.65
   - effect@4.0.0-beta.102
+  - "@trycua/cua-driver-darwin-arm64@0.12.2"
+  - "@trycua/cua-driver-darwin-x64@0.12.2"
+  - "@trycua/cua-driver-linux-arm64-gnu@0.12.2"
+  - "@trycua/cua-driver-linux-x64-gnu@0.12.2"
+  - "@trycua/cua-driver-win32-arm64-msvc@0.12.2"
+  - "@trycua/cua-driver-win32-x64-msvc@0.12.2"
+  - "@trycua/cua-driver@0.12.2"
 
 overrides:
   "@clerk/backend": "catalog:"
