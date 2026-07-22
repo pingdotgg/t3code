@@ -56,7 +56,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import {
   resolveThreadActionProjectRef,
@@ -495,7 +495,7 @@ function OpenCommandPaletteDialog(props: {
   });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
-  const primaryEnvironment = usePrimaryEnvironment();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
@@ -513,7 +513,6 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
-  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -808,7 +807,7 @@ function OpenCommandPaletteDialog(props: {
     () =>
       enumerateCommandPaletteItems(
         buildProjectActionItems({
-          projects,
+          projects: pickerProjects,
           valuePrefix: "new-thread-in",
           icon: (project) => (
             <ProjectFavicon
@@ -830,7 +829,7 @@ function OpenCommandPaletteDialog(props: {
           },
         }),
       ),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
+    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, pickerProjects],
   );
 
   const allThreadItems = useMemo(
