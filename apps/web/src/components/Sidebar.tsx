@@ -343,7 +343,12 @@ function SidebarHiddenThreadChangeRequestStateReporter(props: {
         })
       : null,
   );
-  const prState = resolveThreadPr(thread.branch, gitStatus.data)?.state ?? null;
+  const prState =
+    resolveThreadPr({
+      threadBranch: thread.branch,
+      gitStatus: gitStatus.data,
+      hasDedicatedWorktree: thread.worktreePath !== null,
+    })?.state ?? null;
 
   useEffect(() => {
     onChangeRequestState(threadKey, prState);
