@@ -37,6 +37,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
@@ -65,6 +66,8 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
+import { projectEnvironment } from "../state/projects";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
@@ -621,6 +624,9 @@ export default function SidebarV2() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const { settleThread, unsettleThread, deleteThread } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const deleteProject = useAtomCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
   const newThreadContext = useHandleNewThread();
@@ -1225,6 +1231,87 @@ export default function SidebarV2() {
     ],
   );
 
+  // Project removal lives behind right-click + confirm only: the chips are
+  // compact horizontal-scroll targets, and removal can cascade into deleting
+  // every thread in the project — no hover affordance puts that one
+  // mis-click away from the filter tap.
+  const handleProjectChipContextMenu = useCallback(
+    (project: (typeof projects)[number], position: { x: number; y: number }) => {
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            [{ id: "remove", label: "Remove project", destructive: true, icon: "trash" }],
+            position,
+          ),
+        );
+        if (clicked._tag === "Failure" || clicked.value !== "remove") return;
+        const projectThreadCount = threads.filter(
+          (thread) =>
+            thread.environmentId === project.environmentId && thread.projectId === project.id,
+        ).length;
+        const environmentLabel =
+          environments.length > 1
+            ? (environmentLabelById.get(project.environmentId) ?? null)
+            : null;
+        const confirmed = await settlePromise(() =>
+          api.dialogs.confirm(
+            [
+              projectThreadCount > 0
+                ? `Remove project "${project.title}" and delete its ${projectThreadCount} thread${
+                    projectThreadCount === 1 ? "" : "s"
+                  }?`
+                : `Remove project "${project.title}"?`,
+              `Path: ${project.workspaceRoot}`,
+              ...(environmentLabel ? [`Environment: ${environmentLabel}`] : []),
+              ...(projectThreadCount > 0
+                ? ["This permanently clears conversation history for those threads."]
+                : []),
+              "This removes only this project entry.",
+              ...(projectThreadCount > 0 ? ["This action cannot be undone."] : []),
+            ].join("\n"),
+          ),
+        );
+        if (confirmed._tag === "Failure" || !confirmed.value) return;
+        const result = await deleteProject({
+          environmentId: project.environmentId,
+          input: {
+            projectId: project.id,
+            ...(projectThreadCount > 0 ? { force: true } : {}),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            console.error("Failed to remove project", {
+              projectId: project.id,
+              environmentId: project.environmentId,
+              ...safeErrorLogAttributes(error),
+            });
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: `Failed to remove "${project.title}"`,
+                description:
+                  error instanceof Error ? error.message : "Unknown error removing project.",
+              }),
+            );
+          }
+          return;
+        }
+        const projectRef = scopeProjectRef(project.environmentId, project.id);
+        const draftStore = useComposerDraftStore.getState();
+        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+        if (projectDraftThread) {
+          draftStore.clearDraftThread(projectDraftThread.draftId);
+        }
+        draftStore.clearProjectDraftThreadId(projectRef);
+      })();
+    },
+    [deleteProject, environmentLabelById, environments.length, threads],
+  );
+
   // Thread jump (cmd+1..9) and prev/next traversal reuse the same commands as
   // v1 — the keybinding layer is shared, only the ordered list differs.
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
@@ -1425,6 +1512,13 @@ export default function SidebarV2() {
                       role="tab"
                       aria-selected={isScoped}
                       onClick={() => setProjectScopeKey(isScoped ? null : scopeKey)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        handleProjectChipContextMenu(project, {
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }}
                       className={cn(
                         "flex shrink-0 items-center gap-1.5 rounded-md border py-1 pl-1.5 pr-2.5 text-[11px] font-medium transition-colors",
                         isScoped
