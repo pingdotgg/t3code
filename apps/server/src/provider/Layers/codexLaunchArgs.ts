@@ -1,11 +1,33 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
 export const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
+export const T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV = "T3CODE_CODEX_APPEND_LAUNCH_ARGS";
+export const T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV = "T3CODE_CODEX_APPEND_THREAD_CONFIG";
 
 export const resolveCodexLaunchArgs = (
   launchArgs?: string,
   environment: NodeJS.ProcessEnv = process.env,
-) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+) => {
+  const configured = environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+  const appended = environment[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]?.trim() || "";
+  return [configured, appended].filter((value) => value.length > 0).join(" ");
+};
+
+export const resolveCodexThreadConfig = (
+  environment: NodeJS.ProcessEnv = process.env,
+): Readonly<Record<string, unknown>> => {
+  const serialized = environment[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV]?.trim();
+  if (!serialized) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Readonly<Record<string, unknown>>)
+      : {};
+  } catch {
+    return {};
+  }
+};
 
 export const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> =>
   tokenizeCliArgs(launchArgs);

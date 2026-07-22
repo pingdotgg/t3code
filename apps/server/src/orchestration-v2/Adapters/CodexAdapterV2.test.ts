@@ -56,6 +56,7 @@ import {
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
+  resolveCodexAdapterAppServerArgs,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
@@ -305,7 +306,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 });
 
 describe("CodexAdapterV2 process spawning", () => {
-  it("injects cwd, model, and MCP authorization into thread-scoped params", () => {
+  it("merges integration and T3 MCP servers into thread-scoped params", () => {
     const threadId = ThreadId.make("thread-codex-mcp");
     McpProviderSession.setMcpProviderSession({
       environmentId: EnvironmentId.make("environment-codex-mcp"),
@@ -326,12 +327,20 @@ describe("CodexAdapterV2 process spawning", () => {
             interactionMode: "default",
             cwd: "/workspace/thread-codex-mcp",
           },
+          environment: {
+            T3CODE_CODEX_APPEND_THREAD_CONFIG:
+              '{"mcp_servers":{"cua-driver":{"command":"/bin/cua-driver","args":["mcp"]}}}',
+          },
         }),
         {
           cwd: "/workspace/thread-codex-mcp",
           model: "gpt-5.4",
           config: {
             mcp_servers: {
+              "cua-driver": {
+                command: "/bin/cua-driver",
+                args: ["mcp"],
+              },
               "t3-code": {
                 url: "http://127.0.0.1:43123/mcp",
                 http_headers: {
@@ -345,6 +354,15 @@ describe("CodexAdapterV2 process spawning", () => {
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
+  });
+
+  it("includes configured and integration arguments in app-server sessions", () => {
+    assert.deepEqual(
+      resolveCodexAdapterAppServerArgs("--strict-config", {
+        T3CODE_CODEX_APPEND_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/bin/cua-driver"',
+      }),
+      ["app-server", "--strict-config", "-c", "mcp_servers.cua-driver.command=/bin/cua-driver"],
+    );
   });
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>

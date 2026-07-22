@@ -471,6 +471,9 @@ importers:
       '@pierre/diffs':
         specifier: 'catalog:'
         version: 1.3.0-beta.5(patch_hash=7cb6da88544119adda056b2f46f43956f99326227732da0b345081e285a6c53a)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@trycua/cua-driver':
+        specifier: 0.12.2
+        version: 0.12.2
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5)
@@ -1893,10 +1896,6 @@ packages:
   '@cursor/sdk@1.0.22':
     resolution: {integrity: sha512-xn99xoMvq/JwIXmWrpmEGMSY88zPr6dgxGSZYv3m9PytOBrawkwx9CHKosXs8m3ihVcQ+Wrt+TaEIUsgSNc5YA==}
     engines: {node: '>=22.13'}
-
-  '@develar/schema-utils@2.6.5':
-    resolution: {integrity: sha512-0cp4PsWQ/9avqTVMCtZ+GirikIA36ikvjtHweU4/j8yLtgObI0+JUPhYFScgwlteveGB1rt3Cm8UhN04XayDig==}
-    engines: {node: '>= 8.9.0'}
 
   '@distilled.cloud/aws@0.23.1':
     resolution: {integrity: sha512-xvNljahdVVCKo7uGgwFS097qnzPbfwAe7enHAzyKWXlBXuJtqlnVgPj61eDKxsqI6fz20weG54DkEcjbF3ocGw==}
@@ -4898,6 +4897,41 @@ packages:
     peerDependencies:
       '@testing-library/dom': '>=7.21.4'
 
+  '@trycua/cua-driver-darwin-arm64@0.12.2':
+    resolution: {integrity: sha512-rR4KpxaE/R/RAQ718YAIJ+YXuHewdAxq1kmtcPh0thhZCxcckTfVHk6sa6XSfwmqeNF1kTR82zKaeOhr55uBlw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@trycua/cua-driver-darwin-x64@0.12.2':
+    resolution: {integrity: sha512-BBFhMjmKZTvb24Z7NiYmWR2+yvTQgYat1biStxd6T+yPv6aTNFho/QE6YrVYxEzQTNHv3Rr6aa9Fu72mcmzBag==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@trycua/cua-driver-linux-arm64-gnu@0.12.2':
+    resolution: {integrity: sha512-XJPPLwnUroKsD0vh2dkE+NUaSElKwWNmjfy48cc/j/iLve8m2xZAFcmHgEug6Ps94AdRQ/Ko3w9z9jeCzJr72w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@trycua/cua-driver-linux-x64-gnu@0.12.2':
+    resolution: {integrity: sha512-JekaFKUol9DYJqw90Td8OISemRSDKyzOUoWfVRIQfLqm8YveySP3+sHGOovJDytTDXVuSKEJOIdV7q678gr4rA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@trycua/cua-driver-win32-arm64-msvc@0.12.2':
+    resolution: {integrity: sha512-0sU/GSGyfrIjBpOsc9UObi2bdD1oUcuaYqB/HIzWXIDdUmoMfXIsHPnPb0QvUnsm0EI6cFXjBzURlBKHhITKQQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@trycua/cua-driver-win32-x64-msvc@0.12.2':
+    resolution: {integrity: sha512-ZZC8EPvuDPxg+/aOy8LX53AirEdqlO6xd4Vqsm3uWmNjfis+D8Fg9Fko2mOO5LWbuGzBYePyQlHji4n4Kqe2Lw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@trycua/cua-driver@0.12.2':
+    resolution: {integrity: sha512-Jbhb6KwyRWng6BFyoudxkUPGkJrdvw1TfSIpMNvQbQpcCPgQgc54r2aIoR+Kcl4P54JScY85dZFc5285qcHcKw==}
+
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
 
@@ -5066,6 +5100,56 @@ packages:
     resolution: {integrity: sha512-A3/9yZTt2V5NlDURcVJ4mN2YjfeQTXCRyLuENKrNdGhO+y59mC/2UDr7UvpB3Li+83TRAuhDN8SBoM+7gkHdzQ==}
     engines: {node: '>=16.20.0'}
     hasBin: true
+
+  '@ubjs/core@0.31.0-3':
+    resolution: {integrity: sha512-39XrJgUZ2VVb561sSnkXPhczNoeBsNiSRArecsV0JE7CJq69ajFkcn9/tBAUS2NpgHkLIDU+z6Ks2+1wXnboxg==}
+
+  '@ubjs/node-darwin-arm64@0.31.0-3':
+    resolution: {integrity: sha512-GGQVPLkVo4Gc8qVLW4IGvS8bjl8eHXyeP4a97ntGmsAdXwE5gsS29o8xUEFROjhwHKD+9sgVeblCSWVG3CpHsw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@ubjs/node-darwin-x64@0.31.0-3':
+    resolution: {integrity: sha512-2sc47u4XFYOsbmP5EW+Gx8m/yGrYnfFDFQm6+kz7goSWTNg84eEiz3COs9HKJDVuNJ5Khv5XipTO8CFadMLXCw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@ubjs/node-linux-arm64-gnu@0.31.0-3':
+    resolution: {integrity: sha512-YStVXhYz/5jvlWf/p4fhiVT72unYAbGugifFC9QmO/+hnroQDAQ5t8SARbsc15G4olMcamdIB+GETiUB7gmaYg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ubjs/node-linux-arm64-musl@0.31.0-3':
+    resolution: {integrity: sha512-Izp4nvfy/LmibzFowAztkoDOksCR2fb2zl6fh1ojR1HEsg0rAGruxtI8d3fn8DI0lBXwqmn6SF///oD4mFNJPQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@ubjs/node-linux-x64-gnu@0.31.0-3':
+    resolution: {integrity: sha512-Xdm21blyg5U/kW6s7OMvgrr8coGTkUlt26DVR9x8gKISif+E3YwdEskbFScWqystAiJnfjw7xHEc8UMu0Qlz7Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ubjs/node-linux-x64-musl@0.31.0-3':
+    resolution: {integrity: sha512-fFQ9BWS6i2LUH9SJgD9oEiKXXo/say59vHy7usFe1t7C2xvwvP34f5SuxXmWP9R8fHyA0aC4kIZ+TTwyHSv1Kw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@ubjs/node-win32-arm64-msvc@0.31.0-3':
+    resolution: {integrity: sha512-ID6rSz1NmPsWTNBBNAw4OnJ5Dj8pcbtNJtdPB3OxcGigLBd/e0x7buhSI7os6Mo5iYtEdCynBRQHFJwub5XSPg==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@ubjs/node-win32-x64-msvc@0.31.0-3':
+    resolution: {integrity: sha512-wevs+Y+szwcCUT8IJFbB4/1nfxyRv/51l8oG7FGUPWD1xLPyuHfJBG27C+PDeC7KRzes/2n6aLo4DGZbr/LYTw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@ubjs/node@0.31.0-3':
+    resolution: {integrity: sha512-qNMpi2LICNwxGXZyRF8fSDBSpbezyZbEsydrbiMPJOmtOWr4tmZIEl7jkWGHVGShoBvHfFo4eHp5B4UVP928Cg==}
 
   '@ungap/structured-clone@1.3.1':
     resolution: {integrity: sha512-mUFwbeTqrVgDQxFveS+df2yfap6iuP20NAKAsBt5jDEoOTDew+zwLAOilHCeQJOVSvmgCX4ogqIrA0mnyr08yQ==}
@@ -11690,11 +11774,6 @@ snapshots:
       '@cursor/sdk-linux-x64': 1.0.22
       '@cursor/sdk-win32-x64': 1.0.22
 
-  '@develar/schema-utils@2.6.5':
-    dependencies:
-      ajv: 6.15.0
-      ajv-keywords: 3.5.2(ajv@6.15.0)
-
   '@distilled.cloud/aws@0.23.1(effect@4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5))':
     dependencies:
       '@aws-crypto/crc32': 5.2.0
@@ -14978,6 +15057,36 @@ snapshots:
     dependencies:
       '@testing-library/dom': 10.4.1
 
+  '@trycua/cua-driver-darwin-arm64@0.12.2':
+    optional: true
+
+  '@trycua/cua-driver-darwin-x64@0.12.2':
+    optional: true
+
+  '@trycua/cua-driver-linux-arm64-gnu@0.12.2':
+    optional: true
+
+  '@trycua/cua-driver-linux-x64-gnu@0.12.2':
+    optional: true
+
+  '@trycua/cua-driver-win32-arm64-msvc@0.12.2':
+    optional: true
+
+  '@trycua/cua-driver-win32-x64-msvc@0.12.2':
+    optional: true
+
+  '@trycua/cua-driver@0.12.2':
+    dependencies:
+      '@ubjs/core': 0.31.0-3
+      '@ubjs/node': 0.31.0-3
+    optionalDependencies:
+      '@trycua/cua-driver-darwin-arm64': 0.12.2
+      '@trycua/cua-driver-darwin-x64': 0.12.2
+      '@trycua/cua-driver-linux-arm64-gnu': 0.12.2
+      '@trycua/cua-driver-linux-x64-gnu': 0.12.2
+      '@trycua/cua-driver-win32-arm64-msvc': 0.12.2
+      '@trycua/cua-driver-win32-x64-msvc': 0.12.2
+
   '@tybys/wasm-util@0.10.3':
     dependencies:
       tslib: 2.8.1
@@ -15151,6 +15260,43 @@ snapshots:
       '@typescript/native-preview-linux-x64': 7.0.0-dev.20260604.1
       '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260604.1
       '@typescript/native-preview-win32-x64': 7.0.0-dev.20260604.1
+
+  '@ubjs/core@0.31.0-3': {}
+
+  '@ubjs/node-darwin-arm64@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-darwin-x64@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-arm64-gnu@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-arm64-musl@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-x64-gnu@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-linux-x64-musl@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-win32-arm64-msvc@0.31.0-3':
+    optional: true
+
+  '@ubjs/node-win32-x64-msvc@0.31.0-3':
+    optional: true
+
+  '@ubjs/node@0.31.0-3':
+    optionalDependencies:
+      '@ubjs/node-darwin-arm64': 0.31.0-3
+      '@ubjs/node-darwin-x64': 0.31.0-3
+      '@ubjs/node-linux-arm64-gnu': 0.31.0-3
+      '@ubjs/node-linux-arm64-musl': 0.31.0-3
+      '@ubjs/node-linux-x64-gnu': 0.31.0-3
+      '@ubjs/node-linux-x64-musl': 0.31.0-3
+      '@ubjs/node-win32-arm64-msvc': 0.31.0-3
+      '@ubjs/node-win32-x64-msvc': 0.31.0-3
 
   '@ungap/structured-clone@1.3.1': {}
 
