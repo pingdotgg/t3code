@@ -7,6 +7,7 @@ import {
   resolveLockedWorkspaceLabel,
   type EnvMode,
 } from "./BranchToolbar.logic";
+import { Kbd } from "./ui/kbd";
 import {
   Select,
   SelectGroup,
@@ -23,6 +24,9 @@ interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  shortcutHintLabel?: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel?: string | null;
   onUsePreviousWorktree?: () => void;
@@ -32,6 +36,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   envLocked,
   effectiveEnvMode,
   activeWorktreePath,
+  open,
+  onOpenChange,
+  shortcutHintLabel,
   onEnvModeChange,
   previousWorktreeLabel,
   onUsePreviousWorktree,
@@ -67,18 +74,20 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   }
 
   return (
-    <Select
-      modal={false}
-      value={effectiveEnvMode}
-      onValueChange={(value: string | null) => {
-        if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
-          onUsePreviousWorktree?.();
+      <Select
+        modal={false}
+        value={effectiveEnvMode}
+        {...(open !== undefined ? { open } : {})}
+        {...(onOpenChange ? { onOpenChange } : {})}
+        onValueChange={(value: string | null) => {
+          if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
+            onUsePreviousWorktree?.();
           return;
-        }
-        onEnvModeChange(value as EnvMode);
-      }}
-      items={envModeItems}
-    >
+          }
+          onEnvModeChange(value as EnvMode);
+        }}
+        items={envModeItems}
+      >
       <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
         {effectiveEnvMode === "worktree" ? (
           <FolderGit2Icon className="size-3" />
@@ -88,6 +97,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <FolderIcon className="size-3" />
         )}
         <SelectValue />
+        {shortcutHintLabel ? (
+          <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">{shortcutHintLabel}</Kbd>
+        ) : null}
       </SelectTrigger>
       <SelectPopup>
         <SelectGroup>

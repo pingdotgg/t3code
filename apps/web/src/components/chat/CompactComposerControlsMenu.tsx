@@ -20,12 +20,17 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
-    <Menu>
+    <Menu
+      {...(props.open !== undefined ? { open: props.open } : {})}
+      {...(props.onOpenChange ? { onOpenChange: props.onOpenChange } : {})}
+    >
       <MenuTrigger
         render={
           <Button

@@ -47,6 +47,16 @@ export const MODEL_PICKER_KEYBINDING_COMMANDS = [
 ] as const;
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
+export const COMPOSER_KEYBINDING_COMMANDS = [
+  "modelOptionsPicker.toggle",
+  "runtimeModePicker.toggle",
+  "planMode.toggle",
+  "environmentPicker.toggle",
+  "envModePicker.toggle",
+  "branchPicker.toggle",
+] as const;
+export type ComposerKeybindingCommand = (typeof COMPOSER_KEYBINDING_COMMANDS)[number];
+
 const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
   "terminal.toggle",
@@ -67,6 +77,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "editor.openFavorite",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
+  ...COMPOSER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 

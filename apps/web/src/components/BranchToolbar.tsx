@@ -1,5 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ResolvedKeybindingsConfig, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CloudIcon,
@@ -9,11 +9,23 @@ import {
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import {
+  memo,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import {
+  shortcutLabelForCommand,
+  shouldShowComposerControlHintsForModifiers,
+} from "../keybindings";
+import { useShortcutModifierState } from "../shortcutModifierState";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -25,7 +37,10 @@ import {
   resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
-import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
+import {
+  BranchToolbarBranchSelector,
+  type BranchToolbarBranchSelectorHandle,
+} from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { Button } from "./ui/button";
@@ -41,10 +56,19 @@ import {
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
 
+export interface BranchToolbarHandle {
+  /** Each toggle returns false (without side effects) when its control is unavailable. */
+  toggleEnvironmentPicker: () => boolean;
+  toggleEnvModePicker: () => boolean;
+  toggleBranchPicker: () => boolean;
+}
+
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
+  keybindings: ResolvedKeybindingsConfig;
+  toolbarRef?: React.RefObject<BranchToolbarHandle | null>;
   onEnvModeChange: (mode: EnvMode) => void;
   effectiveEnvModeOverride?: EnvMode;
   activeThreadBranchOverride?: string | null;
@@ -65,6 +89,8 @@ interface MobileRunContextSelectorProps {
   availableEnvironments: readonly EnvironmentOption[] | undefined;
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
@@ -80,6 +106,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   availableEnvironments,
   showEnvironmentPicker,
   showEnvironmentIndicator,
+  open,
+  onOpenChange,
   onEnvironmentChange,
   effectiveEnvMode,
   activeWorktreePath,
@@ -132,7 +160,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   }
 
   return (
-    <Menu>
+    <Menu open={open} onOpenChange={onOpenChange}>
       <MenuTrigger
         render={<Button variant="ghost" size="xs" />}
         className="min-w-0 max-w-[48%] flex-1 justify-start text-muted-foreground/70 hover:text-foreground/80 md:hidden"
@@ -218,6 +246,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   environmentId,
   threadId,
   draftId,
+  keybindings,
+  toolbarRef,
   onEnvModeChange,
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
@@ -301,6 +331,61 @@ export const BranchToolbar = memo(function BranchToolbar({
   });
   const isMobile = useIsMobile();
 
+  const [environmentPickerOpen, setEnvironmentPickerOpen] = useState(false);
+  const [envModePickerOpen, setEnvModePickerOpen] = useState(false);
+  const [mobileRunContextOpen, setMobileRunContextOpen] = useState(false);
+  const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle | null>(null);
+
+  const isRendered = hasActiveThread && activeProject !== null;
+  const environmentPickerAvailable =
+    showEnvironmentIndicator && availableEnvironments !== undefined && showEnvironmentPicker;
+  useImperativeHandle(
+    toolbarRef,
+    () => ({
+      toggleEnvironmentPicker: () => {
+        if (!isRendered || !environmentPickerAvailable || envLocked) return false;
+        if (isMobile) {
+          if (envModeLocked) return false;
+          setMobileRunContextOpen((open) => !open);
+          return true;
+        }
+        setEnvironmentPickerOpen((open) => !open);
+        return true;
+      },
+      toggleEnvModePicker: () => {
+        if (!isRendered || envModeLocked) return false;
+        if (isMobile) {
+          setMobileRunContextOpen((open) => !open);
+          return true;
+        }
+        setEnvModePickerOpen((open) => !open);
+        return true;
+      },
+      toggleBranchPicker: () => {
+        if (!isRendered) return false;
+        return branchSelectorRef.current?.togglePicker() ?? false;
+      },
+    }),
+    [envLocked, envModeLocked, environmentPickerAvailable, isMobile, isRendered],
+  );
+
+  // Hold-modifier hint badges, mirroring the composer footer controls.
+  const shortcutModifiers = useShortcutModifierState();
+  const showControlHints = shouldShowComposerControlHintsForModifiers(
+    shortcutModifiers,
+    keybindings,
+    { platform: navigator.platform },
+  );
+  const environmentHintLabel = showControlHints
+    ? shortcutLabelForCommand(keybindings, "environmentPicker.toggle")
+    : null;
+  const envModeHintLabel = showControlHints
+    ? shortcutLabelForCommand(keybindings, "envModePicker.toggle")
+    : null;
+  const branchHintLabel = showControlHints
+    ? shortcutLabelForCommand(keybindings, "branchPicker.toggle")
+    : null;
+
   if (!hasActiveThread || !activeProject) return null;
 
   return (
@@ -313,6 +398,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           availableEnvironments={availableEnvironments}
           showEnvironmentPicker={showEnvironmentPicker}
           showEnvironmentIndicator={showEnvironmentIndicator}
+          open={mobileRunContextOpen}
+          onOpenChange={setMobileRunContextOpen}
           onEnvironmentChange={onEnvironmentChange}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
@@ -328,6 +415,9 @@ export const BranchToolbar = memo(function BranchToolbar({
                 envLocked={envLocked}
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
+                open={environmentPickerOpen}
+                onOpenChange={setEnvironmentPickerOpen}
+                shortcutHintLabel={environmentHintLabel}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
               />
               <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
@@ -337,6 +427,9 @@ export const BranchToolbar = memo(function BranchToolbar({
             envLocked={envModeLocked}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
+            open={envModePickerOpen}
+            onOpenChange={setEnvModePickerOpen}
+            shortcutHintLabel={envModeHintLabel}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             onUsePreviousWorktree={onUsePreviousWorktree}
@@ -355,6 +448,8 @@ export const BranchToolbar = memo(function BranchToolbar({
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         startFromOrigin={startFromOrigin}
         onStartFromOriginChange={onStartFromOriginChange}
+        selectorRef={branchSelectorRef}
+        shortcutHintLabel={branchHintLabel}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
       />

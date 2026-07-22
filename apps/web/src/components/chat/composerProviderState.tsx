@@ -15,7 +15,12 @@ import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+  type TraitsPickerControlProps,
+} from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -83,6 +88,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
+  pickerControlProps?: TraitsPickerControlProps,
 ): ReactNode {
   const {
     provider,
@@ -113,6 +119,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      {...(pickerControlProps ?? {})}
     />
   );
 }
@@ -121,6 +128,13 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
   return renderTraitsControl(TraitsMenuContent, input);
 }
 
-export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
-  return renderTraitsControl(TraitsPicker, input);
+export function renderProviderTraitsPicker(
+  input: TraitsRenderInput & TraitsPickerControlProps,
+): ReactNode {
+  const { open, onOpenChange, shortcutHintLabel, ...rest } = input;
+  return renderTraitsControl(TraitsPicker, rest, {
+    ...(open !== undefined ? { open } : {}),
+    ...(onOpenChange ? { onOpenChange } : {}),
+    ...(shortcutHintLabel !== undefined ? { shortcutHintLabel } : {}),
+  });
 }

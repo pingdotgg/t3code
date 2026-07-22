@@ -21,6 +21,7 @@ import {
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
+  shouldShowComposerControlHintsForModifiers,
   shouldShowModelPickerJumpHints,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
@@ -121,6 +122,36 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("e", { shiftKey: true }),
+    command: "modelOptionsPicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("a", { shiftKey: true }),
+    command: "runtimeModePicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("p", { shiftKey: true }),
+    command: "planMode.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("v", { shiftKey: true }),
+    command: "environmentPicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("l", { shiftKey: true }),
+    command: "envModePicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("b", { shiftKey: true }),
+    command: "branchPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
@@ -453,6 +484,158 @@ describe("model picker navigation helpers", () => {
         platform: "MacIntel",
         context: { modelPickerOpen: true },
       }),
+    );
+  });
+});
+
+describe("shouldShowComposerControlHintsForModifiers", () => {
+  function modifiers(
+    overrides: Partial<{
+      metaKey: boolean;
+      ctrlKey: boolean;
+      shiftKey: boolean;
+      altKey: boolean;
+    }> = {},
+  ) {
+    return { metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...overrides };
+  }
+
+  it("shows hints while the platform mod key is held", () => {
+    assert.isTrue(
+      shouldShowComposerControlHintsForModifiers(modifiers({ metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+    assert.isTrue(
+      shouldShowComposerControlHintsForModifiers(modifiers({ ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("requires the platform mod key", () => {
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(modifiers({ ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(modifiers({ metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(modifiers({ shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(modifiers(), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("treats held modifiers as a subset of the shortcut modifiers", () => {
+    assert.isTrue(
+      shouldShowComposerControlHintsForModifiers(
+        modifiers({ ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Linux" },
+      ),
+    );
+    assert.isTrue(
+      shouldShowComposerControlHintsForModifiers(
+        modifiers({ metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+    );
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(
+        modifiers({ ctrlKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Linux" },
+      ),
+    );
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(
+        modifiers({ ctrlKey: true, shiftKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Linux" },
+      ),
+    );
+  });
+
+  it("respects customized bindings", () => {
+    const custom = compile([
+      { shortcut: modShortcut("e", { altKey: true }), command: "modelOptionsPicker.toggle" },
+    ]);
+    assert.isTrue(
+      shouldShowComposerControlHintsForModifiers(modifiers({ ctrlKey: true }), custom, {
+        platform: "Linux",
+      }),
+    );
+    assert.isTrue(
+      shouldShowComposerControlHintsForModifiers(
+        modifiers({ ctrlKey: true, altKey: true }),
+        custom,
+        { platform: "Linux" },
+      ),
+    );
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(
+        modifiers({ ctrlKey: true, shiftKey: true }),
+        custom,
+        { platform: "Linux" },
+      ),
+    );
+  });
+
+  it("returns false when no composer control command is bound", () => {
+    const noComposerBindings = compile([
+      { shortcut: modShortcut("j"), command: "terminal.toggle" },
+    ]);
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(modifiers({ ctrlKey: true }), noComposerBindings, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("respects when-context while resolving effective shortcuts", () => {
+    assert.isFalse(
+      shouldShowComposerControlHintsForModifiers(modifiers({ ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("resolves labels for composer control commands", () => {
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "modelOptionsPicker.toggle", "Linux"),
+      "Ctrl+Shift+E",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "runtimeModePicker.toggle", "MacIntel"),
+      "⇧⌘A",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "planMode.toggle", "Linux"),
+      "Ctrl+Shift+P",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "environmentPicker.toggle", "Linux"),
+      "Ctrl+Shift+V",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "envModePicker.toggle", "Linux"),
+      "Ctrl+Shift+L",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "branchPicker.toggle", "MacIntel"),
+      "⇧⌘B",
     );
   });
 });
