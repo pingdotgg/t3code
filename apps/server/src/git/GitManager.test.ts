@@ -1379,6 +1379,141 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "status does not reuse a stale PR after the branch is retargeted to a different upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-retarget"]);
+
+        const originRemote = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originRemote]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-retarget"]);
+
+        const existingPr = {
+          number: 214,
+          title: "Sticky PR",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/214",
+          baseRefName: "main",
+          headRefName: "feature/pr-retarget",
+        };
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            prListSequence: [JSON.stringify([existingPr])],
+            failWith: new GitHubCli.GitHubCliUnavailableError({
+              command: "gh",
+              cwd: repoDir,
+              cause: new Error("rate limited"),
+            }),
+            failAfterCalls: 1,
+          },
+        });
+
+        const first = yield* manager.status({ cwd: repoDir });
+        expect(first.pr?.number).toBe(214);
+
+        // Retarget the branch to a different remote/upstream (e.g. the PR was
+        // reopened against a fork). The previously cached PR belonged to the
+        // old upstream and must not be shown against the new one.
+        const forkRemote = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", forkRemote]);
+        yield* runGit(repoDir, ["push", "fork", "feature/pr-retarget"]);
+        yield* runGit(repoDir, [
+          "branch",
+          "--set-upstream-to=fork/feature/pr-retarget",
+          "feature/pr-retarget",
+        ]);
+
+        yield* manager.invalidateStatus(repoDir);
+        const second = yield* manager.status({ cwd: repoDir });
+        expect(second.pr).toBeNull();
+      }),
+  );
+
+  it.effect("status keeps the last known PR when the branch gains its first upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-sticky-first-push"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+      const existingPr = {
+        number: 215,
+        title: "Sticky first-push PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/215",
+        baseRefName: "main",
+        headRefName: "feature/pr-sticky-first-push",
+      };
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          prListSequence: [JSON.stringify([existingPr])],
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(215);
+
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-sticky-first-push"]);
+      yield* manager.invalidateStatus(repoDir);
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr?.number).toBe(215);
+    }),
+  );
+
+  it.effect("status drops the last known PR when the tracked remote is repointed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-repointed"]);
+      const originalRemoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originalRemoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-repointed"]);
+
+      const existingPr = {
+        number: 216,
+        title: "Old remote PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/216",
+        baseRefName: "main",
+        headRefName: "feature/pr-repointed",
+      };
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          prListSequence: [JSON.stringify([existingPr])],
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(216);
+
+      const replacementRemoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "replacement", replacementRemoteDir]);
+      yield* runGit(repoDir, ["push", "replacement", "feature/pr-repointed"]);
+      yield* runGit(repoDir, ["remote", "set-url", "origin", replacementRemoteDir]);
+      yield* manager.invalidateStatus(repoDir);
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr).toBeNull();
+    }),
+  );
+
   it.effect("creates a commit when working tree is dirty", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
