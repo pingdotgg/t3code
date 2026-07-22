@@ -1153,6 +1153,12 @@ function ComposerEmacsReadlinePlugin() {
           const replacementEnd = edit.replacementEnd;
           if (replacementStart === undefined || replacementEnd === undefined) return false;
 
+          if (replacementStart === replacementEnd && !edit.insertedText) {
+            event.preventDefault();
+            event.stopPropagation();
+            return true;
+          }
+
           // Inline chips represent one logical cursor unit but serialize to
           // longer prompt text. Transposing across one would corrupt that
           // representation, so keep the chord as an intentional no-op there.
