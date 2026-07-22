@@ -5,6 +5,7 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  resolveBrowseTabCompletion,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -37,6 +38,49 @@ describe("enumerateCommandPaletteItems", () => {
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+describe("resolveBrowseTabCompletion", () => {
+  const entries = [
+    { name: "alpha", fullPath: "/workspace/alpha" },
+    { name: "alpine", fullPath: "/workspace/alpine" },
+  ];
+
+  it("uses the highlighted directory", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: entries,
+        highlightedItemValue: "browse:/workspace/alpine",
+      }),
+    ).toEqual({ kind: "entry", entry: entries[1] });
+  });
+
+  it("uses the first directory when none is highlighted", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: entries,
+        highlightedItemValue: null,
+      }),
+    ).toEqual({ kind: "entry", entry: entries[0] });
+  });
+
+  it("preserves the highlighted parent-directory action", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: entries,
+        highlightedItemValue: "browse:up",
+      }),
+    ).toEqual({ kind: "up" });
+  });
+
+  it("returns null when there are no matching directories", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: [],
+        highlightedItemValue: null,
+      }),
+    ).toBeNull();
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

@@ -102,6 +102,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  resolveBrowseTabCompletion,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -1697,6 +1698,28 @@ function OpenCommandPaletteDialog(props: {
         executeItem(matchingItem);
         return;
       }
+    }
+
+    const isPlainTab =
+      event.key === "Tab" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+
+    if (isBrowsing && isPlainTab) {
+      event.preventDefault();
+
+      if (relativePathNeedsActiveProject || isBrowsePending) {
+        return;
+      }
+
+      const completion = resolveBrowseTabCompletion({
+        filteredEntries: filteredBrowseEntries,
+        highlightedItemValue,
+      });
+      if (completion?.kind === "up") {
+        browseUp();
+      } else if (completion?.kind === "entry") {
+        browseTo(completion.entry.name);
+      }
+      return;
     }
 
     if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
