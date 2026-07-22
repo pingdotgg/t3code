@@ -20,12 +20,16 @@ struct T3MarkdownTextParagraphStyleRange {
   Float firstLineHeadIndent;
   Float headIndent;
   Float paragraphSpacing;
+
+  bool operator==(const T3MarkdownTextParagraphStyleRange&) const = default;
 };
 
 struct T3MarkdownTextAttachmentRange {
   size_t location;
   size_t length;
   std::string imageUri;
+
+  bool operator==(const T3MarkdownTextAttachmentRange&) const = default;
 };
 
 inline Float T3MarkdownTextAttachmentSize(const T3MarkdownTextAttachmentRange &) {
@@ -52,11 +56,6 @@ T3MarkdownTextStateReal> {
 public:
   using ConcreteViewShadowNode::ConcreteViewShadowNode;
 
-  T3MarkdownTextShadowNode(
-   const ShadowNode& sourceShadowNode,
-   const ShadowNodeFragment& fragment
-  );
-
   static ShadowNodeTraits BaseTraits() {
     auto traits = ConcreteViewShadowNode::BaseTraits();
     traits.set(ShadowNodeTraits::Trait::LeafYogaNode);
@@ -71,8 +70,18 @@ public:
       const LayoutConstraints& layoutConstraints) const override;
 
 private:
-  mutable AttributedString _attributedString;
-  mutable std::vector<T3MarkdownTextParagraphStyleRange> _paragraphStyleRanges;
-  mutable std::vector<T3MarkdownTextAttachmentRange> _attachmentRanges;
+  // Content must be derived from the current children whenever it is needed.
+  // Yoga can invoke layout() on a fresh clone without ever calling
+  // measureContent() on it (for example when both dimensions are already
+  // exact), so caching measure-time content in mutable members and publishing
+  // it from layout() lets state fall behind the children and drop text.
+  struct Content {
+    AttributedString attributedString;
+    std::vector<T3MarkdownTextParagraphStyleRange> paragraphStyleRanges;
+    std::vector<T3MarkdownTextAttachmentRange> attachmentRanges;
+  };
+
+  Content buildContent(const LayoutContext& layoutContext) const;
+  void updateStateIfNeeded(Content&& content);
 };
 } // namespace facebook::React

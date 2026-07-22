@@ -72,15 +72,8 @@ static void applyAttachments(
   }
 }
 
-T3MarkdownTextShadowNode::T3MarkdownTextShadowNode(
-   const ShadowNode& sourceShadowNode,
-   const ShadowNodeFragment& fragment
-) : ConcreteViewShadowNode(sourceShadowNode, fragment) {
-};
-
-Size T3MarkdownTextShadowNode::measureContent(
-  const LayoutContext& layoutContext,
-  const LayoutConstraints& layoutConstraints) const {
+T3MarkdownTextShadowNode::Content T3MarkdownTextShadowNode::buildContent(
+    const LayoutContext& layoutContext) const {
     const auto &baseProps = getConcreteProps();
 
     auto baseTextAttributes = TextAttributes::defaultTextAttributes();
@@ -207,14 +200,23 @@ Size T3MarkdownTextShadowNode::measureContent(
       }
     }
 
-    _attributedString = baseAttributedString;
-    _paragraphStyleRanges = paragraphStyleRanges;
-    _attachmentRanges = attachmentRanges;
+    return Content{
+        std::move(baseAttributedString),
+        std::move(paragraphStyleRanges),
+        std::move(attachmentRanges),
+    };
+}
+
+Size T3MarkdownTextShadowNode::measureContent(
+  const LayoutContext& layoutContext,
+  const LayoutConstraints& layoutConstraints) const {
+    const auto &baseProps = getConcreteProps();
+    const auto content = buildContent(layoutContext);
 
     NSMutableAttributedString *convertedAttributedString =
-        [RCTNSAttributedStringFromAttributedString(baseAttributedString) mutableCopy];
-    applyParagraphStyles(convertedAttributedString, paragraphStyleRanges);
-    applyAttachments(convertedAttributedString, attachmentRanges);
+        [RCTNSAttributedStringFromAttributedString(content.attributedString) mutableCopy];
+    applyParagraphStyles(convertedAttributedString, content.paragraphStyleRanges);
+    applyAttachments(convertedAttributedString, content.attachmentRanges);
 
     const CGFloat maximumWidth = std::isfinite(layoutConstraints.maximumSize.width)
         ? layoutConstraints.maximumSize.width
@@ -255,10 +257,21 @@ Size T3MarkdownTextShadowNode::measureContent(
 
 void T3MarkdownTextShadowNode::layout(LayoutContext layoutContext) {
   ensureUnsealed();
+  updateStateIfNeeded(buildContent(layoutContext));
+}
+
+void T3MarkdownTextShadowNode::updateStateIfNeeded(Content&& content) {
+  const auto &stateData = getStateData();
+  if (stateData.attributedString == content.attributedString &&
+      stateData.paragraphStyleRanges == content.paragraphStyleRanges &&
+      stateData.attachmentRanges == content.attachmentRanges) {
+    return;
+  }
+
   setStateData(T3MarkdownTextStateReal{
-    _attributedString,
-    _paragraphStyleRanges,
-    _attachmentRanges,
+      std::move(content.attributedString),
+      std::move(content.paragraphStyleRanges),
+      std::move(content.attachmentRanges),
   });
 }
 }
