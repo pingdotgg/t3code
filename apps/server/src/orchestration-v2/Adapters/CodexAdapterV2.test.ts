@@ -244,6 +244,35 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("adds default-mode developer instructions when the T3 MCP server is attached", () =>
+    Effect.gen(function* () {
+      const params = yield* buildCodexTurnStartParams({
+        nativeThreadId: "native-orchestration-instructions",
+        codexInput: [{ type: "text", text: "delegate this task" }],
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        hasT3Mcp: true,
+      });
+
+      assert.equal(params.collaborationMode?.mode, "default");
+      assert.include(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        "use `delegate_task`",
+      );
+      assert.include(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        "structured object, never as JSON text",
+      );
+    }),
+  );
+
   it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
     Effect.gen(function* () {
       const params = yield* buildCodexTurnStartParams({
