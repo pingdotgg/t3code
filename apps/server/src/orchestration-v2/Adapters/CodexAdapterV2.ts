@@ -47,7 +47,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
-import { CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "../../provider/CodexDeveloperInstructions.ts";
+import {
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+} from "../../provider/CodexDeveloperInstructions.ts";
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
@@ -542,6 +545,7 @@ export function buildCodexTurnStartParams(input: {
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
+  readonly hasT3Mcp?: boolean;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -560,17 +564,23 @@ export function buildCodexTurnStartParams(input: {
     const effort =
       selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
     const serviceTier = getCodexServiceTierOptionValue(input.modelSelection);
-    const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
+    const developerInstructions =
       input.runtimePolicy.interactionMode === "plan"
-        ? {
-            mode: "plan",
+        ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+        : input.hasT3Mcp === true
+          ? CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS
+          : undefined;
+    const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
+      developerInstructions === undefined
+        ? undefined
+        : {
+            mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "default",
             settings: {
               model: input.modelSelection.model,
               reasoning_effort: effort ?? "medium",
-              developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+              developer_instructions: developerInstructions,
             },
-          }
-        : undefined;
+          };
 
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
@@ -4421,6 +4431,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
+                hasT3Mcp:
+                  McpProviderSession.readMcpProviderSession(turnInput.threadId) !== undefined,
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
