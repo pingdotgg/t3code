@@ -1446,15 +1446,19 @@ const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
 const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;
 const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
 const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
+const USER_MESSAGE_FILE_LINK_PATTERN = /\[((?:\\.|[^\]\\])*)\]\([^)\s]+\)/g;
 
 function shouldCollapseUserMessage(text: string): boolean {
-  if (text.trim().length === 0) {
+  const visibleText = text.replace(USER_MESSAGE_FILE_LINK_PATTERN, (_source, label: string) =>
+    label.replace(/\\(.)/g, "$1"),
+  );
+  if (visibleText.trim().length === 0) {
     return false;
   }
 
   return (
-    text.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
-    text.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
+    visibleText.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
+    visibleText.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
   );
 }
 

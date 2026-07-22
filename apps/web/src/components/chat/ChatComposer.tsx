@@ -129,6 +129,11 @@ import {
 } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { resolvePathLinkTarget } from "~/terminal-links";
+
+const TEXT_ATTACHMENT_MAX_BYTES = 1024 * 1024;
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
@@ -632,6 +637,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
@@ -1789,14 +1795,46 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   // ------------------------------------------------------------------
-  // Callbacks: images
+  // Callbacks: attachments
   // ------------------------------------------------------------------
-  const addComposerImages = (files: File[]) => {
+  const addComposerTextAttachment = async (file: File): Promise<string | null> => {
+    if (!gitCwd) return `Could not resolve the workspace path for '${file.name}'.`;
+    if (file.size > TEXT_ATTACHMENT_MAX_BYTES) {
+      return `'${file.name}' exceeds the 1 MB text attachment limit.`;
+    }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-") || "context.md";
+    const relativePath = `.t3/attachments/${randomUUID()}/${safeName}`;
+    const result = await file
+      .arrayBuffer()
+      .then((buffer) => {
+        const bytes = new Uint8Array(buffer);
+        if (bytes.includes(0)) return null;
+        const contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return writeProjectFile({
+          environmentId,
+          input: { cwd: gitCwd, relativePath, contents },
+        });
+      })
+      .catch(() => null);
+    if (result === null) return `'${file.name}' is not a supported text file.`;
+    if (result._tag === "Failure") return `Could not attach '${file.name}'.`;
+
+    const currentPrompt = promptRef.current;
+    const separator = currentPrompt.length > 0 && !/\s$/.test(currentPrompt) ? " " : "";
+    applyPromptReplacement(
+      currentPrompt.length,
+      currentPrompt.length,
+      `${separator}${serializeComposerFileLink(resolvePathLinkTarget(relativePath, gitCwd))} `,
+    );
+    return null;
+  };
+
+  const addComposerAttachments = async (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
     if (pendingUserInputs.length > 0) {
       toastManager.add({
         type: "error",
-        title: "Attach images after answering plan questions.",
+        title: "Attach files after answering plan questions.",
       });
       return;
     }
@@ -1805,7 +1843,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let error: string | null = null;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+        error = (await addComposerTextAttachment(file)) ?? error;
         continue;
       }
       if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
@@ -1849,7 +1887,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const imageFiles = files.filter((file) => file.type.startsWith("image/"));
     if (imageFiles.length === 0) return;
     event.preventDefault();
-    addComposerImages(imageFiles);
+    void addComposerAttachments(imageFiles);
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -1883,7 +1921,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    addComposerImages(files);
+    void addComposerAttachments(files);
     focusComposer();
   };
 

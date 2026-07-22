@@ -414,6 +414,29 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-collapsible="false"');
   });
 
+  it("does not collapse short visible prompts with long file-link destinations", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const fileLinks = Array.from(
+      { length: 15 },
+      (_, index) =>
+        `[test-${index}.ts](/Users/test/project/.t3/attachments/12345678-1234-1234-1234-123456789abc/test-${index}.ts)`,
+    );
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry([...fileLinks, "tell me the contents of each file"].join(" ")),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("test-0.ts");
+    expect(markup).toContain("test-14.ts");
+    expect(markup).toContain("tell me the contents of each file");
+    expect(markup).toContain('data-user-message-body="true"');
+    expect(markup).not.toContain("Show full message");
+  });
+
   it("renders inline terminal labels with the composer chip UI", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
