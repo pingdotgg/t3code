@@ -371,6 +371,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provide(SqlitePersistenceMemory),
     );
     runtime = ManagedRuntime.make(layer);
 
@@ -411,6 +412,7 @@ describe("ProviderCommandReactor", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      snapshotQuery,
       startSession,
       sendTurn,
       interruptTurn,
@@ -465,6 +467,97 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
+
+  effectIt.effect("clears pending work when session startup fails before binding", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+      const messageId = asMessageId("user-message-start-failed");
+      harness.startSession.mockImplementationOnce(
+        (_: unknown, __: unknown) => Effect.fail("simulated startup failure") as never,
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-failed"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId,
+          role: "user",
+          text: "hello reactor",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads[0]?.activities.some(
+              (activity) => activity.kind === "provider.turn.start.failed",
+            ) ?? false
+          );
+        }),
+      );
+
+      const readModel = yield* harness.snapshotQuery.getSnapshot();
+      expect(readModel.threads[0]?.session).toBeNull();
+      expect(
+        readModel.threads[0]?.activities.find(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ),
+      ).toMatchObject({ payload: { requestId: messageId } });
+      const shellSnapshot = yield* harness.snapshotQuery.getShellSnapshot();
+      expect(shellSnapshot.threads[0]?.hasPendingTurnStart).toBe(false);
+    }),
+  );
+
+  effectIt.effect("clears pending work when turn startup is interrupted", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+      const messageId = asMessageId("user-message-start-interrupted");
+      harness.sendTurn.mockImplementationOnce(() => Effect.interrupt);
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-interrupted"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId,
+          role: "user",
+          text: "hello reactor",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads[0]?.activities.some(
+              (activity) => activity.kind === "provider.turn.start.failed",
+            ) ?? false
+          );
+        }),
+      );
+
+      const readModel = yield* harness.snapshotQuery.getSnapshot();
+      expect(
+        readModel.threads[0]?.activities.find(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ),
+      ).toMatchObject({ payload: { requestId: messageId } });
+      const shellSnapshot = yield* harness.snapshotQuery.getShellSnapshot();
+      expect(shellSnapshot.threads[0]?.hasPendingTurnStart).toBe(false);
+    }),
+  );
 
   it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();

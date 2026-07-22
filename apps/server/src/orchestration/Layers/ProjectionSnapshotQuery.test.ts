@@ -217,22 +217,39 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           checkpoint_status,
           checkpoint_files_json
         )
-        VALUES (
-          'thread-1',
-          'turn-1',
-          NULL,
-          'thread-1',
-          'plan-1',
-          'message-1',
-          'completed',
-          '2026-02-24T00:00:08.000Z',
-          '2026-02-24T00:00:08.000Z',
-          '2026-02-24T00:00:08.000Z',
-          1,
-          'checkpoint-1',
-          'ready',
-          '[{"path":"README.md","kind":"modified","additions":2,"deletions":1}]'
-        )
+        VALUES
+          (
+            'thread-1',
+            'turn-1',
+            NULL,
+            'thread-1',
+            'plan-1',
+            'message-1',
+            'completed',
+            '2026-02-24T00:00:08.000Z',
+            '2026-02-24T00:00:08.000Z',
+            '2026-02-24T00:00:08.000Z',
+            1,
+            'checkpoint-1',
+            'ready',
+            '[{"path":"README.md","kind":"modified","additions":2,"deletions":1}]'
+          ),
+          (
+            'thread-1',
+            NULL,
+            'message-pending',
+            NULL,
+            NULL,
+            NULL,
+            'pending',
+            '2026-02-24T00:00:09.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          )
       `;
 
       let sequence = 5;
@@ -432,11 +449,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
           latestUserMessageAt: "2026-02-24T00:00:04.000Z",
+          hasPendingTurnStart: true,
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
         },
       ]);
+
+      const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      assert.equal(threadShell._tag, "Some");
+      assert.equal(threadShell._tag === "Some" && threadShell.value.hasPendingTurnStart, true);
 
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");

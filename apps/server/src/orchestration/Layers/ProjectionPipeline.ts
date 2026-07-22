@@ -1056,9 +1056,52 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.activity-appended": {
+          if (event.payload.activity.kind !== "provider.turn.start.failed") {
+            return;
+          }
+          const requestId = event.metadata.requestId;
+          if (requestId === undefined) {
+            return;
+          }
+          const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (
+            Option.isNone(pendingTurnStart) ||
+            String(requestId) !== pendingTurnStart.value.messageId
+          ) {
+            return;
+          }
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        }
+
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
+            if (
+              event.payload.session.lastError !== null ||
+              event.payload.session.status === "error" ||
+              event.payload.session.status === "interrupted" ||
+              event.payload.session.status === "stopped"
+            ) {
+              const pendingTurnStart =
+                yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+                  threadId: event.payload.threadId,
+                });
+              if (
+                Option.isSome(pendingTurnStart) &&
+                pendingTurnStart.value.requestedAt <= event.payload.session.updatedAt
+              ) {
+                yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+                  threadId: event.payload.threadId,
+                });
+              }
+            }
+
             // Leaving the "running" session status is the turn-end signal:
             // settle still-running turns so their duration reflects the whole
             // turn rather than the last assistant message.

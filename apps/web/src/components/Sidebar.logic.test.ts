@@ -648,7 +648,11 @@ describe("resolveSidebarV2Status", () => {
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  const idle = {
+    hasPendingApprovals: false,
+    hasPendingTurnStart: false,
+    hasPendingUserInput: false,
+  };
 
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
@@ -674,6 +678,16 @@ describe("resolveSidebarV2Status", () => {
       resolveSidebarV2Status({
         ...idle,
         session: { ...session, status: "starting" as const },
+      }),
+    ).toBe("working");
+  });
+
+  it("reports working while a turn start is pending without a session", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingTurnStart: true,
+        session: null,
       }),
     ).toBe("working");
   });
@@ -734,6 +748,7 @@ describe("resolveThreadStatusPill", () => {
   const baseThread = {
     hasActionableProposedPlan: false,
     hasPendingApprovals: false,
+    hasPendingTurnStart: false,
     hasPendingUserInput: false,
     interactionMode: "plan" as const,
     latestTurn: null,
@@ -777,6 +792,35 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while a new thread turn is waiting for its first session update", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingTurnStart: true,
+          session: null,
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("keeps showing working through a ready session before the turn starts", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingTurnStart: true,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            activeTurnId: null,
+            updatedAt: "2026-03-09T10:00:02.000Z",
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
