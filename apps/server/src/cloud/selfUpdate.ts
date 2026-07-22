@@ -57,8 +57,11 @@ export interface ServerSelfUpdateHost {
   readonly cliEntryPath: string;
   /** Original CLI arguments after the entry path, replayed on respawn. */
   readonly cliArgs: ReadonlyArray<string>;
-  /** Fire-and-forget spawn used by the foreground respawn handoff. */
-  readonly spawnDetached: (command: string, args: ReadonlyArray<string>) => void;
+  /** Resolves once the foreground replacement process has actually spawned. */
+  readonly spawnDetached: (
+    command: string,
+    args: ReadonlyArray<string>,
+  ) => Effect.Effect<void, ProcessRunner.ProcessSpawnError>;
   readonly exitProcess: () => void;
 }
 
@@ -168,9 +171,36 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
     cliArgs: options?.host?.cliArgs ?? hostArguments.slice(2),
     spawnDetached:
       options?.host?.spawnDetached ??
-      ((command, args) => {
-        NodeChildProcess.spawn(command, [...args], { detached: true, stdio: "ignore" }).unref();
-      }),
+      ((command, args) =>
+        Effect.callback<void, ProcessRunner.ProcessSpawnError>((resume) => {
+          const spawnError = (cause: unknown) =>
+            new ProcessRunner.ProcessSpawnError({
+              command,
+              argumentCount: args.length,
+              cause,
+            });
+          let child: NodeChildProcess.ChildProcess;
+          try {
+            child = NodeChildProcess.spawn(command, [...args], {
+              detached: true,
+              stdio: "ignore",
+            });
+          } catch (cause) {
+            resume(Effect.fail(spawnError(cause)));
+            return;
+          }
+
+          const onSpawnError = (cause: Error) => resume(Effect.fail(spawnError(cause)));
+          child.once("error", onSpawnError);
+          child.once("spawn", () => {
+            child.removeListener("error", onSpawnError);
+            // Keep asynchronous child errors from becoming uncaught after the
+            // successful spawn handoff has already been acknowledged.
+            child.on("error", () => undefined);
+            child.unref();
+            resume(Effect.void);
+          });
+        })),
     exitProcess: options?.host?.exitProcess ?? (() => process.exit(0)),
   };
 
@@ -243,7 +273,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
             failWith(`Could not verify the installed t3@${targetVersion}.`, cause),
           ),
         );
-      if (preflight.code !== 0) {
+      const preflightVersion = preflight.stdout.trim();
+      if (preflight.code !== 0 || preflightVersion !== targetVersion) {
         // A completed npm install can still be unusable under this Node or on
         // this machine. Remove its sentinel and tree so a retry of the same
         // version performs a clean install instead of reusing a known-bad one.
@@ -258,7 +289,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
           ),
         );
         return yield* failWith(
-          `The installed t3@${targetVersion} failed its version check (exit code ${String(preflight.code)}).`,
+          preflight.code !== 0
+            ? `The installed t3@${targetVersion} failed its version check (exit code ${String(preflight.code)}).`
+            : `The installed runtime did not report the requested t3@${targetVersion} version.`,
         );
       }
 
@@ -314,77 +347,72 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         yield* Effect.logInfo("Server self-update installed; restarting boot service.", {
           targetVersion,
         });
-        // Run through ProcessRunner so a rejected restart can restore the old
-        // unit and release the update lock. On success systemd stops this
-        // process before (or as) the command completes and starts the
-        // rewritten unit.
-        yield* scheduleRestart(
-          Effect.gen(function* () {
-            const restart = yield* runner
-              .run({
-                command: "systemctl",
-                args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
-              })
-              .pipe(
-                Effect.mapError((cause) =>
-                  failWith("Could not restart the systemd boot service.", cause),
-                ),
-              );
-            if (restart.code !== 0) {
-              return yield* failWith(
-                `Restarting the systemd boot service failed (exit code ${String(restart.code)}).`,
-              );
-            }
-          }).pipe(
-            Effect.catch((restartError) =>
-              writeUnitAtomically(unitPath, previousUnit).pipe(
-                Effect.mapError((cause) =>
-                  failWith("Could not restore the previous systemd unit.", cause),
-                ),
-                Effect.andThen(reloadSystemd()),
-                Effect.tap(() =>
-                  Effect.logError(
-                    "Server self-update restart failed; restored the previous systemd unit.",
-                  ).pipe(
-                    Effect.annotateLogs({
-                      targetVersion,
-                      restartError: restartError.reason,
-                    }),
-                  ),
-                ),
-                Effect.catch((rollbackError) =>
-                  Effect.logError(
-                    "Server self-update restart failed and the previous systemd unit could not be restored.",
-                  ).pipe(
-                    Effect.annotateLogs({
-                      targetVersion,
-                      restartError: restartError.reason,
-                      rollbackError: rollbackError.reason,
-                    }),
-                  ),
-                ),
-                Effect.ensuring(Ref.set(inFlight, false)),
+        // A successful systemd restart stops this process, so the RPC is
+        // interrupted and the reconnecting client observes the new version.
+        // A rejected restart returns while the old process is still alive;
+        // restore the previous unit and report that failure through the RPC.
+        yield* Effect.gen(function* () {
+          const restart = yield* runner
+            .run({
+              command: "systemctl",
+              args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                failWith("Could not restart the systemd boot service.", cause),
               ),
+            );
+          if (restart.code !== 0) {
+            return yield* failWith(
+              `Restarting the systemd boot service failed (exit code ${String(restart.code)}).`,
+            );
+          }
+        }).pipe(
+          Effect.catch((restartError) =>
+            writeUnitAtomically(unitPath, previousUnit).pipe(
+              Effect.andThen(reloadSystemd()),
+              Effect.mapError((rollbackError) =>
+                failWith("Could not restore the previous systemd unit.", {
+                  restartError,
+                  rollbackError,
+                }),
+              ),
+              Effect.andThen(Effect.fail(restartError)),
             ),
           ),
         );
       } else {
+        // Spawn the shim before acknowledging the RPC so ENOENT/EACCES and
+        // other launch failures leave this server alive and return a useful
+        // error. The shim itself waits until after the acknowledgement and
+        // deferred exit before binding the replacement server.
+        yield* host
+          .spawnDetached("/bin/sh", [
+            "-c",
+            'sleep 3; exec "$@"',
+            "t3-self-update",
+            host.execPath,
+            runtimePaths.entryPath,
+            ...host.cliArgs,
+          ])
+          .pipe(
+            Effect.mapError((cause) =>
+              failWith("Could not start the replacement t3 process.", cause),
+            ),
+          );
         yield* Effect.logInfo("Server self-update installed; respawning.", { targetVersion });
-        // The shim sleeps so this process has released its listeners before
-        // the replacement binds them, then execs the new version with the
-        // original CLI arguments.
         yield* scheduleRestart(
-          Effect.sync(() => {
-            host.spawnDetached("/bin/sh", [
-              "-c",
-              'sleep 1; exec "$@"',
-              "t3-self-update",
-              host.execPath,
-              runtimePaths.entryPath,
-              ...host.cliArgs,
-            ]);
-            host.exitProcess();
-          }),
+          Effect.try({
+            try: () => host.exitProcess(),
+            catch: (cause) => failWith("Could not exit the replaced t3 process.", cause),
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logError("Server self-update could not exit the replaced process.").pipe(
+                Effect.annotateLogs({ targetVersion, error: error.reason }),
+                Effect.ensuring(Ref.set(inFlight, false)),
+              ),
+            ),
+          ),
         );
       }
 

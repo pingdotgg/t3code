@@ -1,5 +1,6 @@
 import type { Dispatch, ReactElement, SetStateAction } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -152,6 +153,44 @@ describe("ServerUpdateAction", () => {
     expect(renderAction().props.disabled).not.toBe(true);
     expect(testState.toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Server update timed out" }),
+    );
+  });
+
+  it("does not let an expired request clear a newer retry", async () => {
+    const first = deferred<ReturnType<typeof AsyncResult.failure>>();
+    const retry =
+      deferred<
+        ReturnType<typeof AsyncResult.success<{ targetVersion: string; method: "boot-service" }>>
+      >();
+    testState.updateServer.mockReturnValueOnce(first.promise).mockReturnValueOnce(retry.promise);
+
+    renderAction().props.onClick?.();
+    await vi.advanceTimersByTimeAsync(12 * 60_000);
+    expect(renderAction().props.disabled).not.toBe(true);
+
+    renderAction().props.onClick?.();
+    expect(renderAction().props.disabled).toBe(true);
+
+    first.resolve(AsyncResult.failure(Cause.fail(new Error("first request failed late"))));
+    await flushPromises();
+
+    expect(renderAction().props.disabled).toBe(true);
+    expect(testState.updateServer).toHaveBeenCalledTimes(2);
+
+    retry.resolve(AsyncResult.success({ targetVersion: "0.0.29", method: "boot-service" }));
+    await flushPromises();
+    expect(renderAction().props.disabled).toBe(true);
+  });
+
+  it("treats an interrupted restart RPC as pending until reconnect or expiry", async () => {
+    testState.updateServer.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
+
+    renderAction().props.onClick?.();
+    await flushPromises();
+
+    expect(renderAction().props.disabled).toBe(true);
+    expect(testState.toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Server update failed" }),
     );
   });
 });

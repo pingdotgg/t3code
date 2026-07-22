@@ -35,6 +35,9 @@ const makeRecordingRunnerLayer = (
   commands: Array<RecordedCommand>,
   options?: {
     readonly failWhen?: ((command: string, args: ReadonlyArray<string>) => boolean) | undefined;
+    readonly stdoutFor?:
+      | ((command: string, args: ReadonlyArray<string>) => string | undefined)
+      | undefined;
   },
 ) =>
   Layer.succeed(
@@ -44,8 +47,14 @@ const makeRecordingRunnerLayer = (
         Effect.sync(() => {
           commands.push({ command: input.command, args: input.args });
           const failed = options?.failWhen?.(input.command, input.args) === true;
+          const versionFromPath =
+            input.command === NODE_PATH && input.args[1] === "--version"
+              ? /[/\\]runtime[/\\]versions[/\\]([^/\\]+)/.exec(input.args[0] ?? "")?.[1]
+              : undefined;
           return {
-            stdout: "",
+            stdout:
+              options?.stdoutFor?.(input.command, input.args) ??
+              (versionFromPath === undefined ? "" : `${versionFromPath}\n`),
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -246,6 +255,8 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     readonly desktopManaged?: boolean;
     readonly entryPath?: string;
     readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
+    readonly stdoutFor?: (command: string, args: ReadonlyArray<string>) => string | undefined;
+    readonly failSpawn?: boolean;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -294,9 +305,20 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
         : ServerConfig.layerTest(home, baseDir);
     const service = yield* SelfUpdate.make({
       host: {
-        spawnDetached: (command, args) => {
-          spawns.push({ command, args });
-        },
+        spawnDetached: (command, args) =>
+          Effect.sync(() => spawns.push({ command, args })).pipe(
+            Effect.andThen(
+              options?.failSpawn === true
+                ? Effect.fail(
+                    new ProcessRunner.ProcessSpawnError({
+                      command,
+                      argumentCount: args.length,
+                      cause: new Error("detached spawn failed"),
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
         exitProcess: () => {
           exited += 1;
         },
@@ -304,7 +326,10 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          makeRecordingRunnerLayer(commands, { failWhen: options?.failWhen }),
+          makeRecordingRunnerLayer(commands, {
+            failWhen: options?.failWhen,
+            stdoutFor: options?.stdoutFor,
+          }),
           configLayer,
         ),
       ),
@@ -398,11 +423,43 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("rejects and removes an installed runtime that reports the wrong version", () =>
+    Effect.gen(function* () {
+      const context = yield* makeContext({
+        stdoutFor: (command, args) =>
+          command === NODE_PATH && args[1] === "--version" ? "0.0.28\n" : undefined,
+      });
+      const versionDir = context.path.join(context.baseDir, "runtime", "versions", "0.0.29");
+
+      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+
+      assert.include(error.reason, "did not report the requested");
+      assert.isFalse(yield* context.fs.exists(versionDir));
+      assert.lengthOf(context.spawns, 0);
+    }),
+  );
+
+  it.effect("reports a detached replacement spawn failure and leaves updates retryable", () =>
+    Effect.gen(function* () {
+      const context = yield* makeContext({ failSpawn: true });
+
+      const first = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+      assert.include(first.reason, "Could not start the replacement");
+
+      const second = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+      assert.include(second.reason, "Could not start the replacement");
+      assert.notInclude(second.reason, "already in progress");
+      assert.lengthOf(context.spawns, 2);
+      assert.equal(context.exitCount(), 0);
+    }),
+  );
+
   it.effect("installs, preflights, and respawns a foreground server", () =>
     Effect.gen(function* () {
       const context = yield* makeContext();
       const result = yield* context.service.update({ targetVersion: "0.0.29" });
       assert.deepEqual(result, { targetVersion: "0.0.29", method: "respawn" });
+      assert.lengthOf(context.spawns, 1);
 
       const concurrentError = yield* context.service
         .update({ targetVersion: "0.0.30" })
@@ -422,7 +479,6 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       );
 
       // The restart is deferred so the RPC acknowledgement flushes first.
-      assert.lengthOf(context.spawns, 0);
       yield* TestClock.adjust(Duration.seconds(10));
       assert.lengthOf(context.spawns, 1);
       const spawn = context.spawns[0];
@@ -450,11 +506,10 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       assert.include(unit, `ExecStart=${NODE_PATH} ${pinnedEntry} serve`);
       assert.deepEqual(
         context.commands.map((entry) => entry.command),
-        ["npm", NODE_PATH, "systemctl"],
+        ["npm", NODE_PATH, "systemctl", "systemctl"],
       );
       assert.deepEqual(context.commands[2]?.args, ["--user", "daemon-reload"]);
 
-      yield* TestClock.adjust(Duration.seconds(10));
       assert.deepEqual(context.commands[3], {
         command: "systemctl",
         args: ["--user", "restart", "t3code.service"],
@@ -487,19 +542,8 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       );
       const previousUnit = yield* context.fs.readFileString(unitPath);
 
-      const first = yield* context.service.update({ targetVersion: "0.0.29" });
-      assert.deepEqual(first, { targetVersion: "0.0.29", method: "boot-service" });
-
-      yield* TestClock.adjust(Duration.seconds(10));
-      // scheduleRestart intentionally detaches from the request. Once its
-      // TestClock delay elapses, give the real filesystem rollback time to
-      // complete before observing the unit and retry lock.
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        if ((yield* context.fs.readFileString(unitPath)) === previousUnit) {
-          break;
-        }
-        yield* Effect.yieldNow;
-      }
+      const first = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+      assert.include(first.reason, "Restarting the systemd boot service failed");
       assert.equal(yield* context.fs.readFileString(unitPath), previousUnit);
       assert.deepEqual(
         context.commands.slice(-2).map((entry) => entry.args),

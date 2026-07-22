@@ -48,6 +48,7 @@ export function ServerUpdateAction({
   });
   const [pending, setPending] = useState(false);
   const inFlightRef = useRef(false);
+  const attemptRef = useRef(0);
   const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
     target: "update command",
@@ -73,6 +74,8 @@ export function ServerUpdateAction({
         clearTimeout(expiryRef.current);
         expiryRef.current = null;
       }
+      attemptRef.current += 1;
+      inFlightRef.current = false;
     },
     [],
   );
@@ -84,10 +87,15 @@ export function ServerUpdateAction({
       return;
     }
     inFlightRef.current = true;
+    const attempt = attemptRef.current + 1;
+    attemptRef.current = attempt;
+    const ownsAttempt = () => attemptRef.current === attempt;
     setPending(true);
     const armExpiry = () => {
       const expiry = setTimeout(() => {
+        if (!ownsAttempt()) return;
         expiryRef.current = null;
+        attemptRef.current += 1;
         inFlightRef.current = false;
         setPending(false);
         toastManager.add({
@@ -101,6 +109,13 @@ export function ServerUpdateAction({
     };
     let expiry = armExpiry();
     let restartAccepted = false;
+    const keepPendingForRestart = () => {
+      restartAccepted = true;
+      if (expiryRef.current === expiry) {
+        clearTimeout(expiry);
+        expiry = armExpiry();
+      }
+    };
     void Promise.resolve()
       .then(() =>
         updateServer({
@@ -109,24 +124,26 @@ export function ServerUpdateAction({
         }),
       )
       .then((result) => {
+        if (!ownsAttempt()) return;
         if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result)) {
-            toastManager.add({
-              type: "error",
-              title: "Server update failed",
-              description: updateFailureMessage(squashAtomCommandFailure(result)),
-            });
+          // A successful boot-service restart kills the process serving this
+          // RPC, so interruption is the expected acknowledgement. Keep the UI
+          // pending until the new server version reconnects (or expiry).
+          if (isAtomCommandInterrupted(result)) {
+            keepPendingForRestart();
+            return;
           }
+          toastManager.add({
+            type: "error",
+            title: "Server update failed",
+            description: updateFailureMessage(squashAtomCommandFailure(result)),
+          });
           return;
         }
-        restartAccepted = true;
+        keepPendingForRestart();
         // Installation can legitimately consume most of the request window.
         // Give restart/reconnect a fresh full window after the server accepts
         // the handoff instead of expiring based on the original click time.
-        if (expiryRef.current === expiry) {
-          clearTimeout(expiry);
-          expiry = armExpiry();
-        }
         toastManager.add({
           type: "success",
           title: `Updating ${serverLabel}`,
@@ -134,6 +151,7 @@ export function ServerUpdateAction({
         });
       })
       .catch((error: unknown) => {
+        if (!ownsAttempt()) return;
         toastManager.add({
           type: "error",
           title: "Server update failed",
@@ -144,11 +162,10 @@ export function ServerUpdateAction({
         // A successful RPC only acknowledges that restart is scheduled. Keep
         // the action disabled until version sync unmounts it, or until the
         // safety expiry reports that reconnection never arrived.
-        if (restartAccepted) return;
-        if (expiryRef.current === expiry) {
-          expiryRef.current = null;
-        }
+        if (restartAccepted || !ownsAttempt() || expiryRef.current !== expiry) return;
+        expiryRef.current = null;
         clearTimeout(expiry);
+        attemptRef.current += 1;
         inFlightRef.current = false;
         setPending(false);
       });
