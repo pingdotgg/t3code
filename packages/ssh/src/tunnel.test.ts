@@ -3,8 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -200,7 +202,15 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript(),
       "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))",
     );
-    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
+    assert.include(buildRemoteLaunchScript(), 'SAVED_REMOTE_PORT="$REMOTE_PORT"');
+    assert.include(buildRemoteLaunchScript(), '[ "$SAVED_REMOTE_PORT" = "$DEFAULT_REMOTE_PORT" ]');
+    assert.include(buildRemoteLaunchScript(), 'REMOTE_PID="$DEFAULT_RUNTIME_PID"');
+    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="$REMOTE_PID"');
+    assert.include(
+      buildRemoteLaunchScript(),
+      'STARTED_RUNTIME_INFO="$(resolve_default_runtime_port',
+    );
+    assert.include(buildRemoteLaunchScript(), '[ "$STARTED_RUNTIME_PORT" = "$REMOTE_PORT" ]');
     assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
     assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
     assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
@@ -214,6 +224,159 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
+
+  it.live("restarts the actual managed server when the runner changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const net = yield* NetService.NetService;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-managed-restart-" });
+      const binDir = path.join(home, "bin");
+      const stateDir = path.join(home, ".t3", "ssh-launch", "test-state");
+      const runtimeDir = path.join(home, ".t3", "userdata");
+      const runtimeFile = path.join(runtimeDir, "server-runtime.json");
+      const fakeT3 = path.join(binDir, "t3");
+      const port = yield* net.reserveLoopbackPort();
+      const env = { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH ?? ""}` };
+
+      const isPidRunning = (pid: number) =>
+        spawner
+          .exitCode(
+            ChildProcess.make("sh", ["-c", 'kill -0 "$1" 2>/dev/null', "sh", String(pid)], {
+              stderr: "ignore",
+              stdout: "ignore",
+            }),
+          )
+          .pipe(Effect.map((exitCode) => Number(exitCode) === 0));
+      const terminatePid = (pid: number) =>
+        spawner
+          .exitCode(
+            ChildProcess.make("sh", ["-c", 'kill "$1" 2>/dev/null || true', "sh", String(pid)], {
+              stderr: "ignore",
+              stdout: "ignore",
+            }),
+          )
+          .pipe(Effect.asVoid);
+      const waitForFile = Effect.gen(function* () {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if (yield* fs.exists(runtimeFile)) return;
+          yield* Effect.sleep("10 millis");
+        }
+        return yield* Effect.die(new Error(`Timed out waiting for ${runtimeFile}`));
+      });
+      const waitForPidExit = (pid: number) =>
+        Effect.gen(function* () {
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            if (!(yield* isPidRunning(pid))) return;
+            yield* Effect.sleep("10 millis");
+          }
+          return yield* Effect.die(new Error(`Timed out waiting for process ${pid} to exit`));
+        });
+
+      yield* fs.makeDirectory(binDir, { recursive: true });
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.makeDirectory(runtimeDir, { recursive: true });
+      yield* fs.writeFileString(
+        fakeT3,
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const port = Number(args[args.indexOf("--port") + 1]);
+const baseDir = args[args.indexOf("--base-dir") + 1];
+const runtimeFile = path.join(baseDir, "userdata", "server-runtime.json");
+fs.mkdirSync(path.dirname(runtimeFile), { recursive: true });
+const server = http.createServer((_request, response) => {
+  response.writeHead(200);
+  response.end();
+});
+server.listen(port, "127.0.0.1", () => {
+  fs.writeFileSync(runtimeFile, JSON.stringify({ pid: process.pid, port, origin: \`http://127.0.0.1:\${port}\` }));
+});
+const stop = () => server.close(() => {
+  try { fs.unlinkSync(runtimeFile); } catch {}
+  process.exit(0);
+});
+process.on("SIGTERM", stop);
+process.on("SIGINT", stop);
+`,
+      );
+      yield* fs.chmod(fakeT3, 0o700);
+
+      const oldServer = yield* spawner.spawn(
+        ChildProcess.make(
+          fakeT3,
+          [
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            String(port),
+            "--base-dir",
+            path.join(home, ".t3"),
+          ],
+          {
+            env,
+            stderr: "ignore",
+            stdout: "ignore",
+          },
+        ),
+      );
+      const oldServerPid = Number(oldServer.pid);
+      assert.isAbove(oldServerPid, 0);
+      yield* Effect.addFinalizer(() =>
+        oldServer.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
+      );
+      yield* waitForFile;
+      const wrapper = yield* spawner.spawn(
+        ChildProcess.make("sleep", ["60"], { stderr: "ignore", stdout: "ignore" }),
+      );
+      yield* wrapper.unref.pipe(Effect.asVoid);
+      const wrapperPid = Number(wrapper.pid);
+      assert.isAbove(wrapperPid, 0);
+      yield* Effect.addFinalizer(() =>
+        wrapper.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
+      );
+
+      yield* fs.writeFileString(path.join(stateDir, "pid"), `${wrapperPid}\n`);
+      yield* fs.writeFileString(path.join(stateDir, "port"), `${port}\n`);
+      yield* fs.writeFileString(path.join(stateDir, "managed"), "managed\n");
+      yield* fs.writeFileString(path.join(stateDir, "run-t3.sh"), "#!/bin/sh\nexit 1\n");
+
+      const launch = yield* spawner.spawn(
+        ChildProcess.make("sh", ["-s", "test-state"], {
+          env,
+          forceKillAfter: "1 second",
+          stdin: Stream.encodeText(
+            Stream.make(buildRemoteLaunchScript({ packageSpec: "t3@test" })),
+          ),
+        }),
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          Stream.mkString(Stream.decodeText(launch.stdout)),
+          Stream.mkString(Stream.decodeText(launch.stderr)),
+          launch.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.timeout("10 seconds"));
+
+      assert.equal(Number(exitCode), 0, stderr);
+      assert.include(stdout, `{"remotePort":${port},"serverKind":"managed"}`);
+      yield* waitForPidExit(oldServerPid);
+      assert.isFalse(yield* isPidRunning(oldServerPid));
+      assert.isTrue(yield* isPidRunning(wrapperPid));
+      const replacementPid = Number((yield* fs.readFileString(path.join(stateDir, "pid"))).trim());
+      assert.isAbove(replacementPid, 0);
+      yield* Effect.addFinalizer(() => terminatePid(replacementPid).pipe(Effect.ignore));
+      assert.notEqual(replacementPid, oldServerPid);
+      assert.notEqual(replacementPid, wrapperPid);
+      assert.isTrue(yield* isPidRunning(replacementPid));
+      assert.equal(yield* fs.readFileString(path.join(stateDir, "managed")), "managed\n");
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NetService.layer)), Effect.scoped),
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {

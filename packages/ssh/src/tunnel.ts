@@ -507,6 +507,7 @@ NODE
 }
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+SAVED_REMOTE_PORT="$REMOTE_PORT"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
@@ -518,8 +519,11 @@ fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
+    if [ "$REMOTE_MANAGED" = "managed" ] && [ "$SAVED_REMOTE_PORT" = "$DEFAULT_REMOTE_PORT" ] && [ -n "$DEFAULT_RUNTIME_PID" ] && kill -0 "$DEFAULT_RUNTIME_PID" 2>/dev/null; then
+      REMOTE_PID="$DEFAULT_RUNTIME_PID"
+      printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    elif [ "$REMOTE_MANAGED" = "managed" ]; then
+      PID_TO_STOP="$REMOTE_PID"
       if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
         kill "$PID_TO_STOP" 2>/dev/null || true
         wait_for_pid_exit "$PID_TO_STOP"
@@ -585,6 +589,15 @@ if [ -z "$REMOTE_PORT" ]; then
     wait_for_pid_exit "$REMOTE_PID"
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
+  fi
+  STARTED_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+  if [ -n "$STARTED_RUNTIME_INFO" ]; then
+    STARTED_RUNTIME_PID="\${STARTED_RUNTIME_INFO%% *}"
+    STARTED_RUNTIME_PORT="\${STARTED_RUNTIME_INFO#* }"
+    if [ "$STARTED_RUNTIME_PORT" = "$REMOTE_PORT" ]; then
+      REMOTE_PID="$STARTED_RUNTIME_PID"
+      printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    fi
   fi
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
