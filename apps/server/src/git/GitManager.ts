@@ -822,7 +822,9 @@ export const make = Effect.gen(function* () {
     cwd: string,
     details: { branch: string; upstreamRef: string | null; isDefaultBranch: boolean },
   ) {
-    const branchKey = `${cwd}\u0000${details.branch}\u0000${details.upstreamRef ?? ""}`;
+    // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
+    // `push -u`) must not orphan the fallback value for the same branch.
+    const branchKey = `${cwd}\u0000${details.branch}`;
     return yield* Cache.get(prLookupCache, prLookupCacheKey(cwd, details)).pipe(
       Effect.map((latest) => {
         if (!latest) return null;

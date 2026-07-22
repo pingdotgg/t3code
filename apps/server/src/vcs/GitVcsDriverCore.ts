@@ -25,7 +25,7 @@ import {
   type ReviewDiffPreviewSource,
   type VcsRef,
 } from "@t3tools/contracts";
-import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
@@ -233,27 +233,6 @@ function sanitizeRemoteName(value: string): string {
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return sanitized.length > 0 ? sanitized : "fork";
-}
-
-function normalizeRemoteUrl(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/\/+$/g, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
-  // Reduce transport variants of the same repository to `host/path` so
-  // ensureRemote reuses an existing remote instead of adding an ssh/https
-  // duplicate (git@host:owner/repo, ssh://git@host/owner/repo,
-  // https://host/owner/repo all compare equal).
-  const scpLike = /^(?:ssh:\/\/)?(?:[^@/:]+@)([^:/]+)[:/](.+)$/.exec(normalized);
-  if (scpLike) {
-    return `${scpLike[1]}/${scpLike[2]}`;
-  }
-  const urlLike = /^(?:https?|git):\/\/(?:[^@/]+@)?(.+)$/.exec(normalized);
-  if (urlLike) {
-    return urlLike[1] ?? normalized;
-  }
-  return normalized;
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
@@ -1105,7 +1084,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "ensureRemote",
   )(function* (input) {
     const preferredName = sanitizeRemoteName(input.preferredName);
-    const normalizedTargetUrl = normalizeRemoteUrl(input.url);
+    const normalizedTargetUrl = normalizeGitRemoteUrl(input.url);
     const remoteFetchUrls = yield* runGitStdout(
       "GitVcsDriver.ensureRemote.listRemoteUrls",
       input.cwd,
@@ -1113,7 +1092,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => parseRemoteFetchUrls(stdout)));
 
     for (const [remoteName, remoteUrl] of remoteFetchUrls.entries()) {
-      if (normalizeRemoteUrl(remoteUrl) === normalizedTargetUrl) {
+      if (normalizeGitRemoteUrl(remoteUrl) === normalizedTargetUrl) {
         return remoteName;
       }
     }
