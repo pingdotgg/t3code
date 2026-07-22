@@ -982,6 +982,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     clearOpenIntent();
+    setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
     pushPaletteView({
