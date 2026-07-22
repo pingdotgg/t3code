@@ -598,6 +598,11 @@ export function applyEmacsReadlineActionToContentEditable(
 }
 
 let killRingText = "";
+const applicationShortcutYieldEvents = new WeakSet<KeyboardEvent>();
+
+export function didEmacsReadlineYieldToApplicationShortcut(event: KeyboardEvent): boolean {
+  return applicationShortcutYieldEvents.has(event);
+}
 
 export function getEmacsReadlineKillRingText(): string {
   return killRingText;
@@ -625,13 +630,21 @@ export function createEmacsReadlineKeydownHandler(options?: {
       return;
     }
 
-    if (options?.shouldYieldToApplicationShortcut?.(event)) return;
+    if (options?.shouldYieldToApplicationShortcut?.(event)) {
+      applicationShortcutYieldEvents.add(event);
+      return;
+    }
 
     const control = getPlainTextControl(event.target);
     const editableHost = control ? null : getContentEditableHost(event.target);
     // Managed editors such as Lexical must update their own selection and
-    // document state. Their editor plugin handles the original keydown.
-    if (editableHost?.hasAttribute("data-emacs-readline-managed")) return;
+    // document state. Prevent capture-phase application shortcuts from
+    // claiming the chord, but allow the original keydown to keep propagating
+    // to the editor plugin.
+    if (editableHost?.hasAttribute("data-emacs-readline-managed")) {
+      event.preventDefault();
+      return;
+    }
     const result = control
       ? applyActionToPlainTextControl(control, action, killRingText)
       : editableHost

@@ -37,7 +37,7 @@ export interface ShortcutMatchContext {
   [key: string]: boolean;
 }
 
-interface ShortcutMatchOptions {
+export interface ShortcutMatchOptions {
   platform?: string;
   context?: Partial<ShortcutMatchContext>;
 }

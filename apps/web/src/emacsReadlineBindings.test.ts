@@ -4,6 +4,7 @@ import {
   applyEmacsReadlineActionToContentEditable,
   applyEmacsReadlineActionToPlainText,
   createEmacsReadlineKeydownHandler,
+  didEmacsReadlineYieldToApplicationShortcut,
   resolveEmacsReadlineAction,
 } from "./emacsReadlineBindings";
 
@@ -73,10 +74,12 @@ describe("resolveEmacsReadlineAction", () => {
     vi.stubGlobal("Element", TestElement);
 
     const yieldToAppShortcut = vi.fn(() => true);
+    const yieldedEvent = keyboardEvent({ key: "b", ctrlKey: true });
     createEmacsReadlineKeydownHandler({
       shouldYieldToApplicationShortcut: yieldToAppShortcut,
-    })(keyboardEvent({ key: "b", ctrlKey: true }));
+    })(yieldedEvent);
     expect(yieldToAppShortcut).toHaveBeenCalledOnce();
+    expect(didEmacsReadlineYieldToApplicationShortcut(yieldedEvent)).toBe(true);
 
     const captureYield = vi.fn(() => false);
     createEmacsReadlineKeydownHandler({
@@ -131,6 +134,74 @@ describe("resolveEmacsReadlineAction", () => {
 
     expect(dispatchedKeys).toEqual(["ArrowDown"]);
     expect(yieldToAppShortcut).not.toHaveBeenCalled();
+  });
+
+  it("lets managed editors claim readline chords before capture-phase app shortcuts", () => {
+    class TestElement {
+      readonly ownerDocument = { querySelectorAll: () => [] } as unknown as Document;
+
+      closest(selector: string): TestElement | null {
+        return selector.includes("contenteditable") ? this : null;
+      }
+
+      hasAttribute(name: string): boolean {
+        return name === "data-emacs-readline-managed";
+      }
+    }
+    class TestInputElement {
+      readonly testElement = true;
+    }
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+    vi.stubGlobal("HTMLInputElement", TestInputElement);
+    vi.stubGlobal("HTMLTextAreaElement", TestInputElement);
+
+    let defaultPrevented = false;
+    const event = {
+      ...keyboardEvent({ ctrlKey: true, key: "b" }),
+      preventDefault: vi.fn(() => {
+        defaultPrevented = true;
+      }),
+      stopImmediatePropagation: vi.fn(),
+      target: new TestElement(),
+    } as unknown as KeyboardEvent;
+    const appShortcut = vi.fn();
+    const editorHandler = vi.fn();
+
+    createEmacsReadlineKeydownHandler()(event);
+    if (!defaultPrevented) appShortcut();
+    editorHandler();
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+    expect(appShortcut).not.toHaveBeenCalled();
+    expect(editorHandler).toHaveBeenCalledOnce();
+  });
+
+  it("leaves readline chords outside editable hosts available to app shortcuts", () => {
+    class TestElement {
+      closest(): null {
+        return null;
+      }
+    }
+    class TestInputElement {
+      readonly testElement = true;
+    }
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLInputElement", TestInputElement);
+    vi.stubGlobal("HTMLTextAreaElement", TestInputElement);
+
+    const appShortcut = vi.fn();
+    const preventDefault = vi.fn();
+    createEmacsReadlineKeydownHandler()({
+      ...keyboardEvent({ ctrlKey: true, key: "d" }),
+      preventDefault,
+      target: new TestElement(),
+    } as unknown as KeyboardEvent);
+    if (preventDefault.mock.calls.length === 0) appShortcut();
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(appShortcut).toHaveBeenCalledOnce();
   });
 });
 
