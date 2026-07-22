@@ -1,4 +1,8 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type KeybindingCommand,
+  type FilesystemBrowseEntry,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -109,6 +113,95 @@ export function buildProjectActionItems(input: {
       await input.runProject(project);
     },
   }));
+}
+
+export interface ProjectEnvironmentGroupLabel {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+export function buildProjectActionGroups(input: {
+  projects: ReadonlyArray<Project>;
+  environmentLabels: ReadonlyArray<ProjectEnvironmentGroupLabel>;
+  valuePrefix: string;
+  icon: (project: Project) => ReactNode;
+  runProject: (project: Project) => Promise<void>;
+  shortcutCommand?: KeybindingCommand;
+}): CommandPaletteGroup[] {
+  const labelByEnvironmentId = new Map(
+    input.environmentLabels.map((environment) => [environment.environmentId, environment.label]),
+  );
+  const projectsByEnvironmentId = new Map<EnvironmentId, Project[]>();
+  for (const project of input.projects) {
+    const environmentProjects = projectsByEnvironmentId.get(project.environmentId);
+    if (environmentProjects) {
+      environmentProjects.push(project);
+    } else {
+      projectsByEnvironmentId.set(project.environmentId, [project]);
+    }
+  }
+
+  // Environments in catalog order first, then any environment that only
+  // appears on a project (e.g. a machine removed from the catalog).
+  const orderedEnvironmentIds = [
+    ...input.environmentLabels.map((environment) => environment.environmentId),
+    ...projectsByEnvironmentId.keys(),
+  ];
+  const seenEnvironmentIds = new Set<EnvironmentId>();
+  const groups: CommandPaletteGroup[] = [];
+  for (const environmentId of orderedEnvironmentIds) {
+    if (seenEnvironmentIds.has(environmentId)) {
+      continue;
+    }
+    seenEnvironmentIds.add(environmentId);
+    const environmentProjects = projectsByEnvironmentId.get(environmentId);
+    if (!environmentProjects) {
+      continue;
+    }
+    const label = labelByEnvironmentId.get(environmentId) ?? environmentId;
+    groups.push({
+      value: `${input.valuePrefix}-environment:${environmentId}`,
+      label,
+      items: buildProjectActionItems({
+        projects: environmentProjects,
+        valuePrefix: input.valuePrefix,
+        icon: input.icon,
+        runProject: input.runProject,
+        ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      }).map((item) => ({ ...item, searchTerms: [...item.searchTerms, label] })),
+    });
+  }
+
+  // With a single known environment there is no machine to disambiguate, so
+  // keep the familiar flat "Projects" heading.
+  if (input.environmentLabels.length <= 1 && groups.length === 1 && groups[0]) {
+    return [{ ...groups[0], label: "Projects" }];
+  }
+  return groups;
+}
+
+export function prioritizeProjectGroupItem(
+  groups: ReadonlyArray<CommandPaletteGroup>,
+  currentItemValue: string | null,
+): CommandPaletteGroup[] {
+  if (currentItemValue === null) {
+    return [...groups];
+  }
+  const groupIndex = groups.findIndex((group) =>
+    group.items.some((item) => item.value === currentItemValue),
+  );
+  const currentGroup = groupIndex === -1 ? undefined : groups[groupIndex];
+  if (!currentGroup) {
+    return [...groups];
+  }
+  const reorderedGroup: CommandPaletteGroup = {
+    ...currentGroup,
+    items: [
+      ...currentGroup.items.filter((item) => item.value === currentItemValue),
+      ...currentGroup.items.filter((item) => item.value !== currentItemValue),
+    ],
+  };
+  return [reorderedGroup, ...groups.filter((_, index) => index !== groupIndex)];
 }
 
 export type BuildThreadActionItemsThread = Pick<
