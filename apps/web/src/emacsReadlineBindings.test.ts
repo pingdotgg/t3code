@@ -327,6 +327,11 @@ describe("applyEmacsReadlineActionToPlainText", () => {
     expect(apply("previous-line", value, 11).selectionStart).toBe(7);
   });
 
+  it("preserves code-point columns without landing inside surrogate pairs", () => {
+    expect(apply("forward-line", "a\n😀x", 1).selectionStart).toBe(4);
+    expect(apply("previous-line", "😀x\nab", 5).selectionStart).toBe(2);
+  });
+
   it("implements readline kill, discard, yank, and deletion behavior", () => {
     expect(apply("kill-line", "one two\nthree", 4)).toMatchObject({
       value: "one \nthree",
@@ -437,6 +442,21 @@ describe("applyEmacsReadlineActionToPlainTextControl", () => {
       applyEmacsReadlineActionToPlainTextControl(disabledControl, "backward-char", ""),
     ).toEqual({ handled: false });
     expect(disabledControl.setSelectionRange).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate or dispatch input for a boundary deletion no-op", () => {
+    const boundaryControl = control();
+    boundaryControl.selectionStart = boundaryControl.value.length;
+    boundaryControl.selectionEnd = boundaryControl.value.length;
+    const dispatchEvent = vi.fn();
+    Object.assign(boundaryControl, { dispatchEvent });
+
+    expect(
+      applyEmacsReadlineActionToPlainTextControl(boundaryControl, "delete-forward", ""),
+    ).toEqual({ handled: true });
+    expect(boundaryControl.setRangeText).not.toHaveBeenCalled();
+    expect(boundaryControl.setSelectionRange).toHaveBeenCalledWith(5, 5);
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 });
 

@@ -67,6 +67,10 @@ describe("resolveComposerReadlineReplacement", () => {
     ).toEqual([{ type: "text", text: "[file.ts](src/file.ts)" }]);
   });
 
+  it("keeps an empty inline-token insertion empty", () => {
+    expect(splitComposerReadlineInsertion("")).toEqual([]);
+  });
+
   it("stores readable terminal text instead of object-replacement placeholders", () => {
     const selectedText = `before ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} after`;
     const edit = applyEmacsReadlineActionToPlainText({

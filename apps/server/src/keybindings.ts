@@ -109,6 +109,22 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   );
 }
 
+function compileRuntimeKeybindingsConfig(
+  config: ReadonlyArray<KeybindingRule>,
+): ResolvedKeybindingsConfig {
+  const compiled: ResolvedKeybindingRule[] = [];
+  for (const rule of config) {
+    const source = DEFAULT_KEYBINDINGS.some((defaultRule) =>
+      isSameKeybindingRule(rule, defaultRule),
+    )
+      ? "default"
+      : "user";
+    const resolved = compileResolvedKeybindingRule(rule, source);
+    if (resolved) compiled.push(resolved);
+  }
+  return compiled.slice(-MAX_KEYBINDINGS_COUNT);
+}
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -448,7 +464,7 @@ const make = Effect.gen(function* () {
 
   const loadConfigStateFromDisk = loadRuntimeCustomKeybindingsConfig().pipe(
     Effect.map(({ keybindings, issues }) => ({
-      keybindings: mergeWithDefaultKeybindings(compileResolvedKeybindingsConfig(keybindings)),
+      keybindings: mergeWithDefaultKeybindings(compileRuntimeKeybindingsConfig(keybindings)),
       issues,
     })),
   );
@@ -664,7 +680,7 @@ const make = Effect.gen(function* () {
           }
           yield* writeConfigAtomically(cappedConfig);
           const nextResolved = mergeWithDefaultKeybindings(
-            compileResolvedKeybindingsConfig(cappedConfig),
+            compileRuntimeKeybindingsConfig(cappedConfig),
           );
           yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
             keybindings: nextResolved,
@@ -685,7 +701,7 @@ const make = Effect.gen(function* () {
           const nextConfig = customConfig.filter((entry) => !isSameKeybindingRule(entry, target));
           yield* writeConfigAtomically(nextConfig);
           const nextResolved = mergeWithDefaultKeybindings(
-            compileResolvedKeybindingsConfig(nextConfig),
+            compileRuntimeKeybindingsConfig(nextConfig),
           );
           yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
             keybindings: nextResolved,

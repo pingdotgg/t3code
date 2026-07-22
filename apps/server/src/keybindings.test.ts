@@ -188,6 +188,19 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("marks startup-written defaults as defaults in runtime snapshots", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+        return yield* keybindings.loadConfigState;
+      });
+
+      assert.equal(snapshot.keybindings.length, Keybindings.DEFAULT_KEYBINDINGS.length);
+      assert.isTrue(snapshot.keybindings.every((binding) => binding.source === "default"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("ships configurable thread navigation defaults", () =>
     Effect.sync(() => {
       const defaultsByCommand = new Map(

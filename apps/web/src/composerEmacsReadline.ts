@@ -43,7 +43,7 @@ export function splitComposerReadlineInsertion(
   }
   if (cursor < text.length) {
     segments.push({ type: "text", text: text.slice(cursor) });
-  } else if (segments.at(-1)?.type !== "text") {
+  } else if (segments.length > 0 && segments.at(-1)?.type !== "text") {
     // Inline-token grammar requires trailing whitespace. Preserve the chip
     // reconstructed at the kill-ring boundary by adding the same delimiter
     // used by autocomplete and paste insertion.

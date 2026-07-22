@@ -123,19 +123,19 @@ function lineEnd(value: string, position: number): number {
 function previousLinePosition(value: string, position: number): number {
   const currentStart = lineStart(value, position);
   if (currentStart === 0) return position;
-  const column = position - currentStart;
+  const column = codePointColumn(value, currentStart, position);
   const previousEnd = currentStart - 1;
   const previousStart = lineStart(value, previousEnd);
-  return Math.min(previousStart + column, previousEnd);
+  return positionAtCodePointColumn(value, previousStart, previousEnd, column);
 }
 
 function nextLinePosition(value: string, position: number): number {
   const currentStart = lineStart(value, position);
   const currentEnd = lineEnd(value, position);
   if (currentEnd === value.length) return position;
-  const column = position - currentStart;
+  const column = codePointColumn(value, currentStart, position);
   const nextStart = currentEnd + 1;
-  return Math.min(nextStart + column, lineEnd(value, nextStart));
+  return positionAtCodePointColumn(value, nextStart, lineEnd(value, nextStart), column);
 }
 
 function isWordCharacter(character: string): boolean {
@@ -161,6 +161,29 @@ function nextCodePointPosition(value: string, position: number): number {
     if (trailingUnit >= 0xdc00 && trailingUnit <= 0xdfff) return position + 2;
   }
   return position + 1;
+}
+
+function codePointColumn(value: string, start: number, position: number): number {
+  let cursor = start;
+  let column = 0;
+  while (cursor < position) {
+    cursor = nextCodePointPosition(value, cursor);
+    column += 1;
+  }
+  return column;
+}
+
+function positionAtCodePointColumn(
+  value: string,
+  start: number,
+  end: number,
+  column: number,
+): number {
+  let cursor = start;
+  for (let currentColumn = 0; currentColumn < column && cursor < end; currentColumn += 1) {
+    cursor = Math.min(nextCodePointPosition(value, cursor), end);
+  }
+  return cursor;
 }
 
 function codePointBefore(value: string, position: number): string {
@@ -476,7 +499,7 @@ export function applyEmacsReadlineActionToPlainTextControl(
     selectionEnd,
     yankText,
   });
-  if (edit.inputType) {
+  if (edit.inputType && edit.value !== control.value) {
     control.setRangeText(edit.value, 0, control.value.length, "end");
     control.setSelectionRange(edit.selectionStart, edit.selectionEnd);
     dispatchInputEvent(control, edit.inputType, inputEventDataForPlainTextEdit(edit));
