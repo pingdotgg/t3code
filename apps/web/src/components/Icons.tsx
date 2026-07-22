@@ -211,6 +211,18 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const SazabiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
+  >
+    <path d="M12 1.5c.45 4.6.9 5.05 5.5 5.5 1.9.19 3.02 2.36 2.5 4.5-4.6.45-5.05.9-5.5 5.5-.45-4.6-.9-5.05-5.5-5.5-4.6-.45-5.05-.9-5.5-5.5 4.6-.45 5.05-.9 5.5-5.5 0-.18.34-.18.5 0z" />
+    <path d="M18.5 15c.22 2.28.45 2.5 2.75 2.75-2.3.25-2.53.47-2.75 2.75-.22-2.28-.45-2.5-2.75-2.75 2.3-.25 2.53-.47 2.75-2.75z" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

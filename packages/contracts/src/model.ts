@@ -132,8 +132,18 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const SAZABI_DRIVER_KIND = ProviderDriverKind.make("sazabi");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
+
+/**
+ * Placeholder default model slug for the Sazabi cloud provider (scaffold).
+ *
+ * TODO(T2): replace with the real Sazabi model catalogue once the public API
+ * exposes `models` discovery. Kept as a single stable slug so a scaffolded
+ * instance still resolves a default selection in the UI.
+ */
+export const DEFAULT_SAZABI_MODEL = "sazabi-default";
 
 /**
  * Codex default-model preference, most preferred first. The provider snapshot
@@ -152,6 +162,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [SAZABI_DRIVER_KIND]: DEFAULT_SAZABI_MODEL,
 };
 
 /** Per-provider text generation model defaults. */
@@ -162,6 +173,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [SAZABI_DRIVER_KIND]: DEFAULT_SAZABI_MODEL,
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -218,4 +230,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [SAZABI_DRIVER_KIND]: "Sazabi",
 };

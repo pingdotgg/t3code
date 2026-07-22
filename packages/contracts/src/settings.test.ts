@@ -6,6 +6,8 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
+  SAZABI_TOKEN_ENV_VAR,
+  SazabiSettings,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -15,6 +17,7 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeSazabiSettings = Schema.decodeUnknownSync(SazabiSettings);
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -105,6 +108,52 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         providerInstances: { "1bad": { driver: "codex" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("SazabiSettings (cloud provider scaffold)", () => {
+  it("defaults to a disabled, credential-free scaffold", () => {
+    const decoded = decodeSazabiSettings({});
+    expect(decoded.enabled).toBe(false);
+    expect(decoded.apiBaseUrl).toBe("");
+    expect(decoded.projectId).toBe("");
+    expect(decoded.binaryPath).toBe("");
+    expect(decoded.customModels).toEqual([]);
+    // The API token is deliberately absent from the schema — it is read from
+    // the environment (SAZABI_TOKEN) so no secret is persisted to disk.
+    expect(decoded).not.toHaveProperty("apiToken");
+    expect(decoded).not.toHaveProperty("token");
+    expect(SAZABI_TOKEN_ENV_VAR).toBe("SAZABI_TOKEN");
+  });
+
+  it("trims and retains the cloud connection fields", () => {
+    const decoded = decodeSazabiSettings({
+      enabled: true,
+      apiBaseUrl: "  https://api.example.dev  ",
+      projectId: "  proj_123  ",
+      binaryPath: "  sazabi  ",
+    });
+    expect(decoded.enabled).toBe(true);
+    expect(decoded.apiBaseUrl).toBe("https://api.example.dev");
+    expect(decoded.projectId).toBe("proj_123");
+    expect(decoded.binaryPath).toBe("sazabi");
+  });
+
+  it("hydrates providers.sazabi with scaffold defaults for legacy configs", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.providers.sazabi.enabled).toBe(false);
+    expect(decoded.providers.sazabi.apiBaseUrl).toBe("");
+  });
+
+  it("trims sazabi patch fields", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        sazabi: { enabled: true, apiBaseUrl: "  https://x.dev  ", projectId: "  p  " },
+      },
+    });
+    expect(patch.providers?.sazabi?.enabled).toBe(true);
+    expect(patch.providers?.sazabi?.apiBaseUrl).toBe("https://x.dev");
+    expect(patch.providers?.sazabi?.projectId).toBe("p");
   });
 });
 

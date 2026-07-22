@@ -376,6 +376,97 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+/**
+ * Environment variable the Sazabi cloud provider reads its API token from.
+ *
+ * Sazabi is a **cloud** provider (Path A): the driver talks to the Sazabi
+ * public API over HTTP/SSE rather than wrapping a local ACP CLI. Auth is
+ * therefore an API token, not an interactive CLI login.
+ *
+ * The token is intentionally NOT a persisted settings field — we do not want
+ * to write a bearer secret to `settings.json` in plaintext. Instead it flows
+ * in through the process environment (or a per-instance, `sensitive`
+ * `ProviderInstanceEnvironment` variable, which the registry already keeps out
+ * of the settings file). The probe treats the presence of this variable as the
+ * signal that the provider is usable.
+ */
+export const SAZABI_TOKEN_ENV_VAR = "SAZABI_TOKEN" as const;
+
+/**
+ * Placeholder default base URL for the Sazabi public API.
+ *
+ * TODO(T2): confirm the canonical production base URL against the Sazabi
+ * public API once the streaming/cancel endpoints land in the sibling
+ * monorepo. Until then this is only used as the fallback when
+ * `SazabiSettings.apiBaseUrl` is left blank; the scaffolded adapter does not
+ * issue real requests yet.
+ */
+export const DEFAULT_SAZABI_API_BASE_URL = "https://api.sazabi.dev" as const;
+
+/**
+ * Settings for the Sazabi cloud provider.
+ *
+ * Scaffold only (PR T1). The real streaming adapter + cancel wiring arrive in
+ * PR T2 once the Sazabi public API is available. Fields here describe how to
+ * reach the cloud service; the bearer token is supplied via the
+ * `SAZABI_TOKEN` environment variable (see {@link SAZABI_TOKEN_ENV_VAR}) and is
+ * deliberately absent from this schema so no secret is persisted to disk.
+ *
+ * `binaryPath` is optional and only used for an auxiliary CLI presence/`whoami`
+ * probe when a `sazabi` CLI happens to be installed; availability does not
+ * require it.
+ */
+export const SazabiSettings = makeProviderSettingsSchema(
+  {
+    // Defaults off: the streaming adapter is not implemented until PR T2, so we
+    // keep the provider opt-in (mirrors Cursor) rather than surfacing an error
+    // state for every user before the cloud integration is usable.
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiBaseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API base URL",
+        description: "Override the Sazabi public API base URL for this instance.",
+        providerSettingsForm: {
+          placeholder: DEFAULT_SAZABI_API_BASE_URL,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    projectId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Project ID",
+        description: "Optional Sazabi project this instance scopes runs to.",
+        providerSettingsForm: {
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    binaryPath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "CLI path (optional)",
+        description:
+          "Path to a `sazabi` CLI, used only for an auxiliary availability/whoami probe. Not required for the cloud provider.",
+        providerSettingsForm: { placeholder: "sazabi", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiBaseUrl", "projectId", "binaryPath"],
+  },
+);
+export type SazabiSettings = typeof SazabiSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -420,6 +511,7 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    sazabi: SazabiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -523,6 +615,14 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const SazabiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiBaseUrl: Schema.optionalKey(TrimmedString),
+  projectId: Schema.optionalKey(TrimmedString),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -545,6 +645,7 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      sazabi: Schema.optionalKey(SazabiSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
