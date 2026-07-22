@@ -596,6 +596,26 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("marks the origin default ref as default when no local copy exists", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/only-local"]);
+        yield* git(cwd, ["branch", "-D", initialBranch]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const refs = yield* driver.listRefs({ cwd });
+        const remoteDefault = refs.refs.find((ref) => ref.name === `origin/${initialBranch}`);
+        assert.equal(remoteDefault?.isRemote, true);
+        assert.equal(remoteDefault?.isDefault, true);
+      }),
+    );
+
     it.effect("creates, checks out, renames, and lists refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

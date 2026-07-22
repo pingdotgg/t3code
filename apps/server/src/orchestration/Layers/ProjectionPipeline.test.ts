@@ -171,6 +171,70 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
+
+      // Settled lifecycle through the DB pipeline: thread.settled writes the
+      // override + timestamp, thread.unsettled(user) flips to the active pin.
+      yield* eventStore.append({
+        type: "thread.settled",
+        eventId: EventId.make("evt-settle-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: CommandId.make("cmd-settle-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-settle-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          settledAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const settledRows = yield* sql<{
+        readonly settledOverride: string | null;
+        readonly settledAt: string | null;
+      }>`
+        SELECT
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(settledRows, [
+        { settledOverride: "settled", settledAt: "2026-01-01T00:00:01.000Z" },
+      ]);
+
+      yield* eventStore.append({
+        type: "thread.unsettled",
+        eventId: EventId.make("evt-unsettle-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        commandId: CommandId.make("cmd-unsettle-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-unsettle-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          reason: "user",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const unsettledRows = yield* sql<{
+        readonly settledOverride: string | null;
+        readonly settledAt: string | null;
+      }>`
+        SELECT
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(unsettledRows, [{ settledOverride: "active", settledAt: null }]);
     }),
   );
 });
@@ -2399,6 +2463,74 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 });
+
+it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
+  "OrchestrationProjectionPipeline pending turn cleanup",
+  (it) => {
+    it.effect("clears pending turn starts when startup reaches a terminal session state", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        for (const [index, status] of (["error", "interrupted", "stopped"] as const).entries()) {
+          const threadId = ThreadId.make(`thread-terminal-${status}`);
+          const requestedAt = `2026-02-26T14:00:0${index}.000Z`;
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-terminal-pending-${status}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make(`cmd-terminal-pending-${status}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-terminal-pending-${status}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-terminal-${status}`),
+              runtimeMode: "approval-required",
+              createdAt: requestedAt,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make(`evt-terminal-session-${status}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make(`cmd-terminal-session-${status}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-terminal-session-${status}`),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status,
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: null,
+                lastError: status === "error" ? "startup failed" : null,
+                updatedAt: requestedAt,
+              },
+            },
+          });
+        }
+
+        yield* projectionPipeline.bootstrap;
+
+        const pendingRows = yield* sql<{ readonly threadId: string }>`
+          SELECT thread_id AS "threadId"
+          FROM projection_turns
+          WHERE turn_id IS NULL
+            AND state = 'pending'
+        `;
+        assert.deepEqual(pendingRows, []);
+      }),
+    );
+  },
+);
 
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
   Effect.gen(function* () {
