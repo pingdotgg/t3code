@@ -98,4 +98,44 @@ describe("checkPiProviderStatus", () => {
       ),
     ),
   );
+
+  it.effect("does not treat a failed version command as usable", () =>
+    withProcessResult(
+      Effect.succeed({
+        stdout: "pi 0.81.1\n",
+        stderr: "fatal error",
+        code: 1,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    ).pipe(
+      Effect.tap((snapshot) =>
+        Effect.sync(() => {
+          expect(snapshot.status).toBe("error");
+          expect(snapshot.message).toContain("version check failed");
+        }),
+      ),
+    ),
+  );
+
+  it.effect("does not treat a timed-out version command as usable", () =>
+    withProcessResult(
+      Effect.succeed({
+        stdout: "",
+        stderr: "",
+        code: null,
+        timedOut: true,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    ).pipe(
+      Effect.tap((snapshot) =>
+        Effect.sync(() => {
+          expect(snapshot.status).toBe("error");
+          expect(snapshot.message).toContain("timed out");
+        }),
+      ),
+    ),
+  );
 });

@@ -76,6 +76,25 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
+  if (result.right.timedOut || result.right.code !== 0) {
+    return buildServerProvider({
+      driver: PI_DRIVER,
+      presentation: PI_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: result.right.timedOut
+          ? "Pi CLI version check timed out. Check the selected binary and try again."
+          : "Pi CLI version check failed. Check the selected binary and try again.",
+      },
+    });
+  }
+
   const parsed = parsePiVersion(`${result.right.stdout}\n${result.right.stderr}`);
   if (parsed._tag === "Invalid") {
     return buildServerProvider({
