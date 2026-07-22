@@ -22,6 +22,11 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  connectionProbe: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.settle / thread.unsettle commands. Absent on
+      pre-settlement servers, so clients treat missing as unsupported and
+      never send the commands under version skew. */
+  threadSettlement: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  archiveSelectedThreadEntries,
+  buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -16,8 +18,10 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
+  resolveSidebarV2Status,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -37,6 +41,73 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("archiveSelectedThreadEntries", () => {
+  const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
+  const success = { _tag: "Success" } as const;
+  const failure = { _tag: "Failure" } as const;
+
+  it("records every entry after full success", async () => {
+    const outcome = await archiveSelectedThreadEntries({
+      entries,
+      archive: async (_entry, onArchived) => {
+        onArchived();
+        return success;
+      },
+    });
+
+    expect(outcome).toEqual({
+      archivedThreadKeys: ["one", "two", "three"],
+      mutationFailure: null,
+      followupFailures: [],
+    });
+  });
+
+  it("stops at a mutation failure and retains prior successes", async () => {
+    const archive = vi.fn(async (entry: (typeof entries)[number], onArchived: () => void) => {
+      if (entry.threadKey === "two") return failure;
+      onArchived();
+      return success;
+    });
+    const outcome = await archiveSelectedThreadEntries({ entries, archive });
+
+    expect(archive).toHaveBeenCalledTimes(2);
+    expect(outcome).toEqual({
+      archivedThreadKeys: ["one"],
+      mutationFailure: failure,
+      followupFailures: [],
+    });
+  });
+
+  it("continues after a post-archive failure", async () => {
+    const archive = vi.fn(async (entry: (typeof entries)[number], onArchived: () => void) => {
+      onArchived();
+      return entry.threadKey === "two" ? failure : success;
+    });
+    const outcome = await archiveSelectedThreadEntries({ entries, archive });
+
+    expect(archive).toHaveBeenCalledTimes(3);
+    expect(outcome).toEqual({
+      archivedThreadKeys: ["one", "two", "three"],
+      mutationFailure: null,
+      followupFailures: [failure],
+    });
+  });
+});
+
+describe("buildMultiSelectThreadContextMenuItems", () => {
+  it("offers bulk archive with the selected count", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+    ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
+  });
+
+  it("disables bulk archive when a selected thread is running", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+    ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
 
 describe("resolveSidebarStageBadgeLabel", () => {
   it("returns Nightly for nightly primary server versions", () => {
@@ -565,6 +636,100 @@ describe("isContextMenuPointerDown", () => {
   });
 });
 
+describe("resolveSidebarV2Status", () => {
+  const session = {
+    threadId: ThreadId.make("thread-1"),
+    status: "running" as const,
+    providerName: "Codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    activeTurnId: "turn-1" as never,
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  };
+
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+
+  it("prioritizes approval over a running session", () => {
+    expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
+      "approval",
+    );
+  });
+
+  it("prioritizes awaiting input over a running session, below approval", () => {
+    expect(resolveSidebarV2Status({ ...idle, hasPendingUserInput: true, session })).toBe("input");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingApprovals: true,
+        hasPendingUserInput: true,
+        session,
+      }),
+    ).toBe("approval");
+  });
+
+  it("reports working for running and starting sessions", () => {
+    expect(resolveSidebarV2Status({ ...idle, session })).toBe("working");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "starting" as const },
+      }),
+    ).toBe("working");
+  });
+
+  it("reports failed only while the session status is error", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "stopped" as const, lastError: "persisted" },
+      }),
+    ).toBe("ready");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "ready" as const, lastError: "persisted" },
+      }),
+    ).toBe("ready");
+  });
+
+  it("defaults to ready with no session", () => {
+    expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("sortThreadsForSidebarV2", () => {
+  const sortable = (input: { id: string; createdAt: string }) => ({
+    id: input.id,
+    createdAt: input.createdAt,
+  });
+
+  it("orders by creation time, newest first, ignoring activity", () => {
+    const sorted = sortThreadsForSidebarV2([
+      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
+      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+  });
+
+  it("breaks creation-time ties by id so the order is stable", () => {
+    const sorted = sortThreadsForSidebarV2([
+      sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
     hasActionableProposedPlan: false,
@@ -831,6 +996,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     proposedPlans: [],
     createdAt: "2026-03-09T10:00:00.000Z",
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,

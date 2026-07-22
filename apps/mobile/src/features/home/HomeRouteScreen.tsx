@@ -4,7 +4,6 @@ import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { renderCompactBrandTitle } from "../../components/CompactBrandTitle";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -29,7 +28,8 @@ export function HomeRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
-  const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
+    useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -87,9 +87,7 @@ export function HomeRouteScreen() {
     >
       <>
         {/* Restore the compact title in case the split branch blanked it. */}
-        <NativeStackScreenOptions
-          options={{ title: "T3 Code", headerTitle: renderCompactBrandTitle }}
-        />
+        <NativeStackScreenOptions options={{ title: "Threads", headerTitle: "Threads" }} />
         <HomeHeader
           environments={environments}
           searchQuery={searchQuery}
@@ -114,6 +112,8 @@ export function HomeRouteScreen() {
           }
           onArchiveThread={archiveThread}
           onDeleteThread={confirmDeleteThread}
+          onSettleThread={settleThread}
+          onUnsettleThread={unsettleThread}
           onEnvironmentChange={setSelectedEnvironmentId}
           onOpenEnvironments={() =>
             navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
@@ -123,6 +123,8 @@ export function HomeRouteScreen() {
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={(thread) => {
+            // Settled threads are live shells: opening one is plain
+            // navigation, and sending a message un-settles server-side.
             navigation.navigate("Thread", {
               environmentId: thread.environmentId,
               threadId: thread.id,

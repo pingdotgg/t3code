@@ -171,6 +171,70 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
+
+      // Settled lifecycle through the DB pipeline: thread.settled writes the
+      // override + timestamp, thread.unsettled(user) flips to the active pin.
+      yield* eventStore.append({
+        type: "thread.settled",
+        eventId: EventId.make("evt-settle-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: CommandId.make("cmd-settle-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-settle-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          settledAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const settledRows = yield* sql<{
+        readonly settledOverride: string | null;
+        readonly settledAt: string | null;
+      }>`
+        SELECT
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(settledRows, [
+        { settledOverride: "settled", settledAt: "2026-01-01T00:00:01.000Z" },
+      ]);
+
+      yield* eventStore.append({
+        type: "thread.unsettled",
+        eventId: EventId.make("evt-unsettle-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        commandId: CommandId.make("cmd-unsettle-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-unsettle-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          reason: "user",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const unsettledRows = yield* sql<{
+        readonly settledOverride: string | null;
+        readonly settledAt: string | null;
+      }>`
+        SELECT
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(unsettledRows, [{ settledOverride: "active", settledAt: null }]);
     }),
   );
 });
