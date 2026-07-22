@@ -690,22 +690,36 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         agentsResult = a2;
       }
 
-      // Degrade gracefully on failure — return empty inventory (warning status, not error)
-      let connected: string[] = [];
-      let allProviders: ProviderListResponse["all"] = [];
-      if (modelsResult._tag === "Success" && modelsResult.value.code === 0) {
-        const parsed = parseModelsCliOutput(modelsResult.value.stdout);
-        connected = [...parsed.connected];
-        allProviders = [...parsed.providers.values()].map((p) => ({
-          id: p.id,
-          name: p.name,
+      if (modelsResult._tag === "Failure") {
+        const cause = Cause.squash(modelsResult.cause);
+        return yield* ensureRuntimeError(
+          "loadInventoryFromCli",
+          `Failed to load OpenCode models: ${openCodeRuntimeErrorDetail(cause)}`,
+          cause,
+        );
+      }
+      if (modelsResult.value.code !== 0) {
+        return yield* new OpenCodeRuntimeError({
+          operation: "loadInventoryFromCli",
+          detail: `OpenCode models command exited with code ${modelsResult.value.code}.`,
+        });
+      }
+
+      const parsed = parseModelsCliOutput(modelsResult.value.stdout);
+      const connected = [...parsed.connected];
+      const allProviders: ProviderListResponse["all"] = [...parsed.providers.values()].map(
+        (provider) => ({
+          id: provider.id,
+          name: provider.name,
           source: "config" as const,
           env: [],
           options: {},
-          models: p.models,
-        }));
-      }
+          models: provider.models,
+        }),
+      );
 
+      // Agent metadata enriches model capabilities but is not required for an
+      // authoritative model inventory, so it may still degrade to an empty list.
       let agents: ReadonlyArray<Agent> = [];
       if (agentsResult._tag === "Success" && agentsResult.value.code === 0) {
         agents = parseAgentListCliOutput(agentsResult.value.stdout);
