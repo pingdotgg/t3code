@@ -9,6 +9,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { play } from "cuelume";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -27,7 +28,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -47,7 +48,18 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useThreadShells,
+} from "../state/entities";
+import {
+  captureThreadSoundState,
+  captureThreadSoundStateWhileSettingsHydrating,
+  deriveInteractionSoundCues,
+  type ThreadSoundStateByKey,
+} from "../interactionSounds";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -134,11 +146,39 @@ function RootRouteView() {
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        <InteractionSoundCoordinator />
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function InteractionSoundCoordinator() {
+  const threads = useThreadShells();
+  const completionSoundEnabled = useClientSettings((settings) => settings.enableCompletionSounds);
+  const settingsHydrated = useClientSettingsHydrated();
+  const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
+
+  useEffect(() => {
+    if (!settingsHydrated) {
+      previousStateRef.current = captureThreadSoundStateWhileSettingsHydrating(
+        previousStateRef.current,
+        threads,
+      );
+      return;
+    }
+
+    const previous = previousStateRef.current;
+    if (completionSoundEnabled && previous !== null) {
+      for (const cue of deriveInteractionSoundCues(previous, threads)) {
+        play(cue);
+      }
+    }
+    previousStateRef.current = captureThreadSoundState(threads);
+  }, [completionSoundEnabled, settingsHydrated, threads]);
+
+  return null;
 }
 
 function DocumentTitleSync() {
