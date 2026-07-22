@@ -71,4 +71,55 @@ it.layer(NodeServices.layer)("goal decider", (it) => {
       });
     }),
   );
+
+  it.effect("wakes settled threads for goal requests and provider goal sync", () =>
+    Effect.gen(function* () {
+      const setResult = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.goal.set",
+          commandId: CommandId.make("command-goal-settled-start"),
+          threadId,
+          objective: "Ship goal support",
+          status: "active",
+          createdAt: now,
+        },
+        readModel: {
+          ...createEmptyReadModel(now),
+          threads: [{ ...thread, settledOverride: "settled", settledAt: now }],
+        },
+      });
+      const setEvents = Array.isArray(setResult) ? setResult : [setResult];
+      expect(setEvents.map((event) => event.type)).toEqual([
+        "thread.unsettled",
+        "thread.goal-set-requested",
+      ]);
+
+      const syncResult = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.goal.sync",
+          commandId: CommandId.make("command-goal-active-sync"),
+          threadId,
+          goal: {
+            objective: "Ship goal support",
+            status: "active",
+            tokenBudget: null,
+            tokensUsed: 100,
+            timeUsedSeconds: 10,
+            createdAt: now,
+            updatedAt: now,
+          },
+          createdAt: now,
+        },
+        readModel: {
+          ...createEmptyReadModel(now),
+          threads: [{ ...thread, settledOverride: "active" }],
+        },
+      });
+      const syncEvents = Array.isArray(syncResult) ? syncResult : [syncResult];
+      expect(syncEvents.map((event) => event.type)).toEqual([
+        "thread.unsettled",
+        "thread.goal-updated",
+      ]);
+    }),
+  );
 });

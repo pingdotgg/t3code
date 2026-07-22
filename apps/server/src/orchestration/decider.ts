@@ -589,7 +589,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.goal.set": {
-      yield* requireThread({ readModel, command, threadId: command.threadId });
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
       if (
         command.objective === undefined &&
         command.status === undefined &&
@@ -600,7 +600,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: "A goal update must include an objective, status, or token budget.",
         });
       }
-      return {
+      const goalSetRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -619,6 +619,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+      if (thread.settledOverride === null) {
+        return goalSetRequestedEvent;
+      }
+      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: "activity",
+          updatedAt: command.createdAt,
+        },
+      };
+      return [unsettledEvent, goalSetRequestedEvent];
     }
 
     case "thread.goal.clear": {
@@ -636,8 +654,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.goal.sync": {
-      yield* requireThread({ readModel, command, threadId: command.threadId });
-      return {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const goalUpdatedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -647,6 +665,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.goal-updated",
         payload: { threadId: command.threadId, goal: command.goal },
       };
+      if (thread.settledOverride === null) {
+        return goalUpdatedEvent;
+      }
+      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsettled",
+        payload: {
+          threadId: command.threadId,
+          reason: "activity",
+          updatedAt: command.createdAt,
+        },
+      };
+      return [unsettledEvent, goalUpdatedEvent];
     }
 
     case "thread.goal.sync-clear": {
