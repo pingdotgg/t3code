@@ -13,6 +13,10 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+export const KeyboardEditingMode = Schema.Literals(["default", "emacs"]);
+export type KeyboardEditingMode = typeof KeyboardEditingMode.Type;
+export const DEFAULT_KEYBOARD_EDITING_MODE: KeyboardEditingMode = "default";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -86,6 +90,9 @@ export const ClientSettingsSchema = Schema.Struct({
       model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  keyboardEditingMode: KeyboardEditingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_KEYBOARD_EDITING_MODE)),
+  ),
   providerModelPreferences: Schema.Record(
     ProviderInstanceId,
     Schema.Struct({
@@ -582,6 +589,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  keyboardEditingMode: Schema.optionalKey(KeyboardEditingMode),
   providerModelPreferences: Schema.optionalKey(
     Schema.Record(
       ProviderInstanceId,

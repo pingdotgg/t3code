@@ -120,6 +120,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const KEYBOARD_EDITING_MODE_LABELS = {
+  default: "Browser default",
+  emacs: "Emacs / readline",
+} as const;
+
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 function withoutProviderInstanceKey<V>(
@@ -404,6 +409,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.keyboardEditingMode !== DEFAULT_UNIFIED_SETTINGS.keyboardEditingMode
+        ? ["Keyboard editing mode"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -460,6 +468,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
+      settings.keyboardEditingMode,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -481,6 +490,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      keyboardEditingMode: DEFAULT_UNIFIED_SETTINGS.keyboardEditingMode,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -667,6 +677,47 @@ export function GeneralSettingsPanel() {
               }}
               aria-label="Project Grouping"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Keyboard editing mode"
+          description="Emacs / readline enables familiar Control and Alt editing shortcuts in text fields, plus Control-N and Control-P in candidate pickers."
+          resetAction={
+            settings.keyboardEditingMode !== DEFAULT_UNIFIED_SETTINGS.keyboardEditingMode ? (
+              <SettingResetButton
+                label="keyboard editing mode"
+                onClick={() =>
+                  updateSettings({
+                    keyboardEditingMode: DEFAULT_UNIFIED_SETTINGS.keyboardEditingMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.keyboardEditingMode}
+              onValueChange={(value) => {
+                if (value === "default" || value === "emacs") {
+                  updateSettings({ keyboardEditingMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Keyboard editing mode">
+                <SelectValue>
+                  {KEYBOARD_EDITING_MODE_LABELS[settings.keyboardEditingMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="default">
+                  {KEYBOARD_EDITING_MODE_LABELS.default}
+                </SelectItem>
+                <SelectItem hideIndicator value="emacs">
+                  {KEYBOARD_EDITING_MODE_LABELS.emacs}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

@@ -49,6 +49,21 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings keyboard editing mode", () => {
+  it("defaults to native browser editing", () => {
+    expect(decodeClientSettings({}).keyboardEditingMode).toBe("default");
+  });
+
+  it("accepts Emacs/readline editing", () => {
+    expect(decodeClientSettings({ keyboardEditingMode: "emacs" }).keyboardEditingMode).toBe(
+      "emacs",
+    );
+    expect(decodeClientSettingsPatch({ keyboardEditingMode: "emacs" }).keyboardEditingMode).toBe(
+      "emacs",
+    );
+  });
+});
+
 describe("ClientSettings sidebar v2", () => {
   it("defaults the beta off with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
