@@ -1109,8 +1109,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
-  // Soft-fail FS skill discovery for the `$` menu snapshot. Use the same
-  // workspace cwd as session start / send-path apply (ServerConfig.cwd via driver).
+  // Soft-fail FS skill discovery for the `$` menu snapshot.
+  // Provider status is process-wide: this `cwd` is ServerConfig.cwd (via driver).
+  // Send-apply also scans session cwd + this same ServerConfig.cwd so listed
+  // skills remain applicable when a thread/worktree cwd diverges.
   const discoveredSkills = yield* discoverCursorSkills({
     projectCwd: cwd,
   }).pipe(Effect.orElseSucceed(() => [] as const));

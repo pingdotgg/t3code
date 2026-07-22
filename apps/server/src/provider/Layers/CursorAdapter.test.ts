@@ -1495,4 +1495,98 @@ Always verify tests before shipping.
       assert.notMatch(textPart, /\$ship-it\b/);
     }),
   );
+
+  it.effect("applies listed Cursor skills from ServerConfig.cwd when session cwd diverges", () => {
+    // Provider `$` listing uses ServerConfig.cwd; threads/worktrees may use a
+    // different session cwd. Send-apply must still resolve skills that the
+    // menu listed from the process-wide listing root.
+    return Effect.gen(function* () {
+      const listingCwd = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-skill-listing-cwd-")),
+      );
+      const sessionCwd = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-skill-session-cwd-")),
+      );
+      const skillDir = NodePath.join(listingCwd, ".cursor", "skills", "ship-it");
+      yield* Effect.promise(() => NodeFSP.mkdir(skillDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(skillDir, "SKILL.md"),
+          `---
+name: ship-it
+description: Ships changes carefully
+---
+
+# Ship It
+
+Apply listed workspace skill even from a worktree session.
+`,
+          "utf8",
+        ),
+      );
+
+      const divergedAdapterLayer = Layer.effect(
+        CursorAdapter,
+        Effect.gen(function* () {
+          const cursorConfig = decodeCursorSettings({});
+          const resolveSettings = yield* makeResolveCursorSettings;
+          return yield* makeCursorAdapter(cursorConfig, { resolveSettings });
+        }),
+      ).pipe(
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(
+          ServerConfig.layerTest(listingCwd, {
+            prefix: "t3code-cursor-adapter-skill-cwd-",
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const adapter = yield* CursorAdapter;
+        const serverSettings = yield* ServerSettingsService;
+        const threadId = ThreadId.make("cursor-skill-cwd-diverge");
+
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-skill-cwd-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const argvLogPath = NodePath.join(tempDir, "argv.txt");
+        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+        const wrapperPath = yield* Effect.promise(() =>
+          makeProbeWrapper(requestLogPath, argvLogPath),
+        );
+        yield* serverSettings.updateSettings({
+          providers: { cursor: { binaryPath: wrapperPath } },
+        });
+
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: sessionCwd,
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        });
+
+        yield* adapter.sendTurn({
+          threadId,
+          input: "$ship-it prepare the release",
+          attachments: [],
+        });
+        yield* adapter.stopSession(threadId);
+
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        const promptRequest = requests.find((entry) => entry.method === "session/prompt");
+        assert.isDefined(promptRequest);
+        const prompt = (
+          promptRequest?.params as { prompt?: Array<{ type?: string; text?: string }> }
+        )?.prompt;
+        const textPart = prompt?.find((part) => part.type === "text")?.text ?? "";
+        assert.include(textPart, "Apply listed workspace skill even from a worktree session.");
+        assert.include(textPart, "prepare the release");
+        assert.include(textPart, "Skill `ship-it` (applied by T3 Code for Cursor ACP):");
+        assert.notMatch(textPart, /\$ship-it\b/);
+      }).pipe(Effect.provide(divergedAdapterLayer));
+    });
+  });
 });

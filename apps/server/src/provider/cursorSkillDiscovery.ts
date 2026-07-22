@@ -29,7 +29,18 @@ const CURSOR_SKILLS_REL = NodePath.join(".cursor", "skills");
 const CURSOR_SKILL_MENTION_RE = /\$([a-z0-9]+(?:-[a-z0-9]+)*)\b/gi;
 
 export interface CursorSkillRoots {
+  /**
+   * Primary project cwd (session/thread cwd on send-apply).
+   * Scanned first so worktree-local skills win on name collision.
+   */
   readonly projectCwd?: string | null | undefined;
+  /**
+   * Extra project roots scanned after `projectCwd`.
+   * Send-apply passes `ServerConfig.cwd` here so `$` menu skills (provider
+   * snapshot, process-wide) still resolve when session cwd diverges
+   * (worktree/thread). Deduped against `projectCwd` after path resolve.
+   */
+  readonly additionalProjectCwds?: ReadonlyArray<string | null | undefined>;
   readonly userHome?: string | null | undefined;
 }
 
@@ -44,14 +55,36 @@ export interface DiscoveredCursorSkill {
   readonly shortDescription?: string;
 }
 
+function normalizeProjectCwds(
+  primary: string | null | undefined,
+  additional: ReadonlyArray<string | null | undefined> | undefined,
+): ReadonlyArray<string> {
+  const out: Array<string> = [];
+  const seen = new Set<string>();
+  for (const raw of [primary, ...(additional ?? [])]) {
+    const trimmed = raw?.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const resolved = NodePath.resolve(trimmed);
+    if (seen.has(resolved)) {
+      continue;
+    }
+    seen.add(resolved);
+    out.push(resolved);
+  }
+  return out;
+}
+
 export function resolveCursorSkillRoots(input: CursorSkillRoots = {}): {
-  readonly projectSkillsDir: string | null;
+  /** Ordered project skill dirs (primary first). Empty when no project cwd. */
+  readonly projectSkillsDirs: ReadonlyArray<string>;
   readonly userSkillsDir: string | null;
 } {
-  const projectCwd = input.projectCwd?.trim() || null;
+  const projectCwds = normalizeProjectCwds(input.projectCwd, input.additionalProjectCwds);
   const userHome = (input.userHome ?? NodeOS.homedir()).trim() || null;
   return {
-    projectSkillsDir: projectCwd ? NodePath.join(projectCwd, CURSOR_SKILLS_REL) : null,
+    projectSkillsDirs: projectCwds.map((cwd) => NodePath.join(cwd, CURSOR_SKILLS_REL)),
     userSkillsDir: userHome ? NodePath.join(userHome, CURSOR_SKILLS_REL) : null,
   };
 }
@@ -128,6 +161,8 @@ export function parseCursorSkillMarkdown(
  */
 export async function discoverCursorSkillsWithFs(
   roots: {
+    readonly projectSkillsDirs?: ReadonlyArray<string | null | undefined>;
+    /** @deprecated Prefer `projectSkillsDirs`. Kept for call-site convenience. */
     readonly projectSkillsDir?: string | null;
     readonly userSkillsDir?: string | null;
   },
@@ -172,8 +207,14 @@ export async function discoverCursorSkillsWithFs(
     }
   };
 
-  // Project skills win over user skills on name collision.
-  await scanRoot(roots.projectSkillsDir, "repo");
+  const projectDirs = [
+    ...(roots.projectSkillsDirs ?? []),
+    ...(roots.projectSkillsDir ? [roots.projectSkillsDir] : []),
+  ];
+  // Earlier project roots win on name collision; project wins over user.
+  for (const projectDir of projectDirs) {
+    await scanRoot(projectDir, "repo");
+  }
   await scanRoot(roots.userSkillsDir, "user");
 
   return discovered;
@@ -252,7 +293,9 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
       }
     });
 
-  yield* scanRoot(roots.projectSkillsDir, "repo");
+  for (const projectDir of roots.projectSkillsDirs) {
+    yield* scanRoot(projectDir, "repo");
+  }
   yield* scanRoot(roots.userSkillsDir, "user");
   return discovered;
 });

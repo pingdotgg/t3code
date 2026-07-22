@@ -964,9 +964,14 @@ export function makeCursorAdapter(
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
             // Codex-style `$name` is inert under Cursor ACP. Rediscover FS skills
-            // for this session cwd and inject matched SKILL.md bodies before prompt.
+            // and inject matched SKILL.md bodies before prompt.
+            // Scan session cwd first (thread/worktree), then ServerConfig.cwd
+            // (provider `$` snapshot source) so listed skills still apply when
+            // those roots diverge. Snapshot listing stays process-wide until
+            // per-project capabilities exist.
             const discoveredSkills = yield* discoverCursorSkills({
               projectCwd: ctx.session.cwd,
+              additionalProjectCwds: [serverConfig.cwd],
             }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),

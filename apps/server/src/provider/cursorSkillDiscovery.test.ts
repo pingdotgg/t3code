@@ -22,14 +22,14 @@ describe("resolveCursorSkillRoots", () => {
         userHome: "/Users/demo",
       }),
     ).toEqual({
-      projectSkillsDir: NodePath.join("/tmp/project", ".cursor", "skills"),
+      projectSkillsDirs: [NodePath.join(NodePath.resolve("/tmp/project"), ".cursor", "skills")],
       userSkillsDir: NodePath.join("/Users/demo", ".cursor", "skills"),
     });
   });
 
   it("omits project root when cwd is missing", () => {
     expect(resolveCursorSkillRoots({ projectCwd: null, userHome: "/Users/demo" })).toEqual({
-      projectSkillsDir: null,
+      projectSkillsDirs: [],
       userSkillsDir: NodePath.join("/Users/demo", ".cursor", "skills"),
     });
   });
@@ -41,7 +41,27 @@ describe("resolveCursorSkillRoots", () => {
         userHome: "/Users/demo",
       }),
     ).toEqual({
-      projectSkillsDir: NodePath.join("/workspace/active-project", ".cursor", "skills"),
+      projectSkillsDirs: [
+        NodePath.join(NodePath.resolve("/workspace/active-project"), ".cursor", "skills"),
+      ],
+      userSkillsDir: NodePath.join("/Users/demo", ".cursor", "skills"),
+    });
+  });
+
+  it("merges additional project cwds and dedupes resolved paths", () => {
+    const sessionCwd = "/tmp/worktree";
+    const listingCwd = "/tmp/workspace";
+    expect(
+      resolveCursorSkillRoots({
+        projectCwd: sessionCwd,
+        additionalProjectCwds: [listingCwd, `${sessionCwd}/`],
+        userHome: "/Users/demo",
+      }),
+    ).toEqual({
+      projectSkillsDirs: [
+        NodePath.join(NodePath.resolve(sessionCwd), ".cursor", "skills"),
+        NodePath.join(NodePath.resolve(listingCwd), ".cursor", "skills"),
+      ],
       userSkillsDir: NodePath.join("/Users/demo", ".cursor", "skills"),
     });
   });
@@ -157,7 +177,7 @@ description: Only for user
 
     const skills = await discoverCursorSkillsWithFs(
       {
-        projectSkillsDir: "/proj/.cursor/skills",
+        projectSkillsDirs: ["/proj/.cursor/skills"],
         userSkillsDir: "/home/.cursor/skills",
       },
       {
@@ -184,10 +204,93 @@ description: Only for user
     expect(toServerProviderSkills(skills).every((skill) => !("content" in skill))).toBe(true);
   });
 
+  it("merges skills from multiple project roots with earlier roots winning", async () => {
+    const files = new Map<string, string>([
+      [
+        "/session/.cursor/skills/session-only/SKILL.md",
+        `---
+name: session-only
+description: Only in session cwd
+---
+# Session
+`,
+      ],
+      [
+        "/session/.cursor/skills/shared/SKILL.md",
+        `---
+name: shared
+description: Session shared skill
+---
+# Session shared
+`,
+      ],
+      [
+        "/listing/.cursor/skills/shared/SKILL.md",
+        `---
+name: shared
+description: Listing shared skill
+---
+# Listing shared
+`,
+      ],
+      [
+        "/listing/.cursor/skills/listed-only/SKILL.md",
+        `---
+name: listed-only
+description: Only in listing cwd
+---
+# Listed
+`,
+      ],
+    ]);
+    const directories = new Set([
+      "/session/.cursor/skills",
+      "/session/.cursor/skills/session-only",
+      "/session/.cursor/skills/shared",
+      "/listing/.cursor/skills",
+      "/listing/.cursor/skills/shared",
+      "/listing/.cursor/skills/listed-only",
+    ]);
+
+    const skills = await discoverCursorSkillsWithFs(
+      {
+        projectSkillsDirs: ["/session/.cursor/skills", "/listing/.cursor/skills"],
+        userSkillsDir: null,
+      },
+      {
+        readFile: async (path) => files.get(path) ?? null,
+        readDirectory: async (path) => {
+          if (path === "/session/.cursor/skills") {
+            return ["session-only", "shared"];
+          }
+          if (path === "/listing/.cursor/skills") {
+            return ["shared", "listed-only"];
+          }
+          return null;
+        },
+        isDirectory: async (path) => directories.has(path),
+        join: (...parts) => parts.join("/"),
+      },
+    );
+
+    expect(skills.map((skill) => skill.name).sort()).toEqual([
+      "listed-only",
+      "session-only",
+      "shared",
+    ]);
+    expect(skills.find((skill) => skill.name === "shared")).toMatchObject({
+      description: "Session shared skill",
+      path: "/session/.cursor/skills/shared/SKILL.md",
+    });
+    expect(skills.find((skill) => skill.name === "listed-only")).toMatchObject({
+      path: "/listing/.cursor/skills/listed-only/SKILL.md",
+    });
+  });
+
   it("soft-fails missing skill roots", async () => {
     const skills = await discoverCursorSkillsWithFs(
       {
-        projectSkillsDir: "/missing/.cursor/skills",
+        projectSkillsDirs: ["/missing/.cursor/skills"],
         userSkillsDir: null,
       },
       {
