@@ -234,6 +234,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
+  isProviderAuthError,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -268,23 +269,6 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 
-/**
- * Heuristic for whether a thread/turn error stems from an expired or missing
- * provider credential — the signals that make an in-app "Re-authenticate"
- * action worth offering (e.g. Claude's
- * `401 OAuth access token has expired. Re-authenticate to continue.`).
- *
- * Intentionally narrow: it matches credential-specific phrasing rather than
- * bare tokens like `401`/`oauth`/`api key`, which also appear in generic tool
- * or HTTP failures and would otherwise surface a misleading re-authenticate
- * action.
- */
-function isProviderAuthError(message: string | null | undefined): boolean {
-  if (!message) return false;
-  return /(re-?authenticate|re-?auth\b|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|access token (?:has )?expired|expired .*token|invalid (?:api key|access token|credentials)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
-    message,
-  );
-}
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);

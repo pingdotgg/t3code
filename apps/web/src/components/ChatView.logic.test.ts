@@ -18,6 +18,7 @@ import {
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
+  isProviderAuthError,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
@@ -509,5 +510,39 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("isProviderAuthError", () => {
+  it("matches the Claude auth failures that should offer in-app re-authentication", () => {
+    // The exact messages Claude Code surfaces mid-turn when its credential is
+    // expired or rejected — both must trigger the Re-authenticate affordance.
+    expect(
+      isProviderAuthError(
+        "LLM error: Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderAuthError(
+        "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderAuthError(
+        "LLM error: Failed to authenticate. API Error: 401 Invalid authentication credentials",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag generic, non-credential failures", () => {
+    // Guards against the over-broad heuristic a prior review flagged: bare
+    // status codes / provider mentions must NOT surface the action.
+    expect(isProviderAuthError(null)).toBe(false);
+    expect(isProviderAuthError(undefined)).toBe(false);
+    expect(isProviderAuthError("")).toBe(false);
+    expect(isProviderAuthError("Request failed with status 401")).toBe(false);
+    expect(isProviderAuthError("Tool execution failed: exit code 1")).toBe(false);
+    expect(isProviderAuthError("Configured OAuth provider settings")).toBe(false);
+    expect(isProviderAuthError("Set your api key in settings")).toBe(false);
   });
 });

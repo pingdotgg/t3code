@@ -27,6 +27,31 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+/**
+ * Heuristic for whether a thread/turn error stems from an expired, missing, or
+ * rejected provider credential — the signal that makes an in-app
+ * "Re-authenticate" action worth offering automatically.
+ *
+ * This must match the auth failures Claude Code surfaces mid-turn, e.g.:
+ *   - "Failed to authenticate. API Error: 401 OAuth access token has expired.
+ *      Re-authenticate to continue."
+ *   - "Failed to authenticate. API Error: 401 Invalid authentication
+ *      credentials"
+ *
+ * It stays deliberately narrow: it keys off credential-specific phrasing
+ * ("failed to authenticate", "invalid authentication", expired/invalid token
+ * or credentials, re-authenticate, please sign in) rather than bare tokens
+ * like `401`/`403`/`oauth`/`api key`, which also appear in generic tool or HTTP
+ * failures and would otherwise surface a misleading recovery action. Covered by
+ * regression tests in ChatView.logic.test.ts.
+ */
+export function isProviderAuthError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /(re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|api key|access token|token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
+    message,
+  );
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
