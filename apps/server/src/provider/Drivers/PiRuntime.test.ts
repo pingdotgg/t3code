@@ -1,0 +1,77 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  buildPiLaunchPlan,
+  parsePiVersion,
+  PI_MINIMUM_VERSION,
+} from "./PiRuntime.ts";
+
+describe("Pi runtime launch plan", () => {
+  it("keeps the Pi configuration directory in PI_AGENT_DIR", () => {
+    const plan = buildPiLaunchPlan({
+      configDirectory: "/Users/example/.pi-work",
+      launchArgs: "--verbose",
+      sessionDirectory: "/tmp/t3/pi/work",
+      sessionId: "thread_123",
+    });
+
+    expect(plan).toEqual({
+      _tag: "Success",
+      args: [
+        "--verbose",
+        "--mode",
+        "rpc",
+        "--session-dir",
+        "/tmp/t3/pi/work",
+        "--session",
+        "thread_123",
+      ],
+      environment: { PI_AGENT_DIR: "/Users/example/.pi-work" },
+    });
+  });
+
+  it("leaves Pi's normal configuration untouched when no config directory is selected", () => {
+    const plan = buildPiLaunchPlan({
+      configDirectory: "",
+      launchArgs: "",
+      sessionDirectory: "/tmp/t3/pi/work",
+      sessionId: "thread_123",
+    });
+
+    expect(plan).toEqual({
+      _tag: "Success",
+      args: ["--mode", "rpc", "--session-dir", "/tmp/t3/pi/work", "--session", "thread_123"],
+      environment: {},
+    });
+  });
+
+  it.each(["--mode json", "--session-dir /tmp/other", "--session=other"]) (
+    "rejects user launch arguments that override managed Pi parameters: %s",
+    (launchArgs) => {
+      expect(
+        buildPiLaunchPlan({
+          configDirectory: "",
+          launchArgs,
+          sessionDirectory: "/tmp/t3/pi/work",
+          sessionId: "thread_123",
+        }),
+      ).toEqual({ _tag: "Failure", message: expect.stringContaining("managed by T3 Code") });
+    },
+  );
+});
+
+describe("parsePiVersion", () => {
+  it("accepts Pi 0.81.1 and newer", () => {
+    expect(parsePiVersion("pi 0.81.1")).toEqual({ _tag: "Supported", version: PI_MINIMUM_VERSION });
+    expect(parsePiVersion("pi 0.82.0")).toEqual({ _tag: "Supported", version: "0.82.0" });
+  });
+
+  it("reports an upgrade requirement for older Pi versions", () => {
+    expect(parsePiVersion("pi 0.81.0")).toEqual({ _tag: "Unsupported", version: "0.81.0" });
+    expect(parsePiVersion("pi 0.80.99")).toEqual({ _tag: "Unsupported", version: "0.80.99" });
+  });
+
+  it("reports invalid version output", () => {
+    expect(parsePiVersion("not a version")).toEqual({ _tag: "Invalid" });
+  });
+});

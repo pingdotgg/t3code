@@ -5,6 +5,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   DEFAULT_SERVER_SETTINGS,
+  PiSettings,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -84,6 +85,25 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         providerInstances: { "1bad": { driver: "codex" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("PiSettings", () => {
+  it("keeps Pi runtime configuration instance-scoped", () => {
+    const decodePiSettings = Schema.decodeUnknownSync(PiSettings);
+
+    expect(
+      decodePiSettings({
+        binaryPath: "/opt/pi/bin/pi",
+        configDirectory: "~/.config/pi-work",
+        launchArgs: "--verbose",
+      }),
+    ).toMatchObject({
+      enabled: true,
+      binaryPath: "/opt/pi/bin/pi",
+      configDirectory: "~/.config/pi-work",
+      launchArgs: "--verbose",
+    });
   });
 });
 
