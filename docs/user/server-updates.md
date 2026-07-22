@@ -31,6 +31,15 @@ The update does not remove saved threads, settings, or project files.
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
 
+If the server uses the T3 Code background service, you can also update it directly on the host:
+
+```sh
+npx t3@latest service update
+```
+
+See [Running T3 Code in the Background](./background-service.md) for install, status, and removal
+commands.
+
 ## After the Update
 
 Keep the web or desktop app open while the server restarts. When it reconnects with the matching

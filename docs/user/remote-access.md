@@ -162,6 +162,9 @@ run a copied command on the server machine.
 Finish active work before updating because the server restarts briefly. For step-by-step guidance,
 see [Keeping T3 Code in Sync](./server-updates.md).
 
+On a Linux host, you can keep the server running after logout and manage it independently of the
+connection method. See [Running T3 Code in the Background](./background-service.md).
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.

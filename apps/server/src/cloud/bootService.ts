@@ -19,12 +19,10 @@ import * as ProcessRunner from "../processRunner.ts";
 import { ensurePinnedRuntimeInstalled, pinnedRuntimePaths } from "./pinnedRuntime.ts";
 
 /**
- * Installs T3 Code as a per-user boot service so a connected machine stays
- * reachable through T3 Connect after the SSH session ends. Linux-only for
- * now: systemd user unit + loginctl enable-linger. The service runs a pinned
- * runtime installed under <baseDir>/runtime — never `npx t3`, whose cache is
- * ephemeral and whose registry fetch at boot would make startup depend on
- * the network.
+ * Installs T3 Code as a per-user boot service. Linux-only for now: systemd
+ * user unit + loginctl enable-linger. The service runs a stable or pinned
+ * runtime — never an ephemeral `npx t3` cache whose eviction could break
+ * startup.
  */
 
 const BOOT_SERVICE_NAME = "t3code";
@@ -92,7 +90,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // relay connection, and Restart=always covers early-boot failures.
   return [
     "[Unit]",
-    "Description=T3 Code server (T3 Connect)",
+    "Description=T3 Code server",
     // Give up after 5 crashes in 5 minutes so a persistently broken install
     // (deleted runtime, broken workspace) stops instead of restarting every
     // 5s forever and growing the unrotated append log without bound.
@@ -324,8 +322,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
 
     // If any activation step fails, remove the unit again: a leftover file
-    // would make the next `t3 connect` report the service as already set up
-    // even though it was never enabled or lingered.
+    // would make service status report it as installed even though it was
+    // never enabled or lingered.
     yield* Effect.gen(function* () {
       yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
       yield* runStep("enabling the service", "systemctl", [
@@ -355,7 +353,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // fails), leave nothing behind: disable removes the enable symlink, remove
   // deletes the file, daemon-reload clears the stale definition — otherwise a
   // dangling wants/ symlink logs "Failed to load unit" at every boot and the
-  // next connect misreports the state.
+  // next lifecycle command misreports the state.
   const rollbackFailedInstall = Effect.fn("cloud.boot_service.rollback_failed_install")(function* (
     previousUnit: Option.Option<string>,
   ) {

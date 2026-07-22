@@ -303,8 +303,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
           .pipe(
             Effect.mapError((cause) => failWith("Could not read the current systemd unit.", cause)),
           );
-        // Same shape bootService.install writes, so the next `t3 connect`
-        // still recognizes the unit as current.
+        // Same shape bootService.install writes, so host lifecycle commands
+        // still recognize the unit as current.
         const unit = renderBootServiceUnit({
           nodePath: host.execPath,
           t3EntryPath: runtimePaths.entryPath,
