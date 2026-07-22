@@ -479,14 +479,17 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         tabIndex={0}
         data-testid="sidebar-v2-row-card"
         className={cn(
+          // Every card carries a faint tonal fill so threads read as
+          // discrete objects; active/selected/hover are brighter tones of
+          // the same treatment rather than a different shape.
           "group/v2-row relative w-full cursor-pointer select-none overflow-hidden rounded-lg text-left transition-colors",
           props.isActive
             ? "bg-foreground/[0.11] text-foreground dark:bg-white/[0.11]"
             : isSelected
               ? "bg-foreground/[0.07] text-foreground dark:bg-white/[0.07]"
               : shouldRecede
-                ? "hover:bg-accent/45"
-                : "hover:bg-accent/65",
+                ? "bg-foreground/[0.025] hover:bg-accent/45 dark:bg-white/[0.025]"
+                : "bg-foreground/[0.035] hover:bg-accent/65 dark:bg-white/[0.035]",
         )}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
