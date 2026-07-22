@@ -510,9 +510,7 @@ export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
-    settings.sidebarProjectGroupingMode === "separate"
-      ? readLastEnabledProjectGroupingMode()
-      : settings.sidebarProjectGroupingMode,
+    readLastEnabledProjectGroupingMode(),
   );
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
