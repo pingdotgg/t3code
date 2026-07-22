@@ -4379,8 +4379,8 @@ function ChatViewContent(props: ChatViewProps) {
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
-        resetLocalDispatch();
       }
+      resetLocalDispatch();
       setIsGoalMutationPending(false);
       sendInFlightRef.current = false;
       return;
