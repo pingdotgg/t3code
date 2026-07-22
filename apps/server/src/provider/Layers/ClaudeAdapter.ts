@@ -2828,7 +2828,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // release adding a subtype fails this typecheck instead of silently
         // warning at runtime. The runtime fallback still catches undeclared
         // wire-only subtypes (like background_tasks_changed used to be).
-        const unknownMessage: { subtype: string } = message satisfies never;
+        message satisfies never;
+        const unknownMessage = message as never as { subtype: string };
         yield* emitRuntimeWarning(
           context,
           describeUnknownSdkMessage(`Claude system message '${unknownMessage.subtype}'`, message),
@@ -2949,7 +2950,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       default: {
         // Exhaustiveness guard (see handleSystemMessage): new SDK top-level
         // message types fail typecheck here instead of warning at runtime.
-        const unknownMessage: { type: string } = message satisfies never;
+        message satisfies never;
+        const unknownMessage = message as never as { type: string };
         yield* emitRuntimeWarning(
           context,
           describeUnknownSdkMessage(`Claude SDK message '${unknownMessage.type}'`, message),
