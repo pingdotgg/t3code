@@ -377,19 +377,23 @@ export function shouldShowComposerControlHintsForModifiers(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
+  return COMPOSER_CONTROL_HINT_COMMANDS.some((command) =>
+    shouldShowCommandHintForModifiers(modifiers, keybindings, command, options),
+  );
+}
+
+export function shouldShowCommandHintForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): boolean {
   const platform = resolvePlatform(options);
   const modKeyHeld = isMacPlatform(platform) ? modifiers.metaKey : modifiers.ctrlKey;
   if (!modKeyHeld) return false;
 
-  for (const command of COMPOSER_CONTROL_HINT_COMMANDS) {
-    const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
-    if (!shortcut) continue;
-    if (modifiersAreSubsetOfShortcutModifiers(modifiers, shortcut, platform)) {
-      return true;
-    }
-  }
-
-  return false;
+  const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
+  return shortcut ? modifiersAreSubsetOfShortcutModifiers(modifiers, shortcut, platform) : false;
 }
 
 export function isTerminalToggleShortcut(

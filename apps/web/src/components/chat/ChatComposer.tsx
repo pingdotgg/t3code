@@ -63,7 +63,10 @@ import {
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
-import { useLayoutScopedOpenState } from "../../hooks/useLayoutScopedOpenState";
+import {
+  useLayoutScopedOpenState,
+  useLayoutScopedState,
+} from "../../hooks/useLayoutScopedOpenState";
 import { useTerminalFocus } from "../../hooks/useTerminalFocus";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -87,6 +90,8 @@ import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
+  type CompactControlsMenuOpenSource,
+  toggleCompactControlsMenuForShortcut,
   renderProviderTraitsPicker,
   resolveModelOptionsShortcutTarget,
 } from "./composerProviderState";
@@ -193,10 +198,7 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
-import {
-  shortcutLabelForCommand,
-  shouldShowComposerControlHintsForModifiers,
-} from "../../keybindings";
+import { shortcutLabelForCommand, shouldShowCommandHintForModifiers } from "../../keybindings";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { ComposerControlShortcutHint } from "./ComposerControlShortcutHint";
 
@@ -995,8 +997,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     useLayoutScopedOpenState(composerControlsLayout);
   const [isComposerRuntimeModePickerOpen, setIsComposerRuntimeModePickerOpen] =
     useLayoutScopedOpenState(composerControlsLayout);
-  const [isCompactControlsMenuOpen, setIsCompactControlsMenuOpen] =
-    useLayoutScopedOpenState(composerControlsLayout);
+  const [compactControlsMenuOpenSource, setCompactControlsMenuOpenSource] = useLayoutScopedState<
+    typeof composerControlsLayout,
+    CompactControlsMenuOpenSource | null
+  >(composerControlsLayout, null);
+  const isCompactControlsMenuOpen = compactControlsMenuOpenSource !== null;
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const isMobileViewport = useMediaQuery("max-sm");
@@ -1234,31 +1239,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const shortcutModifiers = useShortcutModifierState();
   const terminalFocus = useTerminalFocus();
   const shortcutContext = useMemo(() => ({ terminalFocus }), [terminalFocus]);
-  const showComposerControlHints = shouldShowComposerControlHintsForModifiers(
-    shortcutModifiers,
-    keybindings,
-    { platform: navigator.platform, context: shortcutContext },
-  );
-  const composerControlHintLabels = useMemo(
-    () =>
-      showComposerControlHints
-        ? {
-            modelPicker: shortcutLabelForCommand(keybindings, "modelPicker.toggle", {
-              context: shortcutContext,
-            }),
-            modelOptionsPicker: shortcutLabelForCommand(keybindings, "modelOptionsPicker.toggle", {
-              context: shortcutContext,
-            }),
-            runtimeModePicker: shortcutLabelForCommand(keybindings, "runtimeModePicker.toggle", {
-              context: shortcutContext,
-            }),
-            planMode: shortcutLabelForCommand(keybindings, "planMode.toggle", {
-              context: shortcutContext,
-            }),
-          }
-        : null,
-    [keybindings, shortcutContext, showComposerControlHints],
-  );
+  const composerControlHintLabels = useMemo(() => {
+    const hintLabel = (command: Parameters<typeof shortcutLabelForCommand>[1]) =>
+      shouldShowCommandHintForModifiers(shortcutModifiers, keybindings, command, {
+        platform: navigator.platform,
+        context: shortcutContext,
+      })
+        ? shortcutLabelForCommand(keybindings, command, { context: shortcutContext })
+        : null;
+
+    return {
+      modelPicker: hintLabel("modelPicker.toggle"),
+      modelOptionsPicker: hintLabel("modelOptionsPicker.toggle"),
+      runtimeModePicker: hintLabel("runtimeModePicker.toggle"),
+      planMode: hintLabel("planMode.toggle"),
+    };
+  }, [keybindings, shortcutContext, shortcutModifiers]);
 
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
@@ -2171,7 +2167,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         if (target === null) return false;
         if (target === "compact-controls-menu") {
-          setIsCompactControlsMenuOpen((open) => !open);
+          setCompactControlsMenuOpenSource((current) =>
+            toggleCompactControlsMenuForShortcut(current, "model-options"),
+          );
         } else {
           setIsComposerTraitsPickerOpen((open) => !open);
         }
@@ -2180,7 +2178,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toggleRuntimeModePicker: () => {
         if (isComposerCollapsedMobile || isComposerApprovalState) return false;
         if (isComposerFooterCompact) {
-          setIsCompactControlsMenuOpen((open) => !open);
+          setCompactControlsMenuOpenSource((current) =>
+            toggleCompactControlsMenuForShortcut(current, "runtime-mode"),
+          );
           return true;
         }
         setIsComposerRuntimeModePickerOpen((open) => !open);
@@ -2790,7 +2790,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                     traitsMenuContent={providerTraitsMenuContent}
                     open={isCompactControlsMenuOpen}
-                    onOpenChange={setIsCompactControlsMenuOpen}
+                    onOpenChange={(open) => {
+                      setCompactControlsMenuOpenSource((current) =>
+                        open ? (current ?? "direct") : null,
+                      );
+                    }}
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
                     onRuntimeModeChange={handleRuntimeModeChange}

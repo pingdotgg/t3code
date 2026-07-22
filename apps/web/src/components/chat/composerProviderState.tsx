@@ -42,6 +42,14 @@ export type ComposerProviderState = {
 };
 
 export type ModelOptionsShortcutTarget = "compact-controls-menu" | "traits-picker";
+export type CompactControlsMenuOpenSource = "direct" | "model-options" | "runtime-mode";
+
+export function toggleCompactControlsMenuForShortcut(
+  current: CompactControlsMenuOpenSource | null,
+  source: Exclude<CompactControlsMenuOpenSource, "direct">,
+): CompactControlsMenuOpenSource | null {
+  return current === source ? null : source;
+}
 
 export function resolveModelOptionsShortcutTarget(input: {
   readonly isComposerUnavailable: boolean;

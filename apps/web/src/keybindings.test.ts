@@ -22,6 +22,7 @@ import {
   isTerminalToggleShortcut,
   resolveShortcutCommand,
   shouldShowComposerControlHintsForModifiers,
+  shouldShowCommandHintForModifiers,
   shouldShowModelPickerJumpHints,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
@@ -587,6 +588,30 @@ describe("shouldShowComposerControlHintsForModifiers", () => {
       shouldShowComposerControlHintsForModifiers(
         modifiers({ ctrlKey: true, shiftKey: true }),
         custom,
+        { platform: "Linux" },
+      ),
+    );
+  });
+
+  it("matches each control against its own customized modifiers", () => {
+    const custom = compile([
+      { shortcut: modShortcut("e", { altKey: true }), command: "modelOptionsPicker.toggle" },
+      { shortcut: modShortcut("l", { shiftKey: true }), command: "runtimeModePicker.toggle" },
+    ]);
+
+    assert.isTrue(
+      shouldShowCommandHintForModifiers(
+        modifiers({ ctrlKey: true, altKey: true }),
+        custom,
+        "modelOptionsPicker.toggle",
+        { platform: "Linux" },
+      ),
+    );
+    assert.isFalse(
+      shouldShowCommandHintForModifiers(
+        modifiers({ ctrlKey: true, altKey: true }),
+        custom,
+        "runtimeModePicker.toggle",
         { platform: "Linux" },
       ),
     );

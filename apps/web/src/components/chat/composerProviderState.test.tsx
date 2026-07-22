@@ -11,6 +11,7 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
   resolveModelOptionsShortcutTarget,
+  toggleCompactControlsMenuForShortcut,
 } from "./composerProviderState";
 
 // Everything in composerProviderState is now data-driven by the model's
@@ -96,6 +97,22 @@ describe("resolveModelOptionsShortcutTarget", () => {
         isComposerUnavailable: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("toggleCompactControlsMenuForShortcut", () => {
+  it("keeps the shared menu open when switching shortcut targets", () => {
+    expect(toggleCompactControlsMenuForShortcut("model-options", "runtime-mode")).toBe(
+      "runtime-mode",
+    );
+    expect(toggleCompactControlsMenuForShortcut("runtime-mode", "model-options")).toBe(
+      "model-options",
+    );
+  });
+
+  it("closes the shared menu when the same shortcut is repeated", () => {
+    expect(toggleCompactControlsMenuForShortcut("model-options", "model-options")).toBeNull();
+    expect(toggleCompactControlsMenuForShortcut("runtime-mode", "runtime-mode")).toBeNull();
   });
 });
 

@@ -23,10 +23,7 @@ import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/e
 import { useLayoutScopedState } from "../hooks/useLayoutScopedOpenState";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
-import {
-  shortcutLabelForCommand,
-  shouldShowComposerControlHintsForModifiers,
-} from "../keybindings";
+import { shortcutLabelForCommand, shouldShowCommandHintForModifiers } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import {
   type BranchToolbarPicker,
@@ -426,22 +423,32 @@ export const BranchToolbar = memo(function BranchToolbar({
   const shortcutModifiers = useShortcutModifierState();
   const terminalFocus = useTerminalFocus();
   const shortcutContext = useMemo(() => ({ terminalFocus }), [terminalFocus]);
-  const showControlHints = shouldShowComposerControlHintsForModifiers(
+  const environmentHintLabel = shouldShowCommandHintForModifiers(
     shortcutModifiers,
     keybindings,
+    "environmentPicker.toggle",
     { platform: navigator.platform, context: shortcutContext },
-  );
-  const environmentHintLabel = showControlHints
+  )
     ? shortcutLabelForCommand(keybindings, "environmentPicker.toggle", {
         context: shortcutContext,
       })
     : null;
-  const envModeHintLabel = showControlHints
+  const envModeHintLabel = shouldShowCommandHintForModifiers(
+    shortcutModifiers,
+    keybindings,
+    "envModePicker.toggle",
+    { platform: navigator.platform, context: shortcutContext },
+  )
     ? shortcutLabelForCommand(keybindings, "envModePicker.toggle", {
         context: shortcutContext,
       })
     : null;
-  const branchHintLabel = showControlHints
+  const branchHintLabel = shouldShowCommandHintForModifiers(
+    shortcutModifiers,
+    keybindings,
+    "branchPicker.toggle",
+    { platform: navigator.platform, context: shortcutContext },
+  )
     ? shortcutLabelForCommand(keybindings, "branchPicker.toggle", {
         context: shortcutContext,
       })
