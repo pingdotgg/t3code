@@ -21,10 +21,7 @@ import {
   runArchivedThreadActions,
   type ArchivedThreadSortState,
 } from "./archivedThreadList";
-import {
-  refreshArchivedThreadsForEnvironment,
-  useArchivedThreadSnapshots,
-} from "./useArchivedThreadSnapshots";
+import { useArchivedThreadSnapshots } from "./useArchivedThreadSnapshots";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 
@@ -96,14 +93,7 @@ export function ArchivedThreadsRouteScreen() {
       }),
     [search, selectedEnvironmentId, snapshots, sort],
   );
-  const refreshChangedEnvironment = useCallback(
-    (thread: { readonly environmentId: EnvironmentId }) => {
-      refreshArchivedThreadsForEnvironment(thread.environmentId);
-    },
-    [],
-  );
-  const { unarchiveThread, deleteThread, confirmDeleteThread } =
-    useArchivedThreadListActions(refreshChangedEnvironment);
+  const { unarchiveThread, deleteThread, confirmDeleteThread } = useArchivedThreadListActions();
   const updateBusyThreads = useCallback(
     (threads: ReadonlyArray<EnvironmentThreadShell>, busy: boolean) => {
       setBusyThreadKeys((current) => {
@@ -154,8 +144,14 @@ export function ArchivedThreadsRouteScreen() {
       try {
         const summary = await runArchivedThreadActions(threads, (thread) =>
           action === "unarchive"
-            ? unarchiveThread(thread, { reportFailure: false })
-            : deleteThread(thread, { reportFailure: false }),
+            ? unarchiveThread(thread, {
+                reportFailure: false,
+                refreshArchivedThreads: false,
+              })
+            : deleteThread(thread, {
+                reportFailure: false,
+                refreshArchivedThreads: false,
+              }),
         );
         if (summary.failed > 0 || summary.skipped > 0) {
           Alert.alert(
