@@ -12,6 +12,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { isGeneralChatsProjectId } from "@t3tools/client-runtime/general-chats";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -243,7 +244,9 @@ export function NewTaskDraftScreen(props: {
       const directProject =
         projects.find(
           (project) =>
-            project.environmentId === initialEnvironmentId && project.id === initialProjectId,
+            project.environmentId === initialEnvironmentId &&
+            project.id === initialProjectId &&
+            !isGeneralChatsProjectId(project.id),
         ) ?? null;
 
       if (directProject) {

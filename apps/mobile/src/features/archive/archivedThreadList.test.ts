@@ -1,4 +1,5 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import { GENERAL_CHATS_PROJECT_ID } from "@t3tools/client-runtime/general-chats";
 import type { OrchestrationProjectShell, OrchestrationThreadShell } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -61,6 +62,25 @@ function makeSnapshot(
 }
 
 describe("buildArchivedThreadGroups", () => {
+  it("keeps archived standalone chats out of the mobile archive", () => {
+    const chatsProject = makeProject({ id: GENERAL_CHATS_PROJECT_ID, title: "Chats" });
+    const chatsThread = makeThread({
+      id: ThreadId.make("chat-thread"),
+      projectId: GENERAL_CHATS_PROJECT_ID,
+      title: "Archived chat",
+    });
+
+    expect(
+      buildArchivedThreadGroups({
+        snapshots: [makeSnapshot([chatsProject], [chatsThread])],
+        environmentLabels: {},
+        environmentId: null,
+        searchQuery: "",
+        sortOrder: "newest",
+      }),
+    ).toEqual([]);
+  });
+
   it("groups archived threads by project and sorts newest first", () => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const older = makeThread({

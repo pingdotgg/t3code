@@ -4,6 +4,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 
 import { groupProjectsByRepository } from "./repositoryGroups";
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { GENERAL_CHATS_PROJECT_ID } from "@t3tools/client-runtime/general-chats";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -186,5 +187,25 @@ describe("groupProjectsByRepository", () => {
     expect(groups[0]?.key).toBe("env-local:project-local");
     expect(groups[0]?.title).toBe("Scratchpad");
     expect(groups[0]?.subtitle).toBeNull();
+  });
+
+  it("keeps the app-managed Chats project out of mobile project pickers", () => {
+    const environmentId = EnvironmentId.make("env-local");
+    const chatsProject = makeProject({
+      environmentId,
+      id: GENERAL_CHATS_PROJECT_ID,
+      title: "Chats",
+    });
+    const chatsThread = makeThread({
+      environmentId,
+      id: ThreadId.make("chat-thread"),
+      projectId: GENERAL_CHATS_PROJECT_ID,
+      title: "Ad hoc chat",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    });
+
+    expect(groupProjectsByRepository({ projects: [chatsProject], threads: [chatsThread] })).toEqual(
+      [],
+    );
   });
 });

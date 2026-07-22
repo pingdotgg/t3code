@@ -1,4 +1,5 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import { isGeneralChatsProjectId } from "@t3tools/client-runtime/general-chats";
 import {
   scopeProject,
   scopeThreadShell,
@@ -55,6 +56,9 @@ export function buildArchivedThreadGroups(input: {
     }
 
     for (const rawProject of entry.snapshot.projects) {
+      if (isGeneralChatsProjectId(rawProject.id)) {
+        continue;
+      }
       const project = scopeProject(entry.environmentId, rawProject);
       const projectThreads = threadsByProjectId.get(project.id) ?? [];
       const groupMatches =

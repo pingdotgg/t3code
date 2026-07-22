@@ -2,6 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { GENERAL_CHATS_PROJECT_ID } from "@t3tools/client-runtime/general-chats";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -65,6 +66,23 @@ function buildGroups(
 }
 
 describe("buildHomeThreadGroups", () => {
+  it("keeps standalone chats out of the normal mobile thread groups", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const chatsProject = makeProject({
+      environmentId,
+      id: GENERAL_CHATS_PROJECT_ID,
+      title: "Chats",
+    });
+    const chatsThread = makeThread({
+      environmentId,
+      id: ThreadId.make("chat-thread"),
+      projectId: GENERAL_CHATS_PROJECT_ID,
+      title: "Ad hoc chat",
+    });
+
+    expect(buildGroups([chatsProject], [chatsThread])).toEqual([]);
+  });
+
   it("sorts the newest thread first regardless of snapshot order", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const project = makeProject({

@@ -19,6 +19,10 @@
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"
     },
+    "./general-chats": {
+      "types": "./src/generalChats.ts",
+      "default": "./src/generalChats.ts"
+    },
     "./rpc": {
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"

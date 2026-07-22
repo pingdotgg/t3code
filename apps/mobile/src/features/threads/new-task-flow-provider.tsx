@@ -24,6 +24,10 @@ import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import {
+  excludeGeneralChatsProject,
+  isGeneralChatsProjectId,
+} from "@t3tools/client-runtime/general-chats";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -168,7 +172,8 @@ type NewTaskFlowContextValue = {
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
-  const projects = useProjects();
+  const allProjects = useProjects();
+  const projects = useMemo(() => excludeGeneralChatsProject(allProjects), [allProjects]);
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
 
@@ -638,7 +643,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const beginEditingPendingTask = useCallback((messageId: string): boolean => {
     const message = findQueuedPendingTask(messageId);
-    if (!message?.creation) {
+    if (!message?.creation || isGeneralChatsProjectId(message.creation.projectId)) {
       return false;
     }
     const draftKey = pendingTaskDraftKey(message.messageId);

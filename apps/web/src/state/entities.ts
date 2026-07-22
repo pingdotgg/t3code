@@ -181,6 +181,48 @@ export function readProject(ref: ScopedProjectRef): EnvironmentProject | null {
   return appAtomRegistry.get(environmentProjects.projectAtom(ref));
 }
 
+export async function waitForProject(
+  ref: ScopedProjectRef,
+  timeoutMs = 2_000,
+): Promise<EnvironmentProject | null> {
+  const projectAtom = environmentProjects.projectAtom(ref);
+  const getProject = () => appAtomRegistry.get(projectAtom);
+  const project = getProject();
+  if (project !== null) {
+    return project;
+  }
+
+  return await new Promise<EnvironmentProject | null>((resolve) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+    const finish = (result: EnvironmentProject | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+      unsubscribe();
+      resolve(result);
+    };
+
+    const unsubscribe = appAtomRegistry.subscribe(projectAtom, (nextProject) => {
+      if (nextProject !== null) {
+        finish(nextProject);
+      }
+    });
+
+    const currentProject = getProject();
+    if (currentProject !== null) {
+      finish(currentProject);
+      return;
+    }
+
+    timeoutId = globalThis.setTimeout(() => finish(null), timeoutMs);
+  });
+}
+
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }

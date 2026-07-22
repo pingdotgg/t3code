@@ -1,5 +1,9 @@
 import * as Order from "effect/Order";
 import * as Arr from "effect/Array";
+import {
+  excludeGeneralChatsProject,
+  excludeGeneralChatsThreads,
+} from "@t3tools/client-runtime/general-chats";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "./scopedEntities";
@@ -62,9 +66,11 @@ export function groupProjectsByRepository(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }): ReadonlyArray<RepositoryGroup> {
+  const projects = excludeGeneralChatsProject(input.projects);
+  const threads = excludeGeneralChatsThreads(input.threads);
   const threadsByProjectKey = new Map<string, EnvironmentThreadShell[]>();
 
-  for (const thread of input.threads) {
+  for (const thread of threads) {
     const key = scopedProjectKey(thread.environmentId, thread.projectId);
     const existing = threadsByProjectKey.get(key);
     if (existing) {
@@ -76,7 +82,7 @@ export function groupProjectsByRepository(input: {
 
   const grouped = new Map<string, RepositoryGroup>();
 
-  for (const project of input.projects) {
+  for (const project of projects) {
     const key = deriveRepositoryGroupKey(project);
     const projectKey = scopedProjectKey(project.environmentId, project.id);
     const threads = Arr.sortWith(
