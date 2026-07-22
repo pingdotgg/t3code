@@ -208,6 +208,61 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps pull requests from gh versions without headRepository.nameWithOwner", () =>
+    // gh < 2.47 (e.g. Ubuntu-packaged 2.46) exports headRepository as
+    // {id, name} only. These entries must decode instead of being dropped,
+    // with nameWithOwner rebuilt from the owner login.
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 2829,
+                title: "Codex turn mapping",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/2829",
+                baseRefName: "main",
+                headRefName: "t3code/codex-turn-mapping",
+                state: "OPEN",
+                mergedAt: null,
+                isCrossRepository: false,
+                headRepository: {
+                  id: "R_kgDORLtfbQ",
+                  name: "codething-mvp",
+                },
+                headRepositoryOwner: {
+                  id: "MDEyOk9yZ2FuaXphdGlvbjg5MTkxNzI3",
+                  login: "pingdotgg",
+                },
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.listOpenPullRequests({
+        cwd: "/repo",
+        headSelector: "t3code/codex-turn-mapping",
+      });
+
+      assert.deepStrictEqual(result, [
+        {
+          number: 2829,
+          title: "Codex turn mapping",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/2829",
+          baseRefName: "main",
+          headRefName: "t3code/codex-turn-mapping",
+          state: "open",
+          isCrossRepository: false,
+          headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+          headRepositoryOwnerLogin: "pingdotgg",
+        },
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

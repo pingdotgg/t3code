@@ -366,10 +366,9 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    yield* Effect.all([workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)], {
-      concurrency: "unbounded",
-      discard: true,
-    });
+    // invalidateStatus (not the two partial invalidations) so an explicit
+    // refresh also bypasses GitManager's slow PR-lookup cache.
+    yield* workflow.invalidateStatus(cwd);
     const [local, remote] = yield* Effect.all(
       [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
       { concurrency: "unbounded" },
