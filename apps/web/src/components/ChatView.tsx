@@ -2320,6 +2320,11 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const hasTimelineTopBanner =
+    Boolean(threadError) ||
+    (activeProviderStatus !== null &&
+      activeProviderStatus.status !== "ready" &&
+      activeProviderStatus.status !== "disabled");
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -5412,7 +5417,7 @@ function ChatViewContent(props: ChatViewProps) {
         <header
           data-chat-header
           className={cn(
-            "border-b border-border transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
               ? cn(
                   "workspace-topbar drag-region relative px-3 sm:px-5",
@@ -5448,8 +5453,6 @@ function ChatViewContent(props: ChatViewProps) {
           />
         </header>
 
-        {/* Error banner */}
-        <ProviderStatusBanner status={activeProviderStatus} />
         <ThreadErrorBanner
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}
@@ -5458,6 +5461,10 @@ function ChatViewContent(props: ChatViewProps) {
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* Provider status overlays the timeline without changing its content height. */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+              <ProviderStatusBanner status={activeProviderStatus} />
+            </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
@@ -5494,6 +5501,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState}
+                topFadeEnabled={!hasTimelineTopBanner}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -5526,17 +5534,6 @@ function ChatViewContent(props: ChatViewProps) {
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
-              {!isDraftHeroState ? (
-                <div
-                  key="docked-composer-blur"
-                  aria-hidden="true"
-                  className="chat-composer-horizontal-inset pointer-events-none absolute inset-x-0 top-1.5 bottom-0 z-0 sm:top-2"
-                >
-                  <div className="relative mx-auto h-full w-full max-w-3xl overflow-clip rounded-t-[20px]">
-                    <div className="chat-composer-shared-blur absolute -inset-8" />
-                  </div>
-                </div>
-              ) : null}
               <div
                 ref={attachDraftHeroTransitionGroupRef}
                 className="chat-composer-horizontal-inset w-full"
@@ -5574,7 +5571,7 @@ function ChatViewContent(props: ChatViewProps) {
                   >
                     <div
                       ref={attachDraftHeroComposerAnchorRef}
-                      className="relative z-10 mx-auto w-full max-w-3xl"
+                      className="relative z-10 isolate mx-auto w-full max-w-3xl before:pointer-events-none before:absolute before:inset-x-0 before:bottom-0 before:-z-10 before:h-2 before:rounded-b-[22px] before:bg-background"
                     >
                       <ChatComposer
                         composerRef={composerRef}
@@ -5658,12 +5655,7 @@ function ChatViewContent(props: ChatViewProps) {
                     >
                       <div
                         data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                        className={cn(
-                          "chat-composer-lower-chrome relative z-10",
-                          isGitRepo
-                            ? "pb-[calc(env(safe-area-inset-bottom)+0.25rem)]"
-                            : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
-                        )}
+                        className="chat-composer-lower-chrome relative z-0 pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1.25rem)]"
                       >
                         {isGitRepo && (
                           <div className="pointer-events-auto">

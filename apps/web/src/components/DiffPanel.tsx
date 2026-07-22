@@ -521,27 +521,37 @@ export default function DiffPanel({
             <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-60">
-            <DropdownMenuItem onClick={() => selectGitScope("unstaged")}>
+            <DropdownMenuItem
+              className={
+                selectedTurnId === null && selectedGitScope === "unstaged"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("unstaged")}
+            >
               <span>Working tree</span>
-              {selectedTurnId === null && selectedGitScope === "unstaged" && (
-                <CheckIcon className="ml-auto" />
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => selectGitScope("branch")}>
-              <span>Branch changes</span>
-              {selectedTurnId === null && selectedGitScope === "branch" && (
-                <CheckIcon className="ml-auto" />
-              )}
             </DropdownMenuItem>
             <DropdownMenuItem
+              className={
+                selectedTurnId === null && selectedGitScope === "branch"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("branch")}
+            >
+              <span>Branch changes</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={
+                selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
               onClick={() => {
                 if (latestTurn) selectTurn(latestTurn.turnId);
               }}
             >
               <span>Latest turn</span>
-              {selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId && (
-                <CheckIcon className="ml-auto" />
-              )}
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
@@ -554,13 +564,15 @@ export default function DiffPanel({
                   return (
                     <DropdownMenuItem
                       key={summary.turnId}
+                      className={
+                        summary.turnId === selectedTurn?.turnId ? "bg-foreground/[0.08]" : undefined
+                      }
                       onClick={() => selectTurn(summary.turnId)}
                     >
                       <span>Turn {turnCount}</span>
                       <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                         {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                       </span>
-                      {summary.turnId === selectedTurn?.turnId && <CheckIcon className="ml-1" />}
                     </DropdownMenuItem>
                   );
                 })}

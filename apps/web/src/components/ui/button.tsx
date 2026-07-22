@@ -40,7 +40,7 @@ const buttonVariants = cva(
           "border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [&_svg:not([class*='text-'])]:text-muted-foreground",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
         outline:
-          "border-input bg-popover not-dark:bg-clip-padding text-foreground shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-disabled:before:shadow-[0_-1px_--theme(--color-white/2%)] dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:bg-accent/50 dark:[:hover,[data-pressed]]:bg-input/64 [&_svg:not([class*='text-'])]:text-muted-foreground",
+          "border-transparent bg-popover not-dark:bg-clip-padding text-foreground shadow-none dark:bg-input/32 [:hover,[data-pressed]]:bg-accent/50 dark:[:hover,[data-pressed]]:bg-input/64 [&_svg:not([class*='text-'])]:text-muted-foreground",
         secondary:
           "border-transparent bg-secondary text-secondary-foreground [:active,[data-pressed]]:bg-secondary/80 [:hover,[data-pressed]]:bg-secondary/90",
       },

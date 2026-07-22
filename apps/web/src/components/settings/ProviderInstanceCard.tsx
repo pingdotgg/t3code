@@ -531,7 +531,7 @@ export function ProviderInstanceCard({
   const titleHeadNode = (
     <>
       {titleIconNode}
-      <h3 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+      <h3 className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
         {displayName}
       </h3>
       {String(instanceId) !== String(instance.driver) ? (
@@ -578,7 +578,7 @@ export function ProviderInstanceCard({
   );
 
   const authRowNode = (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
       {hasAuthenticatedEmail ? (
         <>
           <span>Authenticated as</span>
@@ -600,8 +600,8 @@ export function ProviderInstanceCard({
   ) : null;
 
   return (
-    <div className="border-t border-border/60 first:border-t-0">
-      <div className="px-4 py-3.5 sm:px-5">
+    <div className="rounded-xl transition-colors hover:bg-muted/20">
+      <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -729,8 +729,8 @@ export function ProviderInstanceCard({
 
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
-          <div className="space-y-0">
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+          <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
+            <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
                 <span className="text-xs font-medium text-foreground">Display name</span>
                 <DraftInput
@@ -747,7 +747,7 @@ export function ProviderInstanceCard({
               </label>
             </div>
 
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+            <div>
               <ProviderAccentColorPicker
                 displayName={displayName}
                 value={accentColor}
@@ -757,7 +757,7 @@ export function ProviderInstanceCard({
               />
             </div>
 
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+            <div>
               <ProviderEnvironmentSection
                 environment={instance.environment ?? []}
                 onChange={updateEnvironment}
@@ -789,7 +789,7 @@ export function ProviderInstanceCard({
                 onModelOrderChange={onModelOrderChange}
               />
             ) : (
-              <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+              <div>
                 <p className="text-xs text-muted-foreground">
                   This instance uses a driver (
                   <code className="text-foreground">{String(instance.driver)}</code>) that is not

@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -337,9 +337,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                           </>
                         ) : null}
                       </span>
-                      {option.id === selectedValue ? (
-                        <CheckIcon className="size-3.5 shrink-0 text-blue-400" />
-                      ) : null}
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -370,9 +367,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   <MenuRadioItem key={value} value={value} hideIndicator>
                     <span className="flex w-full min-w-0 items-center justify-between gap-3">
                       <span>{value === "on" ? "On" : "Off"}</span>
-                      {value === selectedValue ? (
-                        <CheckIcon className="size-3.5 shrink-0 text-blue-400" />
-                      ) : null}
                     </span>
                   </MenuRadioItem>
                 ))}

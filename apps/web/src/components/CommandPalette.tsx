@@ -1948,7 +1948,7 @@ function OpenCommandPaletteDialog(props: {
             <Button
               variant="ghost"
               size="xs"
-              className="h-auto px-2 text-zinc-700 text-xs hover:bg-transparent hover:text-foreground dark:text-zinc-300"
+              className="h-auto px-2 text-muted-foreground text-xs hover:bg-transparent hover:text-foreground"
               disabled={isPickingProjectFolder}
               onClick={() => {
                 void handleOpenProjectFromFileManager();

@@ -219,6 +219,23 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("uses the larger leading inset only when the top fade is enabled", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const timelineEntries = [buildUserTimelineEntry("Hello")];
+
+    const compactMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+    const fadedMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} topFadeEnabled />,
+    );
+
+    expect(compactMarkup).toContain('class="h-3 sm:h-4"');
+    expect(compactMarkup).not.toContain("chat-timeline-scroll-fade");
+    expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
+    expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const assistantMessageId = MessageId.make("message-assistant-with-files");

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useId } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -47,6 +48,10 @@ export function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVar
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
+export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
+}
+
 const NIGHTLY_STARS: ReadonlyArray<{
   cx: number;
   cy: number;
@@ -78,18 +83,26 @@ const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number }> = [
   { x: 246, y: 26 },
 ];
 
-function NightlySkyArt() {
+function NightlySkyArt({ compact = false }: { compact?: boolean }) {
+  const idPrefix = useId().replaceAll(":", "");
+  const skyId = `${idPrefix}-stage-night-sky`;
+  const glowId = `${idPrefix}-stage-night-glow`;
+  const cloudId = `${idPrefix}-stage-night-cloud`;
+  const softId = `${idPrefix}-stage-night-soft`;
+  const starsId = `${idPrefix}-stage-night-stars`;
+  const glowsId = `${idPrefix}-stage-night-glows`;
+
   return (
     <svg
       className="h-full w-full"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
-      viewBox={STAGE_BACKDROP_VIEW_BOX}
+      viewBox={compact ? "96 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
         <linearGradient
-          id="stage-night-sky"
+          id={skyId}
           x1="24"
           y1="0"
           x2="264"
@@ -102,7 +115,7 @@ function NightlySkyArt() {
           <stop offset="1" stopColor="#32155B" />
         </linearGradient>
         <radialGradient
-          id="stage-night-glow"
+          id={glowId}
           cx="0"
           cy="0"
           r="1"
@@ -113,29 +126,15 @@ function NightlySkyArt() {
           <stop offset="0.5" stopColor="#283075" stopOpacity="0.16" />
           <stop offset="1" stopColor="#111635" stopOpacity="0" />
         </radialGradient>
-        <linearGradient
-          id="stage-night-cloud"
-          x1="0"
-          y1="60"
-          x2="288"
-          y2="96"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={cloudId} x1="0" y1="60" x2="288" y2="96" gradientUnits="userSpaceOnUse">
           <stop stopColor="#4EA4FF" stopOpacity="0.5" />
           <stop offset="0.52" stopColor="#696FEA" stopOpacity="0.62" />
           <stop offset="1" stopColor="#A85BEA" stopOpacity="0.5" />
         </linearGradient>
-        <filter
-          id="stage-night-soft"
-          x="-24"
-          y="-24"
-          width="336"
-          height="144"
-          filterUnits="userSpaceOnUse"
-        >
+        <filter id={softId} x="-24" y="-24" width="336" height="144" filterUnits="userSpaceOnUse">
           <feGaussianBlur stdDeviation="4" />
         </filter>
-        <pattern id="stage-night-stars" width="288" height="96" patternUnits="userSpaceOnUse">
+        <pattern id={starsId} width="288" height="96" patternUnits="userSpaceOnUse">
           <g fill="#E4EAFF">
             {NIGHTLY_STARS.map((star) => (
               <circle
@@ -156,25 +155,25 @@ function NightlySkyArt() {
             ))}
           </g>
         </pattern>
-        <pattern id="stage-night-glows" width="640" height="96" patternUnits="userSpaceOnUse">
-          <rect width="640" height="96" fill="url(#stage-night-glow)" />
+        <pattern id={glowsId} width="640" height="96" patternUnits="userSpaceOnUse">
+          <rect width="640" height="96" fill={`url(#${glowId})`} />
         </pattern>
       </defs>
 
-      <rect width="100%" height="96" fill="url(#stage-night-sky)" />
-      <rect width="100%" height="96" fill="url(#stage-night-glows)" />
-      <rect width="100%" height="96" fill="url(#stage-night-stars)" />
+      <rect width="100%" height="96" fill={`url(#${skyId})`} />
+      <rect width="100%" height="96" fill={`url(#${glowsId})`} />
+      <rect width="100%" height="96" fill={`url(#${starsId})`} />
 
-      <g filter="url(#stage-night-soft)">
+      <g filter={`url(#${softId})`}>
         <path
           d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96H-12V88Z"
-          fill="url(#stage-night-cloud)"
+          fill={`url(#${cloudId})`}
         />
       </g>
-      <g filter="url(#stage-night-soft)">
+      <g filter={`url(#${softId})`}>
         <path
           d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96H150Z"
-          fill="url(#stage-night-cloud)"
+          fill={`url(#${cloudId})`}
           fillOpacity="0.8"
         />
       </g>
@@ -182,18 +181,29 @@ function NightlySkyArt() {
   );
 }
 
-function DevBlueprintArt() {
+function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
+  const idPrefix = useId().replaceAll(":", "");
+  const paperId = `${idPrefix}-stage-bp-paper`;
+  const glowId = `${idPrefix}-stage-bp-glow`;
+  const celesteGlowId = `${idPrefix}-stage-bp-glow-celeste`;
+  const violetGlowId = `${idPrefix}-stage-bp-glow-violet`;
+  const minorGridId = `${idPrefix}-stage-bp-grid-minor`;
+  const majorGridId = `${idPrefix}-stage-bp-grid-major`;
+  const rulerId = `${idPrefix}-stage-bp-ruler`;
+  const glowsId = `${idPrefix}-stage-bp-glows`;
+  const annotationsId = `${idPrefix}-stage-bp-annotations`;
+
   return (
     <svg
       className="stage-blueprint h-full w-full"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
-      viewBox={STAGE_BACKDROP_VIEW_BOX}
+      viewBox={compact ? "64 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
         <linearGradient
-          id="stage-bp-paper"
+          id={paperId}
           x1="60"
           y1="0"
           x2="220"
@@ -206,7 +216,7 @@ function DevBlueprintArt() {
           <stop offset="1" style={{ stopColor: "var(--stage-bp-top)" }} />
         </linearGradient>
         <radialGradient
-          id="stage-bp-glow"
+          id={glowId}
           cx="0"
           cy="0"
           r="1"
@@ -218,7 +228,7 @@ function DevBlueprintArt() {
           <stop offset="1" stopColor="#276AF1" stopOpacity="0" />
         </radialGradient>
         <radialGradient
-          id="stage-bp-glow-celeste"
+          id={celesteGlowId}
           cx="0"
           cy="0"
           r="1"
@@ -230,7 +240,7 @@ function DevBlueprintArt() {
           <stop offset="1" stopColor="#277EF1" stopOpacity="0" />
         </radialGradient>
         <radialGradient
-          id="stage-bp-glow-violet"
+          id={violetGlowId}
           cx="0"
           cy="0"
           r="1"
@@ -241,13 +251,13 @@ function DevBlueprintArt() {
           <stop offset="0.52" stopColor="#7C8BFF" stopOpacity="0.14" />
           <stop offset="1" stopColor="#3155DF" stopOpacity="0" />
         </radialGradient>
-        <pattern id="stage-bp-grid-minor" width="8" height="8" patternUnits="userSpaceOnUse">
+        <pattern id={minorGridId} width="8" height="8" patternUnits="userSpaceOnUse">
           <path d="M8 0H0V8" stroke="#EAF6FF" strokeOpacity="0.14" strokeWidth="0.5" />
         </pattern>
-        <pattern id="stage-bp-grid-major" width="32" height="32" patternUnits="userSpaceOnUse">
+        <pattern id={majorGridId} width="32" height="32" patternUnits="userSpaceOnUse">
           <path d="M32 0H0V32" stroke="#EAF6FF" strokeOpacity="0.26" strokeWidth="0.6" />
         </pattern>
-        <pattern id="stage-bp-ruler" width="32" height="6" patternUnits="userSpaceOnUse">
+        <pattern id={rulerId} width="32" height="6" patternUnits="userSpaceOnUse">
           <path
             d="M4 0V2.5M12 0V2.5M20 0V4M28 0V2.5"
             stroke="#DDF7FF"
@@ -255,12 +265,12 @@ function DevBlueprintArt() {
             strokeWidth="0.5"
           />
         </pattern>
-        <pattern id="stage-bp-glows" width="768" height="96" patternUnits="userSpaceOnUse">
-          <rect width="768" height="96" fill="url(#stage-bp-glow)" />
-          <rect width="768" height="96" fill="url(#stage-bp-glow-celeste)" />
-          <rect width="768" height="96" fill="url(#stage-bp-glow-violet)" />
+        <pattern id={glowsId} width="768" height="96" patternUnits="userSpaceOnUse">
+          <rect width="768" height="96" fill={`url(#${glowId})`} />
+          <rect width="768" height="96" fill={`url(#${celesteGlowId})`} />
+          <rect width="768" height="96" fill={`url(#${violetGlowId})`} />
         </pattern>
-        <pattern id="stage-bp-annotations" width="768" height="96" patternUnits="userSpaceOnUse">
+        <pattern id={annotationsId} width="768" height="96" patternUnits="userSpaceOnUse">
           <g stroke="#DDF7FF" strokeLinecap="round" strokeOpacity="0.6" strokeWidth="0.7">
             <path d="M180 64H264" strokeDasharray="5 4" />
             <path d="M180 61V67M264 61V67" />
@@ -309,12 +319,12 @@ function DevBlueprintArt() {
         </pattern>
       </defs>
 
-      <rect width="100%" height="96" fill="url(#stage-bp-paper)" />
-      <rect width="100%" height="96" fill="url(#stage-bp-glows)" />
-      <rect width="100%" height="96" fill="url(#stage-bp-grid-minor)" />
-      <rect width="100%" height="96" fill="url(#stage-bp-grid-major)" />
-      <rect width="100%" height="6" fill="url(#stage-bp-ruler)" />
-      <rect width="100%" height="96" fill="url(#stage-bp-annotations)" />
+      <rect width="100%" height="96" fill={`url(#${paperId})`} />
+      <rect width="100%" height="96" fill={`url(#${glowsId})`} />
+      <rect width="100%" height="96" fill={`url(#${minorGridId})`} />
+      <rect width="100%" height="96" fill={`url(#${majorGridId})`} />
+      <rect width="100%" height="6" fill={`url(#${rulerId})`} />
+      <rect width="100%" height="96" fill={`url(#${annotationsId})`} />
     </svg>
   );
 }
