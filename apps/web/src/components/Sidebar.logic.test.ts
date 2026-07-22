@@ -754,8 +754,19 @@ describe("getSidebarThreadKeysNeedingChangeRequestReporter", () => {
       getSidebarThreadKeysNeedingChangeRequestReporter(
         ["visible", "preview-hidden", "collapsed"],
         new Set(["visible"]),
+        true,
       ),
     ).toEqual(["preview-hidden", "collapsed"]);
+  });
+
+  it("reports every thread when settings replaces the sidebar thread rows", () => {
+    expect(
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        ["would-be-visible", "preview-hidden", "collapsed"],
+        new Set(["would-be-visible"]),
+        false,
+      ),
+    ).toEqual(["would-be-visible", "preview-hidden", "collapsed"]);
   });
 });
 

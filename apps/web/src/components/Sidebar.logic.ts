@@ -66,8 +66,11 @@ export function shouldDismissThreadSettleConfirmation<T>(input: {
 export function getSidebarThreadKeysNeedingChangeRequestReporter<T>(
   allThreadKeys: readonly T[],
   visibleThreadKeys: ReadonlySet<T>,
+  sidebarThreadRowsMounted: boolean,
 ): T[] {
-  return allThreadKeys.filter((threadKey) => !visibleThreadKeys.has(threadKey));
+  return allThreadKeys.filter(
+    (threadKey) => !sidebarThreadRowsMounted || !visibleThreadKeys.has(threadKey),
+  );
 }
 
 export function resolveSidebarThreadGitCwd(input: {

@@ -3543,8 +3543,9 @@ export default function Sidebar() {
       getSidebarThreadKeysNeedingChangeRequestReporter(
         allUnarchivedSidebarThreadKeys,
         visibleSidebarThreadKeySet,
+        !isOnSettings,
       ),
-    [allUnarchivedSidebarThreadKeys, visibleSidebarThreadKeySet],
+    [allUnarchivedSidebarThreadKeys, isOnSettings, visibleSidebarThreadKeySet],
   );
   useEffect(() => {
     const liveThreadKeys = new Set(allUnarchivedSidebarThreadKeys);
