@@ -106,7 +106,10 @@ import {
 } from "~/environments/primary";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
-import { resolveServerConfigVersionMismatch } from "~/versionSkew";
+import {
+  resolveServerConfigVersionMismatch,
+  resolveServerSelfUpdateCapability,
+} from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
@@ -129,6 +132,7 @@ import {
 } from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { ServerUpdateAction } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 
@@ -1425,11 +1429,19 @@ function SavedBackendListRow({
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
           ) : null}
           {versionMismatch ? (
-            <p className="flex items-center gap-1 text-warning text-xs">
-              <TriangleAlertIcon className="size-3.5 shrink-0" />
-              Version drift: client {versionMismatch.clientVersion}, server{" "}
-              {versionMismatch.serverVersion}.
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="flex items-center gap-1 text-warning text-xs">
+                <TriangleAlertIcon className="size-3.5 shrink-0" />
+                Version drift: client {versionMismatch.clientVersion}, server{" "}
+                {versionMismatch.serverVersion}.
+              </p>
+              <ServerUpdateAction
+                environmentId={environmentId}
+                serverLabel={`${environment.label} server`}
+                selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
+                targetVersion={versionMismatch.clientVersion}
+              />
+            </div>
           ) : null}
           {environment.connection.error ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
@@ -2981,6 +2993,16 @@ export function ConnectionsSettings() {
                     {primaryVersionMismatch.serverVersion}. Sync them if RPC calls or reconnects
                     fail.
                   </span>
+                }
+                control={
+                  primaryEnvironmentId !== null ? (
+                    <ServerUpdateAction
+                      environmentId={primaryEnvironmentId}
+                      serverLabel={primaryEnvironment?.label ?? "this server"}
+                      selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
+                      targetVersion={primaryVersionMismatch.clientVersion}
+                    />
+                  ) : undefined
                 }
               />
             ) : null}

@@ -156,6 +156,26 @@ One-time Vercel dashboard setup:
 - Publishes the CLI package (`apps/server`, npm package `t3`) to the `nightly` npm dist-tag using the same nightly version.
 - Does not commit version bumps back to `main`.
 
+## Server self-update release invariant
+
+Connected servers update to the client's exact version, not to an npm dist-tag. Every released
+desktop or hosted client version must therefore have a matching `t3@<version>` package available on
+npm before users can receive that client.
+
+The workflow enforces this ordering:
+
+1. `publish_cli` publishes the exact stable or nightly version to npm.
+2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
+3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
+
+Preserve these dependencies when changing the release graph. Publishing a client first would leave
+the **Update server** action targeting a package version that does not exist yet.
+
+For a release smoke test, confirm `npm view t3@<version> version` returns the expected version, then
+connect the new client to a server on the previous version and verify that the update action
+reconnects to the matching server. Test one automatic path and the manual or desktop-managed
+guidance when those environments are available.
+
 ## Desktop auto-update notes
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
@@ -293,6 +313,7 @@ Checklist:
 5. Verify workflow steps:
    - preflight passes
    - all matrix builds pass
+   - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files
 6. Smoke test downloaded artifacts.
 

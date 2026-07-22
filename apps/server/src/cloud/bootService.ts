@@ -16,21 +16,19 @@ import {
 } from "@t3tools/shared/hostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { ensurePinnedRuntimeInstalled, pinnedRuntimePaths } from "./pinnedRuntime.ts";
 
 /**
- * Installs T3 Code as a per-user boot service so a connected machine stays
- * reachable through T3 Connect after the SSH session ends. Linux-only for
- * now: systemd user unit + loginctl enable-linger. The service runs a pinned
- * runtime installed under <baseDir>/runtime — never `npx t3`, whose cache is
- * ephemeral and whose registry fetch at boot would make startup depend on
- * the network.
+ * Installs T3 Code as a per-user boot service. Linux-only for now: systemd
+ * user unit + loginctl enable-linger. The service runs a stable or pinned
+ * runtime — never an ephemeral `npx t3` cache whose eviction could break
+ * startup.
  */
 
 const BOOT_SERVICE_NAME = "t3code";
-const BOOT_RUNTIME_DIR = "runtime";
 
-const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
+export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
 const EPHEMERAL_CACHE_SEGMENTS = [
   "/_npx/", // npx
@@ -92,7 +90,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // relay connection, and Restart=always covers early-boot failures.
   return [
     "[Unit]",
-    "Description=T3 Code server (T3 Connect)",
+    "Description=T3 Code server",
     // Give up after 5 crashes in 5 minutes so a persistently broken install
     // (deleted runtime, broken workspace) stops instead of restarting every
     // 5s forever and growing the unrotated append log without bound.
@@ -103,6 +101,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.t3EntryPath)} serve`,
     "Restart=always",
     "RestartSec=5",
@@ -206,14 +205,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const unitDir = path.join(homeDir, ".config", "systemd", "user");
   const unitPath = path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
   const logPath = path.join(input.logsDir, "boot-service.log");
-  const runtimeVersionDir = path.join(
-    input.baseDir,
-    BOOT_RUNTIME_DIR,
-    "versions",
-    input.cliVersion,
-  );
-  const runtimeEntryPath = path.join(runtimeVersionDir, "node_modules", "t3", "dist", "bin.mjs");
-  const runtimeSentinelPath = path.join(runtimeVersionDir, ".install-complete");
+  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
 
   const requireSystemdLinux = Effect.gen(function* () {
     if (platform !== "linux" || homeDir === "") {
@@ -263,52 +255,41 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!isEphemeralCacheEntry(host.cliEntryPath)) {
       return;
     }
-    // The sentinel is written only after npm exits 0. Checking the entry
-    // file alone is not enough: npm extracts files before running native
-    // builds (node-pty), so a killed install leaves a plausible-looking but
-    // broken tree behind.
-    const alreadyPinned = yield* Effect.all([
-      fs.exists(runtimeSentinelPath),
-      fs.exists(runtimeEntryPath),
-    ]).pipe(
-      Effect.map(([sentinelExists, entryExists]) => sentinelExists && entryExists),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-    if (alreadyPinned) {
-      return;
-    }
-    yield* fs.remove(runtimeVersionDir, { recursive: true, force: true }).pipe(
-      Effect.andThen(fs.makeDirectory(runtimeVersionDir, { recursive: true })),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-    yield* runStep(
-      "installing the pinned t3 runtime (this can take a few minutes)",
-      "npm",
-      [
-        "install",
-        "--prefix",
-        runtimeVersionDir,
-        "--no-fund",
-        "--no-audit",
-        `t3@${input.cliVersion}`,
-      ],
-      // Native deps (node-pty) can compile from source on slow boxes; the
-      // ProcessRunner default of 60s would kill a healthy install.
-      { timeout: PINNED_RUNTIME_INSTALL_TIMEOUT },
-    ).pipe(
-      Effect.tapError(() =>
-        fs.remove(runtimeVersionDir, { recursive: true, force: true }).pipe(Effect.ignore),
+    yield* ensurePinnedRuntimeInstalled({
+      baseDir: input.baseDir,
+      version: input.cliVersion,
+      fs,
+      path,
+      runner,
+    }).pipe(
+      Effect.mapError((error) =>
+        error.step.startsWith("installing")
+          ? new BootServiceCommandError({
+              step: error.step,
+              exitCode: error.exitCode,
+              stdoutLength: error.stdoutLength,
+              stderrLength: error.stderrLength,
+              cause: error.cause,
+            })
+          : new BootServiceInstallError({ cause: error }),
+      ),
+      Effect.tapError((error) =>
+        DateTime.now.pipe(
+          Effect.flatMap((now) =>
+            fs.writeFileString(logPath, `${DateTime.formatIso(now)} ${error.message}\n`, {
+              flag: "a",
+            }),
+          ),
+          Effect.ignore,
+        ),
       ),
     );
-    yield* fs
-      .writeFileString(runtimeSentinelPath, `${input.cliVersion}\n`)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   });
 
   // Where the unit will point: derivable without touching the network, so
   // status can compare units purely; install materializes it first.
   const plannedEntryPath = isEphemeralCacheEntry(host.cliEntryPath)
-    ? runtimeEntryPath
+    ? runtimePaths.entryPath
     : host.cliEntryPath;
   const plan: BootServicePlan = {
     nodePath: host.execPath,
@@ -341,8 +322,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
 
     // If any activation step fails, remove the unit again: a leftover file
-    // would make the next `t3 connect` report the service as already set up
-    // even though it was never enabled or lingered.
+    // would make service status report it as installed even though it was
+    // never enabled or lingered.
     yield* Effect.gen(function* () {
       yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
       yield* runStep("enabling the service", "systemctl", [
@@ -372,7 +353,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // fails), leave nothing behind: disable removes the enable symlink, remove
   // deletes the file, daemon-reload clears the stale definition — otherwise a
   // dangling wants/ symlink logs "Failed to load unit" at every boot and the
-  // next connect misreports the state.
+  // next lifecycle command misreports the state.
   const rollbackFailedInstall = Effect.fn("cloud.boot_service.rollback_failed_install")(function* (
     previousUnit: Option.Option<string>,
   ) {

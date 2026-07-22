@@ -16,9 +16,9 @@ import {
   formatRelayClientReady,
   headlessSessionConfig,
   isPublishAgentActivityEnabledValue,
-  recoverBootServiceOffer,
   reportCloudDisconnectResults,
 } from "./connect.ts";
+import { recoverServiceOnboardingOffer } from "./service.ts";
 
 it("explains how to complete headless authorization", () => {
   assert.equal(
@@ -58,7 +58,7 @@ it.effect("detects headless operation from individual SSH config values", () =>
 
 it.effect("treats cancelling optional background setup as a successful skip", () =>
   Effect.gen(function* () {
-    const result = yield* recoverBootServiceOffer(Effect.fail(new Terminal.QuitError({})));
+    const result = yield* recoverServiceOnboardingOffer(Effect.fail(new Terminal.QuitError({})));
     assert.isFalse(result);
   }),
 );

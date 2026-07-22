@@ -321,6 +321,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    updateServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:update-server",
+      tag: WS_METHODS.serverUpdateServer,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",
       tag: WS_METHODS.serverUpsertKeybinding,

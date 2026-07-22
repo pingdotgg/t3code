@@ -92,6 +92,9 @@ connector, and attempts to revoke the relay-side environment record. It retains 
 authorization so `t3 connect link` can re-enable exposure without another browser flow. `t3 connect
 logout` performs the same cleanup and removes the stored CLI authorization.
 
+The background service has an independent lifecycle. Connect setup may offer to install it, but
+logout leaves it running; manage it with `t3 service status`, `install`, `update`, and `uninstall`.
+
 The current OAuth callback listener binds to loopback port `34338`. When running the CLI over SSH,
 forward that port before running `t3 connect login` or `t3 connect link`:
 

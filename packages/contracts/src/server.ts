@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ExecutionEnvironmentDescriptor, ServerSelfUpdateMethod } from "./environment.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   IsoDateTime,
@@ -572,5 +572,32 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
 ) {
   override get message(): string {
     return `Provider update failed for ${this.provider}: ${this.reason}`;
+  }
+}
+
+export const ServerSelfUpdateInput = Schema.Struct({
+  /** Exact npm version of the `t3` package to install (never a dist-tag, so
+      the server and the acknowledging client agree on what was requested). */
+  targetVersion: TrimmedNonEmptyString,
+});
+export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
+
+/** Acknowledgement that the update artifact is installed and the server is
+    about to restart into it — the connection will drop moments later. */
+export const ServerSelfUpdateResult = Schema.Struct({
+  targetVersion: TrimmedNonEmptyString,
+  method: ServerSelfUpdateMethod,
+});
+export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;
+
+export class ServerSelfUpdateError extends Schema.TaggedErrorClass<ServerSelfUpdateError>()(
+  "ServerSelfUpdateError",
+  {
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Server update failed: ${this.reason}`;
   }
 }

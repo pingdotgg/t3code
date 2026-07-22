@@ -202,6 +202,18 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
   );
 
+  it.effect("exposes service lifecycle commands without T3 Connect configuration", () =>
+    Effect.gen(function* () {
+      const { output } = yield* captureStdout(runCli(["service", "--help"], noConnectCli));
+
+      assert.include(output, "Manage the T3 Code background service.");
+      assert.include(output, "install");
+      assert.include(output, "uninstall");
+      assert.include(output, "update");
+      assert.include(output, "status");
+    }),
+  );
+
   it.effect("reports fresh headless connect state without requiring local configuration", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
@@ -305,7 +317,10 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         runConnectCli(["connect", "logout", "--base-dir", baseDir]),
       );
 
-      assert.equal(output, "Signed out of T3 Connect locally.");
+      assert.equal(
+        output,
+        "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
+      );
       assert.isFalse(NodeFS.existsSync(tokenPath));
     }),
   );
