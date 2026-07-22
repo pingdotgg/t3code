@@ -19,7 +19,7 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
-import { useLayoutScopedOpenState } from "../hooks/useLayoutScopedOpenState";
+import { useLayoutScopedState } from "../hooks/useLayoutScopedOpenState";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import {
@@ -28,11 +28,13 @@ import {
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import {
+  type BranchToolbarPicker,
   type EnvMode,
   type EnvironmentOption,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
+  resolveBranchToolbarPickerOpenChange,
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
@@ -333,10 +335,21 @@ export const BranchToolbar = memo(function BranchToolbar({
   const isMobile = useIsMobile();
 
   const toolbarLayout = isMobile ? "mobile" : "desktop";
-  const [environmentPickerOpen, setEnvironmentPickerOpen] = useLayoutScopedOpenState(toolbarLayout);
-  const [envModePickerOpen, setEnvModePickerOpen] = useLayoutScopedOpenState(toolbarLayout);
-  const [mobileRunContextOpen, setMobileRunContextOpen] = useLayoutScopedOpenState(toolbarLayout);
+  const [activePicker, setActivePicker] = useLayoutScopedState<
+    typeof toolbarLayout,
+    BranchToolbarPicker | null
+  >(toolbarLayout, null);
+  const environmentPickerOpen = activePicker === "environment";
+  const envModePickerOpen = activePicker === "env-mode";
+  const mobileRunContextOpen = activePicker === "mobile-run-context";
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle | null>(null);
+
+  const handlePickerOpenChange = useCallback(
+    (picker: BranchToolbarPicker, open: boolean) => {
+      setActivePicker((current) => resolveBranchToolbarPickerOpenChange(current, picker, open));
+    },
+    [setActivePicker],
+  );
 
   const isRendered = hasActiveThread && activeProject !== null;
   const environmentPickerAvailable =
@@ -348,19 +361,19 @@ export const BranchToolbar = memo(function BranchToolbar({
         if (!isRendered || !environmentPickerAvailable || envLocked) return false;
         if (isMobile) {
           if (envModeLocked) return false;
-          setMobileRunContextOpen((open) => !open);
+          handlePickerOpenChange("mobile-run-context", !mobileRunContextOpen);
           return true;
         }
-        setEnvironmentPickerOpen((open) => !open);
+        handlePickerOpenChange("environment", !environmentPickerOpen);
         return true;
       },
       toggleEnvModePicker: () => {
         if (!isRendered || envModeLocked) return false;
         if (isMobile) {
-          setMobileRunContextOpen((open) => !open);
+          handlePickerOpenChange("mobile-run-context", !mobileRunContextOpen);
           return true;
         }
-        setEnvModePickerOpen((open) => !open);
+        handlePickerOpenChange("env-mode", !envModePickerOpen);
         return true;
       },
       toggleBranchPicker: () => {
@@ -368,7 +381,17 @@ export const BranchToolbar = memo(function BranchToolbar({
         return branchSelectorRef.current?.togglePicker() ?? false;
       },
     }),
-    [envLocked, envModeLocked, environmentPickerAvailable, isMobile, isRendered],
+    [
+      envLocked,
+      envModeLocked,
+      envModePickerOpen,
+      environmentPickerAvailable,
+      environmentPickerOpen,
+      handlePickerOpenChange,
+      isMobile,
+      isRendered,
+      mobileRunContextOpen,
+    ],
   );
 
   // Hold-modifier hint badges, mirroring the composer footer controls.
@@ -409,7 +432,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           showEnvironmentPicker={showEnvironmentPicker}
           showEnvironmentIndicator={showEnvironmentIndicator}
           open={mobileRunContextOpen}
-          onOpenChange={setMobileRunContextOpen}
+          onOpenChange={(open) => handlePickerOpenChange("mobile-run-context", open)}
           onEnvironmentChange={onEnvironmentChange}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
@@ -426,7 +449,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
                 open={environmentPickerOpen}
-                onOpenChange={setEnvironmentPickerOpen}
+                onOpenChange={(open) => handlePickerOpenChange("environment", open)}
                 shortcutHintLabel={environmentHintLabel}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
               />
@@ -438,7 +461,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             open={envModePickerOpen}
-            onOpenChange={setEnvModePickerOpen}
+            onOpenChange={(open) => handlePickerOpenChange("env-mode", open)}
             shortcutHintLabel={envModeHintLabel}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
@@ -458,6 +481,8 @@ export const BranchToolbar = memo(function BranchToolbar({
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         startFromOrigin={startFromOrigin}
         onStartFromOriginChange={onStartFromOriginChange}
+        open={activePicker === "branch"}
+        onOpenChange={(open) => handlePickerOpenChange("branch", open)}
         selectorRef={branchSelectorRef}
         shortcutHintLabel={branchHintLabel}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}

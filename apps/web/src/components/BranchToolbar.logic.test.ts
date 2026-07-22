@@ -5,6 +5,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
+  resolveBranchToolbarPickerOpenChange,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -17,6 +18,18 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
+
+describe("resolveBranchToolbarPickerOpenChange", () => {
+  it("replaces the active picker instead of stacking keyboard-opened overlays", () => {
+    expect(resolveBranchToolbarPickerOpenChange("environment", "env-mode", true)).toBe("env-mode");
+    expect(resolveBranchToolbarPickerOpenChange("env-mode", "branch", true)).toBe("branch");
+  });
+
+  it("ignores a stale close event from a picker that is no longer active", () => {
+    expect(resolveBranchToolbarPickerOpenChange("branch", "environment", false)).toBe("branch");
+    expect(resolveBranchToolbarPickerOpenChange("branch", "branch", false)).toBeNull();
+  });
+});
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");

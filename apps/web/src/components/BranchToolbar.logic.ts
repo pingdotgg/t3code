@@ -16,6 +16,17 @@ export interface EnvironmentOption {
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
 
+export type BranchToolbarPicker = "environment" | "env-mode" | "mobile-run-context" | "branch";
+
+export function resolveBranchToolbarPickerOpenChange(
+  current: BranchToolbarPicker | null,
+  picker: BranchToolbarPicker,
+  open: boolean,
+): BranchToolbarPicker | null {
+  if (open) return picker;
+  return current === picker ? null : current;
+}
+
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
 function normalizeDisplayLabel(value: string | null | undefined): string | null {

@@ -79,6 +79,8 @@ interface BranchToolbarBranchSelectorProps {
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   selectorRef?: React.RefObject<BranchToolbarBranchSelectorHandle | null>;
   shortcutHintLabel?: string | null;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -115,6 +117,8 @@ export function BranchToolbarBranchSelector({
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
+  open,
+  onOpenChange,
   selectorRef,
   shortcutHintLabel,
   onCheckoutPullRequestRequest,
@@ -228,7 +232,8 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   // Git ref queries
   // ---------------------------------------------------------------------------
-  const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
+  const [uncontrolledBranchMenuOpen, setUncontrolledBranchMenuOpen] = useState(false);
+  const isBranchMenuOpen = open ?? uncontrolledBranchMenuOpen;
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
@@ -328,6 +333,21 @@ export function BranchToolbarBranchSelector({
         ? `Showing ${refs.length} of ${totalBranchCount} refs`
         : null;
 
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      onOpenChange?.(nextOpen);
+      if (open === undefined) {
+        setUncontrolledBranchMenuOpen(nextOpen);
+      }
+      if (!nextOpen) {
+        setBranchQuery("");
+        return;
+      }
+      branchRefState.refresh();
+    },
+    [branchRefState.refresh, onOpenChange, open],
+  );
+
   // ---------------------------------------------------------------------------
   // Branch actions
   // ---------------------------------------------------------------------------
@@ -383,7 +403,7 @@ export function BranchToolbarBranchSelector({
 
     if (isSelectingWorktreeBase) {
       setThreadBranch(refName.name, null);
-      setIsBranchMenuOpen(false);
+      handleOpenChange(false);
       onComposerFocusRequest?.();
       return;
     }
@@ -396,7 +416,7 @@ export function BranchToolbarBranchSelector({
 
     if (selectionTarget.reuseExistingWorktree) {
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
-      setIsBranchMenuOpen(false);
+      handleOpenChange(false);
       onComposerFocusRequest?.();
       return;
     }
@@ -405,7 +425,7 @@ export function BranchToolbarBranchSelector({
       ? deriveLocalBranchNameFromRemoteRef(refName.name)
       : refName.name;
 
-    setIsBranchMenuOpen(false);
+    handleOpenChange(false);
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
@@ -443,7 +463,7 @@ export function BranchToolbarBranchSelector({
     const name = rawName.trim();
     if (!branchCwd || !name || isBranchActionPending) return;
 
-    setIsBranchMenuOpen(false);
+    handleOpenChange(false);
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
@@ -506,18 +526,6 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   // Combobox / list plumbing
   // ---------------------------------------------------------------------------
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      setIsBranchMenuOpen(open);
-      if (!open) {
-        setBranchQuery("");
-        return;
-      }
-      branchRefState.refresh();
-    },
-    [branchRefState.refresh],
-  );
-
   useImperativeHandle(
     selectorRef,
     () => ({
@@ -639,8 +647,7 @@ export function BranchToolbarBranchSelector({
             if (!prReference || !onCheckoutPullRequestRequest) {
               return;
             }
-            setIsBranchMenuOpen(false);
-            setBranchQuery("");
+            handleOpenChange(false);
             onComposerFocusRequest?.();
             onCheckoutPullRequestRequest(prReference);
           }}
