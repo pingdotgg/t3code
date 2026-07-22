@@ -72,7 +72,12 @@ const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) 
     return result.stdout.trim();
   });
 
-const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: number }) =>
+const searchWorkspaceEntries = (input: {
+  cwd: string;
+  query: string;
+  limit: number;
+  kind?: "file" | "directory";
+}) =>
   Effect.gen(function* () {
     const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
     return yield* workspaceEntries.search(input);
@@ -196,6 +201,24 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const result = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 1 });
 
         expect(result.entries).toHaveLength(1);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("applies the file filter before limiting search results", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-file-limit-" });
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, "src/internal.ts");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd,
+          query: "src",
+          limit: 1,
+          kind: "file",
+        });
+
+        expect(result.entries).toEqual([{ path: "src/index.ts", kind: "file" }]);
         expect(result.truncated).toBe(true);
       }),
     );

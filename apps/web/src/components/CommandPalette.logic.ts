@@ -11,12 +11,55 @@ export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
 
+export interface CommandPaletteOpenIntent {
+  readonly kind: "add-project";
+}
+
+export interface CommandPaletteUiState {
+  readonly open: boolean;
+  readonly mode: "command" | "files";
+  readonly openIntent: CommandPaletteOpenIntent | null;
+}
+
+export type CommandPaletteUiAction =
+  | { readonly _tag: "SetOpen"; readonly open: boolean }
+  | { readonly _tag: "ToggleCommand" }
+  | { readonly _tag: "ToggleFiles" }
+  | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "ClearOpenIntent" };
+
+export function reduceCommandPaletteUiState(
+  state: CommandPaletteUiState,
+  action: CommandPaletteUiAction,
+): CommandPaletteUiState {
+  switch (action._tag) {
+    case "SetOpen":
+      return {
+        open: action.open,
+        mode: "command",
+        openIntent: action.open ? state.openIntent : null,
+      };
+    case "ToggleCommand":
+      return state.open && state.mode === "command"
+        ? { ...state, open: false, openIntent: null }
+        : { open: true, mode: "command", openIntent: null };
+    case "ToggleFiles":
+      return state.open && state.mode === "files"
+        ? { ...state, open: false, openIntent: null }
+        : { open: true, mode: "files", openIntent: null };
+    case "OpenAddProject":
+      return { open: true, mode: "command", openIntent: { kind: "add-project" } };
+    case "ClearOpenIntent":
+      return state.openIntent ? { ...state, openIntent: null } : state;
+  }
+}
+
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
   readonly value: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly title: ReactNode;
-  readonly description?: string;
+  readonly description?: ReactNode;
   readonly timestamp?: string;
   readonly icon: ReactNode;
   readonly disabled?: boolean;

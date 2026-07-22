@@ -4,11 +4,54 @@ import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
+  reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+describe("reduceCommandPaletteUiState", () => {
+  const closedState = { open: false, mode: "command", openIntent: null } as const;
+
+  it("opens, switches, and closes command and file-picker modes", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, { _tag: "ToggleFiles" });
+    expect(filesOpen).toEqual({ open: true, mode: "files", openIntent: null });
+
+    const commandOpen = reduceCommandPaletteUiState(filesOpen, { _tag: "ToggleCommand" });
+    expect(commandOpen).toEqual({ open: true, mode: "command", openIntent: null });
+
+    expect(reduceCommandPaletteUiState(commandOpen, { _tag: "ToggleCommand" })).toEqual({
+      open: false,
+      mode: "command",
+      openIntent: null,
+    });
+  });
+
+  it("routes add-project requests back to command mode", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, { _tag: "ToggleFiles" });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenAddProject" })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "add-project" },
+    });
+  });
+
+  it("resets file-picker mode for dialog trigger opens and closes", () => {
+    const filesOpen = reduceCommandPaletteUiState(closedState, { _tag: "ToggleFiles" });
+
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "SetOpen", open: false })).toEqual({
+      open: false,
+      mode: "command",
+      openIntent: null,
+    });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "SetOpen", open: true })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: null,
+    });
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

@@ -1,4 +1,13 @@
-import { FileFinder, type MixedItem, type MixedSearchResult } from "@ff-labs/fff-node";
+import {
+  type DirItem,
+  type DirSearchResult,
+  type FileItem,
+  FileFinder,
+  type MixedItem,
+  type MixedSearchResult,
+  type Result,
+  type SearchResult,
+} from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import type {
   ProjectEntry,
+  ProjectEntryKind,
   ProjectListEntriesResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
@@ -96,6 +106,7 @@ export class WorkspaceSearchIndex extends Context.Service<
     readonly search: (
       query: string,
       limit: number,
+      kind?: ProjectEntryKind,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
     readonly refresh: () => Effect.Effect<
       void,
@@ -129,6 +140,16 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
   };
 }
 
+function toFileEntry(item: FileItem): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+  return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
+}
+
+function toDirectoryEntry(item: DirItem): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+  return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+}
+
 function mapMixedSearchResult(
   result: MixedSearchResult,
   limit: number,
@@ -151,6 +172,33 @@ function mapMixedSearchResult(
     : 0;
   return {
     entries,
+    truncated: result.totalMatched - rootDirectoryCount > limit,
+  };
+}
+
+function mapFileSearchResult(result: SearchResult, limit: number): ProjectSearchEntriesResult {
+  return {
+    entries: result.items
+      .flatMap((item) => {
+        const entry = toFileEntry(item);
+        return entry ? [entry] : [];
+      })
+      .slice(0, limit),
+    truncated: result.totalMatched > limit,
+  };
+}
+
+function mapDirectorySearchResult(
+  result: DirSearchResult,
+  limit: number,
+): ProjectSearchEntriesResult {
+  const entries = result.items.flatMap((item) => {
+    const entry = toDirectoryEntry(item);
+    return entry ? [entry] : [];
+  });
+  const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
+  return {
+    entries: entries.slice(0, limit),
     truncated: result.totalMatched - rootDirectoryCount > limit,
   };
 }
@@ -229,18 +277,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: strin
       }),
   );
 
-  const runMixedSearch = Effect.fn("WorkspaceSearchIndex.runMixedSearch")(function* (
+  const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
-  ) {
+    operation: "directorySearch" | "fileSearch" | "mixedSearch",
+    execute: () => Result<A>,
+  ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
     const result = yield* Effect.try({
-      try: () => finder.mixedSearch(query, { pageSize }),
+      try: execute,
       catch: (cause) =>
         new WorkspaceSearchIndexSearchFailed({
           cwd,
           queryLength: query.length,
           pageSize,
-          reason: "FileFinder.mixedSearch threw unexpectedly.",
+          reason: `FileFinder.${operation} threw unexpectedly.`,
           cause,
         }),
     });
@@ -287,7 +337,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: strin
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const result = yield* runMixedSearch("", WORKSPACE_INDEX_PAGE_SIZE);
+      const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
+        finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+      );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
@@ -302,8 +354,23 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: strin
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
-  )(function* (query, limit) {
-    const result = yield* runMixedSearch(query, Math.max(1, limit + 1));
+  )(function* (query, limit, kind) {
+    const pageSize = Math.max(1, limit + 1);
+    if (kind === "file") {
+      const result = yield* runSearch(query, pageSize, "fileSearch", () =>
+        finder.fileSearch(query, { pageSize }),
+      );
+      return mapFileSearchResult(result, limit);
+    }
+    if (kind === "directory") {
+      const result = yield* runSearch(query, pageSize, "directorySearch", () =>
+        finder.directorySearch(query, { pageSize }),
+      );
+      return mapDirectorySearchResult(result, limit);
+    }
+    const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
+      finder.mixedSearch(query, { pageSize }),
+    );
     return mapMixedSearchResult(result, limit);
   });
 
