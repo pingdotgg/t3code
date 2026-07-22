@@ -101,8 +101,7 @@ export function resolveProviderWorkspaceSkills(
   input: ProviderWorkspaceSkillsResolutionInput,
 ): ReadonlyArray<ServerProviderSkill> {
   if (input.unavailable === true) {
-    const currentSkills = resolvePendingProviderWorkspaceSkills(input);
-    return currentSkills.length > 0 ? currentSkills : input.fallbackSkills;
+    return input.currentKey === input.nextKey ? input.currentSkills : input.fallbackSkills;
   }
   // AsyncResult failures can retain a previous success for stale-while-revalidate.
   // A failed workspace refresh must still fall back to the provider snapshot rather
