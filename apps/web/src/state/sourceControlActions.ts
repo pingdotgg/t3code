@@ -32,6 +32,9 @@ import { vcsActionManager, vcsEnvironment } from "./vcs";
 export type SourceControlActionKind =
   | "init"
   | "pull"
+  | "fetch"
+  | "push"
+  | "sync"
   | "publishRepository"
   | "runStackedAction"
   | "preparePullRequestThread";
@@ -58,6 +61,9 @@ interface SourceControlActionState<
 const ACTION_OPERATION = {
   init: "init",
   pull: "pull",
+  fetch: "fetch",
+  push: "push",
+  sync: "sync",
   publishRepository: "publish_repository",
   runStackedAction: "run_change_request",
   preparePullRequestThread: "prepare_pull_request_thread",
@@ -192,6 +198,123 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
   return useAction({
     kind: "pull",
     label: "Pulling latest changes",
+    scope,
+    action,
+    onSuccess: status.refresh,
+  });
+}
+
+export function useVcsFetchAction(scope: SourceControlActionScope) {
+  const fetch = useAtomCommand(vcsEnvironment.fetch, { reportFailure: false });
+  const status = useEnvironmentQuery(
+    scope.environmentId !== null && scope.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        })
+      : null,
+  );
+  const action = useCallback(async () => {
+    const target = resolveScope(scope);
+    if (target === null) {
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "fetch",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
+    }
+    return fetch({
+      environmentId: target.environmentId,
+      input: { cwd: target.cwd },
+    });
+  }, [fetch, scope]);
+  return useAction({
+    kind: "fetch",
+    label: "Fetching from remote",
+    scope,
+    action,
+    onSuccess: status.refresh,
+  });
+}
+
+export function useVcsPushAction(scope: SourceControlActionScope) {
+  const push = useAtomCommand(vcsEnvironment.push, { reportFailure: false });
+  const status = useEnvironmentQuery(
+    scope.environmentId !== null && scope.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        })
+      : null,
+  );
+  const action = useCallback(async () => {
+    const target = resolveScope(scope);
+    if (target === null) {
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "push",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
+    }
+    return push({
+      environmentId: target.environmentId,
+      input: { cwd: target.cwd },
+    });
+  }, [push, scope]);
+  return useAction({
+    kind: "push",
+    label: "Pushing to remote",
+    scope,
+    action,
+    onSuccess: status.refresh,
+  });
+}
+
+export function useVcsSyncAction(scope: SourceControlActionScope) {
+  const sync = useAtomCommand(vcsEnvironment.sync, { reportFailure: false });
+  const status = useEnvironmentQuery(
+    scope.environmentId !== null && scope.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        })
+      : null,
+  );
+  const action = useCallback(
+    async (input?: { mode?: "ff" | "rebase" }) => {
+      const target = resolveScope(scope);
+      if (target === null) {
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "sync",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      return sync({
+        environmentId: target.environmentId,
+        input: {
+          cwd: target.cwd,
+          ...(input?.mode ? { mode: input.mode } : {}),
+        },
+      });
+    },
+    [sync, scope],
+  );
+  return useAction({
+    kind: "sync",
+    label: "Syncing with remote",
     scope,
     action,
     onSuccess: status.refresh,

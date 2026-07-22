@@ -15,6 +15,7 @@ import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
+import { WorktreeRenameDialog } from "../components/WorktreeRenameDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
@@ -120,6 +121,7 @@ function RootRouteView() {
       <AppSidebarLayout>
         <Outlet />
       </AppSidebarLayout>
+      <WorktreeRenameDialog />
     </CommandPalette>
   );
 

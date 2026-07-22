@@ -107,6 +107,34 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
+
+  it("labels the folder move with the count of movable threads only", () => {
+    const items = buildMultiSelectThreadContextMenuItems({
+      count: 5,
+      hasRunningThread: false,
+      folderMenuChildren: [{ id: "move:__new__", label: "New folder…" }],
+      folderMoveCount: 3,
+    });
+    expect(items.map((item) => item.id)).toEqual([
+      "mark-unread",
+      "move-submenu",
+      "archive",
+      "delete",
+    ]);
+    expect(items).toContainEqual(
+      expect.objectContaining({ id: "move-submenu", label: "Move 3 to folder" }),
+    );
+  });
+
+  it("hides the folder move when no selected thread belongs to the project", () => {
+    const items = buildMultiSelectThreadContextMenuItems({
+      count: 2,
+      hasRunningThread: false,
+      folderMenuChildren: [{ id: "move:__new__", label: "New folder…" }],
+      folderMoveCount: 0,
+    });
+    expect(items.map((item) => item.id)).toEqual(["mark-unread", "archive", "delete"]);
+  });
 });
 
 describe("resolveSidebarStageBadgeLabel", () => {

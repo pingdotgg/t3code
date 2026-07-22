@@ -20,6 +20,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { useSourceControlActionRunning } from "../lib/sourceControlActions";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThread } from "../state/entities";
@@ -38,8 +39,11 @@ import {
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
+import { GitSyncControl, SYNC_BUSY_ACTIONS } from "./GitSyncControl";
 import {
   ChangeRequestStatusIcon,
+  ChecksStatusIcon,
+  checksStatusIndicator,
   prStatusIndicator,
   resolveThreadPr,
 } from "./ThreadStatusIndicators";
@@ -226,6 +230,10 @@ export function BranchToolbarBranchSelector({
           input: { cwd: branchCwd },
         }),
   );
+  // Block ref switches/creates while a sync action (fetch/push/pull/sync) is in
+  // flight on the same cwd — checking out mid-operation would race the git op.
+  const syncScope = useMemo(() => ({ environmentId, cwd: branchCwd }), [environmentId, branchCwd]);
+  const isSyncBusy = useSourceControlActionRunning(syncScope, SYNC_BUSY_ACTIONS);
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const branchRefTarget = useMemo(
@@ -554,6 +562,16 @@ export function BranchToolbarBranchSelector({
   const branchPrTooltip = branchPr
     ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state}) in browser`
     : "";
+  // CI status chip shown next to the PR pill when the PR has checks.
+  const branchPrChecks = checksStatusIndicator(branchPr?.checks);
+  const branchPrChecksUrl = branchPr ? `${branchPr.url}/checks` : "";
+  // For an open PR with CI, color the pill by the check status too (red/amber/green)
+  // so the whole PR cluster reflects health at a glance. Otherwise keep the PR
+  // state color (merged = violet, closed = gray).
+  const branchPrPillColorClass =
+    branchPr?.state === "open" && branchPrChecks
+      ? branchPrChecks.colorClass
+      : branchPrStatus?.colorClass;
   const openPrLink = useOpenPrLink();
 
   function renderPickerItem(itemValue: string, index: number) {
@@ -663,7 +681,7 @@ export function BranchToolbarBranchSelector({
                   onClick={(event) => openPrLink(event, branchPrStatus.url)}
                   className={cn(
                     "inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium tabular-nums transition-colors hover:bg-muted/60",
-                    branchPrStatus.colorClass,
+                    branchPrPillColorClass,
                   )}
                 />
               }
@@ -674,15 +692,40 @@ export function BranchToolbarBranchSelector({
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
+        {branchPr && branchPrChecks ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={branchPrChecks.tooltip}
+                  onClick={(event) => openPrLink(event, branchPrChecksUrl)}
+                  className={cn(
+                    "inline-flex shrink-0 items-center rounded px-1 py-0.5 transition-colors hover:bg-muted/60",
+                    branchPrChecks.colorClass,
+                  )}
+                />
+              }
+            >
+              <ChecksStatusIcon state={branchPrChecks.state} className="size-3" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{branchPrChecks.tooltip}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         <ComboboxTrigger
           render={<Button variant="ghost" size="xs" />}
           className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
-          disabled={isInitialBranchesLoadPending || isBranchActionPending}
+          disabled={isInitialBranchesLoadPending || isBranchActionPending || isSyncBusy}
         >
           <GitBranchIcon className="size-3 shrink-0 opacity-70" />
           <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
           <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
         </ComboboxTrigger>
+        <GitSyncControl
+          environmentId={environmentId}
+          cwd={branchCwd}
+          status={branchStatusQuery.data ?? null}
+        />
       </div>
       <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
         <div className="shrink-0 px-3 pt-2.5">

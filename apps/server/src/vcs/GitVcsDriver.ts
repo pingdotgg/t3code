@@ -11,6 +11,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type GitDivergedError,
   VcsProcessExitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -23,7 +24,10 @@ import {
   type VcsInitInput,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsFetchResult,
   type VcsPullResult,
+  type VcsSyncInput,
+  type VcsSyncResult,
   type VcsRemoveWorktreeInput,
   type VcsStatusInput,
   type VcsStatusResult,
@@ -229,6 +233,11 @@ export class GitVcsDriver extends Context.Service<
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly fetchCurrentBranch: (cwd: string) => Effect.Effect<VcsFetchResult, GitCommandError>;
+    readonly syncCurrentBranch: (
+      cwd: string,
+      options?: { readonly mode?: VcsSyncInput["mode"] },
+    ) => Effect.Effect<VcsSyncResult, GitCommandError | GitDivergedError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;

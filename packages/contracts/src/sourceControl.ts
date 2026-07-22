@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -21,6 +21,19 @@ export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 
+export const ChangeRequestChecksState = Schema.Literals(["passing", "failing", "pending"]);
+export type ChangeRequestChecksState = typeof ChangeRequestChecksState.Type;
+
+/**
+ * Rolled-up CI status for a change request, derived from the provider's check
+ * runs / status contexts. `failingCount` is only meaningful when failing.
+ */
+export const ChangeRequestChecks = Schema.Struct({
+  state: ChangeRequestChecksState,
+  failingCount: NonNegativeInt,
+});
+export type ChangeRequestChecks = typeof ChangeRequestChecks.Type;
+
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,
   number: PositiveInt,
@@ -33,6 +46,7 @@ export const ChangeRequest = Schema.Struct({
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  checks: Schema.optional(Schema.NullOr(ChangeRequestChecks)),
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
 

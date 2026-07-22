@@ -103,11 +103,102 @@ describe("GitHubCli.layer", () => {
           "view",
           "#42",
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner,statusCheckRollup",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("derives a failing checks summary from statusCheckRollup", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 42,
+              title: "Add PR thread creation",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "main",
+              headRefName: "feature/pr-threads",
+              state: "OPEN",
+              mergedAt: null,
+              statusCheckRollup: [
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" },
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE" },
+                { __typename: "StatusContext", state: "ERROR" },
+                // A stale required check still blocks merging on GitHub.
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "STALE" },
+                { __typename: "CheckRun", status: "IN_PROGRESS", conclusion: null },
+              ],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+      assert.deepStrictEqual(result.checks, { state: "failing", failingCount: 3 });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("derives a pending checks summary when a run is still in progress", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 42,
+              title: "Add PR thread creation",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "main",
+              headRefName: "feature/pr-threads",
+              state: "OPEN",
+              mergedAt: null,
+              statusCheckRollup: [
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" },
+                { __typename: "CheckRun", status: "IN_PROGRESS", conclusion: null },
+              ],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+      assert.deepStrictEqual(result.checks, { state: "pending", failingCount: 0 });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("omits checks when statusCheckRollup is empty", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 42,
+              title: "Add PR thread creation",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "main",
+              headRefName: "feature/pr-threads",
+              state: "OPEN",
+              mergedAt: null,
+              statusCheckRollup: [],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+      expect(result.checks).toBeUndefined();
     }).pipe(Effect.provide(layer)),
   );
 
