@@ -126,6 +126,23 @@ export function shouldShowSidebarV2SettledHeader(input: {
   return input.isSettled && !input.previousIsSettled;
 }
 
+export function isThreadSessionRunning(
+  session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined,
+): boolean {
+  return session?.status === "running" && session.activeTurnId != null;
+}
+
+export function filterArchivableSidebarThreads<
+  T extends {
+    readonly session?:
+      | { readonly status: string; readonly activeTurnId?: unknown }
+      | null
+      | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  return threads.filter((thread) => !isThreadSessionRunning(thread.session));
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"

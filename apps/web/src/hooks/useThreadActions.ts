@@ -12,7 +12,10 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  isThreadSessionRunning,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -129,7 +132,7 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
-      if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
+      if (isThreadSessionRunning(thread.session)) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({

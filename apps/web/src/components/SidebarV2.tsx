@@ -75,8 +75,10 @@ import { cn } from "~/lib/utils";
 import {
   archiveSelectedThreadEntries,
   buildSidebarV2ThreadContextMenuItems,
+  filterArchivableSidebarThreads,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  isThreadSessionRunning,
   isTrailingDoubleClick,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
@@ -462,9 +464,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 <button
                   type="button"
                   aria-label="Archive thread"
-                  disabled={
-                    thread.session?.status === "running" && thread.session.activeTurnId != null
-                  }
+                  disabled={isThreadSessionRunning(thread.session)}
                   onClick={handleArchiveClick}
                   className="inline-flex size-6 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                 >
@@ -836,6 +836,10 @@ export default function SidebarV2() {
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }
   const hiddenSettledCount = Math.max(0, settledThreads.length - settledVisibleCount);
+  const archivableSettledThreads = useMemo(
+    () => filterArchivableSidebarThreads(settledThreads),
+    [settledThreads],
+  );
   const visibleSettledThreads = useMemo(
     () => (hiddenSettledCount > 0 ? settledThreads.slice(0, settledVisibleCount) : settledThreads),
     [hiddenSettledCount, settledThreads, settledVisibleCount],
@@ -1134,18 +1138,18 @@ export default function SidebarV2() {
   const archivingAllSettledRef = useRef(false);
   const archiveAllSettled = useCallback(() => {
     void (async () => {
-      if (archivingAllSettledRef.current || settledThreads.length === 0) return;
+      if (archivingAllSettledRef.current || archivableSettledThreads.length === 0) return;
       archivingAllSettledRef.current = true;
       setIsArchivingAllSettled(true);
       try {
-        const count = settledThreads.length;
+        const count = archivableSettledThreads.length;
         if (
           !(await confirmArchive(`Archive all ${count} settled thread${count === 1 ? "" : "s"}?`))
         ) {
           return;
         }
         const outcome = await archiveThreadEntries(
-          settledThreads.map((thread) => {
+          archivableSettledThreads.map((thread) => {
             const threadRef = scopeThreadRef(thread.environmentId, thread.id);
             return { threadKey: scopedThreadKey(threadRef), threadRef };
           }),
@@ -1156,7 +1160,7 @@ export default function SidebarV2() {
         setIsArchivingAllSettled(false);
       }
     })();
-  }, [archiveThreadEntries, confirmArchive, removeFromSelection, settledThreads]);
+  }, [archivableSettledThreads, archiveThreadEntries, confirmArchive, removeFromSelection]);
 
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
@@ -1171,10 +1175,9 @@ export default function SidebarV2() {
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      const hasRunningThread = threadKeys.some((threadKey) => {
-        const session = threadByKeyRef.current.get(threadKey)?.session;
-        return session?.status === "running" && session.activeTurnId != null;
-      });
+      const hasRunningThread = threadKeys.some((threadKey) =>
+        isThreadSessionRunning(threadByKeyRef.current.get(threadKey)?.session),
+      );
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -1309,8 +1312,7 @@ export default function SidebarV2() {
               canUseLifecycleActions: true,
               supportsSettlement,
               isSettled,
-              isRunning:
-                thread.session?.status === "running" && thread.session.activeTurnId != null,
+              isRunning: isThreadSessionRunning(thread.session),
             }),
             position,
           ),
@@ -1683,30 +1685,28 @@ export default function SidebarV2() {
               // along with whichever row happens to be first in the tail —
               // and row heights stay independent of neighbor classification.
               return [
-                <li
-                  key="settled-divider"
-                  data-thread-selection-safe
-                  className="list-none"
-                >
+                <li key="settled-divider" data-thread-selection-safe className="list-none">
                   <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
                     <span className="text-[10px] font-medium text-muted-foreground/50">
                       Settled
                     </span>
                     <span className="h-px flex-1 bg-border/60" />
-                    <button
-                      type="button"
-                      aria-label={`Archive all ${settledThreads.length} settled thread${settledThreads.length === 1 ? "" : "s"}`}
-                      disabled={isArchivingAllSettled}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        archiveAllSettled();
-                      }}
-                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <ArchiveIcon aria-hidden className="size-3" />
-                      Archive all
-                    </button>
+                    {archivableSettledThreads.length > 0 ? (
+                      <button
+                        type="button"
+                        aria-label={`Archive all ${archivableSettledThreads.length} settled thread${archivableSettledThreads.length === 1 ? "" : "s"}`}
+                        disabled={isArchivingAllSettled}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          archiveAllSettled();
+                        }}
+                        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        <ArchiveIcon aria-hidden className="size-3" />
+                        Archive all
+                      </button>
+                    ) : null}
                   </div>
                 </li>,
                 row,

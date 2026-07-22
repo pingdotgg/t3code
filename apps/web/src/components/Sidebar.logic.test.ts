@@ -4,6 +4,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   buildSidebarV2ThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  filterArchivableSidebarThreads,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -12,6 +13,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isThreadSessionRunning,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -168,6 +170,19 @@ describe("shouldShowSidebarV2SettledHeader", () => {
     expect(shouldShowSidebarV2SettledHeader({ isSettled: true, previousIsSettled: true })).toBe(
       false,
     );
+  });
+});
+
+describe("archive lifecycle guards", () => {
+  it("filters running threads from archive batches", () => {
+    const ready = { id: "ready", session: null };
+    const running = {
+      id: "running",
+      session: { status: "running", activeTurnId: "turn-running" },
+    };
+
+    expect(isThreadSessionRunning(running.session)).toBe(true);
+    expect(filterArchivableSidebarThreads([ready, running])).toEqual([ready]);
   });
 });
 
