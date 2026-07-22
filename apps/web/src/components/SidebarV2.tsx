@@ -1536,7 +1536,7 @@ export default function SidebarV2() {
     }
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projects.length, setOpenMobile]);
+  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
