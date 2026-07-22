@@ -425,6 +425,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       {props.showSettledDivider ? <ThreadListV2SettledDivider pane={props.pane} /> : null}
       <ThreadSwipeable
         backgroundColor={sidebarPane ? drawerColor : screenColor}
+        compactActions={variant === "slim"}
         containerStyle={
           sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" } : undefined
         }
