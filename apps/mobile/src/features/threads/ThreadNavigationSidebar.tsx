@@ -401,13 +401,15 @@ function ThreadNavigationSidebarPane(
     return buildThreadListV2Items({
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
-      projectRef:
+      projectRefs:
         selectedProject === null
           ? null
-          : {
-              environmentId: selectedProject.environmentId,
-              projectId: selectedProject.id,
-            },
+          : [
+              {
+                environmentId: selectedProject.environmentId,
+                projectId: selectedProject.id,
+              },
+            ],
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
