@@ -14,6 +14,7 @@ import {
   CircleDashedIcon,
   CloudIcon,
   FolderPlusIcon,
+  MessageSquareIcon,
   PlusIcon,
   SearchIcon,
   SquarePenIcon,
@@ -128,10 +129,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
-  // Marks where active work transitions into history: a quiet labeled
-  // rule above the first settled row, so the tail reads as a named zone
-  // rather than an unexplained gap.
-  showSettledGap?: boolean;
   isActive: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
@@ -397,12 +394,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         data-thread-item
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
-        {props.showSettledGap ? (
-          <div aria-hidden className="mb-1 mt-3 flex items-center gap-2 px-2.5">
-            <span className="text-[10px] font-medium text-muted-foreground/50">Settled</span>
-            <span className="h-px flex-1 bg-border/60" />
-          </div>
-        ) : null}
         <div
           role="button"
           tabIndex={0}
@@ -426,6 +417,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               environmentId={thread.environmentId}
               cwd={props.projectCwd ?? ""}
               className="size-3.5"
+              fallbackIcon={MessageSquareIcon}
             />
           </span>
           {title}
@@ -1527,7 +1519,7 @@ export default function SidebarV2() {
         ) : null}
         <SidebarGroup className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
           <ul ref={attachListAutoAnimateRef} className="flex flex-col gap-px">
-            {orderedThreads.map((thread, threadIndex) => {
+            {orderedThreads.flatMap((thread, threadIndex) => {
               const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
               const isSettledRow = settledThreadKeys.has(threadKey);
               // Settled is the ONLY thing that collapses a row: every
@@ -1542,10 +1534,14 @@ export default function SidebarV2() {
                   scopedThreadKey(scopeThreadRef(previousThread.environmentId, previousThread.id)),
                 );
               const showSettledGap = !isCard && previousWasCard;
-              return (
+              const row = (
                 <SidebarV2Row
-                  showSettledGap={showSettledGap}
-                  key={threadKey}
+                  // Keyed per variant on purpose: when a thread settles, the
+                  // card fades out in place and the slim row fades in at its
+                  // settled position instead of one element FLIP-sliding
+                  // through every row in between (rows here are translucent,
+                  // so a crossing row reads as text painted over text).
+                  key={`${threadKey}:${isCard ? "card" : "slim"}`}
                   thread={thread}
                   variant={isCard ? "card" : "slim"}
                   // Every settled row can un-settle: explicit settles clear
@@ -1580,6 +1576,28 @@ export default function SidebarV2() {
                   onChangeRequestState={handleChangeRequestState}
                 />
               );
+              if (!showSettledGap) return [row];
+              // The divider is its own keyed list item (not part of the first
+              // settled row): it keeps one stable DOM node at the boundary,
+              // so settling a thread slides it instead of teleporting it
+              // along with whichever row happens to be first in the tail —
+              // and row heights stay independent of neighbor classification.
+              return [
+                <li
+                  key="settled-divider"
+                  aria-hidden
+                  data-thread-selection-safe
+                  className="list-none"
+                >
+                  <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
+                    <span className="text-[10px] font-medium text-muted-foreground/50">
+                      Settled
+                    </span>
+                    <span className="h-px flex-1 bg-border/60" />
+                  </div>
+                </li>,
+                row,
+              ];
             })}
             {hiddenSettledCount > 0 ? (
               <li className="list-none">
