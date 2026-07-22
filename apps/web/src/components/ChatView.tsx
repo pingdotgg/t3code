@@ -3896,23 +3896,22 @@ function ChatViewContent(props: ChatViewProps) {
         id: `branch-mismatch:${activeThread?.id ?? "unknown"}:${localCheckoutBranchMismatch.threadBranch}:${localCheckoutBranchMismatch.currentBranch}`,
         variant: "warning",
         icon: <TriangleAlertIcon />,
-        title: "Branches diverged",
+        title: "You're on a different branch",
         className:
           "text-base sm:text-sm [&>div]:items-start max-sm:[&>div]:flex-wrap max-sm:[&>div>div:last-child]:w-full max-sm:[&>div>div:last-child]:self-start dark:shadow-none",
         actionClassName:
           "max-sm:w-full max-sm:border-t max-sm:border-border/60 max-sm:pt-2 max-sm:pl-6 sm:border-l sm:border-border/60 sm:pl-3",
         description: (
           <p className="text-pretty">
-            Thread{" "}
+            This thread is on{" "}
             <code className="font-medium text-foreground">
               {localCheckoutBranchMismatch.threadBranch}
             </code>
-            <span aria-hidden="true"> · </span>
-            Checkout{" "}
+            , but you're currently checked out at{" "}
             <code className="font-medium text-foreground">
               {localCheckoutBranchMismatch.currentBranch}
             </code>
-            . Sending a message will update the thread branch.
+            . Sending a message will update the thread.
           </p>
         ),
         actions: (
@@ -3923,7 +3922,7 @@ function ChatViewContent(props: ChatViewProps) {
               disabled={isRepairingBranch}
               onClick={() => void handleUpdateThreadToCheckout()}
             >
-              {branchRepairAction === "update-thread" ? "Updating..." : "Update thread"}
+              {branchRepairAction === "update-thread" ? "Moving..." : "Move thread here"}
             </Button>
             <Button
               size="xs"
@@ -3931,7 +3930,7 @@ function ChatViewContent(props: ChatViewProps) {
               disabled={isRepairingBranch}
               onClick={() => void handleSwitchCheckoutToThread()}
             >
-              {branchRepairAction === "switch-checkout" ? "Switching..." : "Switch checkout"}
+              {branchRepairAction === "switch-checkout" ? "Switching..." : "Checkout thread branch"}
             </Button>
           </>
         ),

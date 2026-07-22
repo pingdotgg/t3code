@@ -210,8 +210,7 @@ function SidebarV2ThreadTooltip({
             <div className="flex min-w-0 items-start gap-2 text-warning">
               <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 stroke-current" />
               <div className="min-w-0 flex-1 wrap-break-word leading-5">
-                Thread branch differs from active checkout {branchMismatch.currentBranch}; sending a
-                message will update the thread branch
+                You're currently checked out on another branch.
               </div>
             </div>
           ) : null}
