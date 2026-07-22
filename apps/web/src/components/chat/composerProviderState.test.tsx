@@ -10,6 +10,7 @@ import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  resolveModelOptionsShortcutTarget,
 } from "./composerProviderState";
 
 // Everything in composerProviderState is now data-driven by the model's
@@ -60,6 +61,43 @@ const ULTRATHINK_FRAME_CLASSES = {
   composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
   modelPickerIconClassName: "ultrathink-chroma",
 } as const;
+
+describe("resolveModelOptionsShortcutTarget", () => {
+  const available = {
+    isComposerUnavailable: false,
+    compactTraitsAvailable: true,
+    expandedTraitsAvailable: true,
+  };
+
+  it("opens the layout-specific model options control", () => {
+    expect(resolveModelOptionsShortcutTarget({ ...available, isCompact: true })).toBe(
+      "compact-controls-menu",
+    );
+    expect(resolveModelOptionsShortcutTarget({ ...available, isCompact: false })).toBe(
+      "traits-picker",
+    );
+  });
+
+  it("does not open the generic compact menu when model options are unavailable", () => {
+    expect(
+      resolveModelOptionsShortcutTarget({
+        ...available,
+        isCompact: true,
+        compactTraitsAvailable: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects the shortcut while the composer controls are unavailable", () => {
+    expect(
+      resolveModelOptionsShortcutTarget({
+        ...available,
+        isCompact: false,
+        isComposerUnavailable: true,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("getComposerProviderState", () => {
   it("derives a stable prompt injection state for ordinary prompt edits", () => {

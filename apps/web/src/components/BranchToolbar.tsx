@@ -36,6 +36,7 @@ import {
   resolveAvailableBranchToolbarPicker,
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
+  resolveBranchToolbarRunContextShortcutTarget,
   resolveBranchToolbarPickerOpenChange,
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
@@ -94,6 +95,7 @@ interface MobileRunContextSelectorProps {
   availableEnvironments: readonly EnvironmentOption[] | undefined;
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
+  pickerAvailable: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
@@ -111,6 +113,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   availableEnvironments,
   showEnvironmentPicker,
   showEnvironmentIndicator,
+  pickerAvailable,
   open,
   onOpenChange,
   onEnvironmentChange,
@@ -135,7 +138,6 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     : effectiveEnvMode === "worktree"
       ? resolveEnvModeLabel("worktree")
       : resolveCurrentWorkspaceLabel(activeWorktreePath);
-  const isLocked = envLocked || envModeLocked;
   const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
   const icon = showEnvironmentIndicator ? (
     // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
@@ -156,7 +158,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     </>
   );
 
-  if (isLocked) {
+  if (!pickerAvailable) {
     return (
       <span className="inline-flex min-w-0 max-w-[48%] flex-1 items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 md:hidden">
         {triggerContent}
@@ -345,14 +347,32 @@ export const BranchToolbar = memo(function BranchToolbar({
     typeof toolbarLayout,
     BranchToolbarPicker | null
   >(toolbarLayout, null);
+  const environmentShortcutTarget = resolveBranchToolbarRunContextShortcutTarget({
+    control: "environment",
+    isRendered,
+    isMobile,
+    environmentPickerAvailable,
+    envLocked,
+    envModeLocked,
+  });
+  const envModeShortcutTarget = resolveBranchToolbarRunContextShortcutTarget({
+    control: "env-mode",
+    isRendered,
+    isMobile,
+    environmentPickerAvailable,
+    envLocked,
+    envModeLocked,
+  });
   const pickerAvailability = useMemo(
     () => ({
-      environment: isRendered && !isMobile && environmentPickerAvailable && !envLocked,
-      envMode: isRendered && !isMobile && !envModeLocked,
-      mobileRunContext: isRendered && isMobile && !envLocked && !envModeLocked,
+      environment: environmentShortcutTarget === "environment",
+      envMode: envModeShortcutTarget === "env-mode",
+      mobileRunContext:
+        environmentShortcutTarget === "mobile-run-context" ||
+        envModeShortcutTarget === "mobile-run-context",
       branch: isRendered,
     }),
-    [envLocked, envModeLocked, environmentPickerAvailable, isMobile, isRendered],
+    [envModeShortcutTarget, environmentShortcutTarget, isRendered],
   );
   const activePicker = resolveAvailableBranchToolbarPicker(storedActivePicker, pickerAvailability);
   useLayoutEffect(() => {
@@ -376,22 +396,16 @@ export const BranchToolbar = memo(function BranchToolbar({
     toolbarRef,
     () => ({
       toggleEnvironmentPicker: () => {
-        if (!isRendered || !environmentPickerAvailable || envLocked) return false;
-        if (isMobile) {
-          if (envModeLocked) return false;
-          handlePickerOpenChange("mobile-run-context", !mobileRunContextOpen);
-          return true;
-        }
-        handlePickerOpenChange("environment", !environmentPickerOpen);
+        if (environmentShortcutTarget === null) return false;
+        handlePickerOpenChange(
+          environmentShortcutTarget,
+          activePicker !== environmentShortcutTarget,
+        );
         return true;
       },
       toggleEnvModePicker: () => {
-        if (!isRendered || envModeLocked) return false;
-        if (isMobile) {
-          handlePickerOpenChange("mobile-run-context", !mobileRunContextOpen);
-          return true;
-        }
-        handlePickerOpenChange("env-mode", !envModePickerOpen);
+        if (envModeShortcutTarget === null) return false;
+        handlePickerOpenChange(envModeShortcutTarget, activePicker !== envModeShortcutTarget);
         return true;
       },
       toggleBranchPicker: () => {
@@ -400,15 +414,11 @@ export const BranchToolbar = memo(function BranchToolbar({
       },
     }),
     [
-      envLocked,
-      envModeLocked,
-      envModePickerOpen,
-      environmentPickerAvailable,
-      environmentPickerOpen,
+      activePicker,
+      environmentShortcutTarget,
+      envModeShortcutTarget,
       handlePickerOpenChange,
-      isMobile,
       isRendered,
-      mobileRunContextOpen,
     ],
   );
 
@@ -449,6 +459,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           availableEnvironments={availableEnvironments}
           showEnvironmentPicker={showEnvironmentPicker}
           showEnvironmentIndicator={showEnvironmentIndicator}
+          pickerAvailable={pickerAvailability.mobileRunContext}
           open={mobileRunContextOpen}
           onOpenChange={(open) => handlePickerOpenChange("mobile-run-context", open)}
           onEnvironmentChange={onEnvironmentChange}

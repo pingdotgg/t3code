@@ -18,6 +18,28 @@ export type EnvMode = typeof EnvMode.Type;
 
 export type BranchToolbarPicker = "environment" | "env-mode" | "mobile-run-context" | "branch";
 
+export type BranchToolbarRunContextControl = "environment" | "env-mode";
+
+export function resolveBranchToolbarRunContextShortcutTarget(input: {
+  readonly control: BranchToolbarRunContextControl;
+  readonly isRendered: boolean;
+  readonly isMobile: boolean;
+  readonly environmentPickerAvailable: boolean;
+  readonly envLocked: boolean;
+  readonly envModeLocked: boolean;
+}): BranchToolbarPicker | null {
+  if (!input.isRendered) return null;
+
+  const controlAvailable =
+    input.control === "environment"
+      ? input.environmentPickerAvailable && !input.envLocked
+      : !input.envModeLocked;
+  if (!controlAvailable) return null;
+
+  if (input.isMobile) return "mobile-run-context";
+  return input.control;
+}
+
 export interface BranchToolbarPickerAvailability {
   readonly environment: boolean;
   readonly envMode: boolean;

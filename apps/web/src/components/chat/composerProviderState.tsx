@@ -41,6 +41,21 @@ export type ComposerProviderState = {
   modelPickerIconClassName?: string;
 };
 
+export type ModelOptionsShortcutTarget = "compact-controls-menu" | "traits-picker";
+
+export function resolveModelOptionsShortcutTarget(input: {
+  readonly isComposerUnavailable: boolean;
+  readonly isCompact: boolean;
+  readonly compactTraitsAvailable: boolean;
+  readonly expandedTraitsAvailable: boolean;
+}): ModelOptionsShortcutTarget | null {
+  if (input.isComposerUnavailable) return null;
+  if (input.isCompact) {
+    return input.compactTraitsAvailable ? "compact-controls-menu" : null;
+  }
+  return input.expandedTraitsAvailable ? "traits-picker" : null;
+}
+
 type TraitsRenderInput = {
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;

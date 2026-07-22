@@ -5,6 +5,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveAvailableBranchToolbarPicker,
+  resolveBranchToolbarRunContextShortcutTarget,
   resolveBranchSelectionTarget,
   resolveBranchPickerQueryForOpenState,
   resolveBranchToolbarPickerOpenChange,
@@ -21,6 +22,73 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
+
+describe("resolveBranchToolbarRunContextShortcutTarget", () => {
+  const available = {
+    isRendered: true,
+    environmentPickerAvailable: true,
+    envLocked: false,
+    envModeLocked: false,
+  };
+
+  it("routes either run-context shortcut to the combined picker on mobile", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "environment",
+        isMobile: true,
+      }),
+    ).toBe("mobile-run-context");
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "env-mode",
+        isMobile: true,
+      }),
+    ).toBe("mobile-run-context");
+  });
+
+  it("keeps the mobile environment shortcut available when only workspace mode is locked", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "environment",
+        isMobile: true,
+        envModeLocked: true,
+      }),
+    ).toBe("mobile-run-context");
+  });
+
+  it("keeps the mobile workspace shortcut available when only environment is locked", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "env-mode",
+        isMobile: true,
+        envLocked: true,
+      }),
+    ).toBe("mobile-run-context");
+  });
+
+  it("rejects only the shortcut whose specific control is unavailable", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "environment",
+        isMobile: true,
+        environmentPickerAvailable: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "env-mode",
+        isMobile: true,
+        envModeLocked: true,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("resolveBranchToolbarPickerOpenChange", () => {
   it("replaces the active picker instead of stacking keyboard-opened overlays", () => {
