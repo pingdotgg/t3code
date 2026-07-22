@@ -357,14 +357,19 @@ export function resolveNextActiveThreadIdAfterSettle<T>(input: {
   settledThreadId: T;
   isActive: (threadId: T) => boolean;
 }): T | null {
-  const currentIndex = input.threadIds.indexOf(input.settledThreadId);
-  const preferredThreadIds =
-    currentIndex === -1
-      ? []
-      : [...input.threadIds.slice(currentIndex + 1), ...input.threadIds.slice(0, currentIndex)];
+  const rotateAfterSettledThread = (threadIds: readonly T[]): readonly T[] => {
+    const currentIndex = threadIds.indexOf(input.settledThreadId);
+    return currentIndex === -1
+      ? threadIds
+      : [...threadIds.slice(currentIndex + 1), ...threadIds.slice(0, currentIndex)];
+  };
+  const preferredThreadIds = input.threadIds.includes(input.settledThreadId)
+    ? rotateAfterSettledThread(input.threadIds)
+    : [];
+  const fallbackThreadIds = rotateAfterSettledThread(input.fallbackThreadIds ?? []);
   const seen = new Set<T>([input.settledThreadId]);
 
-  for (const threadId of [...preferredThreadIds, ...(input.fallbackThreadIds ?? [])]) {
+  for (const threadId of [...preferredThreadIds, ...fallbackThreadIds]) {
     if (seen.has(threadId)) continue;
     seen.add(threadId);
     if (input.isActive(threadId)) return threadId;

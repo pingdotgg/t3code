@@ -1,6 +1,7 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  canSettle,
   canSnooze,
   effectiveSettled,
   effectiveSnoozed,
@@ -2149,6 +2150,7 @@ export default function SidebarV2() {
           routeThread != null &&
           serverConfigs.get(routeThread.environmentId)?.environment.capabilities
             .threadSettlement === true &&
+          canSettle(routeThread, { now: new Date().toISOString() }) &&
           !settledThreadKeys.has(routeThreadKey ?? ""),
         isRouteThreadSettling:
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),

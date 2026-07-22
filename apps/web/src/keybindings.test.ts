@@ -189,6 +189,19 @@ describe("thread settle shortcut", () => {
     ).toEqual({ type: "confirm-settle", threadKey: "thread-1" });
   });
 
+  it("consumes settle when live work makes the route thread ineligible", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.settle",
+        orderedThreadKeys: ["thread-1"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: null,
+        canSettleRouteThread: false,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "consume" });
+  });
+
   it("consumes thread navigation while settle confirmation is open", () => {
     expect(
       resolveThreadSidebarShortcutAction({

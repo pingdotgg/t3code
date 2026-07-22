@@ -564,6 +564,33 @@ describe("resolveNextActiveThreadIdAfterSettle", () => {
       }),
     ).toBe("visible-next");
   });
+
+  it("rotates the full logical order when the settled thread is hidden", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-earlier", "visible-later"],
+        fallbackThreadIds: [
+          "visible-earlier",
+          "hidden-current",
+          "logical-next-active",
+          "earlier-active",
+        ],
+        settledThreadId: "hidden-current",
+        isActive: (threadId) => threadId.endsWith("active"),
+      }),
+    ).toBe("logical-next-active");
+  });
+
+  it("rotates hidden fallbacks after exhausting visible active threads", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-current", "visible-settled"],
+        fallbackThreadIds: ["earlier-active", "visible-current", "hidden-next-active"],
+        settledThreadId: "visible-current",
+        isActive: (threadId) => threadId.endsWith("active"),
+      }),
+    ).toBe("hidden-next-active");
+  });
 });
 
 describe("getVisibleSidebarThreadIds", () => {

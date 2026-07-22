@@ -62,6 +62,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { canSettle } from "@t3tools/client-runtime/state/thread-settled";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -3509,7 +3510,8 @@ export default function Sidebar() {
           routeThread != null &&
           serverConfigs.get(routeThread.environmentId)?.environment.capabilities
             .threadSettlement === true &&
-          routeThread.settledOverride !== "settled",
+          routeThread.settledOverride !== "settled" &&
+          canSettle(routeThread, { now: new Date().toISOString() }),
         isRouteThreadSettling:
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
       });
