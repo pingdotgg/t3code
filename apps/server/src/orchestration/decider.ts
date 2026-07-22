@@ -860,9 +860,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Queued message '${command.messageId}' does not exist on thread '${command.threadId}'.`,
         });
       }
-      // Dispatch unconditionally: with an active turn the provider adapters
-      // treat the resulting sendTurn as a steer; on an idle thread this
-      // degrades to a normal turn start.
+      // While the session is still starting there is no provider turn to
+      // steer into — dispatching now would race the pending turn/start with
+      // a second one. The message stays queued; steer again once running.
+      if (thread.session?.status === "starting") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is still starting a turn; steer once it is running.`,
+        });
+      }
+      // Otherwise dispatch unconditionally: with a running turn the provider
+      // adapters treat the resulting sendTurn as a steer; on an idle thread
+      // this degrades to a normal turn start.
       return yield* planQueuedMessageDispatch({
         commandId: command.commandId,
         readModel,

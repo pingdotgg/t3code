@@ -231,6 +231,39 @@ it.layer(NodeServices.layer)("decider queue flows", (it) => {
     }),
   );
 
+  it.effect("steer rejects while the session is still starting", () =>
+    Effect.gen(function* () {
+      let readModel = yield* withSessionStatus(yield* seedReadModel, "starting", 3);
+      readModel = yield* applyPlanned(
+        readModel,
+        yield* decideOrchestrationCommand({
+          command: turnStartCommand("steer-starting"),
+          readModel,
+        }),
+      );
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queue.steer",
+            commandId: asCommandId("cmd-steer-starting"),
+            threadId: THREAD_ID,
+            messageId: asMessageId("message-steer-starting"),
+            createdAt: NOW,
+          },
+          readModel,
+        }),
+      );
+      expect(error.message).toContain("starting");
+
+      // The queued message survives the rejected steer.
+      const thread = readModel.threads.find((entry) => entry.id === THREAD_ID);
+      expect(thread?.queuedMessages.map((entry) => entry.messageId)).toEqual([
+        asMessageId("message-steer-starting"),
+      ]);
+    }),
+  );
+
   it.effect("remove deletes a queued message without dispatching", () =>
     Effect.gen(function* () {
       let readModel = yield* withSessionStatus(yield* seedReadModel, "running", 3);

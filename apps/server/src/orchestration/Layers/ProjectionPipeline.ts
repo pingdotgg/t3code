@@ -332,7 +332,7 @@ function retainProjectionProposedPlansAfterRevert(
 
 function collectThreadAttachmentRelativePaths(
   threadId: string,
-  messages: ReadonlyArray<ProjectionThreadMessage>,
+  messages: ReadonlyArray<Pick<ProjectionThreadMessage, "attachments">>,
 ): Set<string> {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (!threadSegment) {
@@ -914,9 +914,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* Effect.forEach(keptRows, projectionThreadMessageRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
+          // Queued messages survive a revert (they are not part of the
+          // timeline), so their attachment files must survive pruning too.
+          const queuedRows = yield* projectionQueuedMessageRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
           attachmentSideEffects.prunedThreadRelativePaths.set(
             event.payload.threadId,
-            collectThreadAttachmentRelativePaths(event.payload.threadId, keptRows),
+            collectThreadAttachmentRelativePaths(event.payload.threadId, [
+              ...keptRows,
+              ...queuedRows,
+            ]),
           );
           return;
         }
