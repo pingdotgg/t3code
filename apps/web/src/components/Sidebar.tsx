@@ -3399,6 +3399,18 @@ export default function Sidebar() {
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
+  const allUnarchivedSidebarThreadKeys = useMemo(
+    () =>
+      sortedProjects.flatMap((project) =>
+        sortThreads(
+          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+            (thread) => thread.archivedAt === null,
+          ),
+          sidebarThreadSortOrder,
+        ).map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+      ),
+    [sidebarThreadSortOrder, sortedProjects, threadsByProjectKey],
+  );
   const prewarmedSidebarThreadKeys = useMemo(
     () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
     [visibleSidebarThreadKeys],
@@ -3422,6 +3434,7 @@ export default function Sidebar() {
 
       const nextThreadKey = resolveNextActiveThreadIdAfterSettle({
         threadIds: orderedSidebarThreadKeys,
+        fallbackThreadIds: allUnarchivedSidebarThreadKeys,
         settledThreadId: threadKey,
         isActive: (candidateKey) => {
           const candidate = sidebarThreadByKey.get(candidateKey);
@@ -3458,7 +3471,14 @@ export default function Sidebar() {
         }
       })();
     },
-    [handleNewThread, navigateToThread, orderedSidebarThreadKeys, settleThread, sidebarThreadByKey],
+    [
+      allUnarchivedSidebarThreadKeys,
+      handleNewThread,
+      navigateToThread,
+      orderedSidebarThreadKeys,
+      settleThread,
+      sidebarThreadByKey,
+    ],
   );
 
   useEffect(() => {

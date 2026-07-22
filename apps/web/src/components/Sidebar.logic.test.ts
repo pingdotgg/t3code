@@ -542,6 +542,28 @@ describe("resolveNextActiveThreadIdAfterSettle", () => {
       }),
     ).toBeNull();
   });
+
+  it("falls back to an active thread hidden outside the visible keyboard order", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-current", "visible-settled"],
+        fallbackThreadIds: ["visible-current", "preview-hidden-active", "collapsed-project-active"],
+        settledThreadId: "visible-current",
+        isActive: (threadId) => threadId.endsWith("active"),
+      }),
+    ).toBe("preview-hidden-active");
+  });
+
+  it("prefers the next visible active thread before hidden fallbacks", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-current", "visible-next"],
+        fallbackThreadIds: ["visible-current", "hidden-active"],
+        settledThreadId: "visible-current",
+        isActive: (threadId) => threadId !== "visible-current",
+      }),
+    ).toBe("visible-next");
+  });
 });
 
 describe("getVisibleSidebarThreadIds", () => {
