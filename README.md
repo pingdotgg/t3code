@@ -55,8 +55,8 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 
 - [Getting started](./docs/getting-started/quick-start.md)
 - [Architecture overview](./docs/architecture/overview.md)
-- [Provider guides](./docs/providers/codex.md)
-- [Operations](./docs/operations/ci.md)
+- [Provider guides](./docs/providers)
+- [Operations](./docs/operations)
 - [Reference](./docs/reference/encyclopedia.md)
 
 ## If you REALLY want to contribute still.... read this first
