@@ -218,6 +218,23 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry(text: string) {
+  return {
+    id: "entry-2",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: MessageId.make("message-2"),
+      role: "assistant" as const,
+      text,
+      turnId: null,
+      createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      streaming: false,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("keeps assistant changed-files headers sticky below the thread header", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -481,6 +498,22 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Copy link"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-footer="true"');
+  });
+
+  it("keeps message actions visible when their row is not hovered", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("Please check this."),
+          buildAssistantTimelineEntry("Done."),
+        ]}
+      />,
+    );
+
+    expect(markup.match(/opacity-60 transition-opacity duration-200/g)).toHaveLength(2);
+    expect(markup).not.toContain("tabular-nums opacity-0 transition-opacity duration-200");
   });
 
   it("renders context compaction entries in the normal work log", async () => {
