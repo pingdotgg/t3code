@@ -29,6 +29,32 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
+/**
+ * Blocked-on-you work derived from the thread's retained activities: an
+ * approval or user-input request with no later resolution for the same
+ * requestId. The server-side twin of the shell's hasPendingApprovals /
+ * hasPendingUserInput flags, which the decider read model does not carry.
+ */
+function hasOpenBlockingRequest(thread: {
+  readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
+}): boolean {
+  const openRequestIds = new Set<string>();
+  for (const activity of thread.activities) {
+    const payload =
+      typeof activity.payload === "object" && activity.payload !== null
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
+    if (requestId === null) continue;
+    if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
+      openRequestIds.add(requestId);
+    } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
+      openRequestIds.delete(requestId);
+    }
+  }
+  return openRequestIds.size > 0;
+}
+
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
@@ -340,16 +366,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       // Server-side twin of the client's canSettle session check: a stale
       // or raced client must not settle a thread whose session is coming
-      // alive or working. (Pending approval/user-input blocking stays
-      // client-side — deriving it here would replay activity streams — but
-      // it is defense-in-depth twice over: effectiveSettled renders blocked
-      // threads as active regardless of the override, and a new
-      // approval/user-input request auto-un-settles via the activity gate.)
+      // alive or working.
       if (thread.session?.status === "starting" || thread.session?.status === "running") {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
             detail: `thread ${command.threadId} has an active session and cannot be settled`,
+          }),
+        );
+      }
+      // Pending approval / user-input requests are blocked-on-you work: a
+      // raced or stale client must not park them behind a settled override
+      // that would surface only after the request resolves.
+      if (hasOpenBlockingRequest(thread)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be settled`,
           }),
         );
       }
