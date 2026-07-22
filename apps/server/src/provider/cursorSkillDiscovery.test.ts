@@ -33,6 +33,18 @@ describe("resolveCursorSkillRoots", () => {
       userSkillsDir: NodePath.join("/Users/demo", ".cursor", "skills"),
     });
   });
+
+  it("scopes project skills to the provided workspace cwd", () => {
+    expect(
+      resolveCursorSkillRoots({
+        projectCwd: "/workspace/active-project",
+        userHome: "/Users/demo",
+      }),
+    ).toEqual({
+      projectSkillsDir: NodePath.join("/workspace/active-project", ".cursor", "skills"),
+      userSkillsDir: NodePath.join("/Users/demo", ".cursor", "skills"),
+    });
+  });
 });
 
 describe("parseCursorSkillMarkdown", () => {

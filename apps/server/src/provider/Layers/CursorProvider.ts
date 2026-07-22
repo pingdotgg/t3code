@@ -989,6 +989,11 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
+  /**
+   * Active workspace cwd (same source as session start / OpenCode status).
+   * Project skills are discovered under `<cwd>/.cursor/skills`.
+   */
+  cwd: string,
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
   ServerProviderDraft,
@@ -1104,10 +1109,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
-  // Soft-fail FS skill discovery for the `$` menu snapshot. Project skills use
-  // process.cwd(); session send-path rediscovers against the thread cwd.
+  // Soft-fail FS skill discovery for the `$` menu snapshot. Use the same
+  // workspace cwd as session start / send-path apply (ServerConfig.cwd via driver).
   const discoveredSkills = yield* discoverCursorSkills({
-    projectCwd: process.cwd(),
+    projectCwd: cwd,
   }).pipe(Effect.orElseSucceed(() => [] as const));
 
   return buildCursorProviderSnapshot({

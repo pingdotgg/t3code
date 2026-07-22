@@ -462,12 +462,15 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
 describe("checkCursorProviderStatus", () => {
   it("reports the install docs when the Cursor CLI command is missing", async () => {
     const provider = await runNode(
-      checkCursorProviderStatus({
-        enabled: true,
-        binaryPath: missingCursorBinaryPath,
-        apiEndpoint: "",
-        customModels: [],
-      }),
+      checkCursorProviderStatus(
+        {
+          enabled: true,
+          binaryPath: missingCursorBinaryPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        process.cwd(),
+      ),
     );
 
     expect(provider).toMatchObject({
@@ -489,6 +492,7 @@ describe("checkCursorProviderStatus", () => {
           apiEndpoint: "",
           customModels: [],
         },
+        process.cwd(),
         {
           ...process.env,
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,
@@ -503,6 +507,75 @@ describe("checkCursorProviderStatus", () => {
       "claude-opus-4-6",
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
+  });
+
+  it("discovers project skills from the provided workspace cwd, not process.cwd()", async () => {
+    const { wrapperPath } = await runNode(makeProviderStatusEnvFixture());
+
+    const fixture = await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectCwd = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-project-cwd-",
+        });
+        const otherCwd = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-other-cwd-",
+        });
+        const skillDir = path.join(projectCwd, ".cursor", "skills", "ship-it");
+        yield* fileSystem.makeDirectory(skillDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skillDir, "SKILL.md"),
+          `---
+name: ship-it
+description: Ships changes carefully
+---
+
+# Ship It
+`,
+        );
+        return { projectCwd, otherCwd };
+      }),
+    );
+
+    const withProjectCwd = await runNode(
+      checkCursorProviderStatus(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        fixture.projectCwd,
+      ),
+    );
+    expect(withProjectCwd.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "ship-it",
+          scope: "repo",
+          enabled: true,
+        }),
+      ]),
+    );
+    expect(withProjectCwd.skills.find((skill) => skill.name === "ship-it")?.path).toContain(
+      fixture.projectCwd,
+    );
+
+    const withOtherCwd = await runNode(
+      checkCursorProviderStatus(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        fixture.otherCwd,
+      ),
+    );
+    expect(withOtherCwd.skills.some((skill) => skill.name === "ship-it")).toBe(false);
   });
 });
 
