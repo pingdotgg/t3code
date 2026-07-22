@@ -155,13 +155,13 @@ describe("cached VCS refs", () => {
         }
         expect(yield* Ref.get(calls)).toBe(1);
 
-        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("20 seconds");
         expect(Option.getOrThrow(yield* Fiber.join(fiber))).toEqual(LIVE_REFS);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
 
-  it.effect("revalidates connected refs every five seconds", () =>
+  it.effect("revalidates connected refs every twenty seconds", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const calls = yield* Ref.make(0);
@@ -193,7 +193,7 @@ describe("cached VCS refs", () => {
         }
         expect(yield* Ref.get(calls)).toBe(1);
 
-        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("20 seconds");
         expect(Array.from(yield* Fiber.join(fiber))).toEqual([CACHED_REFS, LIVE_REFS]);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
