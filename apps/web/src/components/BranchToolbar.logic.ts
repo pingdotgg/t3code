@@ -27,6 +27,10 @@ export function resolveBranchToolbarPickerOpenChange(
   return current === picker ? null : current;
 }
 
+export function resolveBranchPickerQueryForOpenState(query: string, open: boolean): string {
+  return open ? query : "";
+}
+
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
 function normalizeDisplayLabel(value: string | null | undefined): string | null {

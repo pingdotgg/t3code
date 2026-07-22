@@ -5,6 +5,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
+  resolveBranchPickerQueryForOpenState,
   resolveBranchToolbarPickerOpenChange,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
@@ -28,6 +29,13 @@ describe("resolveBranchToolbarPickerOpenChange", () => {
   it("ignores a stale close event from a picker that is no longer active", () => {
     expect(resolveBranchToolbarPickerOpenChange("branch", "environment", false)).toBe("branch");
     expect(resolveBranchToolbarPickerOpenChange("branch", "branch", false)).toBeNull();
+  });
+});
+
+describe("resolveBranchPickerQueryForOpenState", () => {
+  it("clears a search when the controlled picker is closed externally", () => {
+    expect(resolveBranchPickerQueryForOpenState("feature/search", false)).toBe("");
+    expect(resolveBranchPickerQueryForOpenState("feature/search", true)).toBe("feature/search");
   });
 });
 

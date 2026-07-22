@@ -36,6 +36,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchPickerQueryForOpenState,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -347,6 +348,10 @@ export function BranchToolbarBranchSelector({
     },
     [branchRefState.refresh, onOpenChange, open],
   );
+
+  useLayoutEffect(() => {
+    setBranchQuery((current) => resolveBranchPickerQueryForOpenState(current, isBranchMenuOpen));
+  }, [isBranchMenuOpen]);
 
   // ---------------------------------------------------------------------------
   // Branch actions
