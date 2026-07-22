@@ -15,12 +15,13 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
-  useState,
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
+import { useLayoutScopedOpenState } from "../hooks/useLayoutScopedOpenState";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import {
   shortcutLabelForCommand,
   shouldShowComposerControlHintsForModifiers,
@@ -331,9 +332,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   });
   const isMobile = useIsMobile();
 
-  const [environmentPickerOpen, setEnvironmentPickerOpen] = useState(false);
-  const [envModePickerOpen, setEnvModePickerOpen] = useState(false);
-  const [mobileRunContextOpen, setMobileRunContextOpen] = useState(false);
+  const toolbarLayout = isMobile ? "mobile" : "desktop";
+  const [environmentPickerOpen, setEnvironmentPickerOpen] = useLayoutScopedOpenState(toolbarLayout);
+  const [envModePickerOpen, setEnvModePickerOpen] = useLayoutScopedOpenState(toolbarLayout);
+  const [mobileRunContextOpen, setMobileRunContextOpen] = useLayoutScopedOpenState(toolbarLayout);
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle | null>(null);
 
   const isRendered = hasActiveThread && activeProject !== null;
@@ -371,19 +373,27 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   // Hold-modifier hint badges, mirroring the composer footer controls.
   const shortcutModifiers = useShortcutModifierState();
+  const terminalFocus = useTerminalFocus();
+  const shortcutContext = useMemo(() => ({ terminalFocus }), [terminalFocus]);
   const showControlHints = shouldShowComposerControlHintsForModifiers(
     shortcutModifiers,
     keybindings,
-    { platform: navigator.platform },
+    { platform: navigator.platform, context: shortcutContext },
   );
   const environmentHintLabel = showControlHints
-    ? shortcutLabelForCommand(keybindings, "environmentPicker.toggle")
+    ? shortcutLabelForCommand(keybindings, "environmentPicker.toggle", {
+        context: shortcutContext,
+      })
     : null;
   const envModeHintLabel = showControlHints
-    ? shortcutLabelForCommand(keybindings, "envModePicker.toggle")
+    ? shortcutLabelForCommand(keybindings, "envModePicker.toggle", {
+        context: shortcutContext,
+      })
     : null;
   const branchHintLabel = showControlHints
-    ? shortcutLabelForCommand(keybindings, "branchPicker.toggle")
+    ? shortcutLabelForCommand(keybindings, "branchPicker.toggle", {
+        context: shortcutContext,
+      })
     : null;
 
   if (!hasActiveThread || !activeProject) return null;

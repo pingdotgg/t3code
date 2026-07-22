@@ -610,6 +610,14 @@ describe("shouldShowComposerControlHintsForModifiers", () => {
         context: { terminalFocus: true },
       }),
     );
+
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "modelPicker.toggle", {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      null,
+    );
   });
 
   it("resolves labels for composer control commands", () => {
