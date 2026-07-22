@@ -8,6 +8,7 @@ import type {
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
+import { inferGitCloneDirectoryName } from "@t3tools/shared/git";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -168,6 +169,15 @@ export function buildAddProjectRemoteSourceReadiness(
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
   const trimmed = baseDirectory?.trim() ?? "";
   return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
+}
+
+export function getCloneDestinationInitialQuery(
+  baseDirectory: string | null | undefined,
+  remoteUrl: string | null | undefined,
+): string {
+  const basePath = getAddProjectInitialQuery(baseDirectory);
+  const directoryName = inferGitCloneDirectoryName(remoteUrl ?? "");
+  return directoryName ? `${basePath}${directoryName}` : basePath;
 }
 
 export function resolveAddProjectPath(input: {

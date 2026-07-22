@@ -13,6 +13,7 @@ import {
   buildProjectCreateCommand,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getCloneDestinationInitialQuery,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
 } from "./projects.ts";
@@ -23,6 +24,24 @@ describe("add project shared logic", () => {
     expect(getAddProjectInitialQuery("")).toBe("~/");
     expect(getAddProjectInitialQuery("/work")).toBe("/work/");
     expect(getAddProjectInitialQuery("C:\\work")).toBe("C:\\work\\");
+  });
+
+  it("initializes clone destinations with the inferred repository directory", () => {
+    expect(
+      getCloneDestinationInitialQuery("/work/projects", "git@github.com:openai/codex.git"),
+    ).toBe("/work/projects/codex");
+    expect(getCloneDestinationInitialQuery("C:\\work", "https://github.com/openai/codex.git")).toBe(
+      "C:\\work\\codex",
+    );
+    expect(getCloneDestinationInitialQuery(null, "https://github.com/openai/codex.git")).toBe(
+      "~/codex",
+    );
+  });
+
+  it("falls back to the clone base directory when the remote has no repository name", () => {
+    expect(getCloneDestinationInitialQuery("/work/projects", "https://github.com")).toBe(
+      "/work/projects/",
+    );
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {
