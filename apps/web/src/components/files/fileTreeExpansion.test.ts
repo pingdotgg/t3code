@@ -81,8 +81,13 @@ describe("file tree expansion controls", () => {
   it("preserves the previous depth-one initial expansion", () => {
     const modelPaths = ["docs/", "docs/guide/", "docs/guide/start.md", "src/", "src/index.ts"];
     const directoryPaths = ["docs/", "src/", "docs/guide/"];
-    const previousModel = new FileTree({ initialExpansion: 1, paths: modelPaths });
+    const previousModel = new FileTree({
+      flattenEmptyDirectories: true,
+      initialExpansion: 1,
+      paths: modelPaths,
+    });
     const batchedModel = new FileTree({
+      flattenEmptyDirectories: true,
       initialExpandedPaths: initiallyExpandedDirectoryPaths(directoryPaths),
       initialExpansion: "closed",
       paths: modelPaths,
