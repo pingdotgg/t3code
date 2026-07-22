@@ -1574,6 +1574,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      it.effect("keeps re-authentication when a backend flag is set to a falsy value", () =>
+        Effect.gen(function* () {
+          // `CLAUDE_CODE_USE_BEDROCK=no` means Bedrock is OFF, so the instance
+          // still uses first-party OAuth and the action must remain available.
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+            {
+              CLAUDE_CODE_USE_BEDROCK: "no",
+            },
+          );
+          assert.strictEqual(status.reauthentication?.command, "claude setup-token");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("omits re-authentication for a Bedrock-backed Claude instance", () =>
         Effect.gen(function* () {
           // Bedrock authenticates via external AWS credentials; `setup-token`

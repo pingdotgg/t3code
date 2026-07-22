@@ -397,11 +397,12 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
 
 const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
 
+const FALSY_ENV_FLAG_VALUES = new Set(["", "0", "false", "no", "off", "n"]);
+
 function isTruthyEnvFlag(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
-  return (
-    normalized !== undefined && normalized !== "" && normalized !== "0" && normalized !== "false"
-  );
+  if (normalized === undefined) return false;
+  return !FALSY_ENV_FLAG_VALUES.has(normalized);
 }
 
 /**
