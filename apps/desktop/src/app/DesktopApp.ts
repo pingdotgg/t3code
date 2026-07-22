@@ -24,10 +24,15 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import {
+  configureCuaDriverServerEnvironment,
+  disableCuaDriverServerEnvironment,
+} from "../cua/CuaDriverServerEnvironment.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -227,6 +232,7 @@ const startup = Effect.gen(function* () {
   const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -282,6 +288,38 @@ const startup = Effect.gen(function* () {
     yield* logStartupInfo("safe storage ready", {
       backend: Option.getOrElse(selectedBackend, () => "unknown"),
     });
+  }
+  const cuaEnabled = Option.match(yield* clientSettings.get, {
+    onNone: () => false,
+    onSome: (settings) => settings.enableCua,
+  });
+  if (cuaEnabled && environment.platform === "darwin") {
+    yield* configureCuaDriverServerEnvironment(
+      environment.appUserModelId,
+      environment.isPackaged ? environment.resourcesPath : undefined,
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* disableCuaDriverServerEnvironment();
+          yield* logStartupError("embedded cua-driver failed to configure", {
+            binaryPath: error.binaryPath,
+            ...(error.cause === undefined ? {} : { cause: String(error.cause) }),
+          });
+          yield* electronDialog
+            .showMessageBox({
+              type: "error",
+              title: "Computer use unavailable",
+              message: "Cua could not start.",
+              detail:
+                "T3 Code will continue without computer use. Check the logs, then restart to try again.",
+              buttons: ["Continue"],
+            })
+            .pipe(Effect.ignore);
+        }),
+      ),
+    );
+  } else {
+    yield* disableCuaDriverServerEnvironment();
   }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;

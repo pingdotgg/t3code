@@ -60,6 +60,13 @@ import {
 } from "../../provider/Drivers/CodexHomeLayout.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import {
+  codexAppServerArgs,
+  resolveCodexLaunchArgs,
+  resolveCodexThreadConfig,
+  T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV,
+  T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV,
+} from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -1101,6 +1108,7 @@ export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+  readonly environment?: NodeJS.ProcessEnv;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1108,20 +1116,35 @@ export function codexThreadRuntimeParams(input: {
 } {
   const mcpSession =
     input.threadId === null ? undefined : McpProviderSession.readMcpProviderSession(input.threadId);
+  const integrationConfig = resolveCodexThreadConfig(input.environment);
+  const integrationMcpServers = integrationConfig.mcp_servers;
+  const mcpServers =
+    typeof integrationMcpServers === "object" &&
+    integrationMcpServers !== null &&
+    !Array.isArray(integrationMcpServers)
+      ? integrationMcpServers
+      : {};
+  const hasIntegrationConfig = Object.keys(integrationConfig).length > 0;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
-    ...(mcpSession === undefined
+    ...(!hasIntegrationConfig && mcpSession === undefined
       ? {}
       : {
           config: {
+            ...integrationConfig,
             mcp_servers: {
-              "t3-code": {
-                url: mcpSession.endpoint,
-                http_headers: {
-                  Authorization: mcpSession.authorizationHeader,
-                },
-              },
+              ...mcpServers,
+              ...(mcpSession === undefined
+                ? {}
+                : {
+                    "t3-code": {
+                      url: mcpSession.endpoint,
+                      http_headers: {
+                        Authorization: mcpSession.authorizationHeader,
+                      },
+                    },
+                  }),
             },
           },
         }),
@@ -1261,6 +1284,30 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
+const withLiveCodexIntegrationEnvironment = (
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => ({
+  ...environment,
+  ...(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] === undefined
+    ? {}
+    : {
+        [T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]: process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV],
+      }),
+  ...(process.env[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV] === undefined
+    ? {}
+    : {
+        [T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV]: process.env[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV],
+      }),
+});
+
+export const resolveCodexAdapterAppServerArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<string> =>
+  codexAppServerArgs(
+    resolveCodexLaunchArgs(launchArgs, withLiveCodexIntegrationEnvironment(environment)),
+  );
+
 export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
   CodexAppServerClientFactory,
   never,
@@ -1281,7 +1328,7 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: ["app-server"],
+            args: resolveCodexAdapterAppServerArgs(input.settings.launchArgs, environment),
             env: environment,
           });
           const handle = yield* spawner.spawn(command).pipe(
@@ -4321,6 +4368,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     threadId: threadInput.threadId,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
+                    environment: withLiveCodexIntegrationEnvironment(adapterOptions.environment),
                   }),
                 ),
               ),
@@ -4360,6 +4408,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       ...(threadInput.runtimePolicy === undefined
                         ? {}
                         : { runtimePolicy: threadInput.runtimePolicy }),
+                      environment: withLiveCodexIntegrationEnvironment(adapterOptions.environment),
                     }),
                   }),
                 ),
@@ -4963,6 +5012,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       ...(threadInput.runtimePolicy === undefined
                         ? {}
                         : { runtimePolicy: threadInput.runtimePolicy }),
+                      environment: withLiveCodexIntegrationEnvironment(adapterOptions.environment),
                     }),
                   }),
                 ),

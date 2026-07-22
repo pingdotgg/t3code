@@ -489,6 +489,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Provider update checks"]
         : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
+      ...(settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? ["Computer use"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -528,6 +529,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.persistComposerContextStrip,
       settings.enableAssistantStreaming,
+      settings.enableCua,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
@@ -609,6 +611,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1749,6 +1752,28 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {supportsCua ? (
+          <SettingsRow
+            title="Computer use"
+            description="Let agents use Cua to see and control your Mac. Restart T3 Code after changing this setting."
+            resetAction={
+              settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? (
+                <SettingResetButton
+                  label="computer use"
+                  onClick={() => updateSettings({ enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.enableCua}
+                onCheckedChange={(checked) => updateSettings({ enableCua: Boolean(checked) })}
+                aria-label="Enable Cua computer use"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("provider-update-checks")}
