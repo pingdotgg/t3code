@@ -14,11 +14,16 @@ it("derives concise names for Codex-owned GPT models", () => {
   assert.strictEqual(toCodexShortName("GPT-5.5"), "5.5");
   assert.strictEqual(toCodexShortName("GPT-4o"), "4o");
   assert.strictEqual(toCodexShortName("GPT-4o-Mini"), "4o Mini");
+  assert.strictEqual(toCodexShortName("GPT-5.3-Codex-Spark"), "5.3 Codex Spark");
   assert.strictEqual(toCodexShortName("o3"), "o3");
 });
 
-it("derives name and shortName from a raw catalog display name", () => {
-  const [model] = parseCodexModelListResponse({
+it("preserves unknown catalog suffixes", () => {
+  assert.strictEqual(toCodexShortName("GPT-5.6-My_Model"), "GPT-5.6-My_Model");
+});
+
+it("derives short names only for recognized raw catalog display names", () => {
+  const [model, customModel] = parseCodexModelListResponse({
     data: [
       {
         additionalSpeedTiers: [],
@@ -33,11 +38,26 @@ it("derives name and shortName from a raw catalog display name", () => {
         serviceTiers: [],
         supportedReasoningEfforts: [],
       },
+      {
+        additionalSpeedTiers: [],
+        defaultReasoningEffort: "medium",
+        defaultServiceTier: null,
+        description: "Custom model",
+        displayName: "GPT-5.6-My_Model",
+        hidden: false,
+        id: "gpt-5.6-my_model",
+        isDefault: false,
+        model: "gpt-5.6-my_model",
+        serviceTiers: [],
+        supportedReasoningEfforts: [],
+      },
     ],
   });
 
   assert.strictEqual(model?.name, "GPT-5.4-Mini");
   assert.strictEqual(model?.shortName, "5.4 Mini");
+  assert.strictEqual(customModel?.name, "GPT-5.6-My_Model");
+  assert.strictEqual(customModel?.shortName, undefined);
 });
 
 it("maps current Codex model capability fields", () => {

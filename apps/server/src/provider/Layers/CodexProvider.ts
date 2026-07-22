@@ -182,6 +182,16 @@ const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string =>
     .replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 };
 
+const CODEX_SHORT_NAME_SUFFIXES = new Set([
+  "codex",
+  "codex spark",
+  "luna",
+  "mini",
+  "sol",
+  "spark",
+  "terra",
+]);
+
 export const toCodexShortName = (name: string): string => {
   const match = /^GPT-(\d+(?:\.\d+)*[a-z]?)(?:(?:[-\s]+)(.+))?$/iu.exec(name.trim());
   const version = match?.[1];
@@ -189,6 +199,9 @@ export const toCodexShortName = (name: string): string => {
     return name;
   }
   const suffix = match[2]?.trim().replace(/[-_]+/gu, " ");
+  if (suffix && !CODEX_SHORT_NAME_SUFFIXES.has(suffix.toLowerCase())) {
+    return name;
+  }
   return suffix ? `${version} ${suffix}` : version;
 };
 
