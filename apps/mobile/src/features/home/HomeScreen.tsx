@@ -362,7 +362,15 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       v2ProjectScopeKey === null
         ? null
-        : (v2ScopeProjects.find((project) => project.key === v2ProjectScopeKey) ?? null),
+        : (v2ScopeProjects.find(
+            (scope) =>
+              scope.key === v2ProjectScopeKey ||
+              scope.projectRefs.some(
+                (projectRef) =>
+                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
+                  v2ProjectScopeKey,
+              ),
+          ) ?? null),
     [v2ProjectScopeKey, v2ScopeProjects],
   );
   const v2ScopedProjectKeys = useMemo(
@@ -370,8 +378,8 @@ export function HomeScreen(props: HomeScreenProps) {
       v2ScopedProjectGroup === null
         ? null
         : new Set(
-            v2ScopedProjectGroup.projects.map((project) =>
-              scopedProjectKey(project.environmentId, project.id),
+            v2ScopedProjectGroup.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
             ),
           ),
     [v2ScopedProjectGroup],

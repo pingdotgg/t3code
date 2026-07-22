@@ -167,7 +167,11 @@ export function sortHomeProjectScopes(input: {
       (scope: HomeProjectScope) => ({
         timestamp:
           latestActivityByScope.get(scope.key) ??
-          getProjectSortTimestamp(scope.representative, input.projectSortOrder),
+          Math.max(
+            ...scope.projects.map((project) =>
+              getProjectSortTimestamp(project, input.projectSortOrder),
+            ),
+          ),
         title: scope.title,
         key: scope.key,
       }),

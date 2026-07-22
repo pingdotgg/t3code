@@ -250,6 +250,53 @@ describe("buildHomeThreadGroups", () => {
     ).toEqual([validProject.id, invalidProject.id]);
   });
 
+  it("uses the freshest member when a grouped scope has no activity", () => {
+    const localEnvironmentId = EnvironmentId.make("environment-local");
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+    };
+    const olderMember = makeProject({
+      environmentId: localEnvironmentId,
+      id: ProjectId.make("project-older-member"),
+      title: "t3code",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+      repositoryIdentity,
+    });
+    const newerMember = makeProject({
+      environmentId: remoteEnvironmentId,
+      id: ProjectId.make("project-newer-member"),
+      title: "t3code",
+      updatedAt: "2026-06-03T00:00:00.000Z",
+      repositoryIdentity,
+    });
+    const otherProject = makeProject({
+      environmentId: localEnvironmentId,
+      id: ProjectId.make("project-other"),
+      title: "other",
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    });
+    const scopes = buildHomeProjectScopes({
+      projects: [olderMember, newerMember, otherProject],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+
+    expect(
+      sortHomeProjectScopes({
+        scopes,
+        threads: [],
+        pendingTasks: [],
+        projectSortOrder: "updated_at",
+      })[0]?.key,
+    ).toBe(scopes.find((scope) => scope.projects.length === 2)?.key);
+  });
+
   it("does not merge unrelated repositories that share a title", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const projects = ["one", "two"].map((name) =>
