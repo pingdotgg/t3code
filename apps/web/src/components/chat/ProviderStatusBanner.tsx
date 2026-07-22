@@ -27,7 +27,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         : `${providerName} provider has limited availability.`));
 
   return (
-    <div className="mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
+    <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <div
         className={cn(
           "inline-flex items-center gap-3 rounded-xl border px-3.5 py-3 text-card-foreground text-sm",

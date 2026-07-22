@@ -544,9 +544,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={handleOpenChange}>
-      <DialogPopup className="max-w-xl overflow-hidden">
-        <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-background shadow-2xl">
-          <DialogHeader className="border-b border-border/70 bg-background">
+      <DialogPopup className="workflow-dialog-surface max-w-xl overflow-hidden before:hidden">
+        <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-transparent">
+          <DialogHeader className="border-b border-border/70 bg-foreground/[0.025]">
             <DialogTitle>Publish repository</DialogTitle>
             <DialogDescription>
               Pick where to host it, then point us at a repo to push to.
@@ -913,7 +913,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             </AnimatedHeight>
           </DialogPanel>
 
-          <DialogFooter>
+          <DialogFooter className="dark:border-white/5 dark:bg-white/[0.025]">
             {publishWizardStep === 2 ? (
               <Button size="sm" onClick={() => handleOpenChange(false)}>
                 Done
@@ -1736,7 +1736,7 @@ export default function GitActionsControl({
             >
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>
-            <MenuPopup align="end" className="w-full">
+            <MenuPopup align="end" className="command-menu-surface w-full">
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({
                   item,
@@ -1825,7 +1825,7 @@ export default function GitActionsControl({
           }
         }}
       >
-        <DialogPopup>
+        <DialogPopup className="workflow-dialog-surface before:hidden">
           <DialogHeader>
             <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
@@ -1955,7 +1955,7 @@ export default function GitActionsControl({
               />
             </div>
           </DialogPanel>
-          <DialogFooter>
+          <DialogFooter className="dark:border-white/5 dark:bg-white/[0.025]">
             <Button
               variant="outline"
               size="sm"
@@ -1998,14 +1998,14 @@ export default function GitActionsControl({
           }
         }}
       >
-        <DialogPopup className="max-w-xl">
+        <DialogPopup className="workflow-dialog-surface max-w-xl before:hidden">
           <DialogHeader>
             <DialogTitle>
               {pendingDefaultBranchActionCopy?.title ?? "Run action on default refName?"}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="sm:flex-wrap sm:items-center">
+          <DialogFooter className="dark:border-white/5 dark:bg-white/[0.025] sm:flex-wrap sm:items-center">
             <Button
               className="w-full sm:mr-auto sm:w-auto"
               variant="outline"
