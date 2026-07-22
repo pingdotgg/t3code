@@ -1706,7 +1706,7 @@ function OpenCommandPaletteDialog(props: {
     if (isBrowsing && isPlainTab) {
       event.preventDefault();
 
-      if (relativePathNeedsActiveProject || isBrowsePending) {
+      if (relativePathNeedsActiveProject || (isBrowsePending && browseResult === null)) {
         return;
       }
 
