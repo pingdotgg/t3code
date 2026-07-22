@@ -315,13 +315,19 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [openPrLink, pr],
   );
 
-  const rowClassName = cn(
-    "group/v2-row relative w-full cursor-pointer select-none rounded-md text-left",
+  // All Sidebar V2 rows share one surface model. Live threads used to look
+  // like elevated cards while settled threads were plain rows, leaving neither
+  // a useful hierarchy nor a reliable hover cue. Status now lives in the row
+  // content; surface is reserved for interaction (hover, multi-select, route).
+  const rowSurfaceClassName = cn(
+    "group/v2-row relative w-full cursor-pointer select-none overflow-hidden rounded-md text-left outline-none transition-[background-color,color,box-shadow] duration-150",
     props.isActive
-      ? "bg-background text-foreground shadow-xs ring-1 ring-inset ring-black/[0.13] dark:bg-white/[0.11] dark:shadow-none dark:ring-0"
+      ? "bg-accent text-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-r-full before:bg-primary"
       : isSelected
-        ? "bg-muted text-foreground dark:bg-white/[0.07]"
-        : "hover:bg-accent/65",
+        ? "bg-muted text-foreground"
+        : shouldRecede
+          ? "text-muted-foreground/75 hover:bg-muted hover:text-foreground"
+          : "bg-transparent text-foreground hover:bg-muted",
   );
 
   const title = isRenaming ? (
@@ -395,7 +401,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           role="button"
           tabIndex={0}
           data-testid="sidebar-v2-row-slim"
-          className={cn(rowClassName, "flex h-[34px] items-center gap-2.5 px-2.5")}
+          className={cn(rowSurfaceClassName, "flex h-[34px] items-center gap-2.5 px-2.5")}
           onClick={handleClick}
           onDoubleClick={handleDoubleClick}
           onKeyDown={handleKeyDown}
@@ -467,20 +473,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         role="button"
         tabIndex={0}
         data-testid="sidebar-v2-row-card"
-        className={cn(
-          // Light cards are white objects lifted off the zinc rail. The active
-          // thread deliberately gets a blue selection surface and leading rail:
-          // a slightly darker white card was too easy to lose in a light
-          // sidebar. Dark mode keeps its graphite selection treatment.
-          "group/v2-row relative w-full cursor-pointer select-none overflow-hidden rounded-lg text-left transition-colors",
-          props.isActive
-            ? "bg-primary/[0.12] text-foreground shadow-sm ring-1 ring-inset ring-primary/45 before:absolute before:inset-y-2 before:left-0 before:w-1 before:rounded-r-full before:bg-primary dark:bg-white/[0.11] dark:shadow-none dark:ring-0 dark:before:bg-primary"
-            : isSelected
-              ? "bg-primary/[0.07] text-foreground ring-1 ring-inset ring-primary/25 dark:bg-white/[0.07] dark:ring-0"
-              : shouldRecede
-                ? "bg-background/70 ring-1 ring-inset ring-black/[0.045] hover:bg-background hover:ring-black/[0.08] dark:bg-white/[0.025] dark:ring-0 dark:hover:bg-accent/45"
-                : "bg-background shadow-xs/5 ring-1 ring-inset ring-black/[0.06] hover:ring-black/[0.11] dark:bg-white/[0.035] dark:shadow-none dark:ring-0 dark:hover:bg-accent/65",
-        )}
+        className={rowSurfaceClassName}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={handleKeyDown}

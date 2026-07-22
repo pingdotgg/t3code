@@ -480,39 +480,45 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* Give the navigation rail its own surface instead of borrowing the workspace
-   card color. Light mode is a three-surface hierarchy: a light zinc rail
-   (--card), white cards and controls lifted off it (--background), and
-   restrained neutral tints for hover/selection. The rail must sit far enough
-   below white that cards read as objects without heavy borders. The scoped
-   semantic tokens keep sidebar v2's palette from changing v1 or the settings
-   nav. */
+/* Sidebar V2 uses a deliberately small neutral palette. The panel is a quiet
+   zinc canvas; rows are transparent until interaction supplies the only
+   surface. White is kept for actual raised controls, not thread items. */
 .app-sidebar {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.25 0.008 265);
-  --card: oklch(0.972 0.003 265);
+  --sidebar-canvas: #fcfcfc;
+  --sidebar-raised: var(--color-white);
+  --sidebar-hover: var(--color-zinc-50);
+  --sidebar-selected: var(--color-zinc-100);
+  --sidebar-border: var(--color-zinc-200);
+  --background: var(--sidebar-raised);
+  --foreground: var(--color-zinc-800);
+  --card: var(--sidebar-canvas);
   --card-foreground: var(--foreground);
-  --accent: oklch(0.938 0.005 265);
-  --accent-foreground: oklch(0.2 0.008 265);
-  --muted: oklch(0.936 0.005 265);
-  --muted-foreground: oklch(0.46 0.012 265);
-  --border: oklch(0 0 0 / 10%);
-  --input: oklch(0 0 0 / 16%);
+  --accent: var(--sidebar-selected);
+  --accent-foreground: var(--color-zinc-900);
+  --muted: var(--sidebar-hover);
+  --muted-foreground: var(--color-zinc-500);
+  --border: var(--sidebar-border);
+  --input: var(--color-zinc-300);
   --sidebar-stage-fade: var(--card);
   background-color: var(--card);
 }
 
 .dark .app-sidebar {
-  --background: #000;
-  --foreground: #f1f3f7;
-  --card: #000;
+  --sidebar-canvas: var(--color-zinc-950);
+  --sidebar-raised: var(--color-zinc-900);
+  --sidebar-hover: var(--color-zinc-900);
+  --sidebar-selected: var(--color-zinc-800);
+  --sidebar-border: var(--color-zinc-800);
+  --background: var(--sidebar-raised);
+  --foreground: var(--color-zinc-100);
+  --card: var(--sidebar-canvas);
   --card-foreground: var(--foreground);
-  --accent: #191a1d;
-  --accent-foreground: #f7f9ff;
-  --muted: #0a0a0a;
-  --muted-foreground: #a3a3a3;
-  --border: rgb(255 255 255 / 14%);
-  --input: rgb(255 255 255 / 18%);
+  --accent: var(--sidebar-selected);
+  --accent-foreground: var(--color-zinc-50);
+  --muted: var(--sidebar-hover);
+  --muted-foreground: var(--color-zinc-400);
+  --border: var(--sidebar-border);
+  --input: var(--color-zinc-700);
   /* The stage-channel header art must ramp to THIS panel's surface, not the
      global chrome background, or the fade shows a seam (same rule as the
      light palette above). */
