@@ -404,13 +404,22 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .workflow-dialog-surface {
     border-color: transparent;
-    background: color-mix(in srgb, var(--popover) 82%, transparent);
+    background: var(--secondary);
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
     box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
   }
 
+  .command-palette-dialog-surface {
+    border-color: transparent !important;
+    background: var(--secondary) !important;
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%) !important;
+  }
+
   .dark .dropdown-glass {
+    background: color-mix(in srgb, var(--secondary) 80%, var(--background));
     box-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
   }
 
@@ -425,7 +434,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dark .workflow-dialog-surface {
-    background: color-mix(in srgb, var(--popover) 76%, transparent);
+    background: var(--secondary);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+  }
+
+  .dark .command-palette-dialog-surface {
+    box-shadow: none !important;
+  }
+
+  .dark
+    .command-palette-dialog-surface
+    :is([data-slot="input-control"], [data-slot="textarea-control"]) {
+    background: var(--secondary) !important;
+  }
+
+  .dark
+    .command-palette-dialog-surface
+    :is([data-slot="input-control"], [data-slot="textarea-control"]):not(:has(:focus-visible)) {
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .dark
+    .command-palette-dialog-surface
+    :is([data-slot="input-control"], [data-slot="textarea-control"])::before {
+    box-shadow: none !important;
   }
 
   .dark .chat-composer-context-strip::before {
