@@ -33,7 +33,9 @@ interface RecordedCommand {
 
 const makeRecordingRunnerLayer = (
   commands: Array<RecordedCommand>,
-  options?: { readonly failWhen?: ((command: string) => boolean) | undefined },
+  options?: {
+    readonly failWhen?: ((command: string, args: ReadonlyArray<string>) => boolean) | undefined;
+  },
 ) =>
   Layer.succeed(
     ProcessRunner.ProcessRunner,
@@ -41,7 +43,7 @@ const makeRecordingRunnerLayer = (
       run: (input) =>
         Effect.sync(() => {
           commands.push({ command: input.command, args: input.args });
-          const failed = options?.failWhen?.(input.command) === true;
+          const failed = options?.failWhen?.(input.command, input.args) === true;
           return {
             stdout: "",
             stderr: failed ? `${input.command} exploded` : "",
@@ -243,7 +245,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     readonly bootService?: boolean;
     readonly desktopManaged?: boolean;
     readonly entryPath?: string;
-    readonly failWhen?: (command: string) => boolean;
+    readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -453,11 +455,64 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       assert.deepEqual(context.commands[2]?.args, ["--user", "daemon-reload"]);
 
       yield* TestClock.adjust(Duration.seconds(10));
-      assert.deepEqual(context.spawns, [
-        { command: "systemctl", args: ["--user", "restart", "t3code.service"] },
-      ]);
+      assert.deepEqual(context.commands[3], {
+        command: "systemctl",
+        args: ["--user", "restart", "t3code.service"],
+      });
+      assert.lengthOf(context.spawns, 0);
       // systemd replaces the process; the server must not exit itself.
       assert.equal(context.exitCount(), 0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("restores the previous unit and permits a retry when systemd restart fails", () =>
+    Effect.gen(function* () {
+      let failRestart = true;
+      const context = yield* makeContext({
+        bootService: true,
+        failWhen: (command, args) => {
+          if (command !== "systemctl" || args[1] !== "restart" || !failRestart) {
+            return false;
+          }
+          failRestart = false;
+          return true;
+        },
+      });
+      const unitPath = context.path.join(
+        context.home,
+        ".config",
+        "systemd",
+        "user",
+        BOOT_SERVICE_UNIT_FILE,
+      );
+      const previousUnit = yield* context.fs.readFileString(unitPath);
+
+      const first = yield* context.service.update({ targetVersion: "0.0.29" });
+      assert.deepEqual(first, { targetVersion: "0.0.29", method: "boot-service" });
+
+      yield* TestClock.adjust(Duration.seconds(10));
+      // scheduleRestart intentionally detaches from the request. Once its
+      // TestClock delay elapses, give the real filesystem rollback time to
+      // complete before observing the unit and retry lock.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if ((yield* context.fs.readFileString(unitPath)) === previousUnit) {
+          break;
+        }
+        yield* Effect.promise(
+          () => new Promise<void>((resolve) => globalThis.setTimeout(resolve, 5)),
+        );
+      }
+      assert.equal(yield* context.fs.readFileString(unitPath), previousUnit);
+      assert.deepEqual(
+        context.commands.slice(-2).map((entry) => entry.args),
+        [
+          ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+          ["--user", "daemon-reload"],
+        ],
+      );
+
+      const retry = yield* context.service.update({ targetVersion: "0.0.30" });
+      assert.deepEqual(retry, { targetVersion: "0.0.30", method: "boot-service" });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

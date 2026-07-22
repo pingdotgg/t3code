@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// node:child_process directly: the restart spawns must be detached
-// fire-and-forget children that outlive this process, while Effect's
+// node:child_process directly: the foreground-server replacement must be a
+// detached fire-and-forget child that outlives this process, while Effect's
 // ChildProcessSpawner ties every child to a scope that kills it.
 import {
   ServerSelfUpdateError,
@@ -57,7 +57,7 @@ export interface ServerSelfUpdateHost {
   readonly cliEntryPath: string;
   /** Original CLI arguments after the entry path, replayed on respawn. */
   readonly cliArgs: ReadonlyArray<string>;
-  /** Fire-and-forget spawn that survives this process exiting. */
+  /** Fire-and-forget spawn used by the foreground respawn handoff. */
   readonly spawnDetached: (command: string, args: ReadonlyArray<string>) => void;
   readonly exitProcess: () => void;
 }
@@ -314,10 +314,58 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
         yield* Effect.logInfo("Server self-update installed; restarting boot service.", {
           targetVersion,
         });
-        // systemd stops this process and starts the rewritten unit.
+        // Run through ProcessRunner so a rejected restart can restore the old
+        // unit and release the update lock. On success systemd stops this
+        // process before (or as) the command completes and starts the
+        // rewritten unit.
         yield* scheduleRestart(
-          Effect.sync(() =>
-            host.spawnDetached("systemctl", ["--user", "restart", BOOT_SERVICE_UNIT_FILE]),
+          Effect.gen(function* () {
+            const restart = yield* runner
+              .run({
+                command: "systemctl",
+                args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+              })
+              .pipe(
+                Effect.mapError((cause) =>
+                  failWith("Could not restart the systemd boot service.", cause),
+                ),
+              );
+            if (restart.code !== 0) {
+              return yield* failWith(
+                `Restarting the systemd boot service failed (exit code ${String(restart.code)}).`,
+              );
+            }
+          }).pipe(
+            Effect.catch((restartError) =>
+              writeUnitAtomically(unitPath, previousUnit).pipe(
+                Effect.mapError((cause) =>
+                  failWith("Could not restore the previous systemd unit.", cause),
+                ),
+                Effect.andThen(reloadSystemd()),
+                Effect.tap(() =>
+                  Effect.logError(
+                    "Server self-update restart failed; restored the previous systemd unit.",
+                  ).pipe(
+                    Effect.annotateLogs({
+                      targetVersion,
+                      restartError: restartError.reason,
+                    }),
+                  ),
+                ),
+                Effect.catch((rollbackError) =>
+                  Effect.logError(
+                    "Server self-update restart failed and the previous systemd unit could not be restored.",
+                  ).pipe(
+                    Effect.annotateLogs({
+                      targetVersion,
+                      restartError: restartError.reason,
+                      rollbackError: rollbackError.reason,
+                    }),
+                  ),
+                ),
+                Effect.ensuring(Ref.set(inFlight, false)),
+              ),
+            ),
           ),
         );
       } else {

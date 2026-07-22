@@ -85,17 +85,21 @@ export function ServerUpdateAction({
     }
     inFlightRef.current = true;
     setPending(true);
-    const expiry = setTimeout(() => {
-      expiryRef.current = null;
-      inFlightRef.current = false;
-      setPending(false);
-      toastManager.add({
-        type: "error",
-        title: "Server update timed out",
-        description: "The update may still be running on the server — check again in a minute.",
-      });
-    }, UPDATE_PENDING_EXPIRY_MS);
-    expiryRef.current = expiry;
+    const armExpiry = () => {
+      const expiry = setTimeout(() => {
+        expiryRef.current = null;
+        inFlightRef.current = false;
+        setPending(false);
+        toastManager.add({
+          type: "error",
+          title: "Server update timed out",
+          description: "The update may still be running on the server — check again in a minute.",
+        });
+      }, UPDATE_PENDING_EXPIRY_MS);
+      expiryRef.current = expiry;
+      return expiry;
+    };
+    let expiry = armExpiry();
     let restartAccepted = false;
     void Promise.resolve()
       .then(() =>
@@ -116,6 +120,13 @@ export function ServerUpdateAction({
           return;
         }
         restartAccepted = true;
+        // Installation can legitimately consume most of the request window.
+        // Give restart/reconnect a fresh full window after the server accepts
+        // the handoff instead of expiring based on the original click time.
+        if (expiryRef.current === expiry) {
+          clearTimeout(expiry);
+          expiry = armExpiry();
+        }
         toastManager.add({
           type: "success",
           title: `Updating ${serverLabel}`,
