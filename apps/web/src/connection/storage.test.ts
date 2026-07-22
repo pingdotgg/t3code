@@ -77,6 +77,24 @@ describe("makeCatalogBackend", () => {
 });
 
 describe("upgradeConnectionDatabase", () => {
+  it("does not clear the empty thread store when creating a new database", () => {
+    const stores = new Set<string>();
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    upgradeConnectionDatabase(database, transaction, 0);
+
+    expect(stores).toEqual(new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]));
+    expect(transaction.objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
+
   it("clears existing thread snapshots when upgrading to archive-time cache eviction", () => {
     const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
     const clear = vi.fn();

@@ -2,6 +2,7 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -31,6 +32,25 @@ export const THREAD_LIFECYCLE_RETRY_DELAY = "30 seconds";
 function lifecycleJobKey(job: ThreadLifecycleJob): string {
   return job.type === "compact-legacy-storage" ? job.type : `${job.type}:${job.threadId}`;
 }
+
+export const enqueueLifecycleJobOnce = (
+  scheduledJobs: Set<string>,
+  key: string,
+  enqueue: Effect.Effect<void>,
+) =>
+  Effect.suspend(() => {
+    if (scheduledJobs.has(key)) return Effect.void;
+    scheduledJobs.add(key);
+    return enqueue.pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : Effect.sync(() => {
+              scheduledJobs.delete(key);
+            }),
+      ),
+    );
+  });
 
 export const logCleanupCauseUnlessInterrupted = <R, E>({
   effect,
@@ -166,12 +186,7 @@ const make = Effect.gen(function* () {
   );
 
   const enqueueLifecycleJob = (job: ThreadLifecycleJob) =>
-    Effect.suspend(() => {
-      const key = lifecycleJobKey(job);
-      if (scheduledJobs.has(key)) return Effect.void;
-      scheduledJobs.add(key);
-      return worker.enqueue(job);
-    });
+    enqueueLifecycleJobOnce(scheduledJobs, lifecycleJobKey(job), worker.enqueue(job));
 
   const enqueuePendingLifecycleJobs = Effect.fn("enqueuePendingThreadLifecycleJobs")(function* () {
     const pendingJobs = yield* Effect.all([
@@ -213,6 +228,7 @@ const make = Effect.gen(function* () {
 
     yield* Queue.take(retryRequested).pipe(
       Effect.andThen(Effect.sleep(THREAD_LIFECYCLE_RETRY_DELAY)),
+      Effect.andThen(Queue.poll(retryRequested)),
       Effect.andThen(enqueuePendingLifecycleJobs()),
       Effect.andThen(enqueueLifecycleJob({ type: "compact-legacy-storage" })),
       Effect.forever,

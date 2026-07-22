@@ -525,6 +525,28 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("removes cached data when an archived thread arrives in a snapshot", () =>
+    Effect.gen(function* () {
+      const archivedThread = {
+        ...BASE_THREAD,
+        archivedAt: "2026-04-01T02:00:00.000Z",
+      };
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+
+      yield* Queue.offer(harness.inputs, snapshot(archivedThread));
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect(Option.getOrThrow(state.data).archivedAt).toBe("2026-04-01T02:00:00.000Z");
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+    }),
+  );
+
   it.effect("does not restore an out-of-band cache eviction from queued or teardown writes", () =>
     Effect.gen(function* () {
       const savedThreads = yield* Effect.scoped(

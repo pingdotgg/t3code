@@ -136,7 +136,7 @@ export function upgradeConnectionDatabase(
     database.createObjectStore(VCS_REFS_STORE_NAME);
   }
 
-  if (oldVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION) {
+  if (oldVersion > 0 && oldVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION) {
     transaction?.objectStore(THREAD_STORE_NAME).clear();
   }
 }

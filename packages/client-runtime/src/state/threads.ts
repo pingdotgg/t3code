@@ -197,6 +197,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
       yield* setThread(item.snapshot.thread);
+      if (item.snapshot.thread.archivedAt !== null) {
+        yield* removeCachedThread();
+      }
       return;
     }
 

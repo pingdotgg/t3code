@@ -40,6 +40,7 @@ import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadCol
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import { ThreadColdStorageLive } from "./ThreadColdStorage.ts";
 import {
+  enqueueLifecycleJobOnce,
   logCleanupCauseUnlessInterrupted,
   THREAD_LIFECYCLE_RETRY_DELAY,
   ThreadDeletionReactorLive,
@@ -139,6 +140,26 @@ describe("logCleanupCauseUnlessInterrupted", () => {
     }
   });
 });
+
+effectIt.effect("releases a lifecycle job reservation when enqueueing is interrupted", () =>
+  Effect.gen(function* () {
+    const scheduledJobs = new Set<string>();
+    const enqueueCalls = yield* Ref.make(0);
+
+    const interrupted = yield* Effect.exit(
+      enqueueLifecycleJobOnce(scheduledJobs, "archive:thread-interrupted", Effect.interrupt),
+    );
+    expect(Exit.isFailure(interrupted)).toBe(true);
+    expect(scheduledJobs.has("archive:thread-interrupted")).toBe(false);
+
+    yield* enqueueLifecycleJobOnce(
+      scheduledJobs,
+      "archive:thread-interrupted",
+      Ref.update(enqueueCalls, (count) => count + 1),
+    );
+    expect(yield* Ref.get(enqueueCalls)).toBe(1);
+  }),
+);
 
 effectIt.effect("archives a settled thread when its provider binding is already absent", () =>
   Effect.gen(function* () {
@@ -261,6 +282,56 @@ effectIt.effect("retries a failed durable archive job after a delay", () =>
       yield* reactor.drain;
 
       expect(yield* Ref.get(archiveAttempts)).toBe(2);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("coalesces concurrent lifecycle failures into one delayed rescan", () =>
+  Effect.gen(function* () {
+    const firstThreadId = ThreadId.make("thread-archive-retry-first");
+    const secondThreadId = ThreadId.make("thread-archive-retry-second");
+    const retryCompleted = yield* Deferred.make<void>();
+    const archiveAttempts = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.empty,
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      pendingArchives: [firstThreadId, secondThreadId],
+      archiveThread: (threadId) =>
+        Ref.updateAndGet(archiveAttempts, (count) => count + 1).pipe(
+          Effect.flatMap((attempt) => {
+            if (attempt <= 2) {
+              return Effect.fail(
+                new ThreadColdStorageError({
+                  operation: "archive",
+                  threadId,
+                  cause: new Error("temporary archive failure"),
+                }),
+              );
+            }
+            return attempt === 4
+              ? Deferred.succeed(retryCompleted, undefined).pipe(Effect.asVoid)
+              : Effect.void;
+          }),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* reactor.drain;
+      expect(yield* Ref.get(archiveAttempts)).toBe(2);
+
+      yield* TestClock.adjust(THREAD_LIFECYCLE_RETRY_DELAY);
+      yield* Deferred.await(retryCompleted);
+      yield* reactor.drain;
+      expect(yield* Ref.get(archiveAttempts)).toBe(4);
+
+      yield* TestClock.adjust(THREAD_LIFECYCLE_RETRY_DELAY);
+      yield* Effect.yieldNow;
+      yield* reactor.drain;
+      expect(yield* Ref.get(archiveAttempts)).toBe(4);
     }).pipe(Effect.provide(layer));
   }),
 );
