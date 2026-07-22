@@ -194,7 +194,12 @@ export default function DiffPanel({
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
-  const [includeGitChanges, setIncludeGitChanges] = useState(false);
+  // Scoped per turn selection so revealing git changes on one turn doesn't
+  // leak into other turns or threads.
+  const [includeGitChangesState, setIncludeGitChangesState] = useState<{
+    scopeKey: string | null;
+    value: boolean;
+  }>(() => ({ scopeKey: null, value: false }));
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
@@ -317,6 +322,12 @@ export default function DiffPanel({
   const selectedTurnGitFileCount = useMemo(
     () => selectedTurn?.files.filter((file) => file.origin === "git").length ?? 0,
     [selectedTurn],
+  );
+  const includeGitChanges =
+    includeGitChangesState.scopeKey === collapseScopeKey && includeGitChangesState.value;
+  const setIncludeGitChanges = useCallback(
+    (value: boolean) => setIncludeGitChangesState({ scopeKey: collapseScopeKey, value }),
+    [collapseScopeKey],
   );
   const activeCheckpointDiff = useCheckpointDiff(
     {

@@ -945,10 +945,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
         // The baseline checkpoint commit is created at turn start, so its
         // committer timestamp is the turn-start time. Commits in the HEAD
-        // range authored at or after it were made during the turn and count
-        // as agent work; commits authored before it carried pre-existing
-        // content (pull, checkout — and, because cherry-pick and rebase
-        // preserve author dates, replayed foreign commits too).
+        // range split three ways:
+        //  - authored at/after turn start: made during the turn → agent work.
+        //  - authored before AND committed before: pre-existing content that
+        //    moved into the range wholesale (pull, checkout, merge fast path).
+        //  - authored before but COMMITTED during the turn: rewritten by a
+        //    history-editing command. Cherry-pick and rebase preserve author
+        //    dates while re-committing, and so does `commit --amend` — but an
+        //    amend carries NEW agent content while a replay carries old
+        //    content. Disambiguated below by patch-id: a rewritten commit
+        //    whose exact patch exists elsewhere in the repo (branches,
+        //    remotes, or reflog — the latter catches pre-rebase originals) is
+        //    a replay → demote; otherwise treat as agent work → show.
         const fromCommitTimeRaw = yield* readCommitField(
           `${input.fromCheckpointRef}^{commit}`,
           "%ct",
@@ -963,7 +971,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: [
             "log",
-            "--format=%H %at %p",
+            "--format=%H %at %ct %p",
             `${fromMetadata.headOid}..${toMetadata.headOid}`,
             "--",
           ],
@@ -974,17 +982,108 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           return null;
         }
 
-        const turnAuthoredCommits: Array<{ readonly oid: string; readonly isMerge: boolean }> = [];
+        interface RangeCommit {
+          readonly oid: string;
+          readonly isMerge: boolean;
+        }
+        const turnAuthoredCommits: Array<RangeCommit> = [];
+        const rewrittenCommits: Array<RangeCommit> = [];
         for (const line of headRangeResult.stdout.split("\n")) {
-          const [oid, authorTime, ...parents] = line.trim().split(" ");
-          if (!oid || !authorTime) {
+          const [oid, authorTime, commitTime, ...parents] = line.trim().split(" ");
+          if (!oid || !authorTime || !commitTime) {
             continue;
           }
           const authoredAt = Number(authorTime);
-          if (Number.isFinite(authoredAt) && authoredAt >= fromCommitTime) {
-            turnAuthoredCommits.push({ oid, isMerge: parents.length > 1 });
+          const committedAt = Number(commitTime);
+          if (!Number.isFinite(authoredAt) || !Number.isFinite(committedAt)) {
+            continue;
+          }
+          const commit: RangeCommit = { oid, isMerge: parents.length > 1 };
+          if (authoredAt >= fromCommitTime) {
+            turnAuthoredCommits.push(commit);
+          } else if (committedAt >= fromCommitTime) {
+            rewrittenCommits.push(commit);
           }
         }
+        if (rewrittenCommits.length > 100) {
+          return null;
+        }
+
+        // Batch patch-id computation: diff-tree --stdin -p streams every
+        // commit's patch prefixed by its oid, which `git patch-id` consumes
+        // directly. Failures degrade to an empty map, which classifies the
+        // affected rewritten commits as agent work (shown).
+        const patchIdsForCommits = (oids: ReadonlyArray<string>) =>
+          Effect.gen(function* () {
+            if (oids.length === 0) {
+              return new Map<string, string>();
+            }
+            const patches = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["diff-tree", "--stdin", "-p", "--no-renames", "--root"],
+              stdin: `${oids.join("\n")}\n`,
+              allowNonZeroExit: true,
+              maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+            });
+            if (patches.exitCode !== 0 || patches.stdoutTruncated) {
+              return new Map<string, string>();
+            }
+            const ids = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["patch-id", "--stable"],
+              stdin: patches.stdout,
+              allowNonZeroExit: true,
+              maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+            });
+            if (ids.exitCode !== 0 || ids.stdoutTruncated) {
+              return new Map<string, string>();
+            }
+            const byCommit = new Map<string, string>();
+            for (const line of ids.stdout.split("\n")) {
+              const [patchId, commitId] = line.trim().split(" ");
+              if (patchId && commitId) {
+                byCommit.set(commitId, patchId);
+              }
+            }
+            return byCommit;
+          });
+
+        if (rewrittenCommits.length > 0) {
+          const candidatesResult = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "rev-list",
+              "-n",
+              "500",
+              "--branches",
+              "--tags",
+              "--remotes",
+              "--reflog",
+              "--not",
+              toMetadata.headOid,
+            ],
+            allowNonZeroExit: true,
+            maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          });
+          const candidateOids =
+            candidatesResult.exitCode === 0 && !candidatesResult.stdoutTruncated
+              ? candidatesResult.stdout.split("\n").filter((line) => line.length > 0)
+              : [];
+          const candidatePatchIds = new Set((yield* patchIdsForCommits(candidateOids)).values());
+          const rewrittenPatchIds = yield* patchIdsForCommits(
+            rewrittenCommits.map((commit) => commit.oid),
+          );
+          for (const commit of rewrittenCommits) {
+            const patchId = rewrittenPatchIds.get(commit.oid);
+            if (patchId === undefined || !candidatePatchIds.has(patchId)) {
+              turnAuthoredCommits.push(commit);
+            }
+          }
+        }
+
         // A pathological number of turn-authored commits (e.g. clock skew
         // misclassifying a pulled range) would mean one diff-tree call per
         // commit; skip attribution instead — the diff renders unfiltered.
@@ -1003,6 +1102,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               "-z",
               "--no-commit-id",
               "--name-only",
+              // Root commits (orphan branches) have no parent; without
+              // --root they would list no paths and their agent-authored
+              // content would be misattributed to history.
+              "--root",
               // For merges, the combined diff lists only paths whose result
               // differs from every parent — i.e. conflict resolutions the
               // agent authored. Paths taken wholesale from one side are

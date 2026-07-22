@@ -55,6 +55,7 @@ function writeTextFile(
 function git(
   cwd: string,
   args: ReadonlyArray<string>,
+  env?: NodeJS.ProcessEnv,
 ): Effect.Effect<string, VcsError, VcsProcess.VcsProcess> {
   return Effect.gen(function* () {
     const process = yield* VcsProcess.VcsProcess;
@@ -63,11 +64,18 @@ function git(
       command: "git",
       cwd,
       args,
+      ...(env ? { env: { ...global.process.env, ...env } } : {}),
       timeoutMs: 10_000,
     });
     return result.stdout.trim();
   });
 }
+
+/** Author and committer dates both in the past: a genuinely pre-existing commit. */
+const PRE_EXISTING_COMMIT_ENV: NodeJS.ProcessEnv = {
+  GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
+  GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z",
+};
 
 function initRepoWithCommit(
   cwd: string,
@@ -257,9 +265,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         yield* git(tmp, ["checkout", "-b", "feature"]);
         yield* writeTextFile(NodePath.join(tmp, "feature.ts"), "export const feature = 1;\n");
         yield* git(tmp, ["add", "."]);
-        // Author date in the past: pre-existing commits are authored before
-        // the turn starts (timestamps here have 1s granularity).
-        yield* git(tmp, ["commit", "-m", "feature work", "--date", "2020-01-01T00:00:00Z"]);
+        yield* git(tmp, ["commit", "-m", "feature work"], PRE_EXISTING_COMMIT_ENV);
         yield* git(tmp, ["checkout", defaultBranch]);
 
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
@@ -321,17 +327,19 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         yield* git(tmp, ["checkout", "-b", "source"]);
         yield* writeTextFile(NodePath.join(tmp, "picked.ts"), "export const picked = 1;\n");
         yield* git(tmp, ["add", "."]);
-        yield* git(tmp, [
-          "-c",
-          "user.email=other@test.com",
-          "-c",
-          "user.name=Other",
-          "commit",
-          "-m",
-          "source work",
-          "--date",
-          "2020-01-01T00:00:00Z",
-        ]);
+        yield* git(
+          tmp,
+          [
+            "-c",
+            "user.email=other@test.com",
+            "-c",
+            "user.name=Other",
+            "commit",
+            "-m",
+            "source work",
+          ],
+          PRE_EXISTING_COMMIT_ENV,
+        );
         const pickedOid = yield* git(tmp, ["rev-parse", "HEAD"]);
         yield* git(tmp, ["checkout", defaultBranch]);
 
@@ -352,6 +360,39 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
 
         expect(attribution).not.toBe(null);
         expect(attribution!.get("picked.ts")).toBe("git");
+      }),
+    );
+
+    it.effect("keeps an amend of a pre-turn commit as agent work", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        // Pre-turn commit with an old author date, as amend preserves it.
+        yield* writeTextFile(NodePath.join(tmp, "amended.ts"), "export const value = 1;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "pre-turn work", "--date", "2020-01-01T00:00:00Z"]);
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-attr-amend");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        // The "turn": edit the file and amend it into the pre-turn commit.
+        // The author date stays 2020, but the content is new agent work.
+        yield* writeTextFile(NodePath.join(tmp, "amended.ts"), "export const value = 2;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "--amend", "--no-edit"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const attribution = yield* checkpointStore.attributeCheckpointDiff({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(attribution).not.toBe(null);
+        expect(attribution!.get("amended.ts")).toBe("agent");
       }),
     );
 

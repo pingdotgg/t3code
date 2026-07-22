@@ -38,20 +38,24 @@ function stripGitPathQuoting(value: string): string {
  * the section is unparseable; callers should keep such sections.
  */
 function resolveDiffSectionPath(section: string): string | null {
+  // `--- a/` precedes `+++ b/` in a section, so resolve the post-image path
+  // in a full pass before falling back — for renames the two differ, and the
+  // attribution map is keyed by the post-image path.
+  let fallbackSource: string | null = null;
   for (const line of section.split("\n")) {
     if (line.startsWith("+++ ")) {
       const target = stripGitPathQuoting(line.slice(4).trim());
       if (target !== "/dev/null") {
         return target.startsWith("b/") ? target.slice(2) : target;
       }
-    } else if (line.startsWith("--- ")) {
+    } else if (line.startsWith("--- ") && fallbackSource === null) {
       const source = stripGitPathQuoting(line.slice(4).trim());
       if (source !== "/dev/null" && source.startsWith("a/")) {
-        return source.slice(2);
+        fallbackSource = source.slice(2);
       }
     }
   }
-  return null;
+  return fallbackSource;
 }
 
 /**

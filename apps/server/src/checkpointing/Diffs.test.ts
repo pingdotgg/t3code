@@ -122,3 +122,25 @@ describe("filterUnifiedDiffFiles", () => {
     expect(filterUnifiedDiffFiles("", () => false)).toBe("");
   });
 });
+
+describe("resolveDiffSectionPath via renames", () => {
+  it("filters rename sections by the post-image path", () => {
+    const renameDiff = [
+      "diff --git a/old/name.ts b/new/name.ts",
+      "similarity index 90%",
+      "rename from old/name.ts",
+      "rename to new/name.ts",
+      "index 1111111..2222222 100644",
+      "--- a/old/name.ts",
+      "+++ b/new/name.ts",
+      "@@ -1,1 +1,1 @@",
+      "-before",
+      "+after",
+      "",
+    ].join("\n");
+    // The attribution map is keyed by post-image paths; a filter that only
+    // knows the new path must still match this section.
+    expect(filterUnifiedDiffFiles(renameDiff, (path) => path !== "new/name.ts").trim()).toBe("");
+    expect(filterUnifiedDiffFiles(renameDiff, (path) => path !== "old/name.ts")).toBe(renameDiff);
+  });
+});
