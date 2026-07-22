@@ -77,6 +77,40 @@ describe("resolveProviderWorkspaceSkills", () => {
     ).toEqual([]);
   });
 
+  it("preserves verified same-workspace skills while the environment is unavailable", () => {
+    const currentSkills = [skill("repo-local")];
+
+    expect(
+      resolveProviderWorkspaceSkills({
+        nextKey: "local:codex:/repo",
+        nextSkills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        currentKey: "local:codex:/repo",
+        currentSkills,
+        fallbackSkills: [skill("provider-fallback")],
+      }),
+    ).toBe(currentSkills);
+  });
+
+  it("uses provider fallback skills when a different workspace is unavailable", () => {
+    const fallbackSkills = [skill("provider-fallback")];
+
+    expect(
+      resolveProviderWorkspaceSkills({
+        nextKey: "local:codex:/repo-b",
+        nextSkills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        currentKey: "local:codex:/repo-a",
+        currentSkills: [skill("repo-a")],
+        fallbackSkills,
+      }),
+    ).toBe(fallbackSkills);
+  });
+
   it("uses provider snapshot skills for empty and failed workspace responses", () => {
     const fallbackSkills = [skill("provider-fallback")];
     const base = {
@@ -145,6 +179,34 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
           key: "local:codex:/repo",
           skills: [skill("repo-local")],
         },
+      }),
+    ).toBeNull();
+  });
+
+  it("retains only a same-workspace snapshot while unavailable", () => {
+    const current = {
+      key: "local:codex:/repo-a",
+      skills: [skill("repo-a")],
+    };
+
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: current.key,
+        skills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        current,
+      }),
+    ).toBe(current);
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: "local:codex:/repo-b",
+        skills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        current,
       }),
     ).toBeNull();
   });

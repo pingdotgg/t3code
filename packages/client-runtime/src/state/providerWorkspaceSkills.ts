@@ -12,6 +12,7 @@ export interface ProviderWorkspaceSkillsTarget {
   readonly instanceId: ProviderInstanceId | null;
   readonly cwd: string | null;
   readonly enabled: boolean;
+  readonly connectionAvailable?: boolean;
   readonly fallbackSkills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -31,6 +32,7 @@ export interface ProviderWorkspaceSkillsResolutionInput extends ProviderWorkspac
   readonly nextSkills: ReadonlyArray<ServerProviderSkill> | null;
   readonly isPending: boolean;
   readonly error: string | null;
+  readonly unavailable?: boolean;
   readonly fallbackSkills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -40,6 +42,8 @@ export interface ProviderWorkspaceSkillsSnapshot {
 }
 
 export const EMPTY_PROVIDER_WORKSPACE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+export const PROVIDER_WORKSPACE_SKILLS_UNAVAILABLE_MESSAGE =
+  "Reconnect this environment to refresh workspace skills.";
 
 const isServerProviderSkillsListError = Schema.is(ServerProviderSkillsListError);
 
@@ -96,6 +100,10 @@ export function resolvePendingProviderWorkspaceSkills(
 export function resolveProviderWorkspaceSkills(
   input: ProviderWorkspaceSkillsResolutionInput,
 ): ReadonlyArray<ServerProviderSkill> {
+  if (input.unavailable === true) {
+    const currentSkills = resolvePendingProviderWorkspaceSkills(input);
+    return currentSkills.length > 0 ? currentSkills : input.fallbackSkills;
+  }
   // AsyncResult failures can retain a previous success for stale-while-revalidate.
   // A failed workspace refresh must still fall back to the provider snapshot rather
   // than keeping a stale workspace's skills selectable.
@@ -115,9 +123,14 @@ export function resolveNextProviderWorkspaceSkillsSnapshot(input: {
   readonly skills: ReadonlyArray<ServerProviderSkill> | null;
   readonly isPending: boolean;
   readonly error: string | null;
+  readonly unavailable?: boolean;
   readonly current: ProviderWorkspaceSkillsSnapshot | null;
 }): ProviderWorkspaceSkillsSnapshot | null {
-  if (input.key === null || input.error !== null) return null;
+  if (input.key === null) return null;
+  if (input.unavailable === true) {
+    return input.current?.key === input.key ? input.current : null;
+  }
+  if (input.error !== null) return null;
   if (input.skills === null) return input.isPending ? input.current : null;
   return input.isPending ? input.current : { key: input.key, skills: input.skills };
 }

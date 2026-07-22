@@ -175,6 +175,36 @@ describe("resolveProviderWorkspaceSkills", () => {
     ).toEqual([]);
   });
 
+  it("settles unavailable lookups with same-workspace skills or provider fallback", () => {
+    const currentSkills = [skill("repo-local")];
+    const fallbackSkills = [skill("provider-fallback")];
+
+    expect(
+      resolveProviderWorkspaceSkills({
+        nextKey: "environment:codex:/repo",
+        nextSkills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        currentKey: "environment:codex:/repo",
+        currentSkills,
+        fallbackSkills,
+      }),
+    ).toBe(currentSkills);
+    expect(
+      resolveProviderWorkspaceSkills({
+        nextKey: "environment:codex:/other-repo",
+        nextSkills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        currentKey: "environment:codex:/repo",
+        currentSkills,
+        fallbackSkills,
+      }),
+    ).toBe(fallbackSkills);
+  });
+
   it("does not leak skills during rapid workspace switches", () => {
     const repoASkills = [skill("repo-a")];
     const repoBSkills = [skill("repo-b")];
@@ -321,6 +351,34 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
           key: "environment:codex:/repo",
           skills: [skill("repo-local")],
         },
+      }),
+    ).toBeNull();
+  });
+
+  it("preserves only the active workspace snapshot while unavailable", () => {
+    const current = {
+      key: "environment:codex:/repo",
+      skills: [skill("repo-local")],
+    };
+
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: current.key,
+        skills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        current,
+      }),
+    ).toBe(current);
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: "environment:codex:/other-repo",
+        skills: null,
+        isPending: false,
+        error: null,
+        unavailable: true,
+        current,
       }),
     ).toBeNull();
   });

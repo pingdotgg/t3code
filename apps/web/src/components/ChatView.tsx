@@ -1134,6 +1134,8 @@ function ChatViewContent(props: ChatViewProps) {
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
   );
+  const providerSkillsConnectionAvailable =
+    environmentById.get(environmentId)?.connection.phase === "connected";
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const serverThread = useThread(routeThreadRef);
@@ -2314,6 +2316,7 @@ function ChatViewContent(props: ChatViewProps) {
     instanceId: activeProviderStatus?.instanceId ?? null,
     cwd: providerSkillsCwd,
     enabled: timelineHasSkillReference,
+    connectionAvailable: providerSkillsConnectionAvailable,
     fallbackSkills: activeProviderFallbackSkills,
   });
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -5437,6 +5440,7 @@ function ChatViewContent(props: ChatViewProps) {
                         terminalOpen={Boolean(terminalUiState.terminalOpen)}
                         gitCwd={gitCwd}
                         providerSkillsCwd={providerSkillsCwd}
+                        providerSkillsConnectionAvailable={providerSkillsConnectionAvailable}
                         promptRef={promptRef}
                         composerImagesRef={composerImagesRef}
                         composerTerminalContextsRef={composerTerminalContextsRef}
