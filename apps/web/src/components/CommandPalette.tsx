@@ -791,6 +791,12 @@ function OpenCommandPaletteDialog(props: {
       buildProjectActionItems({
         projects: pickerProjects,
         valuePrefix: "project",
+        searchTerms: (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          return (
+            group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+          );
+        },
         icon: (project) => (
           <ProjectFavicon
             environmentId={project.environmentId}
@@ -800,7 +806,7 @@ function OpenCommandPaletteDialog(props: {
         ),
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, pickerProjects],
+    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
   );
 
   const projectThreadItems = useMemo(
@@ -809,6 +815,12 @@ function OpenCommandPaletteDialog(props: {
         buildProjectActionItems({
           projects: pickerProjects,
           valuePrefix: "new-thread-in",
+          searchTerms: (project) => {
+            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+            return (
+              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+            );
+          },
           icon: (project) => (
             <ProjectFavicon
               environmentId={project.environmentId}
@@ -817,6 +829,14 @@ function OpenCommandPaletteDialog(props: {
             />
           ),
           runProject: async (project) => {
+            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+            const contextualRefBelongsToGroup =
+              contextualProjectRef !== null &&
+              group?.memberProjectRefs.some(
+                (projectRef) =>
+                  projectRef.environmentId === contextualProjectRef.environmentId &&
+                  projectRef.projectId === contextualProjectRef.projectId,
+              );
             await startNewThreadInProjectFromContext(
               {
                 activeDraftThread,
@@ -824,12 +844,22 @@ function OpenCommandPaletteDialog(props: {
                 defaultProjectRef,
                 handleNewThread,
               },
-              scopeProjectRef(project.environmentId, project.id),
+              contextualRefBelongsToGroup
+                ? contextualProjectRef
+                : scopeProjectRef(project.environmentId, project.id),
             );
           },
         }),
       ),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, pickerProjects],
+    [
+      activeDraftThread,
+      activeThread,
+      contextualProjectRef,
+      defaultProjectRef,
+      handleNewThread,
+      pickerProjects,
+      projectGroupByTargetKey,
+    ],
   );
 
   const allThreadItems = useMemo(
