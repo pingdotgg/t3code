@@ -76,6 +76,7 @@ export function applyThreadDetailEvent(
           settledAt: null,
           deletedAt: null,
           messages: [],
+          queuedMessages: [],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -297,6 +298,45 @@ export function applyThreadDetailEvent(
         },
       };
     }
+
+    // ── Queued messages ─────────────────────────────────────────────
+    case "thread.message-queued": {
+      const queuedMessage = {
+        messageId: event.payload.messageId,
+        text: event.payload.text,
+        attachments: event.payload.attachments,
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {}),
+        ...(event.payload.sourceProposedPlan !== undefined
+          ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+          : {}),
+        queuedAt: event.payload.queuedAt,
+      };
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          queuedMessages: [
+            ...thread.queuedMessages.filter((entry) => entry.messageId !== queuedMessage.messageId),
+            queuedMessage,
+          ],
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
+    case "thread.queued-message-removed":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          queuedMessages: thread.queuedMessages.filter(
+            (entry) => entry.messageId !== event.payload.messageId,
+          ),
+          updatedAt: event.occurredAt,
+        },
+      };
 
     // ── Session ─────────────────────────────────────────────────────
     case "thread.session-set": {

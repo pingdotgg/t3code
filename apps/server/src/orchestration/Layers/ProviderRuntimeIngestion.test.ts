@@ -1523,22 +1523,35 @@ describe("ProviderRuntimeIngestion", () => {
       threadId,
     );
 
-    // The steer: a user-requested turn start while the old turn still runs.
+    // The steer: a follow-up sent mid-turn queues by default, then the
+    // explicit queue.steer command dispatches it into the running turn.
     await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-steer"),
-        threadId,
-        message: {
-          messageId: asMessageId("msg-steer"),
-          role: "user",
-          text: "actually, do 15 instead",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt,
-      }),
+      harness.engine
+        .dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-steer"),
+          threadId,
+          message: {
+            messageId: asMessageId("msg-steer"),
+            role: "user",
+            text: "actually, do 15 instead",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        })
+        .pipe(
+          Effect.andThen(
+            harness.engine.dispatch({
+              type: "thread.queue.steer",
+              commandId: CommandId.make("cmd-queue-steer"),
+              threadId,
+              messageId: asMessageId("msg-steer"),
+              createdAt,
+            }),
+          ),
+        ),
     );
 
     // The provider session tracks the new turn before emitting turn.started

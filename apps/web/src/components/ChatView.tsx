@@ -216,6 +216,7 @@ import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { QueuedMessageChips } from "./chat/QueuedMessageChips";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -1112,6 +1113,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const steerQueuedThreadMessage = useAtomCommand(threadEnvironment.steerQueuedMessage, {
+    reportFailure: false,
+  });
+  const removeQueuedThreadMessage = useAtomCommand(threadEnvironment.removeQueuedMessage, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -3667,10 +3674,15 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id) return;
-    if (activeThread.messages.length === 0) {
+    if (activeThread.messages.length === 0 && activeThread.queuedMessages.length === 0) {
       return;
     }
-    const serverIds = new Set(activeThread.messages.map((message) => message.id));
+    // A queued message is server-acknowledged too — it renders as a chip
+    // above the composer, so its optimistic timeline copy must go.
+    const serverIds = new Set([
+      ...activeThread.messages.map((message) => message.id),
+      ...activeThread.queuedMessages.map((message) => message.messageId),
+    ]);
     const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
     if (removedMessages.length === 0) {
       return;
@@ -3691,7 +3703,13 @@ function ChatViewContent(props: ChatViewProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
+  }, [
+    activeThread?.id,
+    activeThread?.messages,
+    activeThread?.queuedMessages,
+    handoffAttachmentPreviews,
+    optimisticUserMessages,
+  ]);
 
   useEffect(() => {
     setOptimisticUserMessages((existing) => {
@@ -4422,6 +4440,36 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError(
         activeThread.id,
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+      );
+    }
+  };
+
+  const onSteerQueuedMessage = async (messageId: MessageId) => {
+    if (!activeThread) return;
+    const result = await steerQueuedThreadMessage({
+      environmentId,
+      input: { threadId: activeThread.id, messageId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to steer the queued message.",
+      );
+    }
+  };
+
+  const onRemoveQueuedMessage = async (messageId: MessageId) => {
+    if (!activeThread) return;
+    const result = await removeQueuedThreadMessage({
+      environmentId,
+      input: { threadId: activeThread.id, messageId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to remove the queued message.",
       );
     }
   };
@@ -5349,7 +5397,17 @@ function ChatViewContent(props: ChatViewProps) {
                       <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                     </div>
                   ) : (
-                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    <>
+                      {isServerThread && activeThread ? (
+                        <QueuedMessageChips
+                          queuedMessages={activeThread.queuedMessages}
+                          disabled={Boolean(activeEnvironmentUnavailableState)}
+                          onSteer={(messageId) => void onSteerQueuedMessage(messageId)}
+                          onRemove={(messageId) => void onRemoveQueuedMessage(messageId)}
+                        />
+                      ) : null}
+                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    </>
                   )}
                   <div
                     className="relative"

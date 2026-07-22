@@ -30,6 +30,8 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionQueuedMessageRepository } from "../../persistence/Services/ProjectionQueuedMessages.ts";
+import { ProjectionQueuedMessageRepositoryLive } from "../../persistence/Layers/ProjectionQueuedMessages.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -692,6 +694,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const projectionQueuedMessageRepository = yield* ProjectionQueuedMessageRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -745,6 +748,29 @@ const make = Effect.gen(function* () {
         Option.filter(description, (value) => value.length > 0).pipe(Option.getOrUndefined),
       ),
     );
+
+  const dispatchQueueDrain = Effect.fn("dispatchQueueDrain")(function* (
+    threadId: ThreadId,
+    event: ProviderRuntimeEvent,
+    now: string,
+  ) {
+    const queuedMessages = yield* projectionQueuedMessageRepository.listByThreadId({ threadId });
+    if (queuedMessages.length === 0) {
+      return;
+    }
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.queue.drain",
+        commandId: yield* providerCommandId(event, "queue-drain"),
+        threadId,
+        createdAt: now,
+      })
+      .pipe(
+        // A drain losing the race to a fresh user turn (or an already-empty
+        // queue) is expected; the next natural completion re-attempts.
+        Effect.catchTag("OrchestrationCommandInvariantError", () => Effect.void),
+      );
+  });
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -1313,6 +1339,7 @@ const make = Effect.gen(function* () {
       });
       const hasPendingTurnStart =
         Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
+      let drainQueueAfterTurnFinalize = false;
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1450,6 +1477,15 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+
+          // Auto-drain queued follow-ups only on natural completion —
+          // never after an interrupt (the user stopped the agent to take
+          // control) or a failure. The dispatch happens after the
+          // assistant-finalization block below so the drained user message
+          // sequences after the assistant text it follows up on.
+          drainQueueAfterTurnFinalize =
+            event.type === "turn.completed" &&
+            normalizeRuntimeTurnState(event.payload.state) === "completed";
         }
       }
 
@@ -1668,6 +1704,10 @@ const make = Effect.gen(function* () {
             updatedAt: now,
           });
         }
+
+        if (drainQueueAfterTurnFinalize) {
+          yield* dispatchQueueDrain(thread.id, event, now);
+        }
       }
 
       if (event.type === "session.exited") {
@@ -1828,4 +1868,7 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(ProjectionQueuedMessageRepositoryLive),
+);

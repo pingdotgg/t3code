@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
   MessageSentPayloadSchema,
+  ThreadMessageQueuedPayload,
+  ThreadQueuedMessageRemovedPayload,
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
@@ -33,6 +35,7 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+const MAX_THREAD_QUEUED_MESSAGES = 50;
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
   if (status === "error") return "error" as const;
@@ -292,6 +295,7 @@ export function projectEvent(
             settledAt: null,
             deletedAt: null,
             messages: [],
+            queuedMessages: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -468,6 +472,65 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.message-queued":
+      return decodeForEvent(ThreadMessageQueuedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          const queuedMessages = [
+            ...thread.queuedMessages.filter((entry) => entry.messageId !== payload.messageId),
+            {
+              messageId: payload.messageId,
+              text: payload.text,
+              attachments: payload.attachments,
+              ...(payload.modelSelection !== undefined
+                ? { modelSelection: payload.modelSelection }
+                : {}),
+              ...(payload.sourceProposedPlan !== undefined
+                ? { sourceProposedPlan: payload.sourceProposedPlan }
+                : {}),
+              queuedAt: payload.queuedAt,
+            },
+          ].slice(-MAX_THREAD_QUEUED_MESSAGES);
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedMessages,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-removed":
+      return decodeForEvent(
+        ThreadQueuedMessageRemovedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedMessages: thread.queuedMessages.filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
