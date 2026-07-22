@@ -92,6 +92,7 @@ export function getDefaultServerModel(
 ): string {
   const models = getProviderModels(providers, provider);
   return (
+    models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     models.find((model) => !model.isCustom)?.slug ??
     models[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[provider] ??

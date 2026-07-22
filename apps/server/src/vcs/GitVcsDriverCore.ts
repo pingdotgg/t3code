@@ -2217,7 +2217,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 name: refName.name,
                 current: false,
                 isRemote: true,
-                isDefault: false,
+                // origin/HEAD's target is the repo default even when no local
+                // copy of the default branch exists.
+                isDefault:
+                  defaultBranch !== null &&
+                  parsedRemoteRef?.remoteName === "origin" &&
+                  parsedRemoteRef.branchName === defaultBranch,
                 worktreePath: null,
               };
               if (parsedRemoteRef) {
@@ -2232,9 +2237,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             })
           : [];
 
-      const allBranches = input.includeMatchingRemoteRefs
+      const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...remoteBranches]
         : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...remoteBranches]);
+      // Keep current/default refs on the first page even when the default
+      // only exists as origin/<default> (remote refs sort after all locals).
+      const allBranches = combinedBranches.toSorted((a, b) => {
+        const aPriority = a.current ? 0 : a.isDefault ? 1 : 2;
+        const bPriority = b.current ? 0 : b.isDefault ? 1 : 2;
+        return aPriority - bPriority;
+      });
       const branchesForKind =
         input.refKind === "local"
           ? allBranches.filter((ref) => !ref.isRemote)
