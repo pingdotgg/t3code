@@ -16,7 +16,12 @@ export type ComposerReadlineInsertionSegment =
 
 export function splitComposerReadlineInsertion(
   text: string,
+  options: { readonly parseInlineTokens?: boolean } = {},
 ): readonly ComposerReadlineInsertionSegment[] {
+  if (options.parseInlineTokens === false) {
+    return text ? [{ type: "text", text }] : [];
+  }
+
   // A virtual delimiter recognizes a confirmed killed chip even when its
   // serialized source ends at the kill-ring boundary.
   const tokens = collectComposerInlineTokens(`${text}\n`).filter(
@@ -38,6 +43,11 @@ export function splitComposerReadlineInsertion(
   }
   if (cursor < text.length) {
     segments.push({ type: "text", text: text.slice(cursor) });
+  } else if (segments.at(-1)?.type !== "text") {
+    // Inline-token grammar requires trailing whitespace. Preserve the chip
+    // reconstructed at the kill-ring boundary by adding the same delimiter
+    // used by autocomplete and paste insertion.
+    segments.push({ type: "text", text: " " });
   }
   return segments;
 }

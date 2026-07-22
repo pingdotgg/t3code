@@ -51,9 +51,21 @@ describe("resolveComposerReadlineReplacement", () => {
         terminalContextTexts: [],
       });
 
-      expect(splitComposerReadlineInsertion(yanked.insertedText)).toEqual([expectedSegment]);
+      expect(splitComposerReadlineInsertion(yanked.insertedText)).toEqual([
+        expectedSegment,
+        { type: "text", text: " " },
+      ]);
     },
   );
+
+  it("keeps transpose insertions literal instead of creating inline chips", () => {
+    expect(splitComposerReadlineInsertion("$a", { parseInlineTokens: false })).toEqual([
+      { type: "text", text: "$a" },
+    ]);
+    expect(
+      splitComposerReadlineInsertion("[file.ts](src/file.ts)", { parseInlineTokens: false }),
+    ).toEqual([{ type: "text", text: "[file.ts](src/file.ts)" }]);
+  });
 
   it("stores readable terminal text instead of object-replacement placeholders", () => {
     const selectedText = `before ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} after`;

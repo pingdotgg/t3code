@@ -872,11 +872,12 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
 function $createComposerReadlineInsertion(
   text: string,
   skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
+  options: { readonly parseInlineTokens?: boolean } = {},
 ): { readonly logicalLength: number; readonly nodes: LexicalNode[] } {
   const nodes: LexicalNode[] = [];
   let logicalLength = 0;
 
-  for (const segment of splitComposerReadlineInsertion(text)) {
+  for (const segment of splitComposerReadlineInsertion(text, options)) {
     if (segment.type === "mention") {
       nodes.push($createComposerMentionNode(segment.path));
       logicalLength += 1;
@@ -1248,6 +1249,7 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
           const insertion = $createComposerReadlineInsertion(
             replacement.insertedText,
             skillMetadata,
+            { parseInlineTokens: action === "yank" },
           );
           $replaceComposerReadlineSelection(replacementSelection, insertion.nodes);
           $setSelectionAtComposerOffset(replacementStart + insertion.logicalLength);
