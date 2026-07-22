@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -61,6 +62,7 @@ import {
   storeEmacsReadlineKilledText,
 } from "~/emacsReadlineBindings";
 import { useClientSettings } from "~/hooks/useSettings";
+import { resolveShortcutCommand } from "~/keybindings";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
@@ -77,6 +79,7 @@ import {
 } from "~/lib/terminalContext";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
@@ -1124,6 +1127,7 @@ function ComposerHomeEndKeyPlugin() {
 function ComposerEmacsReadlinePlugin() {
   const [editor] = useLexicalComposerContext();
   const enabled = useClientSettings((settings) => settings.keyboardEditingMode === "emacs");
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
 
   useEffect(() => {
@@ -1132,6 +1136,7 @@ function ComposerEmacsReadlinePlugin() {
     return editor.registerCommand(
       KEY_DOWN_COMMAND,
       (event) => {
+        if (resolveShortcutCommand(event, keybindings) !== null) return false;
         const action = resolveEmacsReadlineAction(event);
         if (!action) return false;
 
@@ -1205,7 +1210,7 @@ function ComposerEmacsReadlinePlugin() {
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, enabled, onRemoveTerminalContext]);
+  }, [editor, enabled, keybindings, onRemoveTerminalContext]);
 
   return null;
 }

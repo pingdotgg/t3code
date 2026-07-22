@@ -125,24 +125,66 @@ function isWordCharacter(character: string): boolean {
   return /[\p{L}\p{N}_]/u.test(character);
 }
 
+function previousCodePointPosition(value: string, position: number): number {
+  if (position <= 0) return 0;
+  const previous = position - 1;
+  const previousUnit = value.charCodeAt(previous);
+  if (previousUnit >= 0xdc00 && previousUnit <= 0xdfff && previous > 0) {
+    const leadingUnit = value.charCodeAt(previous - 1);
+    if (leadingUnit >= 0xd800 && leadingUnit <= 0xdbff) return previous - 1;
+  }
+  return previous;
+}
+
+function nextCodePointPosition(value: string, position: number): number {
+  if (position >= value.length) return value.length;
+  const currentUnit = value.charCodeAt(position);
+  if (currentUnit >= 0xd800 && currentUnit <= 0xdbff && position + 1 < value.length) {
+    const trailingUnit = value.charCodeAt(position + 1);
+    if (trailingUnit >= 0xdc00 && trailingUnit <= 0xdfff) return position + 2;
+  }
+  return position + 1;
+}
+
+function codePointBefore(value: string, position: number): string {
+  const previous = previousCodePointPosition(value, position);
+  return value.slice(previous, position);
+}
+
+function codePointAt(value: string, position: number): string {
+  return value.slice(position, nextCodePointPosition(value, position));
+}
+
 function backwardWordPosition(value: string, position: number): number {
   let next = position;
-  while (next > 0 && !isWordCharacter(value[next - 1] ?? "")) next -= 1;
-  while (next > 0 && isWordCharacter(value[next - 1] ?? "")) next -= 1;
+  while (next > 0 && !isWordCharacter(codePointBefore(value, next))) {
+    next = previousCodePointPosition(value, next);
+  }
+  while (next > 0 && isWordCharacter(codePointBefore(value, next))) {
+    next = previousCodePointPosition(value, next);
+  }
   return next;
 }
 
 function forwardWordPosition(value: string, position: number): number {
   let next = position;
-  while (next < value.length && !isWordCharacter(value[next] ?? "")) next += 1;
-  while (next < value.length && isWordCharacter(value[next] ?? "")) next += 1;
+  while (next < value.length && !isWordCharacter(codePointAt(value, next))) {
+    next = nextCodePointPosition(value, next);
+  }
+  while (next < value.length && isWordCharacter(codePointAt(value, next))) {
+    next = nextCodePointPosition(value, next);
+  }
   return next;
 }
 
 function backwardKillWordPosition(value: string, position: number): number {
   let next = position;
-  while (next > 0 && /\s/u.test(value[next - 1] ?? "")) next -= 1;
-  while (next > 0 && !/\s/u.test(value[next - 1] ?? "")) next -= 1;
+  while (next > 0 && /\s/u.test(codePointBefore(value, next))) {
+    next = previousCodePointPosition(value, next);
+  }
+  while (next > 0 && !/\s/u.test(codePointBefore(value, next))) {
+    next = previousCodePointPosition(value, next);
+  }
   return next;
 }
 
@@ -188,9 +230,9 @@ export function applyEmacsReadlineActionToPlainText(input: {
     case "end-of-line":
       return movement(value, lineEnd(value, end));
     case "backward-char":
-      return movement(value, start === end ? Math.max(0, start - 1) : start);
+      return movement(value, start === end ? previousCodePointPosition(value, start) : start);
     case "forward-char":
-      return movement(value, start === end ? Math.min(value.length, end + 1) : end);
+      return movement(value, start === end ? nextCodePointPosition(value, end) : end);
     case "previous-line":
       return movement(value, previousLinePosition(value, start));
     case "forward-line":
@@ -200,11 +242,11 @@ export function applyEmacsReadlineActionToPlainText(input: {
     case "forward-word":
       return movement(value, forwardWordPosition(value, end));
     case "delete-backward": {
-      const deleteStart = start === end ? Math.max(0, start - 1) : start;
+      const deleteStart = start === end ? previousCodePointPosition(value, start) : start;
       return replacement(value, deleteStart, end, "", "deleteContentBackward");
     }
     case "delete-forward": {
-      const deleteEnd = start === end ? Math.min(value.length, end + 1) : end;
+      const deleteEnd = start === end ? nextCodePointPosition(value, end) : end;
       return replacement(value, start, deleteEnd, "", "deleteContentForward");
     }
     case "kill-line": {
@@ -266,25 +308,36 @@ export function applyEmacsReadlineActionToPlainText(input: {
       }
       return replacement(value, start, end, input.yankText ?? "", "insertText");
     case "transpose-chars": {
-      if (start !== end || value.length < 2 || start === 0) {
+      if (start !== end || start === 0) {
         return {
           value,
           selectionStart: input.selectionStart,
           selectionEnd: input.selectionEnd,
         };
       }
-      const left = start === value.length ? start - 2 : start - 1;
-      const right = left + 1;
-      const transposed = value.slice(0, left) + value[right] + value[left] + value.slice(right + 1);
-      const nextPosition = Math.min(value.length, start === value.length ? start : start + 1);
+      const rightStart = start === value.length ? previousCodePointPosition(value, start) : start;
+      const leftStart = previousCodePointPosition(value, rightStart);
+      if (leftStart === rightStart || rightStart >= value.length) {
+        return {
+          value,
+          selectionStart: input.selectionStart,
+          selectionEnd: input.selectionEnd,
+        };
+      }
+      const rightEnd = nextCodePointPosition(value, rightStart);
+      const leftCharacter = value.slice(leftStart, rightStart);
+      const rightCharacter = value.slice(rightStart, rightEnd);
+      const transposed =
+        value.slice(0, leftStart) + rightCharacter + leftCharacter + value.slice(rightEnd);
+      const nextPosition = start === value.length ? start : rightEnd;
       return {
         value: transposed,
         selectionStart: nextPosition,
         selectionEnd: nextPosition,
         inputType: "insertTranspose",
-        insertedText: `${value[right]}${value[left]}`,
-        replacementStart: left,
-        replacementEnd: right + 1,
+        insertedText: `${rightCharacter}${leftCharacter}`,
+        replacementStart: leftStart,
+        replacementEnd: rightEnd,
       };
     }
   }
@@ -406,12 +459,20 @@ export function applyEmacsReadlineActionToContentEditable(
   if (
     !selection ||
     !selectionBelongsToHost(selection, host) ||
+    selection.rangeCount === 0 ||
     typeof selection.modify !== "function"
   ) {
     return { handled: false };
   }
 
   const move = (direction: "backward" | "forward", granularity: string) => {
+    if (!selection.isCollapsed) {
+      const range = selection.getRangeAt(0);
+      selection.collapse(
+        direction === "backward" ? range.startContainer : range.endContainer,
+        direction === "backward" ? range.startOffset : range.endOffset,
+      );
+    }
     selection.modify("move", direction, granularity);
   };
   const extendAndDelete = (direction: "backward" | "forward", granularity: string) => {

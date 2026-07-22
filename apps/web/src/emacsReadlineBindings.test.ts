@@ -178,6 +178,18 @@ describe("applyEmacsReadlineActionToPlainText", () => {
       selectionStart: 3,
     });
   });
+
+  it("moves, deletes, and transposes whole Unicode code points", () => {
+    expect(apply("forward-char", "😀x", 0).selectionStart).toBe(2);
+    expect(apply("backward-char", "😀x", 2).selectionStart).toBe(0);
+    expect(apply("delete-forward", "😀x", 0).value).toBe("x");
+    expect(apply("delete-backward", "😀x", 2).value).toBe("x");
+    expect(apply("transpose-chars", "😀a", 3)).toMatchObject({
+      value: "a😀",
+      selectionStart: 3,
+    });
+    expect(apply("forward-word", "𝒜x", 0).selectionStart).toBe(3);
+  });
 });
 
 describe("applyEmacsReadlineActionToContentEditable", () => {
@@ -187,8 +199,18 @@ describe("applyEmacsReadlineActionToContentEditable", () => {
     const modify = vi.fn();
     const selection = {
       anchorNode: inside,
+      anchorOffset: 1,
       focusNode: input?.focusOutside ? outside : inside,
+      focusOffset: 4,
       isCollapsed: input?.isCollapsed ?? true,
+      rangeCount: 1,
+      collapse: vi.fn(),
+      getRangeAt: () => ({
+        startContainer: inside,
+        startOffset: 1,
+        endContainer: inside,
+        endOffset: 4,
+      }),
       modify,
       toString: () => "selected",
     } as unknown as Selection & {
@@ -207,7 +229,7 @@ describe("applyEmacsReadlineActionToContentEditable", () => {
       contains: (node: Node) => node === inside,
       ownerDocument: document,
     } as unknown as HTMLElement;
-    return { execCommand, host, modify };
+    return { collapse: selection.collapse, execCommand, host, modify };
   }
 
   it("rejects selections whose focus endpoint escapes the host", () => {
@@ -237,5 +259,15 @@ describe("applyEmacsReadlineActionToContentEditable", () => {
       handled: false,
     });
     expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["backward-char", "backward", 1],
+    ["forward-char", "forward", 4],
+  ] as const)("collapses a selection to the %s movement boundary", (action, direction, offset) => {
+    const { collapse, host, modify } = harness({ isCollapsed: false });
+    expect(applyEmacsReadlineActionToContentEditable(host, action, "").handled).toBe(true);
+    expect(collapse).toHaveBeenCalledWith(expect.anything(), offset);
+    expect(modify).toHaveBeenCalledWith("move", direction, "character");
   });
 });
