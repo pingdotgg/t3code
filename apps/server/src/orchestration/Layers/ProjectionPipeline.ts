@@ -936,7 +936,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyQueuedMessagesProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyQueuedMessagesProjection",
-    )(function* (event, _attachmentSideEffects) {
+    )(function* (event, attachmentSideEffects) {
       switch (event.type) {
         case "thread.message-queued":
           yield* projectionQueuedMessageRepository.upsert({
@@ -951,12 +951,38 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
 
-        case "thread.queued-message-removed":
+        case "thread.queued-message-removed": {
+          // A user removal orphans the removed message's attachment files —
+          // prune to what the timeline and remaining queue still reference.
+          // Dispatch removals keep everything: the same attachments re-enter
+          // the timeline via the paired thread.message-sent.
+          const removedQueuedMessage =
+            event.payload.reason === "user"
+              ? (yield* projectionQueuedMessageRepository.listByThreadId({
+                  threadId: event.payload.threadId,
+                })).find((entry) => entry.messageId === event.payload.messageId)
+              : undefined;
           yield* projectionQueuedMessageRepository.deleteByMessageId({
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
           });
+          if (removedQueuedMessage && (removedQueuedMessage.attachments?.length ?? 0) > 0) {
+            const retainedMessageRows = yield* projectionThreadMessageRepository.listByThreadId({
+              threadId: event.payload.threadId,
+            });
+            const retainedQueuedRows = yield* projectionQueuedMessageRepository.listByThreadId({
+              threadId: event.payload.threadId,
+            });
+            attachmentSideEffects.prunedThreadRelativePaths.set(
+              event.payload.threadId,
+              collectThreadAttachmentRelativePaths(event.payload.threadId, [
+                ...retainedMessageRows,
+                ...retainedQueuedRows,
+              ]),
+            );
+          }
           return;
+        }
 
         case "thread.deleted":
           yield* projectionQueuedMessageRepository.deleteByThreadId({

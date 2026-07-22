@@ -381,6 +381,19 @@ export const OrchestrationThread = Schema.Struct({
   queuedMessages: Schema.Array(OrchestrationQueuedMessage).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * The turn start that was requested but not yet adopted by a provider
+   * session. Non-null between `thread.turn-start-requested` and the session
+   * reporting running (or a terminal status / start failure). While set,
+   * follow-up sends queue and drains hold — the session status alone cannot
+   * see this window. Read-model twin of the SQL pending-turn-start row.
+   */
+  pendingTurnStart: Schema.NullOr(
+    Schema.Struct({
+      messageId: MessageId,
+      requestedAt: IsoDateTime,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

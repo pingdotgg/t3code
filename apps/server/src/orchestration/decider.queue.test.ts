@@ -176,6 +176,42 @@ it.layer(NodeServices.layer)("decider queue flows", (it) => {
     }),
   );
 
+  it.effect("queues a follow-up racing in behind a just-dispatched turn start", () =>
+    Effect.gen(function* () {
+      // First send on an idle thread: dispatches message-sent +
+      // turn-start-requested, but the provider has not reported any
+      // session status yet — the pending-start window.
+      let readModel = yield* seedReadModel;
+      readModel = yield* applyPlanned(
+        readModel,
+        yield* decideOrchestrationCommand({ command: turnStartCommand("pending-1"), readModel }),
+      );
+
+      // Second send in that window must queue, not open a second turn.
+      const planned = yield* decideOrchestrationCommand({
+        command: turnStartCommand("pending-2"),
+        readModel,
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+      expect(events.map((event) => event.type)).toEqual(["thread.message-queued"]);
+
+      // A drain in the same window is rejected and keeps the queue intact.
+      readModel = yield* applyPlanned(readModel, planned);
+      const drainError = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queue.drain",
+            commandId: asCommandId("cmd-drain-pending"),
+            threadId: THREAD_ID,
+            createdAt: NOW,
+          },
+          readModel,
+        }),
+      );
+      expect(drainError.message).toContain("busy");
+    }),
+  );
+
   it.effect("rejects queueing past the per-thread cap", () =>
     Effect.gen(function* () {
       let readModel = yield* withSessionStatus(yield* seedReadModel, "running", 3);

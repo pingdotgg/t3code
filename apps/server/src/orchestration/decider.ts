@@ -128,6 +128,41 @@ function isThreadTurnActive(thread: OrchestrationThread): boolean {
 }
 
 /**
+ * Settle-guard heuristic: the latest user message is newer than any turn
+ * activity, i.e. a turn start that no session has picked up yet. Message
+ * timestamps are client-supplied, so queue/dispatch decisions must NOT
+ * hang off this (see `pendingTurnStart` on the thread for the event-driven
+ * signal); settle tolerates the skew — it merely delays settling within
+ * the grace window.
+ */
+function hasRecentUnadoptedUserMessage(thread: OrchestrationThread, occurredAt: string): boolean {
+  const latestUserMessageAtMs = thread.messages.reduce(
+    (latest, message) =>
+      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
+    Number.NEGATIVE_INFINITY,
+  );
+  const latestTurnAtMs =
+    thread.latestTurn === null
+      ? Number.NEGATIVE_INFINITY
+      : Math.max(
+          ...[
+            thread.latestTurn.requestedAt,
+            thread.latestTurn.startedAt,
+            thread.latestTurn.completedAt,
+          ].map((candidate) =>
+            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
+          ),
+        );
+  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
+  return (
+    thread.session?.status !== "error" &&
+    Number.isFinite(latestUserMessageAtMs) &&
+    latestUserMessageAtMs > latestTurnAtMs &&
+    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  );
+}
+
+/**
  * Enforced here in the decider so a `thread.message-queued` event past the
  * cap is never emitted — projections and persistence stay in lockstep with
  * the event stream instead of each clamping independently.
@@ -599,35 +634,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // last user message postdates their turn timestamps (older-server
       // data, mid-turn messages) must stay settleable. A failed session
       // start (status "error") clears the block immediately.
-      const latestUserMessageAtMs = thread.messages.reduce(
-        (latest, message) =>
-          message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-        Number.NEGATIVE_INFINITY,
-      );
-      const latestTurnAtMs =
-        thread.latestTurn === null
-          ? Number.NEGATIVE_INFINITY
-          : Math.max(
-              ...[
-                thread.latestTurn.requestedAt,
-                thread.latestTurn.startedAt,
-                thread.latestTurn.completedAt,
-              ].map((candidate) =>
-                candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-              ),
-            );
-      // The age check is bounded on BOTH sides: message timestamps are
-      // client-supplied, so a client clock ahead of the server yields a
-      // negative age. Without the lower bound that negative age satisfies
-      // `<= grace` for as long as the skew lasts, extending the settle
-      // block far past the intended two minutes.
-      const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-      const hasQueuedTurnStart =
-        thread.session?.status !== "error" &&
-        Number.isFinite(latestUserMessageAtMs) &&
-        latestUserMessageAtMs > latestTurnAtMs &&
-        Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS;
-      if (hasQueuedTurnStart) {
+      if (hasRecentUnadoptedUserMessage(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -799,7 +806,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // held server-side and drained on natural turn completion. Explicit
       // mid-turn injection goes through `thread.queue.steer`. Bootstrap
       // starts are exempt — their thread was created in the same dispatch.
-      if (command.bootstrap === undefined && isThreadTurnActive(targetThread)) {
+      // `pendingTurnStart` covers the window where a turn start was just
+      // dispatched (by a send or a queue drain) but the provider has not
+      // reported the session status yet — a send in that gap must queue,
+      // not open a second concurrent turn ahead of already-queued chips.
+      if (
+        command.bootstrap === undefined &&
+        (isThreadTurnActive(targetThread) || targetThread.pendingTurnStart !== null)
+      ) {
         if (targetThread.queuedMessages.length >= MAX_THREAD_QUEUED_MESSAGES) {
           return yield* new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -864,9 +878,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // steer into — dispatching now would race the pending turn/start with
       // a second one. The message stays queued; steer again once running.
       // A `starting` session that already tracks an active turn (provider
-      // reconnect mid-turn) is steerable, so only the pending-start shape
-      // — starting with no active turn — is rejected.
-      if (thread.session?.status === "starting" && thread.session.activeTurnId === null) {
+      // reconnect mid-turn) is steerable. Rejected shapes: starting with no
+      // active turn, and a seemingly-idle session whose just-dispatched
+      // turn start the provider has not adopted yet.
+      const steerRacesPendingStart =
+        (thread.session?.status === "starting" && thread.session.activeTurnId === null) ||
+        (thread.session?.status !== "running" && thread.pendingTurnStart !== null);
+      if (steerRacesPendingStart) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Thread '${command.threadId}' is still starting a turn; steer once it is running.`,
@@ -931,7 +949,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       // The user may have raced a new message in between turn completion and
       // this drain; keep the queue intact and let the next completion retry.
-      if (isThreadTurnActive(thread)) {
+      // The pending-start check also stops a duplicate drain from double-
+      // dispatching while the first drained turn's session is still unset.
+      if (isThreadTurnActive(thread) || thread.pendingTurnStart !== null) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Thread '${command.threadId}' is busy; queued messages drain on turn completion.`,

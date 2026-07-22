@@ -655,6 +655,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const PendingTurnStartDbRowSchema = Schema.Struct({
+    threadId: ThreadId,
+    messageId: MessageId,
+    requestedAt: IsoDateTime,
+  });
+
+  const listPendingTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PendingTurnStartDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          requested_at AS "requestedAt"
+        FROM projection_turns
+        WHERE turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id IS NOT NULL
+          AND checkpoint_turn_count IS NULL
+        ORDER BY thread_id ASC, requested_at DESC
+      `,
+  });
+
   const listActiveLatestTurnRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionLatestTurnDbRowSchema,
@@ -1050,6 +1074,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listPendingTurnStartRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listPendingTurnStarts:query",
+                "ProjectionSnapshotQuery.getSnapshot:listPendingTurnStarts:decodeRows",
+              ),
+            ),
+          ),
           listThreadActivityRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1100,6 +1132,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             messageRows,
             proposedPlanRows,
             queuedMessageRows,
+            pendingTurnStartRows,
             activityRows,
             sessionRows,
             checkpointRows,
@@ -1109,6 +1142,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const queuedMessagesByThread = new Map<string, Array<OrchestrationQueuedMessage>>();
+              // Rows are ordered requested_at DESC per thread; first wins.
+              const pendingTurnStartByThread = new Map<
+                string,
+                { messageId: MessageId; requestedAt: string }
+              >();
+              for (const row of pendingTurnStartRows) {
+                if (!pendingTurnStartByThread.has(row.threadId)) {
+                  pendingTurnStartByThread.set(row.threadId, {
+                    messageId: row.messageId,
+                    requestedAt: row.requestedAt,
+                  });
+                }
+              }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
@@ -1283,6 +1329,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 queuedMessages: queuedMessagesByThread.get(row.threadId) ?? [],
+                pendingTurnStart: pendingTurnStartByThread.get(row.threadId) ?? null,
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
@@ -1347,6 +1394,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listPendingTurnStartRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listPendingTurnStarts:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listPendingTurnStarts:decodeRows",
+              ),
+            ),
+          ),
           listThreadSessionRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1380,6 +1435,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             threadRows,
             proposedPlanRows,
             queuedMessageRows,
+            pendingTurnStartRows,
             sessionRows,
             latestTurnRows,
             stateRows,
@@ -1458,6 +1514,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const queuedMessagesByThread = new Map<string, Array<OrchestrationQueuedMessage>>();
+              // Rows are ordered requested_at DESC per thread; first wins.
+              const pendingTurnStartByThread = new Map<
+                string,
+                { messageId: MessageId; requestedAt: string }
+              >();
+              for (const row of pendingTurnStartRows) {
+                if (!pendingTurnStartByThread.has(row.threadId)) {
+                  pendingTurnStartByThread.set(row.threadId, {
+                    messageId: row.messageId,
+                    requestedAt: row.requestedAt,
+                  });
+                }
+              }
               const sessionByThread = new Map<string, OrchestrationSession>();
 
               for (let index = 0; index < queuedMessageRows.length; index += 1) {
@@ -1512,6 +1581,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   deletedAt: row.deletedAt,
                   messages: [],
                   queuedMessages: queuedMessagesByThread.get(row.threadId) ?? [],
+                  pendingTurnStart: pendingTurnStartByThread.get(row.threadId) ?? null,
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
                   checkpoints: [],

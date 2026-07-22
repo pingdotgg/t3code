@@ -43,6 +43,7 @@ export function buildLocalDraftThread(
     session: null,
     messages: [],
     queuedMessages: [],
+    pendingTurnStart: null,
     createdAt: draftThread.createdAt,
     updatedAt: draftThread.createdAt,
     archivedAt: null,
@@ -456,15 +457,15 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
 
+  // The dispatched message being projected (timeline or queue) is the
+  // strongest acknowledgment in every phase: the server also queues sends
+  // while a session is starting ("connecting" phase), where neither turn
+  // nor session fields necessarily change.
+  if (expectedMessageId !== null && input.projectedMessageIds.has(expectedMessageId)) {
+    return true;
+  }
+
   if (input.phase === "running") {
-    // A send during a running turn lands as either a steered user message or
-    // a queued message, without necessarily changing any turn timestamps.
-    // Acknowledge only when the dispatched message itself is projected —
-    // tail heuristics would let another client's queue activity clear this
-    // composer's "Sending" state prematurely.
-    if (expectedMessageId !== null && input.projectedMessageIds.has(expectedMessageId)) {
-      return true;
-    }
     // Dispatches without a known messageId (e.g. plan-implementation flows)
     // keep the legacy latest-user-message heuristic.
     if (expectedMessageId === null && latestUserMessageChanged) {

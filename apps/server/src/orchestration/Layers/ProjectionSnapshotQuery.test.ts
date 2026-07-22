@@ -323,6 +323,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             },
           ],
           queuedMessages: [],
+          pendingTurnStart: null,
           proposedPlans: [
             {
               id: "plan-1",
