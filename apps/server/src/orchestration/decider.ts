@@ -508,6 +508,86 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.snooze": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // A wake time in the past would create a thread that is snoozed and
+      // woken at once — the row would never leave the inbox but still carry
+      // snooze state. Reject instead of silently normalizing.
+      if (Date.parse(command.snoozedUntil) <= Date.parse(occurredAt)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future`,
+          }),
+        );
+      }
+      // Blocked-on-you work must not be snoozed away: a pending approval or
+      // user-input request is the agent waiting on the user, and hiding it
+      // defeats the request. (A running session IS snoozable — snooze only
+      // affects visibility, never the agent.)
+      if (hasOpenBlockingRequest(thread)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed`,
+          }),
+        );
+      }
+      // Re-snoozing an already-snoozed thread to the SAME wake time is a
+      // duplicate (double-click, raced clients): re-emit with the original
+      // timestamps so the projection is a no-op. A different wake time is a
+      // real change and stamps fresh.
+      const alreadySnoozed =
+        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt != null;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.snoozed",
+        payload: {
+          threadId: command.threadId,
+          snoozedUntil: command.snoozedUntil,
+          snoozedAt: alreadySnoozed && thread.snoozedAt != null ? thread.snoozedAt : occurredAt,
+          updatedAt: alreadySnoozed ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.unsnooze": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.settle): waking a thread that
+      // is not snoozed lands on the same null state without churning
+      // updatedAt.
+      const alreadyAwake = thread.snoozedUntil == null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsnoozed",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          updatedAt: alreadyAwake ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,
@@ -663,24 +743,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Real activity resets ANY override: it wakes an explicitly settled
       // thread, and it clears a keep-active pin back to neutral so the
       // thread can auto-settle again after this burst of work goes stale.
-      if (targetThread.settledOverride === null) {
-        return [userMessageEvent, turnStartRequestedEvent];
+      // A snooze clears the same way — sending a message to a snoozed
+      // thread is the user re-engaging, so the return ticket is spent.
+      const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (targetThread.settledOverride !== null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.unsettled",
-        payload: {
-          threadId: command.threadId,
-          reason: "activity",
-          updatedAt: command.createdAt,
-        },
-      };
-      return [unsettledEvent, userMessageEvent, turnStartRequestedEvent];
+      if (targetThread.snoozedUntil != null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {
@@ -822,7 +920,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       // Only a session coming alive is activity worth waking a settled thread
       // for — status writes like ready/stopped/error arrive after the fact and
-      // must not fight a user's explicit settle.
+      // must not fight a user's explicit settle. Snooze is deliberately NOT
+      // cleared here: snooze never pauses the agent, so its session starting
+      // or erroring is not the user re-engaging. Blocked/failed work still
+      // surfaces immediately — effectiveSnoozed refuses to classify a thread
+      // with a raised hand (approval / input / failure / fresh completion)
+      // as snoozed, without spending the return ticket.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
       // Real activity resets ANY override (settled wakes, active unpins).
