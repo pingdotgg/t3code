@@ -215,6 +215,7 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const blockedTurnStartCommandIds = new Set<CommandId>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -771,7 +772,8 @@ const make = Effect.gen(function* () {
           : {}),
       });
     });
-    yield* run.pipe(
+    return yield* run.pipe(
+      Effect.as(true),
       Effect.catchCause((cause) =>
         appendProviderFailureActivity({
           threadId: event.payload.threadId,
@@ -780,7 +782,7 @@ const make = Effect.gen(function* () {
           detail: formatFailureDetail(cause),
           turnId: null,
           createdAt: event.payload.createdAt,
-        }).pipe(Effect.asVoid),
+        }).pipe(Effect.as(false)),
       ),
     );
   });
@@ -1089,13 +1091,20 @@ const make = Effect.gen(function* () {
         );
         return;
       }
-      case "thread.goal-set-requested":
-        yield* processGoalSetRequested(event);
+      case "thread.goal-set-requested": {
+        const succeeded = yield* processGoalSetRequested(event);
+        if (!succeeded && event.payload.blocksTurnStart === true && event.commandId !== null) {
+          blockedTurnStartCommandIds.add(event.commandId);
+        }
         return;
+      }
       case "thread.goal-clear-requested":
         yield* processGoalClearRequested(event);
         return;
       case "thread.turn-start-requested":
+        if (event.commandId !== null && blockedTurnStartCommandIds.delete(event.commandId)) {
+          return;
+        }
         yield* processTurnStartRequested(event);
         return;
       case "thread.turn-interrupt-requested":

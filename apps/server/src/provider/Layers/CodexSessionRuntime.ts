@@ -435,6 +435,10 @@ type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
   | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
 
+type CodexThreadOpenResult = CodexThreadOpenResponse & {
+  readonly resumedExistingThread: boolean;
+};
+
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
 interface CodexThreadOpenClient {
@@ -452,7 +456,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
-}): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
+}): Effect.Effect<CodexThreadOpenResult, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
@@ -462,7 +466,9 @@ export const openCodexThread = (input: {
   });
 
   if (resumeThreadId === undefined) {
-    return input.client.request("thread/start", startParams);
+    return input.client
+      .request("thread/start", startParams)
+      .pipe(Effect.map((opened) => ({ ...opened, resumedExistingThread: false })));
   }
 
   return input.client
@@ -471,6 +477,7 @@ export const openCodexThread = (input: {
       ...startParams,
     })
     .pipe(
+      Effect.map((opened) => ({ ...opened, resumedExistingThread: true })),
       Effect.catchIf(isRecoverableThreadResumeError, (error) =>
         Effect.logWarning("codex app-server thread resume fell back to fresh start", {
           threadId: input.threadId,
@@ -478,7 +485,10 @@ export const openCodexThread = (input: {
           resumeThreadId,
           recoverable: true,
           cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+        }).pipe(
+          Effect.andThen(input.client.request("thread/start", startParams)),
+          Effect.map((opened) => ({ ...opened, resumedExistingThread: false })),
+        ),
       ),
     );
 };
@@ -1246,7 +1256,7 @@ export const makeCodexSessionRuntime = (
                   goal: response.goal,
                 },
               })
-            : resumeThreadId
+            : opened.resumedExistingThread
               ? emitEvent({
                   kind: "notification",
                   threadId: options.threadId,

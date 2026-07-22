@@ -1027,6 +1027,7 @@ export const ThreadGoalSetRequestedPayload = Schema.Struct({
   status: Schema.optional(ThreadGoalStatus),
   tokenBudget: Schema.optional(Schema.NullOr(NonNegativeInt)),
   modelSelection: Schema.optional(ModelSelection),
+  blocksTurnStart: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 

@@ -23,7 +23,9 @@ export function deriveThreadGoal(
         "goal" in activity.payload
           ? activity.payload.goal
           : undefined;
-      return isThreadGoal(goal) ? goal : null;
+      if (isThreadGoal(goal)) {
+        return goal;
+      }
     }
   }
   return null;

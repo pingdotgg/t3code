@@ -285,6 +285,10 @@ export function parseGoalComposerSlashCommand(text: string): GoalComposerCommand
   }
   const argument = trimmed.slice("/goal".length).trim();
   if (argument.length === 0) return { type: "view" };
+  const explicitSetMatch = /^set\s+(.+)$/is.exec(argument);
+  if (explicitSetMatch) {
+    return { type: "set", objective: explicitSetMatch[1]!.trim() };
+  }
   switch (argument.toLowerCase()) {
     case "pause":
       return { type: "pause" };

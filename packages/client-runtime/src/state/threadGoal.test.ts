@@ -40,4 +40,13 @@ describe("deriveThreadGoal", () => {
       deriveThreadGoal([activity("goal.updated", { goal }, 1), activity("goal.cleared", {}, 2)]),
     ).toBeNull();
   });
+
+  it("falls back to the latest valid goal when a newer update is malformed", () => {
+    expect(
+      deriveThreadGoal([
+        activity("goal.updated", { goal }, 1),
+        activity("goal.updated", { goal: { ...goal, status: "unknown" } }, 2),
+      ]),
+    ).toEqual(goal);
+  });
 });

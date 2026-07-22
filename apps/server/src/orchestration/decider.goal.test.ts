@@ -80,6 +80,7 @@ it.layer(NodeServices.layer)("goal decider", (it) => {
           instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
+        blocksTurnStart: true,
       });
     }),
   );
