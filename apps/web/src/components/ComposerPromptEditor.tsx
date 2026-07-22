@@ -1173,7 +1173,6 @@ function ComposerHomeEndKeyPlugin() {
 function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProviderSkill> }) {
   const [editor] = useLexicalComposerContext();
   const enabled = useClientSettings((settings) => settings.keyboardEditingMode === "emacs");
-  const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
   const skillMetadata = useMemo(() => skillMetadataByName(props.skills), [props.skills]);
 
   useEffect(() => {
@@ -1229,11 +1228,9 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
           const replacementSelection = $getSelection();
           if (!$isRangeSelection(replacementSelection)) return false;
 
-          const removedTerminalContextIds = new Set<string>();
           const removedTerminalContextTexts: string[] = [];
           for (const node of replacementSelection.getNodes()) {
             if (node instanceof ComposerTerminalContextNode) {
-              removedTerminalContextIds.add(node.__context.id);
               removedTerminalContextTexts.push(node.__context.text);
             }
           }
@@ -1253,9 +1250,10 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
           );
           $replaceComposerReadlineSelection(replacementSelection, insertion.nodes);
           $setSelectionAtComposerOffset(replacementStart + insertion.logicalLength);
-          for (const contextId of removedTerminalContextIds) {
-            onRemoveTerminalContext(contextId);
-          }
+          // OnChangePlugin publishes both the mutated prompt and remaining
+          // terminal-context ids from this same Lexical update. Calling the
+          // legacy single-chip removal callback here would instead rewrite
+          // the pre-edit prompt and could restore text removed by the kill.
         } else if (
           edit.selectionStart !== range.start ||
           edit.selectionEnd !== range.end ||
@@ -1270,7 +1268,7 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, enabled, onRemoveTerminalContext, skillMetadata]);
+  }, [editor, enabled, skillMetadata]);
 
   return null;
 }

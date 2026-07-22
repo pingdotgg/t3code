@@ -97,6 +97,24 @@ describe("resolveEmacsReadlineAction", () => {
   it("gives an open candidate list precedence over an application shortcut", () => {
     class TestElement extends EventTarget {
       ownerDocument!: Document;
+      parentElement: TestElement | null = null;
+      hidden = false;
+      id = "";
+
+      contains(candidate: unknown): boolean {
+        for (
+          let current = candidate as TestElement | null;
+          current;
+          current = current.parentElement
+        ) {
+          if (current === this) return true;
+        }
+        return false;
+      }
+
+      getAttribute(): null {
+        return null;
+      }
 
       closest(): null {
         return null;
@@ -114,10 +132,15 @@ describe("resolveEmacsReadlineAction", () => {
     vi.stubGlobal("HTMLElement", TestElement);
 
     const target = new TestElement();
+    const localContainer = new TestElement();
+    const candidateList = new TestElement();
+    target.parentElement = localContainer;
+    candidateList.parentElement = localContainer;
     const document = {
       activeElement: target,
+      body: new TestElement(),
       defaultView: { KeyboardEvent: TestKeyboardEvent },
-      querySelectorAll: () => [{ getAttribute: () => null, hidden: false }],
+      querySelectorAll: () => [candidateList],
     } as unknown as Document;
     target.ownerDocument = document;
     const dispatchedKeys: string[] = [];
@@ -137,6 +160,65 @@ describe("resolveEmacsReadlineAction", () => {
 
     expect(dispatchedKeys).toEqual(["ArrowDown"]);
     expect(yieldToAppShortcut).not.toHaveBeenCalled();
+  });
+
+  it("does not send candidate navigation to an unrelated visible picker", () => {
+    class TestElement extends EventTarget {
+      ownerDocument!: Document;
+      parentElement: TestElement | null = null;
+      hidden = false;
+      id = "";
+
+      contains(candidate: unknown): boolean {
+        for (
+          let current = candidate as TestElement | null;
+          current;
+          current = current.parentElement
+        ) {
+          if (current === this) return true;
+        }
+        return false;
+      }
+
+      getAttribute(): null {
+        return null;
+      }
+
+      closest(): null {
+        return null;
+      }
+    }
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+
+    const body = new TestElement();
+    const focusedContainer = new TestElement();
+    focusedContainer.parentElement = body;
+    const target = new TestElement();
+    target.parentElement = focusedContainer;
+    const pickerContainer = new TestElement();
+    pickerContainer.parentElement = body;
+    const unrelatedPicker = new TestElement();
+    unrelatedPicker.parentElement = pickerContainer;
+    const document = {
+      activeElement: target,
+      body,
+      querySelectorAll: () => [unrelatedPicker],
+    } as unknown as Document;
+    target.ownerDocument = document;
+    const yieldToAppShortcut = vi.fn(() => true);
+    const event = {
+      ...keyboardEvent({ key: "n", ctrlKey: true }),
+      preventDefault: vi.fn(),
+      target,
+    } as unknown as KeyboardEvent;
+
+    createEmacsReadlineKeydownHandler({ shouldYieldToApplicationShortcut: yieldToAppShortcut })(
+      event,
+    );
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(yieldToAppShortcut).toHaveBeenCalledOnce();
   });
 
   it("lets managed editors claim readline chords before capture-phase app shortcuts", () => {

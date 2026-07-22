@@ -364,9 +364,41 @@ function isTerminalTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest("[data-terminal-owner]") !== null;
 }
 
-function isCandidateSelectionOpen(document: Document): boolean {
+function candidateSurfaceBelongsToFocus(
+  surface: HTMLElement,
+  focusedElement: Element | null,
+  document: Document,
+): boolean {
+  if (!focusedElement) return false;
+  if (surface.contains(focusedElement)) return true;
+
+  const controlledIds = focusedElement.getAttribute("aria-controls")?.split(/\s+/) ?? [];
+  if (surface.id && controlledIds.includes(surface.id)) return true;
+
+  // Composer suggestions keep focus in the editor while rendering their list
+  // immediately above it. Accept a nearby shared container, but never climb
+  // as far as body where an unrelated open picker would also appear related.
+  let container = surface.parentElement;
+  for (let depth = 0; container && depth < 6; depth += 1) {
+    if (container === document.body) return false;
+    if (container.contains(focusedElement)) return true;
+    container = container.parentElement;
+  }
+  return false;
+}
+
+function isCandidateSelectionOpen(document: Document, eventTarget: EventTarget | null): boolean {
+  const focusedElement =
+    document.activeElement instanceof Element
+      ? document.activeElement
+      : eventTarget instanceof Element
+        ? eventTarget
+        : null;
   return Array.from(document.querySelectorAll<HTMLElement>(CANDIDATE_SURFACE_SELECTOR)).some(
-    (element) => !element.hidden && element.getAttribute("aria-hidden") !== "true",
+    (element) =>
+      !element.hidden &&
+      element.getAttribute("aria-hidden") !== "true" &&
+      candidateSurfaceBelongsToFocus(element, focusedElement, document),
   );
 }
 
@@ -656,7 +688,7 @@ export function createEmacsReadlineKeydownHandler(options?: {
     const document = (event.target as Node | null)?.ownerDocument ?? globalThis.document;
     if (
       (action === "forward-line" || action === "previous-line") &&
-      isCandidateSelectionOpen(document)
+      isCandidateSelectionOpen(document, event.target)
     ) {
       dispatchCandidateNavigation(event, action === "forward-line" ? "ArrowDown" : "ArrowUp");
       return;
