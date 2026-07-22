@@ -35,6 +35,8 @@ export type CreateThreadInput = CommandInput<"thread.create">;
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
 export type UnarchiveThreadInput = CommandInput<"thread.unarchive">;
+export type SettleThreadInput = CommandInput<"thread.settle">;
+export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
@@ -149,6 +151,26 @@ export const unarchiveThread: (input: UnarchiveThreadInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "thread.unarchive",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const settleThread: (input: SettleThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.settleThread",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.settle",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const unsettleThread: (input: UnsettleThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unsettleThread",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.unsettle",
     commandId: yield* commandId(input),
   });
 });
