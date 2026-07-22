@@ -79,6 +79,7 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
+import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { getLatestThreadForProject } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
@@ -409,6 +410,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [keybindings, terminalOpen, toggleOpen]);
+
+  useEffect(() => onOpenCommandPalette(toggleOpen), [toggleOpen]);
 
   return (
     <OpenAddProjectCommandPaletteProvider openAddProject={openAddProject}>
