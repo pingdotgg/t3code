@@ -39,6 +39,8 @@ function makeThread(
     hasActionableProposedPlan: false,
     goal: null,
     ...input,
+    settledOverride: input.settledOverride ?? null,
+    settledAt: input.settledAt ?? null,
   };
 }
 

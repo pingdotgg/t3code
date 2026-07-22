@@ -47,6 +47,8 @@ const makeThread = (
   createdAt: NOW,
   updatedAt: NOW,
   archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
   session: null,
   goal: null,
   latestUserMessageAt: null,

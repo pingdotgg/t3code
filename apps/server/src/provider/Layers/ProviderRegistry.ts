@@ -78,11 +78,31 @@ const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind)
 const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
+const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  if (provider.driver !== ProviderDriverKind.make("opencode")) {
+    return true;
+  }
+
+  // OpenCode's initial snapshot is deliberately non-authoritative while its
+  // first probe is still running. A probe error from an installed CLI/server
+  // is likewise partial: it could not establish the current inventory.
+  // Conversely, disabled and missing-CLI snapshots are authoritative removals,
+  // as are successful ready/warning inventories (including an empty one after
+  // logout or plugin removal).
+  const isPendingInitialProbe =
+    provider.enabled && !provider.installed && provider.status === "warning";
+  const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
+  return isPendingInitialProbe || didInstalledProviderProbeFail;
+};
+
 const mergeProviderModels = (
+  provider: ServerProvider,
   previousModels: ReadonlyArray<ServerProvider["models"][number]>,
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
-  if (nextModels.length === 0 && previousModels.length > 0) {
+  const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
+
+  if (shouldRetainMissingModels && nextModels.length === 0 && previousModels.length > 0) {
     return previousModels;
   }
 
@@ -98,7 +118,9 @@ const mergeProviderModels = (
     };
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
-  return [...mergedModels, ...previousModels.filter((model) => !nextSlugs.has(model.slug))];
+  return shouldRetainMissingModels
+    ? [...mergedModels, ...previousModels.filter((model) => !nextSlugs.has(model.slug))]
+    : mergedModels;
 };
 
 export const mergeProviderSnapshot = (
@@ -109,7 +131,7 @@ export const mergeProviderSnapshot = (
     ? nextProvider
     : {
         ...nextProvider,
-        models: mergeProviderModels(previousProvider.models, nextProvider.models),
+        models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
       };
 
 export const mergeProviderSnapshots = (

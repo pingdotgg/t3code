@@ -12,6 +12,7 @@ import {
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   shouldIncludeBranchPickerItem,
+  shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -116,6 +117,44 @@ describe("resolveEnvironmentOptionLabel", () => {
         savedLabel: "Build box",
       }),
     ).toBe("Build box");
+  });
+});
+
+describe("shouldShowEnvironmentIndicator", () => {
+  it("shows the indicator whenever multiple environments are pickable", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("shows a sole remote environment so the user knows where the project runs", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: false },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides a sole primary (this-device) environment", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the indicator when the active environment is unknown", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: null,
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
   });
 });
 

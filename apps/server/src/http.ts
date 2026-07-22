@@ -227,7 +227,7 @@ export const staticAndDevRouteLayer = Layer.unwrap(
         ? null
         : yield* fileSystem
             .readFileString(path.resolve(staticRoot, INDEX_HTML_FILE_NAME))
-            .pipe(Effect.catch(() => Effect.succeed(null)));
+            .pipe(Effect.orElseSucceed(() => null));
 
     const indexHtmlResponse =
       indexHtml === null
@@ -317,9 +317,7 @@ export const staticAndDevRouteLayer = Layer.unwrap(
           }
         }
 
-        const fileInfo = yield* fileSystem
-          .stat(filePath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
         if (!fileInfo || fileInfo.type !== "File") {
           return indexHtmlResponse;
         }
@@ -329,9 +327,7 @@ export const staticAndDevRouteLayer = Layer.unwrap(
           return indexHtmlResponse;
         }
 
-        const data = yield* fileSystem
-          .readFile(filePath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const data = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
         if (!data) {
           return HttpServerResponse.text("Internal Server Error", {
             status: 500,
