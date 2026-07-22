@@ -9,33 +9,25 @@ import {
 } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
-import { buildThreadRouteParams } from "../threadRoutes";
-import { useThread, useThreadRefs } from "../state/entities";
+import { buildThreadRouteParams, resolveDraftThreadSubscriptionRef } from "../threadRoutes";
+import { useThread } from "../state/entities";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
   const { draftId: rawDraftId } = Route.useParams();
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
-  const threadRefs = useThreadRefs();
-  const inferredThreadRef = draftSession
-    ? (threadRefs.find(
-        (ref) =>
-          ref.environmentId === draftSession.environmentId &&
-          ref.threadId === draftSession.threadId,
-      ) ?? null)
-    : null;
-  const serverThreadRef = draftSession?.promotedTo ?? inferredThreadRef;
+  const serverThreadRef = resolveDraftThreadSubscriptionRef(draftSession);
   const serverThread = useThread(serverThreadRef);
   const serverThreadStarted = threadHasStarted(serverThread);
   const canonicalThreadRef = serverThreadStarted ? serverThreadRef : null;
 
   useEffect(() => {
-    if (!inferredThreadRef || draftSession?.promotedTo) {
+    if (!serverThreadStarted || !serverThreadRef || draftSession?.promotedTo) {
       return;
     }
-    markPromotedDraftThreadByRef(inferredThreadRef);
-  }, [draftSession?.promotedTo, inferredThreadRef]);
+    markPromotedDraftThreadByRef(serverThreadRef);
+  }, [draftSession?.promotedTo, serverThreadRef, serverThreadStarted]);
 
   useEffect(() => {
     if (!canonicalThreadRef) {

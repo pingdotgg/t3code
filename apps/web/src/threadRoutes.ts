@@ -101,3 +101,18 @@ export function resolveActiveThreadRouteRef(
   }
   return draftThread.promotedTo;
 }
+
+/**
+ * Resolves the server ref a draft route should observe while its first turn is
+ * materializing. Draft ids reserve the eventual server thread ref up front, so
+ * detail synchronization can start without waiting for the shell stream to
+ * publish the new thread.
+ */
+export function resolveDraftThreadSubscriptionRef(
+  draftThread: DraftThreadRouteState | null,
+): ScopedThreadRef | null {
+  if (!draftThread) {
+    return null;
+  }
+  return draftThread.promotedTo ?? scopeThreadRef(draftThread.environmentId, draftThread.threadId);
+}

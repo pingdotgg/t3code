@@ -6,8 +6,9 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import type { Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
@@ -23,6 +24,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  recoverDraftThreadAfterBootstrap,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   shouldShowBranchMismatchBanner,
@@ -33,6 +35,10 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -109,6 +115,35 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         nextBranch: "feature/current",
       }),
     ).toBeNull();
+  });
+});
+
+describe("recoverDraftThreadAfterBootstrap", () => {
+  it("refreshes the reserved thread stream when bootstrap hydration stalls", async () => {
+    vi.spyOn(appAtomRegistry, "get").mockReturnValue(null as never);
+    vi.spyOn(appAtomRegistry, "subscribe").mockReturnValue(() => undefined);
+    const refresh = vi.spyOn(appAtomRegistry, "refresh").mockImplementation(() => undefined);
+
+    await expect(recoverDraftThreadAfterBootstrap({ environmentId, threadId }, 0)).resolves.toBe(
+      false,
+    );
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a hydrated thread stream intact", async () => {
+    vi.spyOn(appAtomRegistry, "get").mockReturnValue(
+      makeThread({ session: readySession }) as never,
+    );
+    const subscribe = vi.spyOn(appAtomRegistry, "subscribe");
+    const refresh = vi.spyOn(appAtomRegistry, "refresh");
+
+    await expect(recoverDraftThreadAfterBootstrap({ environmentId, threadId }, 0)).resolves.toBe(
+      true,
+    );
+
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });
 
