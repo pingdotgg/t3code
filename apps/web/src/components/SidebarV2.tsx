@@ -14,6 +14,7 @@ import {
   CircleDashedIcon,
   CloudIcon,
   FolderPlusIcon,
+  MessageSquareIcon,
   PlusIcon,
   SearchIcon,
   SquarePenIcon,
@@ -426,6 +427,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               environmentId={thread.environmentId}
               cwd={props.projectCwd ?? ""}
               className="size-3.5"
+              fallbackIcon={MessageSquareIcon}
             />
           </span>
           {title}
