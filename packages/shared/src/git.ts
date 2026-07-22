@@ -11,7 +11,11 @@ import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+// Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`,
+// so the matcher accepts both to keep those threads eligible for branch regeneration.
+const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`,
+);
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
@@ -89,7 +93,12 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
 ): string {
-  const token = randomHex(4).toLowerCase();
+  // Normalize to exactly 8 lowercase hex chars so a UUID-shaped callback
+  // still produces the canonical temporary branch form.
+  const token = randomHex(4)
+    .toLowerCase()
+    .replace(/[^0-9a-f]/g, "")
+    .slice(0, 8);
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
