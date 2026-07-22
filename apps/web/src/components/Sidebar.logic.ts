@@ -86,6 +86,46 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
+export type SidebarV2ThreadContextMenuItemId =
+  | "settle"
+  | "unsettle"
+  | "archive"
+  | "rename"
+  | "mark-unread"
+  | "delete";
+
+export function buildSidebarV2ThreadContextMenuItems(input: {
+  canUseLifecycleActions: boolean;
+  supportsSettlement: boolean;
+  isSettled: boolean;
+  isRunning: boolean;
+}): readonly ContextMenuItem<SidebarV2ThreadContextMenuItemId>[] {
+  return [
+    ...(input.supportsSettlement
+      ? [
+          input.isSettled
+            ? ({ id: "unsettle", label: "Un-settle thread" } as const)
+            : ({ id: "settle", label: "Settle thread" } as const),
+        ]
+      : []),
+    ...(input.canUseLifecycleActions
+      ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isRunning }]
+      : []),
+    { id: "rename", label: "Rename thread" },
+    { id: "mark-unread", label: "Mark unread" },
+    ...(input.canUseLifecycleActions
+      ? [{ id: "delete" as const, label: "Delete", destructive: true, icon: "trash" as const }]
+      : []),
+  ];
+}
+
+export function shouldShowSidebarV2SettledHeader(input: {
+  isSettled: boolean;
+  previousIsSettled: boolean;
+}): boolean {
+  return input.isSettled && !input.previousIsSettled;
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"

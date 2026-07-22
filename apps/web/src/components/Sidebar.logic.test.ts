@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  buildSidebarV2ThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -21,6 +22,7 @@ import {
   resolveSidebarV2Status,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  shouldShowSidebarV2SettledHeader,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -106,6 +108,66 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("buildSidebarV2ThreadContextMenuItems", () => {
+  it("offers archive for active and settled threads", () => {
+    const activeItems = buildSidebarV2ThreadContextMenuItems({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: false,
+      isRunning: false,
+    });
+    const settledItems = buildSidebarV2ThreadContextMenuItems({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: true,
+      isRunning: false,
+    });
+
+    expect(activeItems.map((item) => item.id)).toEqual([
+      "settle",
+      "archive",
+      "rename",
+      "mark-unread",
+      "delete",
+    ]);
+    expect(settledItems.map((item) => item.id)).toEqual([
+      "unsettle",
+      "archive",
+      "rename",
+      "mark-unread",
+      "delete",
+    ]);
+  });
+
+  it("keeps archive visible but disabled while a thread is running", () => {
+    const items = buildSidebarV2ThreadContextMenuItems({
+      canUseLifecycleActions: true,
+      supportsSettlement: true,
+      isSettled: false,
+      isRunning: true,
+    });
+
+    expect(items.find((item) => item.id === "archive")).toMatchObject({ disabled: true });
+  });
+});
+
+describe("shouldShowSidebarV2SettledHeader", () => {
+  it("shows above the first settled row even when the list starts settled", () => {
+    expect(shouldShowSidebarV2SettledHeader({ isSettled: true, previousIsSettled: false })).toBe(
+      true,
+    );
+  });
+
+  it("hides for active rows and later settled rows", () => {
+    expect(shouldShowSidebarV2SettledHeader({ isSettled: false, previousIsSettled: false })).toBe(
+      false,
+    );
+    expect(shouldShowSidebarV2SettledHeader({ isSettled: true, previousIsSettled: true })).toBe(
+      false,
+    );
   });
 });
 

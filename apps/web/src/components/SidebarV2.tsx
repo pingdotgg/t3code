@@ -9,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
+  ArchiveIcon,
   CheckIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -72,11 +73,14 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
+  archiveSelectedThreadEntries,
+  buildSidebarV2ThreadContextMenuItems,
   firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
+  shouldShowSidebarV2SettledHeader,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
@@ -141,11 +145,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
+  onArchive: (threadRef: ScopedThreadRef) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
 }) {
   const {
     isRenaming,
     onChangeRequestState,
+    onArchive,
     onCancelRename,
     onCommitRename,
     onContextMenu,
@@ -305,6 +311,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onUnsettle, threadRef],
   );
+  const handleArchiveClick = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onArchive(threadRef);
+    },
+    [onArchive, threadRef],
+  );
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       if (pr?.url) openPrLink(event, pr.url);
@@ -419,7 +433,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
           {prBadge}
-          <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
+          <span
+            className={cn(
+              "relative ml-auto flex h-6 shrink-0 items-center justify-end",
+              variantAction === "unsettle" ? "min-w-14" : "min-w-8",
+            )}
+          >
             <span className="inline-flex justify-end tabular-nums text-muted-foreground/40 transition-opacity group-hover/v2-row:opacity-0">
               <span className="text-[13px]">
                 {props.jumpLabel ??
@@ -428,16 +447,31 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   )}
               </span>
             </span>
-            {!props.settlementSupported ? null : variantAction === "unsettle" ? (
-              <button
-                type="button"
-                aria-label="Un-settle thread"
-                onClick={handleUnsettleClick}
-                className="absolute inset-y-0 right-0 inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
-              >
-                <Undo2Icon className="size-3" />
-              </button>
-            ) : (
+            {variantAction === "unsettle" ? (
+              <span className="absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100">
+                {props.settlementSupported ? (
+                  <button
+                    type="button"
+                    aria-label="Un-settle thread"
+                    onClick={handleUnsettleClick}
+                    className="inline-flex size-6 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground"
+                  >
+                    <Undo2Icon aria-hidden className="size-3" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="Archive thread"
+                  disabled={
+                    thread.session?.status === "running" && thread.session.activeTurnId != null
+                  }
+                  onClick={handleArchiveClick}
+                  className="inline-flex size-6 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <ArchiveIcon aria-hidden className="size-3" />
+                </button>
+              </span>
+            ) : !props.settlementSupported ? null : (
               <button
                 type="button"
                 aria-label="Settle thread"
@@ -618,8 +652,9 @@ export default function SidebarV2() {
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
-  const { settleThread, unsettleThread, deleteThread } = useThreadActions();
+  const { archiveThread, settleThread, unsettleThread, deleteThread } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -1034,6 +1069,92 @@ export default function SidebarV2() {
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
+
+  const confirmArchive = useCallback(
+    async (message: string) => {
+      if (!confirmThreadArchive) return true;
+      const api = readLocalApi();
+      if (!api) return false;
+      const result = await settlePromise(() => api.dialogs.confirm(message));
+      return result._tag === "Success" && result.value;
+    },
+    [confirmThreadArchive],
+  );
+  const archiveThreadEntries = useCallback(
+    async (entries: readonly { threadKey: string; threadRef: ScopedThreadRef }[]) => {
+      const outcome = await archiveSelectedThreadEntries({
+        entries,
+        archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+      });
+      for (const failure of outcome.followupFailures) {
+        if (isAtomCommandInterrupted(failure)) continue;
+        const error = squashAtomCommandFailure(failure);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Thread archived, but navigation failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      if (outcome.mutationFailure && !isAtomCommandInterrupted(outcome.mutationFailure)) {
+        const error = squashAtomCommandFailure(outcome.mutationFailure);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: entries.length === 1 ? "Failed to archive thread" : "Failed to archive threads",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      return outcome;
+    },
+    [archiveThread],
+  );
+  const attemptArchive = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      void (async () => {
+        const thread = threadByKeyRef.current.get(scopedThreadKey(threadRef));
+        if (
+          !(await confirmArchive(
+            thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
+          ))
+        ) {
+          return;
+        }
+        await archiveThreadEntries([{ threadKey: scopedThreadKey(threadRef), threadRef }]);
+      })();
+    },
+    [archiveThreadEntries, confirmArchive],
+  );
+  const [isArchivingAllSettled, setIsArchivingAllSettled] = useState(false);
+  const archivingAllSettledRef = useRef(false);
+  const archiveAllSettled = useCallback(() => {
+    void (async () => {
+      if (archivingAllSettledRef.current || settledThreads.length === 0) return;
+      archivingAllSettledRef.current = true;
+      setIsArchivingAllSettled(true);
+      try {
+        const count = settledThreads.length;
+        if (
+          !(await confirmArchive(`Archive all ${count} settled thread${count === 1 ? "" : "s"}?`))
+        ) {
+          return;
+        }
+        const outcome = await archiveThreadEntries(
+          settledThreads.map((thread) => {
+            const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+            return { threadKey: scopedThreadKey(threadRef), threadRef };
+          }),
+        );
+        removeFromSelection(outcome.archivedThreadKeys);
+      } finally {
+        archivingAllSettledRef.current = false;
+        setIsArchivingAllSettled(false);
+      }
+    })();
+  }, [archiveThreadEntries, confirmArchive, removeFromSelection, settledThreads]);
+
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -1047,10 +1168,19 @@ export default function SidebarV2() {
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
+      const hasRunningThread = threadKeys.some((threadKey) => {
+        const session = threadByKeyRef.current.get(threadKey)?.session;
+        return session?.status === "running" && session.activeTurnId != null;
+      });
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
             { id: "settle", label: `Settle (${count})` },
+            {
+              id: "archive",
+              label: `Archive (${count})`,
+              disabled: hasRunningThread,
+            },
             { id: "mark-unread", label: `Mark unread (${count})` },
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
@@ -1070,6 +1200,23 @@ export default function SidebarV2() {
           attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
         }
         clearSelection();
+        return;
+      }
+      if (clicked.value === "archive") {
+        if (!(await confirmArchive(`Archive ${count} thread${count === 1 ? "" : "s"}?`))) return;
+        const outcome = await archiveThreadEntries(
+          threadKeys.flatMap((threadKey) => {
+            const thread = threadByKeyRef.current.get(threadKey);
+            if (!thread) return [];
+            return [
+              {
+                threadKey,
+                threadRef: scopeThreadRef(thread.environmentId, thread.id),
+              },
+            ];
+          }),
+        );
+        removeFromSelection(outcome.archivedThreadKeys);
         return;
       }
       if (clicked.value === "mark-unread") {
@@ -1121,8 +1268,10 @@ export default function SidebarV2() {
       removeFromSelection(threadKeys);
     },
     [
+      archiveThreadEntries,
       attemptSettle,
       clearSelection,
+      confirmArchive,
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
@@ -1153,18 +1302,13 @@ export default function SidebarV2() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...(supportsSettlement
-                ? [
-                    isSettled
-                      ? { id: "unsettle", label: "Un-settle thread" }
-                      : { id: "settle", label: "Settle thread" },
-                  ]
-                : []),
-              { id: "rename", label: "Rename thread" },
-              { id: "mark-unread", label: "Mark unread" },
-              { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-            ],
+            buildSidebarV2ThreadContextMenuItems({
+              canUseLifecycleActions: true,
+              supportsSettlement,
+              isSettled,
+              isRunning:
+                thread.session?.status === "running" && thread.session.activeTurnId != null,
+            }),
             position,
           ),
         );
@@ -1175,6 +1319,9 @@ export default function SidebarV2() {
             return;
           case "unsettle":
             attemptUnsettle(threadRef);
+            return;
+          case "archive":
+            attemptArchive(threadRef);
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);
@@ -1214,6 +1361,7 @@ export default function SidebarV2() {
       })();
     },
     [
+      attemptArchive,
       attemptSettle,
       attemptUnsettle,
       confirmThreadDelete,
@@ -1473,12 +1621,15 @@ export default function SidebarV2() {
               // sidebar second-guessing what still matters.
               const isCard = !isSettledRow;
               const previousThread = threadIndex > 0 ? orderedThreads[threadIndex - 1] : null;
-              const previousWasCard =
+              const previousIsSettled =
                 previousThread != null &&
-                !settledThreadKeys.has(
+                settledThreadKeys.has(
                   scopedThreadKey(scopeThreadRef(previousThread.environmentId, previousThread.id)),
                 );
-              const showSettledGap = !isCard && previousWasCard;
+              const showSettledGap = shouldShowSidebarV2SettledHeader({
+                isSettled: isSettledRow,
+                previousIsSettled,
+              });
               const row = (
                 <SidebarV2Row
                   // Keyed per variant on purpose: when a thread settles, the
@@ -1518,6 +1669,7 @@ export default function SidebarV2() {
                   onContextMenu={handleThreadContextMenu}
                   onSettle={attemptSettle}
                   onUnsettle={attemptUnsettle}
+                  onArchive={attemptArchive}
                   onChangeRequestState={handleChangeRequestState}
                 />
               );
@@ -1530,7 +1682,6 @@ export default function SidebarV2() {
               return [
                 <li
                   key="settled-divider"
-                  aria-hidden
                   data-thread-selection-safe
                   className="list-none"
                 >
@@ -1539,6 +1690,20 @@ export default function SidebarV2() {
                       Settled
                     </span>
                     <span className="h-px flex-1 bg-border/60" />
+                    <button
+                      type="button"
+                      aria-label={`Archive all ${settledThreads.length} settled thread${settledThreads.length === 1 ? "" : "s"}`}
+                      disabled={isArchivingAllSettled}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        archiveAllSettled();
+                      }}
+                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      <ArchiveIcon aria-hidden className="size-3" />
+                      Archive all
+                    </button>
                   </div>
                 </li>,
                 row,
