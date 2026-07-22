@@ -14,21 +14,18 @@ import type {
   ServerConfig as T3ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
-import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, View, type GestureResponderEvent } from "react-native";
 import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
-import Animated, { FadeInDown, FadeOut, LinearTransition } from "react-native-reanimated";
+import Animated, { FadeInDown, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -172,54 +169,6 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
   }, [threadId, feed]);
 }
 
-// Pre-measurement estimate for the working pill's slot (the real height is
-// measured via onComposerLayout since the pill lives inside the composer
-// overlay). Matches the rendered pill: pt-2 + pb-2 (16) wrapping a bordered
-// px-3/py-2 row (~36), so ~52 — keep it in sync with WorkingDurationPill.
-const WORKING_INDICATOR_HEIGHT = 52;
-
-const WorkingDurationPill = memo(function WorkingDurationPill(props: {
-  readonly startedAt: string;
-}) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setNowMs(Date.now());
-    }, 1_000);
-    return () => clearInterval(intervalId);
-  }, [props.startedAt]);
-
-  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
-
-  return (
-    <Animated.View
-      className="shrink-0 px-4 pb-2 pt-2"
-      entering={FadeInDown.duration(200)}
-      exiting={FadeOut.duration(140)}
-    >
-      <View
-        className={
-          Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
-            ? "self-start rounded-full border border-border bg-card px-3 py-2"
-            : "self-start rounded-full border border-neutral-200/80 bg-neutral-50/90 px-3 py-2 dark:border-white/[0.08] dark:bg-white/[0.04]"
-        }
-      >
-        <View className="flex-row items-center gap-2">
-          <View className="flex-row items-center gap-1">
-            <View className="h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
-            <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
-            <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
-          </View>
-          <Text className="font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-            Working for {durationLabel}
-          </Text>
-        </View>
-      </View>
-    </Animated.View>
-  );
-});
-
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const insets = useSafeAreaInsets();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -253,8 +202,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
-  const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
-  const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight;
+  const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
@@ -411,6 +359,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             contentPresentation={props.contentPresentation}
             agentLabel={agentLabel}
             latestTurn={props.selectedThread.latestTurn}
+            activeWorkStartedAt={props.activeWorkStartedAt}
             listRef={listRef}
             freeze={freeze}
             anchorMessageId={anchorMessageId}
@@ -438,15 +387,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               list's bottom inset, so any padding above the pill/composer
               pushes the resting content floor up by the same amount. */}
           <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
-            <Animated.View
-              className="w-full self-center"
-              layout={LinearTransition.duration(220)}
-              style={{ maxWidth: contentMaxWidth }}
-            >
-              {props.activeWorkStartedAt ? (
-                <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
-              ) : null}
-
+            <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
                   className="shrink-0 gap-3 px-4 pb-3"
@@ -473,7 +414,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : null}
                 </Animated.View>
               ) : null}
-            </Animated.View>
+            </View>
 
             <ThreadComposer
               editorRef={composerEditorRef}
