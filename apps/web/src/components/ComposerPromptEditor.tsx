@@ -62,7 +62,7 @@ import {
   storeEmacsReadlineKilledText,
 } from "~/emacsReadlineBindings";
 import { useClientSettings } from "~/hooks/useSettings";
-import { resolveShortcutCommand } from "~/keybindings";
+import { resolveCustomShortcutCommand } from "~/keybindings";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
@@ -1136,7 +1136,7 @@ function ComposerEmacsReadlinePlugin() {
     return editor.registerCommand(
       KEY_DOWN_COMMAND,
       (event) => {
-        if (resolveShortcutCommand(event, keybindings) !== null) return false;
+        if (resolveCustomShortcutCommand(event, keybindings) !== null) return false;
         const action = resolveEmacsReadlineAction(event);
         if (!action) return false;
 

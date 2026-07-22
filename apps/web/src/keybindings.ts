@@ -2,12 +2,14 @@ import {
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
+  type ResolvedKeybindingRule,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
@@ -198,11 +200,11 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
-export function resolveShortcutCommand(
+function resolveShortcutBinding(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
-): KeybindingCommand | null {
+): ResolvedKeybindingRule | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
 
@@ -211,9 +213,71 @@ export function resolveShortcutCommand(
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesShortcut(event, binding.shortcut, platform)) continue;
-    return binding.command;
+    return binding;
   }
   return null;
+}
+
+export function resolveShortcutCommand(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): KeybindingCommand | null {
+  return resolveShortcutBinding(event, keybindings, options)?.command ?? null;
+}
+
+function keybindingWhenNodesEqual(
+  left: KeybindingWhenNode | undefined,
+  right: KeybindingWhenNode | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if (left.type !== right.type) return false;
+  switch (left.type) {
+    case "identifier":
+      return right.type === "identifier" && left.name === right.name;
+    case "not":
+      return right.type === "not" && keybindingWhenNodesEqual(left.node, right.node);
+    case "and":
+    case "or":
+      return (
+        right.type === left.type &&
+        keybindingWhenNodesEqual(left.left, right.left) &&
+        keybindingWhenNodesEqual(left.right, right.right)
+      );
+  }
+}
+
+function keybindingShortcutsEqual(left: KeybindingShortcut, right: KeybindingShortcut): boolean {
+  return (
+    left.key === right.key &&
+    left.metaKey === right.metaKey &&
+    left.ctrlKey === right.ctrlKey &&
+    left.shiftKey === right.shiftKey &&
+    left.altKey === right.altKey &&
+    left.modKey === right.modKey
+  );
+}
+
+export function isDefaultResolvedKeybinding(binding: ResolvedKeybindingRule): boolean {
+  return DEFAULT_RESOLVED_KEYBINDINGS.some(
+    (candidate) =>
+      candidate.command === binding.command &&
+      keybindingShortcutsEqual(candidate.shortcut, binding.shortcut) &&
+      keybindingWhenNodesEqual(candidate.whenAst, binding.whenAst),
+  );
+}
+
+/**
+ * Resolves only explicit/custom bindings. Built-in Mod shortcuts intentionally
+ * yield to platform editing conventions when focus is inside a text editor.
+ */
+export function resolveCustomShortcutCommand(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): KeybindingCommand | null {
+  const binding = resolveShortcutBinding(event, keybindings, options);
+  return binding && !isDefaultResolvedKeybinding(binding) ? binding.command : null;
 }
 
 function formatShortcutKeyLabel(key: string): string {

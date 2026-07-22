@@ -20,6 +20,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  resolveCustomShortcutCommand,
   resolveShortcutCommand,
   shouldShowModelPickerJumpHints,
   shouldShowThreadJumpHints,
@@ -601,6 +602,22 @@ describe("resolveShortcutCommand", () => {
         platform: "Linux",
       }),
       "script.setup.run",
+    );
+  });
+
+  it("distinguishes custom shortcuts from built-in editing conflicts", () => {
+    assert.isNull(
+      resolveCustomShortcutCommand(event({ key: "b", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+
+    const customBindings = compile([{ shortcut: modShortcut("b"), command: "terminal.toggle" }]);
+    assert.strictEqual(
+      resolveCustomShortcutCommand(event({ key: "b", ctrlKey: true }), customBindings, {
+        platform: "Linux",
+      }),
+      "terminal.toggle",
     );
   });
 

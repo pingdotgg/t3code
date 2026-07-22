@@ -466,13 +466,15 @@ export function applyEmacsReadlineActionToContentEditable(
   }
 
   const move = (direction: "backward" | "forward", granularity: string) => {
-    if (!selection.isCollapsed) {
+    const hadSelection = !selection.isCollapsed;
+    if (hadSelection) {
       const range = selection.getRangeAt(0);
       selection.collapse(
         direction === "backward" ? range.startContainer : range.endContainer,
         direction === "backward" ? range.startOffset : range.endOffset,
       );
     }
+    if (hadSelection && granularity === "character") return;
     selection.modify("move", direction, granularity);
   };
   const extendAndDelete = (direction: "backward" | "forward", granularity: string) => {

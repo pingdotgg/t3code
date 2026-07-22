@@ -377,12 +377,19 @@ describe("applyEmacsReadlineActionToContentEditable", () => {
   });
 
   it.each([
-    ["backward-char", "backward", 1],
-    ["forward-char", "forward", 4],
-  ] as const)("collapses a selection to the %s movement boundary", (action, direction, offset) => {
+    ["backward-char", 1],
+    ["forward-char", 4],
+  ] as const)("collapses a selection to the %s movement boundary", (action, offset) => {
     const { collapse, host, modify } = harness({ isCollapsed: false });
     expect(applyEmacsReadlineActionToContentEditable(host, action, "").handled).toBe(true);
     expect(collapse).toHaveBeenCalledWith(expect.anything(), offset);
-    expect(modify).toHaveBeenCalledWith("move", direction, "character");
+    expect(modify).not.toHaveBeenCalled();
+  });
+
+  it("moves by one character when the selection is already collapsed", () => {
+    const { collapse, host, modify } = harness({ isCollapsed: true });
+    expect(applyEmacsReadlineActionToContentEditable(host, "backward-char", "").handled).toBe(true);
+    expect(collapse).not.toHaveBeenCalled();
+    expect(modify).toHaveBeenCalledWith("move", "backward", "character");
   });
 });

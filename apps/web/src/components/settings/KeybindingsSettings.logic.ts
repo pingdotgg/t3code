@@ -11,6 +11,7 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { isMacPlatform } from "../../lib/utils";
+import { isDefaultResolvedKeybinding } from "../../keybindings";
 
 export type KeybindingSource = "Default" | "Custom" | "Project";
 
@@ -94,16 +95,7 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
     return "Project";
   }
 
-  const bindingKey = shortcutToKeybindingInput(binding.shortcut);
-  const bindingWhen = whenAstToExpression(binding.whenAst);
-  const isDefault = DEFAULT_RESOLVED_KEYBINDINGS.some(
-    (entry) =>
-      entry.command === binding.command &&
-      shortcutToKeybindingInput(entry.shortcut) === bindingKey &&
-      whenAstToExpression(entry.whenAst) === bindingWhen,
-  );
-
-  return isDefault ? "Default" : "Custom";
+  return isDefaultResolvedKeybinding(binding) ? "Default" : "Custom";
 }
 
 function defaultBindingForBinding(
