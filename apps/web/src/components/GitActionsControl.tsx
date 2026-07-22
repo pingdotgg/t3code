@@ -976,6 +976,78 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   );
 }
 
+interface InitializeGitControlProps {
+  readonly environmentId: ScopedThreadRef["environmentId"] | null;
+  readonly gitCwd: string;
+  readonly threadToastData: { threadRef: ScopedThreadRef } | undefined;
+}
+
+function InitializeGitControl({
+  environmentId,
+  gitCwd,
+  threadToastData,
+}: InitializeGitControlProps) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const sourceControlScope = useMemo(
+    () => ({ environmentId, cwd: gitCwd }),
+    [environmentId, gitCwd],
+  );
+  const initAction = useVcsInitAction(sourceControlScope);
+
+  const runGitInit = useCallback(() => {
+    if (initAction.isPending) return;
+    setConfirmOpen(false);
+    void (async () => {
+      const result = await initAction.run();
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Git initialization failed",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+        }),
+      );
+    })();
+  }, [initAction, threadToastData]);
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="xs"
+        disabled={initAction.isPending}
+        onClick={() => setConfirmOpen(true)}
+      >
+        <GitBranchPlusIcon className="size-3.5" aria-hidden />
+        <span className="ml-0.5">
+          {initAction.isPending ? "Initializing..." : "Initialize Git"}
+        </span>
+      </Button>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Initialize Git repository?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will run <code className="rounded bg-muted px-1 py-0.5 text-xs">git init</code>{" "}
+              in <code className="rounded bg-muted px-1 py-0.5 text-xs break-all">{gitCwd}</code>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button disabled={initAction.isPending} onClick={runGitInit}>
+              Initialize
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
+}
+
 export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
@@ -1004,7 +1076,6 @@ export default function GitActionsControl({
         : null,
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const [confirmInitOpen, setConfirmInitOpen] = useState(false);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -1114,7 +1185,6 @@ export default function GitActionsControl({
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
 
-  const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
   const isGitActionRunning = useSourceControlActionRunning(
@@ -1660,62 +1730,17 @@ export default function GitActionsControl({
 
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
-  const runGitInit = useCallback(() => {
-    if (initAction.isPending) return;
-    setConfirmInitOpen(false);
-    void (async () => {
-      const result = await initAction.run();
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-        return;
-      }
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Git initialization failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
-          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
-        }),
-      );
-    })();
-  }, [initAction, threadToastData]);
-
   if (!gitCwd) return null;
 
   return (
     <>
       {!isRepo ? (
-        <>
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={initAction.isPending}
-            onClick={() => setConfirmInitOpen(true)}
-          >
-            <GitBranchPlusIcon className="size-3.5" aria-hidden />
-            <span className="ml-0.5">
-              {initAction.isPending ? "Initializing..." : "Initialize Git"}
-            </span>
-          </Button>
-          <AlertDialog open={confirmInitOpen} onOpenChange={setConfirmInitOpen}>
-            <AlertDialogPopup>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Initialize Git repository?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will run{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs">git init</code> in{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs break-all">{gitCwd}</code>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-                <Button disabled={initAction.isPending} onClick={runGitInit}>
-                  Initialize
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogPopup>
-          </AlertDialog>
-        </>
+        <InitializeGitControl
+          key={gitCwd}
+          environmentId={activeEnvironmentId}
+          gitCwd={gitCwd}
+          threadToastData={threadToastData}
+        />
       ) : (
         <Group aria-label="Git actions" className="shrink-0">
           {quickActionDisabledReason ? (
