@@ -4,6 +4,7 @@ import {
   Camera,
   ExternalLink,
   MousePointerClick,
+  PictureInPicture2,
   RotateCw,
 } from "lucide-react";
 import {
@@ -40,6 +41,9 @@ interface Props {
   onCapture?: ((record: boolean) => void) | undefined;
   captureDisabled?: boolean | undefined;
   recording?: boolean | undefined;
+  onPictureInPicture?: (() => void) | undefined;
+  pictureInPicture?: boolean | undefined;
+  pictureInPictureDisabled?: boolean | undefined;
   /**
    * When provided, renders an annotation-mode toggle button to the right of
    * the URL input. Pressed while annotation mode is active (button shows in `pressed`
@@ -77,6 +81,9 @@ export function PreviewChromeRow({
   onCapture,
   captureDisabled,
   recording,
+  onPictureInPicture,
+  pictureInPicture,
+  pictureInPictureDisabled,
   onPickElement,
   pickActive,
   pickDisabled,
@@ -271,6 +278,30 @@ export function PreviewChromeRow({
             </TooltipTrigger>
             <TooltipPopup>
               {recording ? "Stop recording" : "Screenshot · Shift-click to record"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {onPictureInPicture ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant={pictureInPicture ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  onClick={onPictureInPicture}
+                  aria-label={
+                    pictureInPicture ? "Close picture-in-picture" : "Open picture-in-picture"
+                  }
+                  aria-pressed={pictureInPicture ? "true" : "false"}
+                  type="button"
+                  disabled={pictureInPictureDisabled}
+                />
+              }
+            >
+              <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
+            </TooltipTrigger>
+            <TooltipPopup>
+              {pictureInPicture ? "Close picture-in-picture" : "Keep preview on top"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

@@ -47,7 +47,7 @@ import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   startBrowserRecording,
   stopBrowserRecording,
-  useActiveBrowserRecordingTabId,
+  useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
@@ -67,7 +67,7 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
-  const activeRecordingTabId = useActiveBrowserRecordingTabId();
+  const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
@@ -227,11 +227,25 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
 
+  const handlePictureInPicture = useCallback(() => {
+    if (!previewBridge || !tabId) return;
+    const operation = desktopOverlay?.pictureInPicture
+      ? previewBridge.pictureInPicture.close
+      : previewBridge.pictureInPicture.open;
+    void operation(tabId).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to update picture-in-picture",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, [desktopOverlay?.pictureInPicture, tabId]);
+
   const handleCapture = useCallback(
     (record: boolean) => {
       if (!previewBridge || !tabId) return;
       const bridge = previewBridge;
-      const recordingThisTab = activeRecordingTabId === tabId;
+      const recordingThisTab = activeRecordingTabIds.has(tabId);
       if (recordingThisTab) {
         void stopBrowserRecording(tabId).then(
           (artifact) => {
@@ -325,14 +339,6 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         return;
       }
       if (record) {
-        if (activeRecordingTabId !== null) {
-          toastManager.add({
-            type: "warning",
-            title: "Another preview is recording",
-            description: "Stop the active recording before starting a new one.",
-          });
-          return;
-        }
         void startBrowserRecording(tabId).catch((error) => {
           toastManager.add({
             type: "error",
@@ -472,7 +478,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         },
       );
     },
-    [activeRecordingTabId, tabId],
+    [activeRecordingTabIds, tabId],
   );
 
   const handlePickElement = useCallback(() => {
@@ -594,7 +600,10 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
-        recording={tabId !== null && activeRecordingTabId === tabId}
+        recording={tabId !== null && activeRecordingTabIds.has(tabId)}
+        onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
+        pictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+        pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
@@ -608,7 +617,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           previewBridge ? (
             <PreviewMoreMenu
               tabId={tabId}
-              hasWebContents={desktopOverlay !== null}
+              hasWebContents={desktopOverlay?.hasWebContents ?? false}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}

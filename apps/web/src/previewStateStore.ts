@@ -18,10 +18,12 @@ import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants"
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
+  hasWebContents: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   loading: boolean;
   zoomFactor: number;
+  pictureInPicture: boolean;
   controller: "human" | "agent" | "none";
 }
 

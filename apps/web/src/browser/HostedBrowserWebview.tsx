@@ -8,7 +8,6 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
-import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserRecording";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
@@ -47,7 +46,6 @@ export function HostedBrowserWebview(props: {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
-  const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[tabId];
@@ -58,11 +56,6 @@ export function HostedBrowserWebview(props: {
     }),
   );
   usePreviewBridge({ threadRef, tabId });
-
-  useEffect(() => {
-    if (presentation.visible || activeRecordingTabId !== tabId) return;
-    void stopBrowserRecording(tabId).catch(() => undefined);
-  }, [activeRecordingTabId, presentation.visible, tabId]);
 
   useEffect(() => {
     const lease = acquireDesktopTab(tabId);

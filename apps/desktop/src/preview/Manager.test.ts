@@ -1,4 +1,5 @@
 import { it as effectIt } from "@effect/vitest";
+import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,7 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const {
+  browserWindowConstructor,
   createFromPath,
   fromId,
   getFocusedWebContents,
@@ -29,8 +31,9 @@ const {
   writeFile,
   writeImage,
 } = vi.hoisted(() => ({
+  browserWindowConstructor: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
-  fromId: vi.fn(() => null),
+  fromId: vi.fn((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
   showItemInFolder: vi.fn(),
@@ -40,6 +43,7 @@ const {
 }));
 
 vi.mock("electron", () => ({
+  BrowserWindow: browserWindowConstructor,
   clipboard: {
     writeImage,
   },
@@ -73,6 +77,10 @@ const environmentLayer = Layer.succeed(
   DesktopEnvironment.DesktopEnvironment,
   DesktopEnvironment.DesktopEnvironment.of({
     browserArtifactsDir: "/tmp/t3/dev/browser-artifacts",
+    dirname: "/tmp/t3/desktop",
+    path: {
+      join: (...parts: ReadonlyArray<string>) => parts.join("/"),
+    },
   } as DesktopEnvironment.DesktopEnvironment["Service"]),
 );
 
@@ -108,6 +116,7 @@ const withManager = <A>(
 
 describe("PreviewManager", () => {
   beforeEach(() => {
+    browserWindowConstructor.mockReset();
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
@@ -526,6 +535,233 @@ describe("PreviewManager", () => {
           webContentsId: 42,
           cause: captureCause,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("captures hidden preview recordings independently for concurrent tabs", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstJpeg = Buffer.from("first-recording-frame");
+        const secondJpeg = Buffer.from("second-recording-frame");
+        const firstCapturePage = vi.fn(async () => ({
+          toJPEG: () => firstJpeg,
+          getSize: () => ({ width: 800, height: 600 }),
+        }));
+        const secondCapturePage = vi.fn(async () => ({
+          toJPEG: () => secondJpeg,
+          getSize: () => ({ width: 390, height: 844 }),
+        }));
+        const firstSendCommand = vi.fn(async () => undefined);
+        const secondSendCommand = vi.fn(async () => undefined);
+        const makeWebContents = (
+          id: number,
+          capturePage: typeof firstCapturePage,
+          sendCommand: typeof firstSendCommand,
+        ) =>
+          ({
+            id,
+            isDestroyed: () => false,
+            getType: () => "webview",
+            getURL: () => `https://example.com/${id}`,
+            getTitle: () => `Example ${id}`,
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+            capturePage,
+          }) as never;
+        const webContentsById = new Map([
+          [41, makeWebContents(41, firstCapturePage, firstSendCommand)],
+          [42, makeWebContents(42, secondCapturePage, secondSendCommand)],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
+        const frames: DesktopPreviewRecordingFrame[] = [];
+
+        yield* manager.subscribeRecordingFrames((frame) =>
+          Effect.sync(() => {
+            frames.push(frame);
+          }),
+        );
+        yield* manager.createTab("tab_1");
+        yield* manager.createTab("tab_2");
+        yield* manager.registerWebview("tab_1", 41);
+        yield* manager.registerWebview("tab_2", 42);
+        yield* Effect.all([manager.startRecording("tab_1"), manager.startRecording("tab_2")], {
+          concurrency: 2,
+          discard: true,
+        });
+
+        expect(firstCapturePage).toHaveBeenCalledOnce();
+        expect(secondCapturePage).toHaveBeenCalledOnce();
+        expect(frames).toHaveLength(2);
+        expect(frames).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              tabId: "tab_1",
+              data: firstJpeg.toString("base64"),
+              width: 800,
+              height: 600,
+            }),
+            expect.objectContaining({
+              tabId: "tab_2",
+              data: secondJpeg.toString("base64"),
+              width: 390,
+              height: 844,
+            }),
+          ]),
+        );
+        expect(firstSendCommand).not.toHaveBeenCalledWith(
+          "Page.startScreencast",
+          expect.anything(),
+        );
+        expect(secondSendCommand).not.toHaveBeenCalledWith(
+          "Page.startScreencast",
+          expect.anything(),
+        );
+
+        yield* Effect.all([manager.stopRecording("tab_1"), manager.stopRecording("tab_2")], {
+          concurrency: 2,
+          discard: true,
+        });
+      }),
+    ),
+  );
+
+  effectIt.effect("shares background frame capture between recording and picture-in-picture", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const jpeg = Buffer.from("shared-preview-frame");
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => jpeg,
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+          capturePage,
+        } as never);
+
+        const pictureInPictureListeners = new Map<string, () => void>();
+        const pictureInPictureSend = vi.fn();
+        const pictureInPictureWindow = {
+          isDestroyed: vi.fn(() => false),
+          once: vi.fn((event: string, listener: () => void) => {
+            pictureInPictureListeners.set(event, listener);
+          }),
+          setAlwaysOnTop: vi.fn(),
+          setVisibleOnAllWorkspaces: vi.fn(),
+          setAspectRatio: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+          showInactive: vi.fn(),
+          close: vi.fn(() => {
+            pictureInPictureListeners.get("closed")?.();
+          }),
+          webContents: {
+            send: pictureInPictureSend,
+          },
+        };
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        const states: PreviewManager.PreviewTabState[] = [];
+        const recordingFrames: DesktopPreviewRecordingFrame[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.subscribeRecordingFrames((frame) =>
+          Effect.sync(() => {
+            recordingFrames.push(frame);
+          }),
+        );
+        yield* manager.createTab("tab_pip");
+        yield* manager.registerWebview("tab_pip", 42);
+        yield* manager.openPictureInPicture("tab_pip");
+
+        expect(browserWindowConstructor).toHaveBeenCalledWith(
+          expect.objectContaining({
+            alwaysOnTop: true,
+            show: false,
+            skipTaskbar: true,
+            webPreferences: expect.objectContaining({
+              preload: "/tmp/t3/desktop/preview-pip-preload.cjs",
+              backgroundThrottling: false,
+            }),
+          }),
+        );
+        expect(pictureInPictureWindow.showInactive).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.setAspectRatio).toHaveBeenCalledWith(1280 / 720);
+        expect(pictureInPictureSend).toHaveBeenCalledWith(
+          "desktop:preview-pip-frame",
+          expect.objectContaining({
+            tabId: "tab_pip",
+            data: jpeg.toString("base64"),
+            width: 1280,
+            height: 720,
+          }),
+        );
+        expect(states.at(-1)?.pictureInPicture).toBe(true);
+        expect(capturePage).toHaveBeenCalledOnce();
+
+        yield* manager.startRecording("tab_pip");
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(recordingFrames).toHaveLength(0);
+
+        yield* TestClock.adjust(100);
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(recordingFrames).toHaveLength(1);
+
+        yield* manager.stopRecording("tab_pip");
+        const framesBeforePictureInPictureOnlyTick = pictureInPictureSend.mock.calls.length;
+        yield* TestClock.adjust(100);
+        expect(capturePage).toHaveBeenCalledTimes(3);
+        expect(pictureInPictureSend.mock.calls.length).toBeGreaterThan(
+          framesBeforePictureInPictureOnlyTick,
+        );
+        expect(recordingFrames).toHaveLength(1);
+
+        yield* manager.closePictureInPicture("tab_pip");
+        expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
+        expect(states.at(-1)?.pictureInPicture).toBe(false);
+        const capturesAfterClose = capturePage.mock.calls.length;
+        yield* TestClock.adjust(200);
+        expect(capturePage).toHaveBeenCalledTimes(capturesAfterClose);
       }),
     ),
   );

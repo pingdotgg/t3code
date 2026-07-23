@@ -73,10 +73,12 @@ function shouldClearBrowserPointer(
 
 function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {
   return {
+    hasWebContents: state.webContentsId !== null,
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
     loading: state.navStatus.kind === "Loading",
     zoomFactor: state.zoomFactor,
+    pictureInPicture: state.pictureInPicture,
     controller: state.controller,
   };
 }

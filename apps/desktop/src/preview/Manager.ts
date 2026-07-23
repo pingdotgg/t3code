@@ -27,14 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import {
-  type BrowserWindow,
-  type Session,
-  clipboard,
-  nativeImage,
-  shell,
-  webContents,
-} from "electron";
+import { BrowserWindow, type Session, clipboard, nativeImage, shell, webContents } from "electron";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -52,6 +45,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -84,6 +78,7 @@ export interface PreviewTabState {
   canGoBack: boolean;
   canGoForward: boolean;
   zoomFactor: number;
+  pictureInPicture: boolean;
   controller: "human" | "agent" | "none";
   updatedAt: string;
 }
@@ -99,6 +94,12 @@ const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 const MAX_SCREENSHOT_WIDTH = 1280;
+const RECORDING_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
+const RECORDING_JPEG_QUALITY = 80;
+const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
+const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
+const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
+const PICTURE_IN_PICTURE_MIN_HEIGHT = 160;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -122,6 +123,35 @@ const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   ring: "oklch(0.488 0.217 264)",
   fontSans: "system-ui, sans-serif",
   fontMono: "ui-monospace, monospace",
+};
+
+export const buildPreviewPictureInPictureDataUrl = (): string => {
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    >
+    <meta name="color-scheme" content="dark">
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111; }
+      body { display: grid; place-items: center; }
+      img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
+    </style>
+  </head>
+  <body>
+    <img id="preview-frame" alt="Live browser preview">
+    <script>
+      const frame = document.getElementById("preview-frame");
+      window.previewPictureInPicture.onFrame((next) => {
+        frame.src = "data:image/jpeg;base64," + next.data;
+      });
+    </script>
+  </body>
+</html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 };
 
 const artifactSiteSlug = (rawUrl: string): string => {
@@ -294,6 +324,13 @@ interface ManagedListeners {
   readonly scope: Scope.Closeable;
 }
 
+type FrameCaptureConsumer = "picture-in-picture" | "recording";
+
+interface FrameCaptureSession {
+  readonly scope: Scope.Closeable;
+  readonly consumers: ReadonlySet<FrameCaptureConsumer>;
+}
+
 interface PickSession {
   readonly cancel: Effect.Effect<void>;
 }
@@ -378,6 +415,7 @@ const inputSignalsMatch = (left: PreviewInputSignal, right: PreviewInputSignal):
 
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
+  pictureInPicturePreloadPath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
@@ -413,7 +451,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const actionSequenceRef = yield* Ref.make(0);
   const pointerSequenceRef = yield* Ref.make(0);
-  const recordingTabIdRef = yield* Ref.make<Option.Option<string>>(Option.none());
+  const frameCaptureSessionsRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, FrameCaptureSession>
+  >(new Map());
+  const pictureInPictureWindowsRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, BrowserWindow>
+  >(new Map());
+  const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -444,6 +488,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     update(copy);
     return copy;
   };
+  const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
+    tabId: string,
+    consumer: FrameCaptureConsumer,
+  ) {
+    const captureScope = yield* SynchronizedRef.modify(frameCaptureSessionsRef, (sessions) => {
+      const current = sessions.get(tabId);
+      if (!current || !current.consumers.has(consumer)) {
+        return [undefined, sessions] as const;
+      }
+      const consumers = new Set(current.consumers);
+      consumers.delete(consumer);
+      if (consumers.size > 0) {
+        return [
+          undefined,
+          replaceMap(sessions, (copy) => {
+            copy.set(tabId, { ...current, consumers });
+          }),
+        ] as const;
+      }
+      return [
+        current.scope,
+        replaceMap(sessions, (copy) => {
+          copy.delete(tabId);
+        }),
+      ] as const;
+    });
+    if (captureScope) {
+      yield* Scope.close(captureScope, Exit.void).pipe(Effect.ignore);
+    }
+  });
 
   const deliverEvent = (
     eventKind: "state-change" | "recording-frame" | "pointer-event",
@@ -536,15 +610,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           : Effect.succeed(resolvedPath),
       ),
     );
-
-  const tabIdForWebContents = Effect.fn("PreviewManager.tabIdForWebContents")(function* (
-    webContentsId: number,
-  ) {
-    const tabs = yield* SynchronizedRef.get(tabsRef);
-    return (
-      Array.from(tabs.entries()).find(([, tab]) => tab.webContentsId === webContentsId)?.[0] ?? null
-    );
-  });
 
   const pushBounded = <A>(buffer: ReadonlyArray<A>, entry: A): ReadonlyArray<A> =>
     [...buffer, entry].slice(-DIAGNOSTIC_BUFFER_LIMIT);
@@ -729,42 +794,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const scope = yield* Scope.fork(parentScope, "sequential");
           const handleDebuggerMessage = Effect.fn("PreviewManager.handleDebuggerMessage")(
             function* (method: string, params: Record<string, unknown>) {
-              if (method === "Page.screencastFrame") {
-                const sessionId = params["sessionId"];
-                if (typeof sessionId === "number") {
-                  yield* attemptPromise(
-                    {
-                      operation: "ackScreencastFrame",
-                      webContentsId: wc.id,
-                    },
-                    () => wc.debugger.sendCommand("Page.screencastFrameAck", { sessionId }),
-                  ).pipe(Effect.ignore);
-                }
-                const tabId = yield* tabIdForWebContents(wc.id);
-                const metadata =
-                  typeof params["metadata"] === "object" && params["metadata"] !== null
-                    ? (params["metadata"] as Record<string, unknown>)
-                    : {};
-                if (tabId && typeof params["data"] === "string") {
-                  const receivedAt = yield* currentIso;
-                  const listeners = yield* Ref.get(recordingFrameListenersRef);
-                  const frame: DesktopPreviewRecordingFrame = {
-                    tabId,
-                    data: params["data"],
-                    width:
-                      typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
-                    height:
-                      typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
-                    receivedAt,
-                  };
-                  yield* Effect.forEach(
-                    listeners,
-                    (listener) =>
-                      deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
-                    { discard: true },
-                  );
-                }
-              }
               yield* captureDiagnosticMessage(wc.id, method, params);
             },
           );
@@ -1274,6 +1303,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     window: BrowserWindow,
   ) {
     yield* Ref.set(mainWindowRef, Option.some(window));
+    window.once("closed", () => {
+      runFork(closeAllPictureInPicture());
+    });
   });
 
   const createTab = Effect.fn("PreviewManager.createTab")(function* (tabId: string) {
@@ -1288,6 +1320,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         canGoBack: false,
         canGoForward: false,
         zoomFactor: DEFAULT_ZOOM_FACTOR,
+        pictureInPicture: false,
         controller: "none",
         updatedAt,
       };
@@ -1305,7 +1338,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (!tab) return;
-    yield* cancelPickElement(tabId);
+    yield* Effect.all(
+      [
+        cancelPickElement(tabId),
+        closePictureInPicture(tabId),
+        stopFrameCapture(tabId, "recording"),
+      ],
+      {
+        concurrency: 3,
+        discard: true,
+      },
+    );
     if (tab.webContentsId != null) {
       yield* Effect.all(
         [detachControlSession(tab.webContentsId), detachListeners(tab.webContentsId)],
@@ -1320,6 +1363,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       canGoBack: false,
       canGoForward: false,
       zoomFactor: DEFAULT_ZOOM_FACTOR,
+      pictureInPicture: false,
       controller: "none",
       updatedAt,
     };
@@ -1457,6 +1501,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         canGoBack: current?.canGoBack ?? false,
         canGoForward: current?.canGoForward ?? false,
         zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
+        pictureInPicture: current?.pictureInPicture ?? false,
         controller: current?.controller ?? "none",
         updatedAt,
       };
@@ -1737,40 +1782,311 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
   });
 
-  const startScreencast = Effect.fn("PreviewManager.startScreencast")(function* (
-    send: SendCommand,
+  const capturePreviewFrame = Effect.fn("PreviewManager.capturePreviewFrame")(function* (
+    tabId: string,
   ) {
-    yield* send("Page.enable");
-    yield* send("Page.startScreencast", {
-      format: "jpeg",
-      quality: 80,
-      maxWidth: 1600,
-      maxHeight: 1200,
-      everyNthFrame: 1,
+    const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+    if (!captureSession) return;
+    const wc = yield* requireWebContents(tabId);
+    const image = yield* attemptPromise(
+      {
+        operation: "frameCapture.capturePage",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () => wc.capturePage(),
+    );
+    const encoded = yield* attempt(
+      {
+        operation: "frameCapture.encodeFrame",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () => ({
+        data: image.toJPEG(RECORDING_JPEG_QUALITY).toString("base64"),
+        size: image.getSize(),
+      }),
+    );
+    const receivedAt = yield* currentIso;
+    const frame: DesktopPreviewRecordingFrame = {
+      tabId,
+      data: encoded.data,
+      width: encoded.size.width,
+      height: encoded.size.height,
+      receivedAt,
+    };
+    const deliveries: Array<Effect.Effect<void>> = [];
+    if (captureSession.consumers.has("recording")) {
+      const listeners = yield* Ref.get(recordingFrameListenersRef);
+      deliveries.push(
+        Effect.forEach(
+          listeners,
+          (listener) => deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
+          { discard: true },
+        ),
+      );
+    }
+    if (captureSession.consumers.has("picture-in-picture")) {
+      const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureWindowsRef)).get(
+        tabId,
+      );
+      if (pictureInPictureWindow && !pictureInPictureWindow.isDestroyed()) {
+        deliveries.push(
+          Effect.gen(function* () {
+            const previousAspectRatio = (yield* Ref.get(pictureInPictureAspectRatiosRef)).get(
+              tabId,
+            );
+            const aspectRatio = frame.width / frame.height;
+            if (previousAspectRatio !== aspectRatio) {
+              yield* attempt(
+                {
+                  operation: "pictureInPicture.setAspectRatio",
+                  tabId,
+                  webContentsId: wc.id,
+                },
+                () => pictureInPictureWindow.setAspectRatio(aspectRatio),
+              );
+              yield* Ref.update(pictureInPictureAspectRatiosRef, (aspectRatios) =>
+                replaceMap(aspectRatios, (copy) => {
+                  copy.set(tabId, aspectRatio);
+                }),
+              );
+            }
+            yield* attempt(
+              {
+                operation: "pictureInPicture.deliverFrame",
+                tabId,
+                webContentsId: wc.id,
+              },
+              () => {
+                pictureInPictureWindow.webContents.send(
+                  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
+                  frame,
+                );
+              },
+            );
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Picture-in-picture frame delivery failed.", {
+                tabId,
+                error,
+              }),
+            ),
+          ),
+        );
+      }
+    }
+    yield* Effect.all(deliveries, { concurrency: 2, discard: true });
+  });
+
+  const startFrameCapture = Effect.fn("PreviewManager.startFrameCapture")(function* (
+    tabId: string,
+    consumer: FrameCaptureConsumer,
+  ) {
+    const created = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
+      const current = sessions.get(tabId);
+      if (current) {
+        if (current.consumers.has(consumer)) {
+          return Effect.succeed([false, sessions] as const);
+        }
+        return Effect.succeed([
+          false,
+          replaceMap(sessions, (copy) => {
+            copy.set(tabId, {
+              ...current,
+              consumers: new Set([...current.consumers, consumer]),
+            });
+          }),
+        ] as const);
+      }
+      return Effect.gen(function* () {
+        const scope = yield* Scope.fork(parentScope, "sequential");
+        return [
+          true,
+          replaceMap(sessions, (copy) => {
+            copy.set(tabId, {
+              scope,
+              consumers: new Set([consumer]),
+            });
+          }),
+        ] as const;
+      });
     });
+    if (!created) return;
+    const session = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+    if (!session) return;
+    const captureNextFrame = Effect.sleep(RECORDING_FRAME_INTERVAL_MS).pipe(
+      Effect.andThen(capturePreviewFrame(tabId)),
+      Effect.catch((error) =>
+        Effect.logWarning("Background preview frame capture failed.", {
+          tabId,
+          error,
+        }),
+      ),
+    );
+    yield* Effect.forkIn(Effect.forever(captureNextFrame), session.scope);
+    yield* capturePreviewFrame(tabId).pipe(Effect.onError(() => stopFrameCapture(tabId, consumer)));
+  });
+
+  const releasePictureInPicture = Effect.fn("PreviewManager.releasePictureInPicture")(function* (
+    tabId: string,
+    expectedWindow: BrowserWindow,
+    closeWindow: boolean,
+  ) {
+    const removed = yield* SynchronizedRef.modify(pictureInPictureWindowsRef, (windows) => {
+      if (windows.get(tabId) !== expectedWindow) {
+        return [false, windows] as const;
+      }
+      return [
+        true,
+        replaceMap(windows, (copy) => {
+          copy.delete(tabId);
+        }),
+      ] as const;
+    });
+    if (!removed) return;
+    yield* Ref.update(pictureInPictureAspectRatiosRef, (aspectRatios) =>
+      replaceMap(aspectRatios, (copy) => {
+        copy.delete(tabId);
+      }),
+    );
+    yield* stopFrameCapture(tabId, "picture-in-picture");
+    const tabs = yield* SynchronizedRef.get(tabsRef);
+    if (tabs.has(tabId)) {
+      yield* update(tabId, { pictureInPicture: false });
+    }
+    if (closeWindow && !expectedWindow.isDestroyed()) {
+      yield* attempt({ operation: "pictureInPicture.close", tabId }, () =>
+        expectedWindow.close(),
+      ).pipe(Effect.ignore);
+    }
+  });
+
+  const closePictureInPicture = Effect.fn("PreviewManager.closePictureInPicture")(function* (
+    tabId: string,
+  ) {
+    const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureWindowsRef)).get(
+      tabId,
+    );
+    if (!pictureInPictureWindow) {
+      yield* stopFrameCapture(tabId, "picture-in-picture");
+      return;
+    }
+    yield* releasePictureInPicture(tabId, pictureInPictureWindow, true);
+  });
+
+  const closeAllPictureInPicture = Effect.fn("PreviewManager.closeAllPictureInPicture")(
+    function* () {
+      const windows = yield* SynchronizedRef.get(pictureInPictureWindowsRef);
+      yield* Effect.forEach(windows.keys(), closePictureInPicture, {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    },
+  );
+
+  const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
+    tabId: string,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    const existing = (yield* SynchronizedRef.get(pictureInPictureWindowsRef)).get(tabId);
+    if (existing && !existing.isDestroyed()) {
+      yield* attempt({ operation: "pictureInPicture.showExisting", tabId }, () =>
+        existing.showInactive(),
+      );
+      return;
+    }
+    const title = wc.getTitle().trim();
+    const pictureInPictureWindow = yield* attempt(
+      {
+        operation: "pictureInPicture.create",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () =>
+        new BrowserWindow({
+          width: PICTURE_IN_PICTURE_INITIAL_WIDTH,
+          height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
+          minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,
+          minHeight: PICTURE_IN_PICTURE_MIN_HEIGHT,
+          title: title.length > 0 ? `Preview · ${title}` : "Browser preview",
+          show: false,
+          alwaysOnTop: true,
+          autoHideMenuBar: true,
+          fullscreenable: false,
+          maximizable: false,
+          minimizable: false,
+          resizable: true,
+          skipTaskbar: true,
+          backgroundColor: "#111111",
+          ...(hostPlatform === "darwin" ? { type: "panel" as const } : {}),
+          webPreferences: {
+            preload: pictureInPicturePreloadPath,
+            backgroundThrottling: false,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        }),
+    );
+    const onClosed = () => {
+      runFork(releasePictureInPicture(tabId, pictureInPictureWindow, false));
+    };
+    yield* attempt(
+      {
+        operation: "pictureInPicture.configure",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () => {
+        pictureInPictureWindow.once("closed", onClosed);
+        pictureInPictureWindow.setAlwaysOnTop(
+          true,
+          hostPlatform === "darwin" ? "floating" : "normal",
+        );
+        if (hostPlatform === "darwin") {
+          pictureInPictureWindow.setVisibleOnAllWorkspaces(true, {
+            visibleOnFullScreen: true,
+          });
+        }
+      },
+    );
+    yield* SynchronizedRef.update(pictureInPictureWindowsRef, (windows) =>
+      replaceMap(windows, (copy) => {
+        copy.set(tabId, pictureInPictureWindow);
+      }),
+    );
+    const initialize = Effect.gen(function* () {
+      yield* attemptPromise(
+        {
+          operation: "pictureInPicture.load",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => pictureInPictureWindow.loadURL(buildPreviewPictureInPictureDataUrl()),
+      );
+      yield* startFrameCapture(tabId, "picture-in-picture");
+      yield* attempt(
+        {
+          operation: "pictureInPicture.show",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => pictureInPictureWindow.showInactive(),
+      );
+      yield* update(tabId, { pictureInPicture: true });
+    });
+    yield* initialize.pipe(
+      Effect.onError(() => releasePictureInPicture(tabId, pictureInPictureWindow, true)),
+    );
   });
 
   const startRecording = Effect.fn("PreviewManager.startRecording")(function* (tabId: string) {
-    const recordingTabId = yield* Ref.get(recordingTabIdRef);
-    if (Option.isSome(recordingTabId) && recordingTabId.value !== tabId) {
-      return yield* new PreviewRecordingAlreadyActiveError({
-        requestedTabId: tabId,
-        activeTabId: recordingTabId.value,
-      });
-    }
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "recording.start", startScreencast);
-    yield* Ref.set(recordingTabIdRef, Option.some(tabId));
+    yield* startFrameCapture(tabId, "recording");
   });
 
   const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (tabId: string) {
-    const recordingTabId = yield* Ref.get(recordingTabIdRef);
-    if (Option.isNone(recordingTabId) || recordingTabId.value !== tabId) return;
-    const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "recording.stop", (send) =>
-      send("Page.stopScreencast").pipe(Effect.asVoid),
-    );
-    yield* Ref.set(recordingTabIdRef, Option.none());
+    yield* stopFrameCapture(tabId, "recording");
   });
 
   const saveRecording = Effect.fn("PreviewManager.saveRecording")(function* (
@@ -2518,6 +2834,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     goForward,
     hardReload,
     navigate,
+    openPictureInPicture,
     openDevTools,
     pickElement,
     refresh,
@@ -2528,6 +2845,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setMainWindow,
     startRecording,
+    closePictureInPicture,
     stopRecording,
     subscribePointerEvents: (listener: PointerEventListener) =>
       subscribe(pointerEventListenersRef, listener),
@@ -2846,6 +3164,8 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
     readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly closePictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly startRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly stopRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly saveRecording: (
@@ -2896,7 +3216,10 @@ export class PreviewManager extends Context.Service<
 export const make = Effect.gen(function* PreviewManagerMake() {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const browserSession = yield* BrowserSession.BrowserSession;
-  const operations = yield* makeNativeOperations(environment.browserArtifactsDir);
+  const operations = yield* makeNativeOperations(
+    environment.browserArtifactsDir,
+    environment.path.join(environment.dirname, "preview-pip-preload.cjs"),
+  );
 
   return PreviewManager.of({
     setMainWindow: operations.setMainWindow,
@@ -2953,6 +3276,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     captureScreenshot: operations.captureScreenshot,
     revealArtifact: operations.revealArtifact,
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
+    openPictureInPicture: operations.openPictureInPicture,
+    closePictureInPicture: operations.closePictureInPicture,
     startRecording: operations.startRecording,
     stopRecording: operations.stopRecording,
     saveRecording: operations.saveRecording,

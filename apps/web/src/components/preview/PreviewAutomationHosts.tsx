@@ -29,12 +29,7 @@ import {
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
-import {
-  readActiveBrowserRecordingTabId,
-  startBrowserRecording,
-  stopBrowserRecording,
-} from "~/browser/browserRecording";
-import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
+import { startBrowserRecording, stopBrowserRecording } from "~/browser/browserRecording";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
@@ -507,12 +502,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             };
           }
           case "recordingStop": {
-            const recordingTabId = readActiveBrowserRecordingTabId();
-            const stopTabId = resolveBrowserRecordingStopTarget(
-              recordingTabId,
-              request.tabIdExplicit ? request.tabId : undefined,
-            );
-            const artifact = stopTabId ? await stopBrowserRecording(stopTabId) : null;
+            const artifact = tabId ? await stopBrowserRecording(tabId) : null;
             if (!artifact) {
               return raisePreviewAutomationHostError(
                 new PreviewAutomationRecordingNotActiveError({

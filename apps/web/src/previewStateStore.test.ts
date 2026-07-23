@@ -291,10 +291,12 @@ describe("previewStateStore (single-tab)", () => {
       snapshot,
     });
     applyPreviewDesktopState(ref, snapshot.tabId, {
+      hasWebContents: true,
       canGoBack: true,
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      pictureInPicture: false,
       controller: "none",
     });
     const state = readThreadPreviewState(ref);
@@ -308,10 +310,12 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, first);
     applyPreviewServerSnapshot(ref, second);
     applyPreviewDesktopState(ref, first.tabId, {
+      hasWebContents: true,
       canGoBack: true,
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      pictureInPicture: false,
       controller: "none",
     });
     setActivePreviewTab(ref, first.tabId);
@@ -353,10 +357,12 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, stale);
     applyPreviewServerSnapshot(ref, active);
     applyPreviewDesktopState(ref, stale.tabId, {
+      hasWebContents: true,
       canGoBack: false,
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      pictureInPicture: false,
       controller: "none",
     });
 

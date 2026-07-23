@@ -8,6 +8,11 @@ const mocks = vi.hoisted(() => ({
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
+  togglePictureInPicture: null as (() => void) | null,
+  pictureInPicturePressed: false,
+  openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  pictureInPicture: false,
   showEmptyState: false,
 }));
 
@@ -36,10 +41,12 @@ vi.mock("~/previewStateStore", () => ({
     activeTabId: "tab-1",
     desktopByTabId: {
       "tab-1": {
+        hasWebContents: true,
         canGoBack: false,
         canGoForward: false,
         loading: false,
         zoomFactor: 1,
+        pictureInPicture: mocks.pictureInPicture,
         controller: "none",
       },
     },
@@ -79,7 +86,7 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/browser/browserRecording", () => ({
   startBrowserRecording: vi.fn(),
   stopBrowserRecording: vi.fn(),
-  useActiveBrowserRecordingTabId: () => null,
+  useActiveBrowserRecordingTabIds: () => new Set(),
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({
@@ -94,12 +101,24 @@ vi.mock("~/components/ui/toast", () => ({
 }));
 
 vi.mock("./previewBridge", () => ({
-  previewBridge: { navigate: mocks.navigate },
+  previewBridge: {
+    navigate: mocks.navigate,
+    pictureInPicture: {
+      open: mocks.openPictureInPicture,
+      close: mocks.closePictureInPicture,
+    },
+  },
 }));
 
 vi.mock("./PreviewChromeRow", () => ({
-  PreviewChromeRow: (props: { onSubmit: (url: string) => void }) => {
+  PreviewChromeRow: (props: {
+    onSubmit: (url: string) => void;
+    onPictureInPicture?: () => void;
+    pictureInPicture?: boolean;
+  }) => {
     mocks.submittedUrl = props.onSubmit;
+    mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
+    mocks.pictureInPicturePressed = props.pictureInPicture ?? false;
     return null;
   },
 }));
@@ -127,6 +146,11 @@ describe("PreviewView navigation", () => {
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
     mocks.emptyStateUrl = null;
+    mocks.togglePictureInPicture = null;
+    mocks.pictureInPicturePressed = false;
+    mocks.openPictureInPicture.mockClear();
+    mocks.closePictureInPicture.mockClear();
+    mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
   });
 
@@ -190,5 +214,27 @@ describe("PreviewView navigation", () => {
       },
       "http://172.25.85.75:5173/app?mode=test#top",
     );
+  });
+
+  it("opens and closes picture-in-picture for the active preview tab", async () => {
+    const props = {
+      threadRef: {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      tabId: "tab-1",
+      visible: true,
+    } as const;
+
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.pictureInPicturePressed).toBe(false);
+    mocks.togglePictureInPicture?.();
+    await vi.waitFor(() => expect(mocks.openPictureInPicture).toHaveBeenCalledWith("tab-1"));
+
+    mocks.pictureInPicture = true;
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.pictureInPicturePressed).toBe(true);
+    mocks.togglePictureInPicture?.();
+    await vi.waitFor(() => expect(mocks.closePictureInPicture).toHaveBeenCalledWith("tab-1"));
   });
 });

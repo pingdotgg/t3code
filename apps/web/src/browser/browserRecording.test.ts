@@ -9,12 +9,14 @@ const { events, onFrame, registrySet, save, startScreencast, stopScreencast, sur
     return {
       events,
       onFrame: vi.fn(() => vi.fn()),
-      registrySet: vi.fn((_atom: unknown, value: string | null) => {
-        events.push(value === null ? "clear" : `publish:${value}`);
+      registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
+        events.push(
+          value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
+        );
       }),
-      save: vi.fn(async () => ({
+      save: vi.fn(async (tabId: string) => ({
         id: "recording-test",
-        tabId: "recording-tab",
+        tabId,
         path: "/tmp/recording-test.webm",
         mimeType: "video/webm" as const,
         sizeBytes: 0,
@@ -48,7 +50,6 @@ import {
   BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS,
   BrowserRecordingConflictError,
   BrowserRecordingOperationError,
-  BrowserRecordingRequiresVisibleTabError,
   startBrowserRecording,
   stopBrowserRecording,
 } from "./browserRecording";
@@ -116,7 +117,7 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab");
   });
 
-  it("rejects recording for a hidden tab before starting screencast", async () => {
+  it("records a hidden tab without requiring it to become visible", async () => {
     surfaceState.byTabId = {
       "recording-tab": {
         visible: false,
@@ -125,12 +126,38 @@ describe("browser recording", () => {
       },
     };
 
-    await expect(startBrowserRecording("recording-tab")).rejects.toBeInstanceOf(
-      BrowserRecordingRequiresVisibleTabError,
-    );
+    await startBrowserRecording("recording-tab");
 
-    expect(startScreencast).not.toHaveBeenCalled();
-    expect(registrySet).not.toHaveBeenCalled();
+    expect(startScreencast).toHaveBeenCalledWith("recording-tab");
+    expect(events).toEqual(["start-screencast", "publish:recording-tab"]);
+
+    await stopBrowserRecording("recording-tab");
+  });
+
+  it("records separate tabs concurrently", async () => {
+    surfaceState.byTabId = {
+      ...surfaceState.byTabId,
+      "recording-tab-2": {
+        visible: false,
+        rect: { x: 0, y: 0, width: 390, height: 844 },
+        content: { x: 0, y: 0, width: 390, height: 844, scale: 1, scrollLeft: 0, scrollTop: 0 },
+      },
+    };
+
+    await Promise.all([
+      startBrowserRecording("recording-tab"),
+      startBrowserRecording("recording-tab-2"),
+    ]);
+
+    expect(startScreencast).toHaveBeenCalledTimes(2);
+    expect(onFrame).toHaveBeenCalledOnce();
+    expect(events).toContain("publish:recording-tab,recording-tab-2");
+
+    await Promise.all([
+      stopBrowserRecording("recording-tab"),
+      stopBrowserRecording("recording-tab-2"),
+    ]);
+    expect(save).toHaveBeenCalledTimes(2);
   });
 
   it("does not report success for a second start while the first is still starting", async () => {

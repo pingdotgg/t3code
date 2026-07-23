@@ -46,17 +46,6 @@ export class BrowserRecordingCanvasUnavailableError extends Schema.TaggedErrorCl
   }
 }
 
-export class BrowserRecordingRequiresVisibleTabError extends Schema.TaggedErrorClass<BrowserRecordingRequiresVisibleTabError>()(
-  "BrowserRecordingRequiresVisibleTabError",
-  {
-    tabId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Browser recording requires tab ${this.tabId} to be visible.`;
-  }
-}
-
 export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<BrowserRecordingOperationError>()(
   "BrowserRecordingOperationError",
   {
@@ -102,23 +91,22 @@ interface ActiveRecording {
   lifecycle: BrowserRecordingLifecycle;
 }
 
-const activeBrowserRecordingTabIdAtom = Atom.make<string | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("preview:active-browser-recording-tab"),
-);
-
-export function useActiveBrowserRecordingTabId(): string | null {
-  return useAtomValue(activeBrowserRecordingTabIdAtom);
+interface ActiveBrowserRecordingIndex {
+  readonly tabIds: ReadonlySet<string>;
 }
 
-let active: ActiveRecording | null = null;
+const activeBrowserRecordingTabIdsAtom = Atom.make<ActiveBrowserRecordingIndex>({
+  tabIds: new Set<string>(),
+}).pipe(Atom.keepAlive, Atom.withLabel("preview:active-browser-recording-tabs"));
+
+export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
+  return useAtomValue(activeBrowserRecordingTabIdsAtom).tabIds;
+}
+
+const activeRecordings = new Map<string, ActiveRecording>();
 let unsubscribeFrames: (() => void) | null = null;
 
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
-
-export function readActiveBrowserRecordingTabId(): string | null {
-  return active?.tabId ?? null;
-}
 
 const preferredMimeType = (): string => {
   const candidates = ["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9", "video/webm"];
@@ -126,13 +114,13 @@ const preferredMimeType = (): string => {
 };
 
 const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
-  const recording = active;
-  if (!recording || recording.tabId !== frame.tabId) return;
+  const recording = activeRecordings.get(frame.tabId);
+  if (!recording) return;
   const image = new Image();
   image.addEventListener(
     "load",
     () => {
-      if (active !== recording) return;
+      if (activeRecordings.get(frame.tabId) !== recording) return;
       recording.context.drawImage(image, 0, 0, recording.canvas.width, recording.canvas.height);
     },
     { once: true },
@@ -150,11 +138,15 @@ const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
 };
 
 const clearActiveRecording = (recording: ActiveRecording): void => {
-  if (active !== recording) return;
-  active = null;
-  unsubscribeFrames?.();
-  unsubscribeFrames = null;
-  appAtomRegistry.set(activeBrowserRecordingTabIdAtom, null);
+  if (activeRecordings.get(recording.tabId) !== recording) return;
+  activeRecordings.delete(recording.tabId);
+  if (activeRecordings.size === 0) {
+    unsubscribeFrames?.();
+    unsubscribeFrames = null;
+  }
+  appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
+    tabIds: new Set(activeRecordings.keys()),
+  });
 };
 
 const recordingStartupCancelledError = (
@@ -168,7 +160,7 @@ const recordingStartupCancelledError = (
   });
 
 const isRecordingStarting = (recording: ActiveRecording): boolean =>
-  active === recording && recording.lifecycle.phase === "starting";
+  activeRecordings.get(recording.tabId) === recording && recording.lifecycle.phase === "starting";
 
 const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Promise<void> => {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -198,17 +190,17 @@ const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperatio
 export async function startBrowserRecording(tabId: string): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
-  if (active) {
-    if (active.tabId === tabId && active.lifecycle.phase === "recording") {
-      return active.startedAt;
+  const activeRecording = activeRecordings.get(tabId);
+  if (activeRecording) {
+    if (activeRecording.lifecycle.phase === "recording") {
+      return activeRecording.startedAt;
     }
     throw new BrowserRecordingConflictError({
       requestedTabId: tabId,
-      activeTabId: active.tabId,
+      activeTabId: activeRecording.tabId,
     });
   }
   const surface = useBrowserSurfaceStore.getState().byTabId[tabId];
-  if (!surface?.visible) throw new BrowserRecordingRequiresVisibleTabError({ tabId });
   const recordingSize = surface?.content ?? surface?.rect;
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, recordingSize?.width ?? 1280);
@@ -256,7 +248,7 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
     startupSettled,
     lifecycle: { phase: "starting" },
   };
-  active = recording;
+  activeRecordings.set(tabId, recording);
   try {
     try {
       unsubscribeFrames ??= bridge.recording.onFrame(drawFrame);
@@ -324,7 +316,9 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
       throw recordingStartupCancelledError(recording);
     }
     recording.lifecycle = { phase: "recording" };
-    appAtomRegistry.set(activeBrowserRecordingTabIdAtom, tabId);
+    appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
+      tabIds: new Set(activeRecordings.keys()),
+    });
     return startedAt;
   } finally {
     settleStartup?.();
@@ -434,14 +428,14 @@ export function stopBrowserRecording(
   tabId: string,
 ): Promise<DesktopPreviewRecordingArtifact | null> {
   const bridge = previewBridge;
-  const recording = active;
-  if (!bridge || !recording || recording.tabId !== tabId) return Promise.resolve(null);
+  const recording = activeRecordings.get(tabId);
+  if (!bridge || !recording) return Promise.resolve(null);
   if (recording.lifecycle.phase === "stopping") return recording.lifecycle.stopPromise;
 
   const stopPromise = Promise.resolve()
     .then(() => finalizeBrowserRecording(bridge, recording))
     .catch((error) => {
-      if (isStartupWaitTimeout(error) && active === recording) {
+      if (isStartupWaitTimeout(error) && activeRecordings.get(recording.tabId) === recording) {
         const cleanupAfterStartup = recording.startupSettled.then(() =>
           discardBrowserRecording(bridge, recording),
         );

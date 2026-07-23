@@ -176,7 +176,8 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
-    description: "Stop the active browser recording and save it as a local evidence artifact.",
+    description:
+      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and save it as a local evidence artifact.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,
