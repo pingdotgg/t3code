@@ -67,6 +67,7 @@ const runtimeMock = {
     messageCalls: [] as Array<{ sessionID: string; limit?: number; before?: string }>,
     messageReadHangs: false,
     messageReadAbortCount: 0,
+    overlapMessagePages: false,
     promptCalls: [] as Array<unknown>,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
@@ -90,6 +91,7 @@ const runtimeMock = {
     this.state.messageCalls.length = 0;
     this.state.messageReadHangs = false;
     this.state.messageReadAbortCount = 0;
+    this.state.overlapMessagePages = false;
     this.state.promptCalls.length = 0;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
@@ -212,9 +214,24 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             : runtimeMock.state.messages.length;
           const resolvedEndIndex = endIndex < 0 ? runtimeMock.state.messages.length : endIndex;
           const startIndex =
-            input.limit === undefined ? 0 : Math.max(0, resolvedEndIndex - input.limit);
+            input.limit === undefined
+              ? 0
+              : Math.max(
+                  0,
+                  resolvedEndIndex -
+                    (runtimeMock.state.overlapMessagePages && input.before
+                      ? input.limit - 1
+                      : input.limit),
+                );
+          const page = runtimeMock.state.messages.slice(startIndex, resolvedEndIndex);
+          if (runtimeMock.state.overlapMessagePages && input.before) {
+            const overlappingBoundary = runtimeMock.state.messages[resolvedEndIndex];
+            if (overlappingBoundary) {
+              page.push(overlappingBoundary);
+            }
+          }
           return {
-            data: runtimeMock.state.messages.slice(startIndex, resolvedEndIndex),
+            data: page,
           };
         },
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
@@ -1039,6 +1056,54 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           sessionID: "http://127.0.0.1:9999/session",
           limit: 100,
           before: "user-6",
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.revertCalls, [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          messageID: "assistant-5",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("continues rollback pagination when a full page overlaps the previous page", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-rollback-overlap");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      runtimeMock.state.overlapMessagePages = true;
+      runtimeMock.state.messages = Array.from({ length: 105 }, (_, index) => [
+        {
+          info: { id: `user-${index + 1}`, role: "user" as const },
+          parts: [],
+        },
+        {
+          info: { id: `assistant-${index + 1}`, role: "assistant" as const },
+          parts: [],
+        },
+      ]).flat();
+
+      yield* adapter.rollbackThread(threadId, 100);
+
+      NodeAssert.deepEqual(runtimeMock.state.messageCalls.slice(0, 3), [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+        },
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+          before: "user-56",
+        },
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+          before: "assistant-6",
         },
       ]);
       NodeAssert.deepEqual(runtimeMock.state.revertCalls, [

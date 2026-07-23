@@ -432,7 +432,8 @@ const readOpenCodeMessagesForRollback = Effect.fn("readOpenCodeMessagesForRollba
 
   while (true) {
     const page = yield* readOpenCodeMessagePage(context, before);
-    const pageMessages = (page.data ?? []).filter((entry) => {
+    const rawPageMessages = page.data ?? [];
+    const pageMessages = rawPageMessages.filter((entry) => {
       if (seenMessageIds.has(entry.info.id)) {
         return false;
       }
@@ -442,11 +443,11 @@ const readOpenCodeMessagesForRollback = Effect.fn("readOpenCodeMessagesForRollba
     messages.unshift(...pageMessages);
 
     const assistantCount = messages.filter((entry) => entry.info.role === "assistant").length;
-    if (assistantCount > numTurns || pageMessages.length < OPENCODE_THREAD_MESSAGE_PAGE_SIZE) {
+    if (assistantCount > numTurns || rawPageMessages.length < OPENCODE_THREAD_MESSAGE_PAGE_SIZE) {
       return messages;
     }
 
-    const nextBefore = pageMessages[0]?.info.id;
+    const nextBefore = rawPageMessages[0]?.info.id;
     if (!nextBefore || nextBefore === before) {
       return messages;
     }
