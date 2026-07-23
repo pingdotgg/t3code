@@ -60,6 +60,7 @@ import {
 } from "./ui/combobox";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { refreshVcsRefsOnMenuOpen } from "./vcsRefMenuRefresh";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
@@ -500,9 +501,8 @@ export function BranchToolbarBranchSelector({
       setIsBranchMenuOpen(open);
       if (!open) {
         setBranchQuery("");
-        return;
       }
-      branchRefState.refresh();
+      refreshVcsRefsOnMenuOpen(open, branchRefState.refresh);
     },
     [branchRefState.refresh],
   );
