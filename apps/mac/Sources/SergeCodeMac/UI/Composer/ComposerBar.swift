@@ -34,6 +34,8 @@ public struct ComposerBar: View {
 
     @UIState private var attachmentEncodeTask: Task<Void, Never>?
     @UIState private var defersSuggestionWork = false
+    /// Local Cmd+V monitor token while the composer text field is focused.
+    @UIState private var pasteMonitor: Any?
 
     /// When set, the next send rewinds the origin thread to just before this
     /// message. Cleared on send, draft clear, or thread switch because edit
@@ -391,6 +393,22 @@ public struct ComposerBar: View {
         }
         .onPasteCommand(of: [.image], perform: handlePasteProviders)
         .onDrop(of: [.image], isTargeted: nil, perform: handleDropProviders)
+        // TextEditor's NSTextView owns Cmd+V and swallows image-only pastes
+        // before `.onPasteCommand` runs. Intercept while the composer editor
+        // is focused so screenshots and image files still attach.
+        .onChange(of: editorFocused) { _, focused in
+            if focused {
+                installPasteMonitor()
+            } else {
+                removePasteMonitor()
+            }
+        }
+        .onAppear {
+            if editorFocused { installPasteMonitor() }
+        }
+        .onDisappear {
+            removePasteMonitor()
+        }
         .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
             Button("Download") { model.dictation.downloadModel() }
             Button("Cancel", role: .cancel) {}
@@ -671,6 +689,9 @@ public struct ComposerBar: View {
         editedMessageThreadID = nil
         suggestionMenuDismissed = false
         highlightedSuggestionIndex = 0
+        // Keep paste monitor while the editor stays focused across thread
+        // switches; only drop it when focus leaves (onChange) or the view
+        // disappears.
     }
 
     /// Escape: hide whichever suggestion menu is open. Mentions have real
@@ -927,6 +948,45 @@ public struct ComposerBar: View {
         attachFromProviders(imageProviders, to: threadID)
         return true
     }
+
+    /// Cmd+V while the draft editor is focused: claim image pasteboards so
+    /// they become attachments instead of no-ops (or accidental text pastes).
+    /// Captures only the class-bound `AppModel` — View struct state is not
+    /// shared with the escaping monitor closure.
+    private func installPasteMonitor() {
+        removePasteMonitor()
+        let model = self.model
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            guard flags == .command,
+                event.charactersIgnoringModifiers?.lowercased() == "v"
+            else { return event }
+            let images = Pasteboard.imagePayloads()
+            guard !images.isEmpty else { return event }
+            guard let threadID = model.selectedThreadID else { return event }
+            let existingCount = model.composerDraft(for: threadID).attachments.count
+            guard existingCount < ComposerBar.maxAttachments else { return event }
+            Task { @MainActor in
+                let (encoded, _) = await ComposerBar.encodeFromData(
+                    images, existingCount: existingCount)
+                guard !encoded.isEmpty else { return }
+                let current = model.composerDraft(for: threadID).attachments
+                // Re-check cap against any concurrent attach (paperclip/drop).
+                let room = max(0, ComposerBar.maxAttachments - current.count)
+                guard room > 0 else { return }
+                model.setComposerDraftAttachments(
+                    current + Array(encoded.prefix(room)), for: threadID)
+            }
+            return nil
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let pasteMonitor {
+            NSEvent.removeMonitor(pasteMonitor)
+            self.pasteMonitor = nil
+        }
+    }
 }
 
 // MARK: - Pieces
@@ -1130,21 +1190,21 @@ private struct QueuedMessageRow: View {
     }
 }
 
-/// Horizontal strip of staged attachments with remove buttons.
+/// Horizontal strip of staged attachments with remove buttons and thumbnails.
 private struct AttachmentChipsRow: View {
     let attachments: [OutgoingAttachment]
     let onRemove: (String) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
-                    HStack(spacing: 4) {
-                        Image(systemName: "photo")
-                            .font(.caption)
+                    HStack(spacing: 6) {
+                        AttachmentChipThumbnail(dataURL: attachment.dataURL)
                         Text(attachment.name)
                             .font(.caption)
                             .lineLimit(1)
+                            .frame(maxWidth: 120)
                         Button {
                             onRemove(attachment.id)
                         } label: {
@@ -1156,7 +1216,8 @@ private struct AttachmentChipsRow: View {
                         .help("Remove attachment")
                         .accessibilityLabel("Remove \(attachment.name)")
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.leading, 4)
+                    .padding(.trailing, 8)
                     .padding(.vertical, 4)
                     .background(.quaternary.opacity(0.5), in: Capsule())
                     .transition(Motion.materialize)
@@ -1164,5 +1225,33 @@ private struct AttachmentChipsRow: View {
             }
             .padding(.horizontal, 4)
         }
+    }
+}
+
+private struct AttachmentChipThumbnail: View {
+    let dataURL: String
+
+    var body: some View {
+        Group {
+            if let image = Self.image(from: dataURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: "photo")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 28, height: 28)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private static func image(from dataURL: String) -> NSImage? {
+        guard let marker = dataURL.range(of: "base64,") else { return nil }
+        guard let data = Data(base64Encoded: String(dataURL[marker.upperBound...])) else {
+            return nil
+        }
+        return NSImage(data: data)
     }
 }

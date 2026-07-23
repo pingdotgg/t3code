@@ -41,7 +41,7 @@ public enum WireDate {
 /// merged from `OrchestrationThread.messages` + `.activities` +
 /// `.proposedPlans` + `.checkpoints` (each a separate append-only wire list).
 public enum T3TimelineEntry: Sendable {
-    case userMessage(id: String, text: String, at: Date)
+    case userMessage(id: String, text: String, attachments: [ChatAttachment], at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
     /// `OrchestrationThreadActivity` with a tone other than `.approval`
     /// (`.info`/`.tool`/`.error`) — tool events and inline notices.
@@ -58,7 +58,7 @@ public enum T3TimelineEntry: Sendable {
 
     public var sortDate: Date {
         switch self {
-        case .userMessage(_, _, let at),
+        case .userMessage(_, _, _, let at),
             .assistantMessage(_, _, _, let at),
             .activity(_, let at),
             .approvalActivity(_, _, let at),
@@ -83,7 +83,10 @@ public enum OrchestrationMapping {
             guard let at = WireDate.parse(message.createdAt) else { continue }
             switch message.role {
             case .user:
-                entries.append(.userMessage(id: message.id, text: message.text, at: at))
+                entries.append(
+                    .userMessage(
+                        id: message.id, text: message.text,
+                        attachments: message.attachments ?? [], at: at))
             case .assistant:
                 entries.append(
                     .assistantMessage(id: message.id, markdown: message.text, isStreaming: message.streaming, at: at))

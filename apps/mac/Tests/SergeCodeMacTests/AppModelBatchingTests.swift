@@ -44,7 +44,7 @@ struct AppModelBatchingTests {
         model.enqueue(
             .timelineAppended(
                 threadID: "t1",
-                item: .userMessage(id: "u1", text: "hi", at: Date(timeIntervalSince1970: 1))))
+                item: .userMessage(id: "u1", text: "hi", attachments: [], at: Date(timeIntervalSince1970: 1))))
         model.enqueue(delta("t1", "m1", "partial"))
         model.enqueue(.assistantCompleted(threadID: "t1", messageID: "m1", markdown: "final text"))
         model.flushPendingEvents()
@@ -144,7 +144,7 @@ struct AppModelBatchingTests {
             .timelineReset(
                 threadID: "t1",
                 items: [
-                    .userMessage(id: "u1", text: "hi", at: Date(timeIntervalSince1970: 1)),
+                    .userMessage(id: "u1", text: "hi", attachments: [], at: Date(timeIntervalSince1970: 1)),
                     .assistantMessage(
                         id: "m1", markdown: "first", isStreaming: true,
                         at: Date(timeIntervalSince1970: 2)),

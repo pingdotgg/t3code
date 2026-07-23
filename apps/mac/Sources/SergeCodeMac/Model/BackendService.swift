@@ -87,6 +87,9 @@ public protocol BackendService: Sendable {
     func unsettleThread(id: String) async throws
     func deleteThread(id: String) async throws
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
+    /// Short-lived HTTP URL for a persisted chat attachment image
+    /// (`assets.createUrl` with `{ _tag: "attachment", attachmentId }`).
+    func attachmentImageURL(id: String) async throws -> URL
     func cancelTurn(threadID: String) async throws
     /// Stop a single Claude subagent/background task (thread.task.stop).
     func stopTask(threadID: String, taskId: String) async throws

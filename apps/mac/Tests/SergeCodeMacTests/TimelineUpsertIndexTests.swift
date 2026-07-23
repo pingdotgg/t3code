@@ -20,7 +20,7 @@ struct TimelineUpsertIndexTests {
 
     private func signature(_ item: TimelineItem) -> ItemSignature {
         switch item {
-        case .userMessage(let id, let text, let at):
+        case .userMessage(let id, let text, _, let at):
             .user(id: id, text: text, at: at.timeIntervalSince1970)
         case .reasoning(let id, let text, let at):
             .reasoning(id: id, text: text, at: at.timeIntervalSince1970)
@@ -49,7 +49,7 @@ struct TimelineUpsertIndexTests {
     @Test("indexed and non-indexed upserts stay behaviorally identical")
     func differentialScript() {
         let script: [TimelineItem] = [
-            .userMessage(id: "user-1", text: "first", at: date(1)),
+            .userMessage(id: "user-1", text: "first", attachments: [], at: date(1)),
             .toolEvent(
                 id: "tool:1", name: "Bash", detail: "pwd", kind: .command, status: .running,
                 at: date(2), output: nil, outputIsError: false),
@@ -70,7 +70,7 @@ struct TimelineUpsertIndexTests {
             .toolEvent(
                 id: "completion:2", name: "Bash", detail: "git status", kind: .command,
                 status: .succeeded, at: date(8), output: "clean", outputIsError: false),
-            .userMessage(id: "user-2", text: "second", at: date(9)),
+            .userMessage(id: "user-2", text: "second", attachments: [], at: date(9)),
             .toolEvent(
                 id: "tool:3", name: "Bash", detail: "git log", kind: .command, status: .running,
                 at: date(10), output: nil, outputIsError: false),
@@ -100,7 +100,7 @@ struct TimelineUpsertIndexTests {
 
     @Test("a stale index slot self-repairs before replacing an id hit")
     func staleIndexRepairs() {
-        let user = TimelineItem.userMessage(id: "user-1", text: "first", at: date(1))
+        let user = TimelineItem.userMessage(id: "user-1", text: "first", attachments: [], at: date(1))
         let running = TimelineItem.toolEvent(
             id: "tool:1", name: "Bash", detail: "pwd", kind: .command, status: .running,
             at: date(2), output: nil, outputIsError: false)

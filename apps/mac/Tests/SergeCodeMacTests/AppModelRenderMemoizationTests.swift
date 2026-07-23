@@ -63,7 +63,7 @@ struct AppModelRenderMemoizationTests {
 
         model.enqueue(
             .timelineAppended(
-                threadID: "t1", item: .userMessage(id: "u1", text: "hello", at: date)))
+                threadID: "t1", item: .userMessage(id: "u1", text: "hello", attachments: [], at: date)))
         model.flushPendingEvents()
         #expect(model.timelineVersion(threadID: "t1") == 1)
         #expect(model.timelineStructureVersion(threadID: "t1") == 1)

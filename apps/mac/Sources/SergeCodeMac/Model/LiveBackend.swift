@@ -1074,7 +1074,7 @@ public actor LiveBackend: BackendService {
             var retainedCheckpointRefs: Set<String> = []
             for item in retained {
                 switch item {
-                case .userMessage(let id, _, _), .assistantMessage(let id, _, _, _):
+                case .userMessage(let id, _, _, _), .assistantMessage(let id, _, _, _):
                     retainedMessageIDs.insert(id)
                 case .toolEvent(let id, _, _, _, _, _, _, _),
                     .reasoning(let id, _, _),
@@ -1295,6 +1295,12 @@ public actor LiveBackend: BackendService {
         }
     }
 
+    private static func mapAttachment(_ attachment: ChatAttachment) -> MessageAttachment {
+        MessageAttachment(
+            id: attachment.id, name: attachment.name, mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes)
+    }
+
     private func applyMessageSent(threadID: String, payload: ThreadMessageSentPayload) {
         let at = WireDate.parse(payload.createdAt) ?? Date()
         let messageID = payload.messageId
@@ -1304,11 +1310,13 @@ public actor LiveBackend: BackendService {
         case .user:
             guard !alreadySeen else { return }
             seenMessageIDs[threadID, default: []].insert(messageID)
+            let attachments = (payload.attachments ?? []).map(Self.mapAttachment)
             emitOrdered(
                 threadID: threadID,
                 event: .timelineAppended(
                     threadID: threadID,
-                    item: .userMessage(id: messageID, text: payload.text, at: at)))
+                    item: .userMessage(
+                        id: messageID, text: payload.text, attachments: attachments, at: at)))
 
         case .assistant:
             // Wire semantics (projector.ts "thread.message-sent"): while
@@ -1620,6 +1628,18 @@ public actor LiveBackend: BackendService {
         // latestTurn/worktreePath can lag, and a quick second send must not
         // bootstrap a second worktree in the meantime.
         threadEnvByThread[threadID]?.hasTurns = true
+    }
+
+    public func attachmentImageURL(id: String) async throws -> URL {
+        guard let client = currentClient, let auth = authClient else {
+            throw LiveBackendError.notConnected
+        }
+        let result = try await client.createAttachmentAssetURL(attachmentId: id)
+        let base = await auth.httpBaseURL
+        guard let url = resolveAssetURL(httpBaseURL: base, relativeUrl: result.relativeUrl) else {
+            throw LiveBackendError.invalidAssetURL
+        }
+        return url
     }
 
     /// Whether (and from which base branch) a new thread in this project
@@ -2711,8 +2731,9 @@ public actor LiveBackend: BackendService {
         pendingApprovalIDs: Set<String> = []
     ) -> TimelineItem? {
         switch entry {
-        case let .userMessage(id, text, at):
-            return .userMessage(id: id, text: text, at: at)
+        case let .userMessage(id, text, attachments, at):
+            return .userMessage(
+                id: id, text: text, attachments: attachments.map(Self.mapAttachment), at: at)
         case let .assistantMessage(id, markdown, isStreaming, at):
             return .assistantMessage(id: id, markdown: markdown, isStreaming: isStreaming, at: at)
         case let .activity(activity, at):
@@ -3154,6 +3175,9 @@ public enum LiveBackendError: Error, Sendable {
     case noLanAddress
     /// Mobile pairing is not available while this backend is a remote client.
     case remoteModeUnsupported
+    /// `assets.createUrl` returned a relative URL that could not be joined
+    /// to the server HTTP base.
+    case invalidAssetURL
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])

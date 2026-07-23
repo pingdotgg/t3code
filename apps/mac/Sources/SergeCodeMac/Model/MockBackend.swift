@@ -10,12 +10,14 @@ private enum MockBackendError: Error, LocalizedError {
     case emptyLocation
     case threadNotFound(String)
     case taskNotFound(threadID: String, taskId: String)
+    case unknownAttachment(String)
     var errorDescription: String? {
         switch self {
         case .emptyLocation: "Location must not be empty."
         case .threadNotFound(let id): "Thread not found: \(id)."
         case .taskNotFound(let threadID, let taskId):
             "Task '\(taskId)' not found on thread \(threadID)."
+        case .unknownAttachment(let id): "Attachment not found: \(id)."
         }
     }
 }
@@ -276,6 +278,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.sendMessage(threadID: threadID, text: text, attachments: attachments)
     }
 
+    public func attachmentImageURL(id: String) async throws -> URL {
+        try await state.attachmentImageURL(id: id)
+    }
+
     public func searchWorkspace(threadID: String, query: String) async throws -> [WorkspaceEntry] {
         await state.searchWorkspace(query: query)
     }
@@ -384,6 +390,8 @@ private actor MockState {
     private var projectsByID: [String: Project] = [:]
     private var threadsByID: [String: ChatThread] = [:]
     private var timelinesByThread: [String: [TimelineItem]] = [:]
+    /// data: URLs for attachments sent through the mock, keyed by attachment id.
+    private var mockAttachmentDataURLs: [String: String] = [:]
     private var diffsByThread: [String: [DiffFile]] = [:]
     /// Scoped turn-range diffs keyed by `"threadID:from:to"`.
     private var scopedDiffs: [String: [DiffFile]] = [:]
@@ -679,11 +687,17 @@ private actor MockState {
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment] = []) async {
         guard var thread = threadsByID[threadID] else { return }
 
-        let attachmentSuffix =
-            attachments.isEmpty
-            ? "" : "\n\n(\(attachments.count) attachment\(attachments.count == 1 ? "" : "s"))"
+        let mappedAttachments = attachments.map { attachment in
+            MessageAttachment(
+                id: attachment.id, name: attachment.name, mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes)
+        }
+        // Keep data URLs for mock image loads so UI can render without assets RPC.
+        for attachment in attachments {
+            mockAttachmentDataURLs[attachment.id] = attachment.dataURL
+        }
         let userItem = TimelineItem.userMessage(
-            id: nextID("msg"), text: text + attachmentSuffix, at: Date())
+            id: nextID("msg"), text: text, attachments: mappedAttachments, at: Date())
         timelinesByThread[threadID, default: []].append(userItem)
         emit(.timelineAppended(threadID: threadID, item: userItem))
 
@@ -715,6 +729,15 @@ private actor MockState {
         }
         streamingTasks[key] = task
         await task.value
+    }
+
+    func attachmentImageURL(id: String) async throws -> URL {
+        guard let dataURL = mockAttachmentDataURLs[id],
+            let url = URL(string: dataURL)
+        else {
+            throw MockBackendError.unknownAttachment(id)
+        }
+        return url
     }
 
     private func streamMessage(
@@ -1531,7 +1554,7 @@ private actor MockState {
         [
             // Keep one early fixture item on yesterday's calendar day so the
             // UI probe visibly exercises the transcript day separator.
-            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-26 * 3600)),
+            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", attachments: [], at: now.addingTimeInterval(-26 * 3600)),
             .assistantMessage(
                 id: "t1-a1",
                 markdown: """
@@ -1609,7 +1632,7 @@ private actor MockState {
                 Checkpoint(
                     id: "ckpt-1a", threadID: "thread-1", label: "Before scroll refactor",
                     createdAt: now.addingTimeInterval(-600), turnCount: 1)),
-            .userMessage(id: "t1-u2", text: "Nice, that feels a lot smoother now.", at: now.addingTimeInterval(-90)),
+            .userMessage(id: "t1-u2", text: "Nice, that feels a lot smoother now.", attachments: [], at: now.addingTimeInterval(-90)),
             .plan(ProposedPlan(
                 id: "t1-plan1",
                 threadID: "thread-1",
@@ -1641,8 +1664,7 @@ private actor MockState {
             // Read-only verify turn: tools only, no file edits → empty checkpoint files + "Ran N tools".
             .userMessage(
                 id: "t1-u3",
-                text: "Can you double-check the fix without editing anything?",
-                at: now.addingTimeInterval(-20)),
+                text: "Can you double-check the fix without editing anything?", attachments: [], at: now.addingTimeInterval(-20)),
             .toolEvent(
                 id: "t1-tool10", name: "read_file",
                 detail: "Sources/SergeCodeMac/Views/SidebarView.swift", kind: .fileRead,
@@ -1675,7 +1697,7 @@ private actor MockState {
 
     private static func timelineForApprovalThread(at now: Date) -> [TimelineItem] {
         [
-            .userMessage(id: "t2-u1", text: "Build out MockBackend so we can develop the UI without the Node sidecar.", at: now.addingTimeInterval(-950)),
+            .userMessage(id: "t2-u1", text: "Build out MockBackend so we can develop the UI without the Node sidecar.", attachments: [], at: now.addingTimeInterval(-950)),
             .assistantMessage(
                 id: "t2-a1",
                 markdown: """
@@ -1709,7 +1731,7 @@ private actor MockState {
 
     private static func timelineForPricingThread(at now: Date) -> [TimelineItem] {
         [
-            .userMessage(id: "t3-u1", text: "Rewrite the pricing page copy to sound less salesy.", at: now.addingTimeInterval(-4_200)),
+            .userMessage(id: "t3-u1", text: "Rewrite the pricing page copy to sound less salesy.", attachments: [], at: now.addingTimeInterval(-4_200)),
             .assistantMessage(
                 id: "t3-a1",
                 markdown: """
@@ -1733,7 +1755,7 @@ private actor MockState {
 
     private static func timelineForErrorThread(at now: Date) -> [TimelineItem] {
         [
-            .userMessage(id: "t4-u1", text: "The build is failing on CI, can you take a look?", at: now.addingTimeInterval(-7_500)),
+            .userMessage(id: "t4-u1", text: "The build is failing on CI, can you take a look?", attachments: [], at: now.addingTimeInterval(-7_500)),
             .toolEvent(
                 id: "t4-tool1", name: "run_command", detail: "npm run build", kind: .command,
                 status: .failed, at: now.addingTimeInterval(-7_400),

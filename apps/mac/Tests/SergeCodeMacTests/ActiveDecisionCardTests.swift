@@ -27,7 +27,7 @@ struct ActiveDecisionCardTests {
     @Test("no actionable card")
     func noneWhenTimelineHasNoCards() {
         let items: [TimelineItem] = [
-            .userMessage(id: "user-1", text: "hi", at: date),
+            .userMessage(id: "user-1", text: "hi", attachments: [], at: date),
             .assistantMessage(id: "assistant-1", markdown: "hey", isStreaming: false, at: date),
         ]
         #expect(items.activeDecisionCardID == nil)

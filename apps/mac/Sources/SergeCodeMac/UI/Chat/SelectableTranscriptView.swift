@@ -308,11 +308,20 @@ enum TranscriptTextBuilder {
         leadingBreak: Bool
     ) -> Bool {
         switch item {
-        case .userMessage(_, let text, _):
+        case .userMessage(_, let text, let attachments, _):
             if leadingBreak { appendBlankLine(to: result) }
             appendHeader("You", to: result)
-            appendPlain(text, font: bodyFont, color: .labelColor, to: result)
-            return true
+            if !text.isEmpty {
+                appendPlain(text, font: bodyFont, color: .labelColor, to: result)
+            }
+            if !attachments.isEmpty {
+                if !text.isEmpty { appendBlankLine(to: result) }
+                let names = attachments.map(\.name).joined(separator: ", ")
+                appendPlain(
+                    "[\(attachments.count == 1 ? "Image" : "Images"): \(names)]",
+                    font: bodyFont, color: .secondaryLabelColor, to: result)
+            }
+            return !text.isEmpty || !attachments.isEmpty
 
         case .assistantMessage(_, let markdown, _, _):
             if leadingBreak { appendBlankLine(to: result) }

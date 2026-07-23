@@ -25,7 +25,7 @@ struct AppModelTimelineLoadTests {
             .timelineAppended(
                 threadID: threadID,
                 item: .userMessage(
-                    id: "early-append", text: "streamed only", at: Date())))
+                    id: "early-append", text: "streamed only", attachments: [], at: Date())))
         model.flushPendingEvents()
 
         #expect(model.threadState(threadID)?.hasLoadedTimeline == false)
@@ -46,7 +46,7 @@ struct AppModelTimelineLoadTests {
             .timelineReset(
                 threadID: "t1",
                 items: [
-                    .userMessage(id: "u1", text: "hi", at: Date()),
+                    .userMessage(id: "u1", text: "hi", attachments: [], at: Date()),
                     .assistantMessage(
                         id: "a1", markdown: "yo", isStreaming: false, at: Date()),
                 ]))
@@ -61,7 +61,7 @@ struct AppModelTimelineLoadTests {
         let backend = BlockingTimelineBackend()
         let model = AppModel(backend: backend)
         let items = [
-            TimelineItem.userMessage(id: "cold-user", text: "hello", at: Date())
+            TimelineItem.userMessage(id: "cold-user", text: "hello", attachments: [], at: Date())
         ]
 
         let task = Task { await model.loadTimelineIfNeeded(threadID: "cold") }
@@ -106,7 +106,7 @@ struct AppModelTimelineLoadTests {
         model.enqueue(
             .timelineReset(
                 threadID: "warm",
-                items: [.userMessage(id: "warm-user", text: "already here", at: Date())]))
+                items: [.userMessage(id: "warm-user", text: "already here", attachments: [], at: Date())]))
         model.flushPendingEvents()
 
         await model.loadTimelineIfNeeded(threadID: "warm")
@@ -198,6 +198,9 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
     func deleteThread(id: String) async throws {}
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {}
+    func attachmentImageURL(id: String) async throws -> URL {
+        throw CancellationError()
+    }
     func cancelTurn(threadID: String) async throws {}
     func stopTask(threadID: String, taskId: String) async throws {}
     func respondToApproval(id: String, approve: Bool) async throws {}

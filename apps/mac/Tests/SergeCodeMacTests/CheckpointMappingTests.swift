@@ -110,7 +110,7 @@ struct CheckpointMappingTests {
     private func user(
         _ id: String, at: Date = Date(timeIntervalSince1970: 0)
     ) -> TimelineItem {
-        .userMessage(id: id, text: "go", at: at)
+        .userMessage(id: id, text: "go", attachments: [], at: at)
     }
 
     private func checkpoint(

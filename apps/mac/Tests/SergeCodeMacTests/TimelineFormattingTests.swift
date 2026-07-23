@@ -55,7 +55,7 @@ struct TimelineSeparatorFormattingTests {
         let firstAt = testDate(2026, 7, 10, 8, 0, calendar: calendar)
         let secondAt = testDate(2026, 7, 10, 9, 30, calendar: calendar)
         let items: [TimelineItem] = [
-            .userMessage(id: "first", text: "Earlier", at: firstAt),
+            .userMessage(id: "first", text: "Earlier", attachments: [], at: firstAt),
             .assistantMessage(
                 id: "second", markdown: "Later", isStreaming: false, at: secondAt),
         ]
@@ -77,7 +77,7 @@ struct TimelineSeparatorFormattingTests {
         let now = testDate(2026, 7, 10, 12, calendar: calendar)
         let items: [TimelineItem] = [
             .userMessage(
-                id: "yesterday", text: "Yesterday", at: testDate(
+                id: "yesterday", text: "Yesterday", attachments: [], at: testDate(
                     2026, 7, 9, 23, 30, calendar: calendar)),
             .assistantMessage(
                 id: "today", markdown: "Today", isStreaming: false, at: testDate(
@@ -101,7 +101,7 @@ struct TimelineSeparatorFormattingTests {
         let now = testDate(2026, 7, 10, 12, calendar: calendar)
         let items: [TimelineItem] = [
             .userMessage(
-                id: "first", text: "First", at: testDate(
+                id: "first", text: "First", attachments: [], at: testDate(
                     2026, 7, 10, 10, calendar: calendar)),
             .assistantMessage(
                 id: "regressed", markdown: "Older", isStreaming: false, at: testDate(
@@ -121,7 +121,7 @@ struct TimelineSeparatorFormattingTests {
     func timelineTimeAccessors() {
         let calendar = testCalendar()
         let at = testDate(2026, 7, 10, 9, calendar: calendar)
-        let item = TimelineItem.userMessage(id: "message", text: "Hello", at: at)
+        let item = TimelineItem.userMessage(id: "message", text: "Hello", attachments: [], at: at)
         let display = TimelineDisplayItem.single(item)
 
         #expect(item.at == at)

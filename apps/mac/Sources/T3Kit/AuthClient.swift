@@ -120,6 +120,9 @@ public actor AuthClient {
         self.urlSession = urlSession
     }
 
+    /// HTTP origin used for asset downloads and other non-WebSocket APIs.
+    public var httpBaseURL: URL { config.httpBaseURL }
+
     /// Exchanges the desktop bootstrap token for a bearer access token via
     /// `POST /oauth/token` (RFC 8693 token-exchange grant). The result is
     /// cached for the lifetime of this client, matching the reference
