@@ -88,6 +88,7 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import { streamingMarkdownRenderDelay } from "./ChatMarkdown.logic";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -146,6 +147,33 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+
+function useStreamingMarkdownText(text: string, isStreaming: boolean): string {
+  const [renderedText, setRenderedText] = useState(text);
+  const lastRenderedAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    if (!isStreaming) {
+      lastRenderedAtRef.current = Date.now();
+      setRenderedText((current) => (current === text ? current : text));
+      return;
+    }
+
+    const delay = streamingMarkdownRenderDelay({
+      lastRenderedAt: lastRenderedAtRef.current,
+      now: Date.now(),
+    });
+    const timeout = setTimeout(() => {
+      lastRenderedAtRef.current = Date.now();
+      setRenderedText(text);
+    }, delay);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [isStreaming, text]);
+
+  return isStreaming ? renderedText : text;
+}
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -1251,6 +1279,7 @@ function ChatMarkdown({
   className,
   lineBreaks = false,
 }: ChatMarkdownProps) {
+  const renderedText = useStreamingMarkdownText(text, isStreaming);
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1271,7 +1300,7 @@ function ChatMarkdown({
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
+    for (const href of extractMarkdownLinkHrefs(renderedText)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
@@ -1280,7 +1309,7 @@ function ChatMarkdown({
       }
     }
     return metaByHref;
-  }, [cwd, text]);
+  }, [cwd, renderedText]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath);
     return buildFileLinkParentSuffixByPath(filePaths);
@@ -1288,6 +1317,18 @@ function ChatMarkdown({
   const markdownUrlTransform = useCallback((href: string) => {
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
+  const renderedTextRef = useRef(renderedText);
+  const isStreamingRef = useRef(isStreaming);
+  const markdownFileLinkMetaByHrefRef = useRef(markdownFileLinkMetaByHref);
+  const fileLinkParentSuffixByPathRef = useRef(fileLinkParentSuffixByPath);
+  const resolvedThemeRef = useRef(resolvedTheme);
+  const diffThemeNameRef = useRef(diffThemeName);
+  renderedTextRef.current = renderedText;
+  isStreamingRef.current = isStreaming;
+  markdownFileLinkMetaByHrefRef.current = markdownFileLinkMetaByHref;
+  fileLinkParentSuffixByPathRef.current = fileLinkParentSuffixByPath;
+  resolvedThemeRef.current = resolvedTheme;
+  diffThemeNameRef.current = diffThemeName;
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -1347,7 +1388,9 @@ function ChatMarkdown({
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
         const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+          typeof listItemStart === "number"
+            ? findTaskListMarkerOffset(renderedTextRef.current, listItemStart)
+            : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
             {renderSkillInlineMarkdownChildren(children, skills)}
@@ -1385,7 +1428,9 @@ function ChatMarkdown({
       },
       a({ node, href, children, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? markdownFileLinkMetaByHrefRef.current.get(normalizedHref)
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1455,7 +1500,7 @@ function ChatMarkdown({
           );
         }
 
-        const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+        const parentSuffix = fileLinkParentSuffixByPathRef.current.get(fileLinkMeta.filePath);
         const labelParts = [fileLinkMeta.basename];
         if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
           labelParts.push(parentSuffix);
@@ -1476,7 +1521,7 @@ function ChatMarkdown({
             line={fileLinkMeta.line}
             label={labelParts.join(" · ")}
             copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
-            theme={resolvedTheme}
+            theme={resolvedThemeRef.current}
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
             onOpenInBrowser={
@@ -1509,15 +1554,15 @@ function ChatMarkdown({
             code={codeBlock.code}
             language={language}
             fenceTitle={fenceTitle}
-            theme={resolvedTheme}
+            theme={resolvedThemeRef.current}
           >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
                   code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
+                  themeName={diffThemeNameRef.current}
+                  isStreaming={isStreamingRef.current}
                 />
               </Suspense>
             </CodeHighlightErrorBoundary>
@@ -1526,19 +1571,28 @@ function ChatMarkdown({
       },
     }),
     [
-      diffThemeName,
-      fileLinkParentSuffixByPath,
-      isStreaming,
-      markdownFileLinkMetaByHref,
       onTaskListChange,
       openInPreferredEditor,
       openExternalLinkInPreview,
       openMarkdownFileInPreview,
-      resolvedTheme,
       skills,
-      text,
       threadRef,
     ],
+  );
+  const renderedMarkdown = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={
+          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
+        }
+        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+        components={markdownComponents}
+        urlTransform={markdownUrlTransform}
+      >
+        {renderedText}
+      </ReactMarkdown>
+    ),
+    [lineBreaks, markdownComponents, markdownUrlTransform, renderedText],
   );
 
   return (
@@ -1549,16 +1603,7 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      {renderedMarkdown}
     </div>
   );
 }
