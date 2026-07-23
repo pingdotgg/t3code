@@ -45,7 +45,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
-import { preserveLastAvailableClaudeUsage } from "../Drivers/ClaudeDriver.ts";
+import { resolveRetainedClaudeUsage } from "../Drivers/ClaudeDriver.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
@@ -1817,15 +1817,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     // ── checkClaudeProviderStatus tests ──────────────────────────
 
     describe("checkClaudeProviderStatus", () => {
-      it("preserves the last available Claude usage across a transient miss", () => {
+      it("preserves Claude usage only for the same known account", () => {
         const available: ServerProvider["usageLimits"] = {
           source: "claudePrint",
           checkedAt: "2026-07-22T12:00:00.000Z",
           windows: [{ label: "Session", usedPercent: 30 }],
         };
 
-        assert.strictEqual(preserveLastAvailableClaudeUsage(available, undefined), available);
-        assert.strictEqual(preserveLastAvailableClaudeUsage(undefined, available), available);
+        const initial = resolveRetainedClaudeUsage(undefined, "first@example.com", available);
+        assert.strictEqual(initial.usageLimits, available);
+        assert.strictEqual(
+          resolveRetainedClaudeUsage(initial.retained, "first@example.com", undefined).usageLimits,
+          available,
+        );
+        assert.strictEqual(
+          resolveRetainedClaudeUsage(initial.retained, "second@example.com", undefined).usageLimits,
+          undefined,
+        );
+        assert.strictEqual(
+          resolveRetainedClaudeUsage(initial.retained, undefined, undefined).usageLimits,
+          undefined,
+        );
       });
 
       it.effect("returns ready when claude is installed and authenticated", () =>

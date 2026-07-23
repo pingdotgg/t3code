@@ -783,7 +783,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
-  resolveUsage?: () => Effect.Effect<ServerProviderUsageLimits | undefined>,
+  resolveUsage?: (
+    accountIdentity: string | undefined,
+  ) => Effect.Effect<ServerProviderUsageLimits | undefined>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -928,8 +930,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     authMetadata?.type === "apiKey" || authMetadata?.type === "bedrock"
       ? undefined
       : yield* resolveUsage
-          ? resolveUsage().pipe(Effect.catchCause(() => Effect.void))
-          : probeClaudeUsageLimits(claudeSettings, resolvedEnvironment);
+          ? resolveUsage(capabilities.email?.trim() || undefined).pipe(
+              Effect.catchCause(() => Effect.void),
+            )
+          : probeClaudeUsageLimits(claudeSettings, resolvedEnvironment, cwd);
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,

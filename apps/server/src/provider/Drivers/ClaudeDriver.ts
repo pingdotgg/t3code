@@ -62,11 +62,28 @@ const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 
-export function preserveLastAvailableClaudeUsage(
-  previous: ServerProvider["usageLimits"] | undefined,
+interface RetainedClaudeUsage {
+  readonly accountIdentity: string;
+  readonly usageLimits: NonNullable<ServerProvider["usageLimits"]>;
+}
+
+export function resolveRetainedClaudeUsage(
+  previous: RetainedClaudeUsage | undefined,
+  accountIdentity: string | undefined,
   next: ServerProvider["usageLimits"] | undefined,
-): ServerProvider["usageLimits"] | undefined {
-  return next ?? previous;
+): {
+  readonly retained: RetainedClaudeUsage | undefined;
+  readonly usageLimits: ServerProvider["usageLimits"] | undefined;
+} {
+  if (!accountIdentity) {
+    return { retained: undefined, usageLimits: next };
+  }
+  if (next) {
+    return { retained: { accountIdentity, usageLimits: next }, usageLimits: next };
+  }
+  return previous?.accountIdentity === accountIdentity
+    ? { retained: previous, usageLimits: previous.usageLimits }
+    : { retained: undefined, usageLimits: undefined };
 }
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
@@ -170,22 +187,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
-      const lastAvailableUsageRef = yield* Ref.make<ServerProvider["usageLimits"] | undefined>(
-        undefined,
-      );
+      const lastAvailableUsageRef = yield* Ref.make<RetainedClaudeUsage | undefined>(undefined);
       const usageProbeCache = yield* Cache.make({
-        capacity: 1,
+        capacity: 2,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
           probeClaudeUsageLimits(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(Path.Path, path),
-            Effect.flatMap((usageLimits) =>
-              Ref.modify(lastAvailableUsageRef, (previous) => {
-                const next = preserveLastAvailableClaudeUsage(previous, usageLimits);
-                return [next, next] as const;
-              }),
-            ),
           ),
       });
 
@@ -194,7 +203,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
         processEnv,
         cwd,
-        () => Cache.get(usageProbeCache, capabilitiesCacheKey),
+        (accountIdentity) =>
+          Cache.get(
+            usageProbeCache,
+            `${capabilitiesCacheKey}:${accountIdentity ?? "unknown"}`,
+          ).pipe(
+            Effect.flatMap((usageLimits) =>
+              Ref.modify(lastAvailableUsageRef, (previous) => {
+                const resolved = resolveRetainedClaudeUsage(previous, accountIdentity, usageLimits);
+                return [resolved.usageLimits, resolved.retained] as const;
+              }),
+            ),
+          ),
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
