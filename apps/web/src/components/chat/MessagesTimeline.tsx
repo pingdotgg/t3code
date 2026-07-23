@@ -1993,16 +1993,30 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+function normalizeWorkspaceRelativeFilePath(filePath: string): string | null {
+  const segments: string[] = [];
+  for (const segment of filePath.replace(/^\.\/+/, "").split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.length === 0) return null;
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.length > 0 ? segments.join("/") : null;
+}
+
 function toWorkspaceRelativeFilePath(
   filePath: string,
   workspaceRoot: string | undefined,
 ): string | null {
   const normalizedPath = filePath.replaceAll("\\", "/").replace(/^\/(?=[A-Za-z]:\/)/, "");
-  const isAbsoluteWindowsPath = /^[A-Za-z]:\//.test(normalizedPath);
+  const hasWindowsDrivePrefix = /^[A-Za-z]:/.test(normalizedPath);
   if (!workspaceRoot) {
-    return normalizedPath.startsWith("/") || isAbsoluteWindowsPath
+    return normalizedPath.startsWith("/") || hasWindowsDrivePrefix
       ? null
-      : normalizedPath.replace(/^\.\/+/, "");
+      : normalizeWorkspaceRelativeFilePath(normalizedPath);
   }
 
   const normalizedRoot = workspaceRoot
@@ -2011,16 +2025,16 @@ function toWorkspaceRelativeFilePath(
     .replace(/\/+$/, "");
   const rootWithSeparator = `${normalizedRoot}/`;
   const usesCaseInsensitiveComparison =
-    /^[A-Za-z]:\//.test(normalizedRoot) || normalizedRoot.startsWith("//");
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedRoot) || normalizedRoot.startsWith("//");
   const isInsideWorkspace = usesCaseInsensitiveComparison
     ? normalizedPath.toLowerCase().startsWith(rootWithSeparator.toLowerCase())
     : normalizedPath.startsWith(rootWithSeparator);
   if (isInsideWorkspace) {
-    return normalizedPath.slice(rootWithSeparator.length);
+    return normalizeWorkspaceRelativeFilePath(normalizedPath.slice(rootWithSeparator.length));
   }
-  return normalizedPath.startsWith("/") || isAbsoluteWindowsPath
+  return normalizedPath.startsWith("/") || hasWindowsDrivePrefix
     ? null
-    : normalizedPath.replace(/^\.\/+/, "");
+    : normalizeWorkspaceRelativeFilePath(normalizedPath);
 }
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -2076,26 +2090,28 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
     (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
-  const rowToggleProps = canExpand
-    ? {
-        role: "button" as const,
-        tabIndex: 0 as const,
-        "aria-label": displayText,
-        onClick: () => setExpanded((v) => !v),
-        onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded((v) => !v);
-          }
-        },
-      }
-    : {};
+  const rowToggleProps =
+    canExpand && !openableFilePath
+      ? {
+          role: "button" as const,
+          tabIndex: 0 as const,
+          "aria-label": displayText,
+          onClick: () => setExpanded((v) => !v),
+          onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setExpanded((v) => !v);
+            }
+          },
+        }
+      : {};
 
   return (
     <div
       className={cn(
         "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
         canExpand &&
+          !openableFilePath &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
@@ -2136,11 +2152,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
-            <span
-              className="flex size-4 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
-            >
-              {canExpand ? (
+            {canExpand && openableFilePath ? (
+              <button
+                type="button"
+                className="flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                aria-expanded={expanded}
+                aria-label={`${expanded ? "Collapse" : "Expand"} ${heading}`}
+                onClick={() => setExpanded((value) => !value)}
+              >
                 <ChevronDownIcon
                   className={cn(
                     "size-3 shrink-0 opacity-70 transition-transform duration-200",
@@ -2148,8 +2167,23 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                   )}
                   aria-hidden
                 />
-              ) : null}
-            </span>
+              </button>
+            ) : (
+              <span
+                className="flex size-4 shrink-0 items-center justify-center"
+                aria-hidden={!canExpand}
+              >
+                {canExpand ? (
+                  <ChevronDownIcon
+                    className={cn(
+                      "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                      expanded && "rotate-180",
+                    )}
+                    aria-hidden
+                  />
+                ) : null}
+              </span>
+            )}
             <span className="flex size-4 shrink-0 items-center justify-center">
               {showFailedIndicator ? (
                 <Tooltip>

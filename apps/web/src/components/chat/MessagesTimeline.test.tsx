@@ -549,28 +549,93 @@ describe("MessagesTimeline", () => {
   });
 
   it("rejects absolute Windows paths while the workspace root is unavailable", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
+    const renderChangedFile = (filePath: string) =>
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Updated file",
-              tone: "tool",
-              changedFiles: ["C:\\repo\\outside.ts"],
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Updated file",
+                tone: "tool",
+                changedFiles: [filePath],
+              },
             },
-          },
-        ]}
-        workspaceRoot={undefined}
-      />,
-    );
+          ]}
+          workspaceRoot={undefined}
+        />,
+      );
 
-    expect(markup).not.toContain('aria-label="Open file');
+    expect(renderChangedFile("C:\\repo\\outside.ts")).not.toContain('aria-label="Open file');
+    expect(renderChangedFile("C:outside.ts")).not.toContain('aria-label="Open file');
+  });
+
+  it("handles Windows drive roots and UNC workspaces case-insensitively", () => {
+    const renderChangedFile = (filePath: string, workspaceRoot: string) =>
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Updated file",
+                tone: "tool",
+                changedFiles: [filePath],
+              },
+            },
+          ]}
+          workspaceRoot={workspaceRoot}
+        />,
+      );
+
+    expect(renderChangedFile("/c:/inside.ts", "C:/")).toContain('aria-label="Open file inside.ts"');
+    expect(
+      renderChangedFile("\\\\SERVER\\SHARE\\Repo\\.scratch\\inside.ts", "\\\\server\\share\\repo"),
+    ).toContain('aria-label="Open file .scratch/inside.ts"');
+    expect(
+      renderChangedFile("\\\\server\\share\\repo-other\\outside.ts", "\\\\server\\share\\repo"),
+    ).not.toContain('aria-label="Open file');
+  });
+
+  it("rejects relative paths that escape the workspace", () => {
+    const renderChangedFile = (filePath: string) =>
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Updated file",
+                tone: "tool",
+                changedFiles: [filePath],
+              },
+            },
+          ]}
+          workspaceRoot="/home/alice/Repo"
+        />,
+      );
+
+    expect(renderChangedFile("../outside.ts")).not.toContain('aria-label="Open file');
+    expect(renderChangedFile("..\\outside.ts")).not.toContain('aria-label="Open file');
+    expect(renderChangedFile("/home/alice/Repo/dir/../../outside.ts")).not.toContain(
+      'aria-label="Open file',
+    );
+    expect(renderChangedFile("src/../inside.ts")).toContain('aria-label="Open file inside.ts"');
   });
 
   it("rejects case-mismatched POSIX paths outside the workspace", () => {
@@ -628,6 +693,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("git status");
     expect(markup).not.toContain(">git status</button>");
     expect(markup).toContain('aria-label="Open file inside.ts"');
+    expect(markup).toContain('aria-label="Expand Ran command"');
+    expect(markup).not.toContain('role="button" tabindex="0" aria-label="Ran command');
     expect(markup).toContain("lucide-file-text");
     expect(markup).toContain('<span class="truncate">inside.ts</span>');
   });
@@ -658,6 +725,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Wrote requested content");
     expect(markup).not.toContain(">Wrote requested content</button>");
     expect(markup).toContain('aria-label="Open file inside.ts"');
+    expect(markup).toContain('aria-label="Expand Updated file"');
+    expect(markup).not.toContain('role="button" tabindex="0" aria-label="Updated file');
     expect(markup).toContain("lucide-file-text");
     expect(markup).toContain('<span class="truncate">inside.ts</span>');
   });
