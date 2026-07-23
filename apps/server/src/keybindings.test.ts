@@ -248,6 +248,37 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("restores default source metadata when settings resets a binding", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const sidebarDefault = Keybindings.DEFAULT_KEYBINDINGS.find(
+        (rule) => rule.command === "sidebar.toggle",
+      );
+      assert.isDefined(sidebarDefault);
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { ...sidebarDefault, key: "mod+alt+b", source: "user" },
+      ]);
+
+      const snapshot = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          ...sidebarDefault,
+          source: "default",
+          replace: {
+            key: "mod+alt+b",
+            command: sidebarDefault.command,
+            ...(sidebarDefault.when === undefined ? {} : { when: sidebarDefault.when }),
+          },
+        });
+      });
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const sidebarBinding = snapshot.find((binding) => binding.command === "sidebar.toggle");
+
+      assert.equal(sidebarBinding?.source, "default");
+      assert.equal(persisted.find((rule) => rule.command === "sidebar.toggle")?.source, "default");
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("ships configurable thread navigation defaults", () =>
     Effect.sync(() => {
       const defaultsByCommand = new Map(

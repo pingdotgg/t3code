@@ -435,6 +435,7 @@ export const ServerUpsertKeybindingInput = Schema.Struct({
   key: KeybindingValue,
   command: KeybindingCommand,
   when: Schema.optional(KeybindingWhen),
+  source: Schema.optional(Schema.Literals(["default", "user"])),
   replace: Schema.optional(ServerUpsertKeybindingReplaceTarget),
 });
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;

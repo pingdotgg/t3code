@@ -9,6 +9,10 @@ export interface ComposerReadlineReplacement {
   readonly killedText?: string;
 }
 
+export type ComposerReadlinePlaceholderReplacement =
+  | { readonly type: "inline-token"; readonly text: string }
+  | { readonly type: "text"; readonly text: string };
+
 export type ComposerReadlineInsertionSegment =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "mention"; readonly path: string }
@@ -63,31 +67,54 @@ export function $replaceComposerReadlineSelection(
   }
 }
 
-function expandTerminalContextPlaceholders(
+function expandComposerReadlinePlaceholders(
   text: string,
-  terminalContextTexts: readonly string[],
+  replacements: readonly ComposerReadlinePlaceholderReplacement[],
 ): string {
-  let terminalContextIndex = 0;
-  return text.replaceAll(INLINE_TERMINAL_CONTEXT_PLACEHOLDER, () => {
-    const contextText = terminalContextTexts[terminalContextIndex] ?? "";
-    terminalContextIndex += 1;
-    return contextText;
-  });
+  let replacementIndex = 0;
+  let expanded = "";
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
+      expanded += character;
+      continue;
+    }
+
+    const replacement = replacements[replacementIndex];
+    replacementIndex += 1;
+    if (!replacement) continue;
+
+    if (replacement.type === "inline-token") {
+      if (expanded.length > 0 && !/\s/u.test(expanded.at(-1) ?? "")) {
+        expanded += " ";
+      }
+      expanded += replacement.text;
+      const nextCharacter = text[index + 1];
+      if (nextCharacter === undefined || !/\s/u.test(nextCharacter)) {
+        expanded += " ";
+      }
+      continue;
+    }
+
+    expanded += replacement.text;
+  }
+
+  return expanded;
 }
 
 export function resolveComposerReadlineReplacement(input: {
   readonly edit: PlainTextEdit;
-  readonly selectedText: string;
-  readonly terminalContextTexts: readonly string[];
+  readonly placeholderReplacements: readonly ComposerReadlinePlaceholderReplacement[];
 }): ComposerReadlineReplacement {
   return {
     insertedText: input.edit.insertedText ?? "",
     ...(input.edit.killedText === undefined
       ? {}
       : {
-          killedText: expandTerminalContextPlaceholders(
-            input.selectedText,
-            input.terminalContextTexts,
+          killedText: expandComposerReadlinePlaceholders(
+            input.edit.killedText,
+            input.placeholderReplacements,
           ),
         }),
   };

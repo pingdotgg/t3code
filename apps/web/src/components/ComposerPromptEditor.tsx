@@ -63,6 +63,7 @@ import {
 } from "~/emacsReadlineBindings";
 import {
   $replaceComposerReadlineSelection,
+  type ComposerReadlinePlaceholderReplacement,
   resolveComposerReadlineReplacement,
   splitComposerReadlineInsertion,
 } from "~/composerEmacsReadline";
@@ -1254,16 +1255,17 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
           const replacementSelection = $getSelection();
           if (!$isRangeSelection(replacementSelection)) return false;
 
-          const removedTerminalContextTexts: string[] = [];
+          const placeholderReplacements: ComposerReadlinePlaceholderReplacement[] = [];
           for (const node of replacementSelection.getNodes()) {
-            if (node instanceof ComposerTerminalContextNode) {
-              removedTerminalContextTexts.push(node.__context.text);
+            if (node instanceof ComposerMentionNode || node instanceof ComposerSkillNode) {
+              placeholderReplacements.push({ type: "inline-token", text: node.getTextContent() });
+            } else if (node instanceof ComposerTerminalContextNode) {
+              placeholderReplacements.push({ type: "text", text: node.__context.text });
             }
           }
           const replacement = resolveComposerReadlineReplacement({
             edit,
-            selectedText: replacementSelection.getTextContent(),
-            terminalContextTexts: removedTerminalContextTexts,
+            placeholderReplacements,
           });
           if (replacement.killedText !== undefined) {
             storeEmacsReadlineKilledText(replacement.killedText);

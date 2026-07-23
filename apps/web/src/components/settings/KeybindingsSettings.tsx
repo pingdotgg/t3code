@@ -1155,6 +1155,7 @@ export function KeybindingsSettingsPanel() {
         command: input.command,
         key: input.key.trim(),
         ...(input.when?.trim() ? { when: input.when.trim() } : {}),
+        ...(input.source ? { source: input.source } : {}),
         ...(input.replace ? { replace: input.replace } : {}),
       };
       void (async () => {
@@ -1210,6 +1211,7 @@ export function KeybindingsSettingsPanel() {
         command: row.command,
         key: row.defaultKey,
         when: row.defaultWhen.trim().length > 0 ? row.defaultWhen : undefined,
+        source: "default",
         replace: {
           command: row.command,
           key: row.key,

@@ -150,8 +150,13 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
 
 function keybindingRuleFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule {
   return input.when === undefined
-    ? { key: input.key, command: input.command, source: "user" }
-    : { key: input.key, command: input.command, when: input.when, source: "user" };
+    ? { key: input.key, command: input.command, source: input.source ?? "user" }
+    : {
+        key: input.key,
+        command: input.command,
+        when: input.when,
+        source: input.source ?? "user",
+      };
 }
 
 function replaceTargetFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule | null {
