@@ -23,6 +23,8 @@ const T3_MCP_TOOL_DISPLAY_NAMES: Record<string, string> = {
   t3_thread_send: "Send to a T3 thread",
   t3_thread_wait: "Wait for a T3 thread",
   t3_thread_interrupt: "Interrupt a T3 thread",
+  t3_worktree_handoff: "Hand off thread to a git worktree",
+  t3_worktree_status: "Get thread worktree status",
 };
 
 function normalizeT3McpToolLabel(value: string): string {
