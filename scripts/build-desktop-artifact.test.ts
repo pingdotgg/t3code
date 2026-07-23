@@ -91,7 +91,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("selects channel-specific desktop packaging icons", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
-      macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
+      macIconPng: BRAND_ASSET_PATHS.alphaMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
     });
