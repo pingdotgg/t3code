@@ -29,6 +29,7 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { buildModelDisplayNameMap } from "../../lib/modelOptions";
+import { deriveShouldShowParentThinking } from "../../lib/parentThinkingPresentation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadHealthStalledForLabel, type ThreadHealth } from "../../lib/threadHealth";
 import type {
@@ -47,6 +48,7 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { ThinkingIndicator } from "./ThinkingIndicator";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -311,14 +313,34 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
+  const showParentThinking = useMemo(
+    () =>
+      deriveShouldShowParentThinking({
+        session: props.selectedThread.session,
+        latestTurn: props.selectedThread.latestTurn,
+        feed: selectedThreadFeed,
+        hasPendingApproval: props.activePendingApproval != null,
+        hasPendingUserInput: props.activePendingUserInput != null,
+        isStalled: threadHealth?.stalled ?? false,
+      }),
+    [
+      props.activePendingApproval,
+      props.activePendingUserInput,
+      props.selectedThread.latestTurn,
+      props.selectedThread.session,
+      selectedThreadFeed,
+      threadHealth?.stalled,
+    ],
+  );
+  const showWorkingDuration =
+    !showParentThinking &&
+    !!props.activeWorkStartedAt &&
+    !threadHealth?.stalled &&
+    props.selectedThread.session?.status !== "waiting";
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   const activeWorkIndicatorHeight =
-    props.activeWorkStartedAt &&
-    !threadHealth?.stalled &&
-    props.selectedThread.session?.status !== "waiting"
-      ? WORKING_INDICATOR_HEIGHT
-      : 0;
+    showParentThinking || showWorkingDuration ? WORKING_INDICATOR_HEIGHT : 0;
   const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight + 8;
   const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
     listRef,
@@ -512,10 +534,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               style={{ width: "100%", paddingTop: 8 }}
             >
               <View style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}>
-                {props.activeWorkStartedAt &&
-                !threadHealth?.stalled &&
-                props.selectedThread.session?.status !== "waiting" ? (
-                  <Animated.View entering={bannerDrop()}>
+                {showParentThinking ? (
+                  <Animated.View entering={bannerDrop()} key="parent-thinking">
+                    <ThinkingIndicator />
+                  </Animated.View>
+                ) : showWorkingDuration && props.activeWorkStartedAt ? (
+                  <Animated.View entering={bannerDrop()} key="working-duration">
                     <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
                   </Animated.View>
                 ) : null}

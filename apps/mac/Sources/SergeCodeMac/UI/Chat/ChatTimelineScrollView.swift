@@ -106,11 +106,18 @@ struct ChatTimelineScrollView: View {
         // the timeline itself — a per-row scan also made every row observe
         // those, so any thread churn during a run re-rendered the whole
         // visible transcript. See TimelineRowContext.
+        let thread = model.thread(threadID: threadID)
         let rowContext = TimelineRowContext(
-            threadStatus: model.thread(threadID: threadID)?.status,
+            threadStatus: thread?.status,
             projectRoot: model.projectPath(forScopedThreadKey: threadKey),
             activeDecisionCardID: items.activeDecisionCardID,
             isConnectionReady: model.connection == .ready)
+        // Single ephemeral row, not a timeline entry: long silent reasoning
+        // must never stack repeated "Thinking" items into the transcript.
+        let showThinking = ParentThinkingPresentation.shouldShow(
+            threadStatus: thread?.status,
+            isStalled: thread?.isStalled ?? false,
+            items: items)
 
         // Cold load: spinner instead of an empty LazyVStack, which bypasses
         // the autoscroll machinery and avoids a blank flash before the first
@@ -140,6 +147,11 @@ struct ChatTimelineScrollView: View {
                                 // identities at once; animating those removals
                                 // blanks the LazyVStack for a frame or two.
                                 .transition(rowTransition)
+                        }
+                        if showThinking {
+                            ThinkingIndicator()
+                                .id("thinking-indicator")
+                                .transition(Motion.rise)
                         }
                         Color.clear
                             .frame(height: 1)
