@@ -109,6 +109,7 @@ import {
   ITEM_ICON_CLASS,
   NEW_THREAD_PROJECT_VIEW_GROUP,
   RECENT_THREAD_LIMIT,
+  shouldClearAddProjectEnvironmentOnPop,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -964,7 +965,13 @@ function OpenCommandPaletteDialog(props: {
     if (isNewThreadProjectPickerView) {
       setNewThreadPreferredProjectRef(null);
     }
-    if (viewStack.length <= 1) {
+    if (
+      shouldClearAddProjectEnvironmentOnPop({
+        viewStackDepth: viewStack.length,
+        currentGroupValue: currentView?.groups[0]?.value,
+        addProjectEnvironmentId,
+      })
+    ) {
       setAddProjectEnvironmentId(null);
     }
     setViewStack((previousViews) => previousViews.slice(0, -1));

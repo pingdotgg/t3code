@@ -6,6 +6,7 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  shouldClearAddProjectEnvironmentOnPop,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -93,6 +94,28 @@ describe("buildNewThreadPickerGroups", () => {
         items: [addProjectItem],
       },
     ]);
+  });
+});
+
+describe("shouldClearAddProjectEnvironmentOnPop", () => {
+  it("clears the selected environment when returning from source selection", () => {
+    expect(
+      shouldClearAddProjectEnvironmentOnPop({
+        viewStackDepth: 2,
+        currentGroupValue: "sources:environment-local",
+        addProjectEnvironmentId: "environment-local",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the selected environment while returning to source selection", () => {
+    expect(
+      shouldClearAddProjectEnvironmentOnPop({
+        viewStackDepth: 3,
+        currentGroupValue: undefined,
+        addProjectEnvironmentId: "environment-local",
+      }),
+    ).toBe(false);
   });
 });
 

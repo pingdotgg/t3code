@@ -92,6 +92,18 @@ export function buildNewThreadPickerGroups(input: {
   return groups;
 }
 
+export function shouldClearAddProjectEnvironmentOnPop(input: {
+  viewStackDepth: number;
+  currentGroupValue: string | undefined;
+  addProjectEnvironmentId: string | null;
+}): boolean {
+  return (
+    input.viewStackDepth <= 1 ||
+    (input.addProjectEnvironmentId !== null &&
+      input.currentGroupValue === `sources:${input.addProjectEnvironmentId}`)
+  );
+}
+
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 export function filterBrowseEntries(input: {
