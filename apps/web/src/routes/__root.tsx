@@ -135,6 +135,7 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <CompletedThreadUnreadTracker />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -195,6 +196,11 @@ function HostedStaticEnvironmentBootstrap() {
     setActiveEnvironmentId(firstSavedEnvironment.environmentId);
   }, [activeEnvironmentId, environments]);
 
+  return null;
+}
+
+function CompletedThreadUnreadTracker() {
+  useMarkFirstSeenCompletedThreadsUnread();
   return null;
 }
 
@@ -278,8 +284,6 @@ function AuthenticatedTracingBootstrap() {
 }
 
 function EventRouter() {
-  useMarkFirstSeenCompletedThreadsUnread();
-
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);

@@ -1766,6 +1766,15 @@ function ChatViewContent(props: ChatViewProps) {
     serverThread?.updatedAt,
   ]);
 
+  useEffect(
+    () => () => {
+      if (useUiStateStore.getState().activeThreadVisit?.threadId === routeThreadKey) {
+        markActiveThreadVisited(null, null);
+      }
+    },
+    [markActiveThreadVisited, routeThreadKey],
+  );
+
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??

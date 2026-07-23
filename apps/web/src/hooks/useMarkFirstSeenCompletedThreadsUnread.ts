@@ -24,30 +24,47 @@ interface FirstSeenThreadInput {
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
   readonly latestTurn: {
+    readonly turnId: string;
     readonly state: string;
     readonly completedAt: string | null;
   } | null;
 }
 
+export interface ObservedThreadTurn {
+  readonly turnId: string | null;
+  readonly state: string | null;
+}
+
 export function resolveFirstSeenCompletedThreads(input: {
   readonly threads: ReadonlyArray<FirstSeenThreadInput>;
   readonly environmentSnapshotIds: ReadonlyArray<EnvironmentId>;
-  readonly previouslySeenThreadKeysByEnvironment: ReadonlyMap<EnvironmentId, ReadonlySet<string>>;
+  readonly previouslyObservedThreadsByEnvironment: ReadonlyMap<
+    EnvironmentId,
+    ReadonlyMap<string, ObservedThreadTurn>
+  >;
+  readonly activeThreadKey?: string | null;
 }): {
-  readonly nextSeenThreadKeysByEnvironment: Map<EnvironmentId, Set<string>>;
+  readonly nextObservedThreadsByEnvironment: Map<EnvironmentId, Map<string, ObservedThreadTurn>>;
   readonly newlyUnreadThreads: ReadonlyArray<{
     readonly threadKey: string;
     readonly completedAt: string | null;
   }>;
 } {
   const snapshotEnvironmentIds = new Set(input.environmentSnapshotIds);
-  const nextSeenThreadKeysByEnvironment = new Map<EnvironmentId, Set<string>>();
+  const nextObservedThreadsByEnvironment = new Map(
+    [...input.previouslyObservedThreadsByEnvironment].map(([environmentId, threads]) => [
+      environmentId,
+      new Map(threads),
+    ]),
+  );
   const newlyUnreadThreads: Array<{
     readonly threadKey: string;
     readonly completedAt: string | null;
   }> = [];
   for (const environmentId of snapshotEnvironmentIds) {
-    nextSeenThreadKeysByEnvironment.set(environmentId, new Set());
+    if (!nextObservedThreadsByEnvironment.has(environmentId)) {
+      nextObservedThreadsByEnvironment.set(environmentId, new Map());
+    }
   }
 
   for (const thread of input.threads) {
@@ -56,42 +73,52 @@ export function resolveFirstSeenCompletedThreads(input: {
     }
 
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    nextSeenThreadKeysByEnvironment.get(thread.environmentId)?.add(threadKey);
-
-    const previousThreadKeys = input.previouslySeenThreadKeysByEnvironment.get(
+    const observedThread: ObservedThreadTurn = {
+      turnId: thread.latestTurn?.turnId ?? null,
+      state: thread.latestTurn?.state ?? null,
+    };
+    const previousEnvironmentThreads = input.previouslyObservedThreadsByEnvironment.get(
       thread.environmentId,
     );
+    const previousThread = previousEnvironmentThreads?.get(threadKey);
     if (
-      previousThreadKeys !== undefined &&
-      !previousThreadKeys.has(threadKey) &&
-      thread.latestTurn?.state === "completed"
+      previousEnvironmentThreads !== undefined &&
+      thread.latestTurn?.state === "completed" &&
+      threadKey !== input.activeThreadKey &&
+      (previousThread === undefined ||
+        previousThread.turnId !== observedThread.turnId ||
+        previousThread.state !== "completed")
     ) {
       newlyUnreadThreads.push({
         threadKey,
         completedAt: thread.latestTurn.completedAt,
       });
     }
+    nextObservedThreadsByEnvironment.get(thread.environmentId)?.set(threadKey, observedThread);
   }
 
-  return { nextSeenThreadKeysByEnvironment, newlyUnreadThreads };
+  return { nextObservedThreadsByEnvironment, newlyUnreadThreads };
 }
 
 export function useMarkFirstSeenCompletedThreadsUnread(): void {
   const threads = useThreadShells();
   const environmentSnapshotIds = useAtomValue(environmentSnapshotIdsAtom);
-  const seenThreadKeysByEnvironmentRef = useRef<Map<EnvironmentId, Set<string>>>(new Map());
+  const observedThreadsByEnvironmentRef = useRef<
+    Map<EnvironmentId, Map<string, ObservedThreadTurn>>
+  >(new Map());
 
   useEffect(() => {
-    const { nextSeenThreadKeysByEnvironment, newlyUnreadThreads } =
+    const { nextObservedThreadsByEnvironment, newlyUnreadThreads } =
       resolveFirstSeenCompletedThreads({
         threads,
         environmentSnapshotIds,
-        previouslySeenThreadKeysByEnvironment: seenThreadKeysByEnvironmentRef.current,
+        previouslyObservedThreadsByEnvironment: observedThreadsByEnvironmentRef.current,
+        activeThreadKey: useUiStateStore.getState().activeThreadVisit?.threadId ?? null,
       });
     for (const thread of newlyUnreadThreads) {
       useUiStateStore.getState().markThreadUnread(thread.threadKey, thread.completedAt);
     }
 
-    seenThreadKeysByEnvironmentRef.current = nextSeenThreadKeysByEnvironment;
+    observedThreadsByEnvironmentRef.current = nextObservedThreadsByEnvironment;
   }, [environmentSnapshotIds, threads]);
 }

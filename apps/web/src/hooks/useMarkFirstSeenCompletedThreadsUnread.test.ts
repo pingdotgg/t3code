@@ -11,11 +11,13 @@ function thread(
   id: string,
   state: "completed" | "running" = "completed",
   environmentId = localEnvironmentId,
+  turnId = `turn-${id}`,
 ) {
   return {
     environmentId,
     id: ThreadId.make(id),
     latestTurn: {
+      turnId,
       state,
       completedAt: "2026-06-18T09:00:00.000Z",
     },
@@ -27,12 +29,17 @@ describe("resolveFirstSeenCompletedThreads", () => {
     const result = resolveFirstSeenCompletedThreads({
       threads: [thread("historical")],
       environmentSnapshotIds: [localEnvironmentId],
-      previouslySeenThreadKeysByEnvironment: new Map(),
+      previouslyObservedThreadsByEnvironment: new Map(),
     });
 
     expect(result.newlyUnreadThreads).toEqual([]);
-    expect(result.nextSeenThreadKeysByEnvironment.get(localEnvironmentId)).toEqual(
-      new Set([scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("historical")))]),
+    expect(result.nextObservedThreadsByEnvironment.get(localEnvironmentId)).toEqual(
+      new Map([
+        [
+          scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("historical"))),
+          { turnId: "turn-historical", state: "completed" },
+        ],
+      ]),
     );
   });
 
@@ -46,8 +53,11 @@ describe("resolveFirstSeenCompletedThreads", () => {
     const result = resolveFirstSeenCompletedThreads({
       threads: [thread("historical"), thread("completed")],
       environmentSnapshotIds: [localEnvironmentId],
-      previouslySeenThreadKeysByEnvironment: new Map([
-        [localEnvironmentId, new Set([historicalKey])],
+      previouslyObservedThreadsByEnvironment: new Map([
+        [
+          localEnvironmentId,
+          new Map([[historicalKey, { turnId: "turn-historical", state: "completed" }]]),
+        ],
       ]),
     });
 
@@ -63,10 +73,82 @@ describe("resolveFirstSeenCompletedThreads", () => {
     const result = resolveFirstSeenCompletedThreads({
       threads: [thread("running", "running"), thread("remote", "completed", remoteEnvironmentId)],
       environmentSnapshotIds: [localEnvironmentId],
-      previouslySeenThreadKeysByEnvironment: new Map([[localEnvironmentId, new Set()]]),
+      previouslyObservedThreadsByEnvironment: new Map([[localEnvironmentId, new Map()]]),
     });
 
     expect(result.newlyUnreadThreads).toEqual([]);
-    expect(result.nextSeenThreadKeysByEnvironment.has(remoteEnvironmentId)).toBe(false);
+    expect(result.nextObservedThreadsByEnvironment.has(remoteEnvironmentId)).toBe(false);
+  });
+
+  it("marks a previously observed running thread unread when its turn completes", () => {
+    const runningKey = scopedThreadKey(
+      scopeThreadRef(localEnvironmentId, ThreadId.make("running")),
+    );
+    const result = resolveFirstSeenCompletedThreads({
+      threads: [thread("running", "completed")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map([
+        [localEnvironmentId, new Map([[runningKey, { turnId: "turn-running", state: "running" }]])],
+      ]),
+    });
+
+    expect(result.newlyUnreadThreads).toEqual([
+      {
+        threadKey: runningKey,
+        completedAt: "2026-06-18T09:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("marks a later completed turn unread even when the prior turn was completed", () => {
+    const threadKey = scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("reused")));
+    const result = resolveFirstSeenCompletedThreads({
+      threads: [thread("reused", "completed", localEnvironmentId, "turn-new")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map([
+        [
+          localEnvironmentId,
+          new Map([[threadKey, { turnId: "turn-previous", state: "completed" }]]),
+        ],
+      ]),
+    });
+
+    expect(result.newlyUnreadThreads).toHaveLength(1);
+  });
+
+  it("retains observations while a thread is archived and does not flag it on re-entry", () => {
+    const threadKey = scopedThreadKey(
+      scopeThreadRef(localEnvironmentId, ThreadId.make("archived")),
+    );
+    const previous = new Map([
+      [localEnvironmentId, new Map([[threadKey, { turnId: "turn-archived", state: "completed" }]])],
+    ]);
+    const whileArchived = resolveFirstSeenCompletedThreads({
+      threads: [],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: previous,
+    });
+    const afterUnarchive = resolveFirstSeenCompletedThreads({
+      threads: [thread("archived")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: whileArchived.nextObservedThreadsByEnvironment,
+    });
+
+    expect(
+      whileArchived.nextObservedThreadsByEnvironment.get(localEnvironmentId)?.has(threadKey),
+    ).toBe(true);
+    expect(afterUnarchive.newlyUnreadThreads).toEqual([]);
+  });
+
+  it("does not mark the currently active thread unread", () => {
+    const activeKey = scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("active")));
+    const result = resolveFirstSeenCompletedThreads({
+      threads: [thread("active")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map([[localEnvironmentId, new Map()]]),
+      activeThreadKey: activeKey,
+    });
+
+    expect(result.newlyUnreadThreads).toEqual([]);
   });
 });

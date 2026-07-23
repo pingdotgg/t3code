@@ -98,6 +98,7 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -336,6 +337,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // flag must not light up every historical thread as unread.
   const isUnread = isExplicitlyUnread || hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
+  const topStatusKind = resolveSidebarV2TopStatus({
+    status,
+    isExplicitlyUnread,
+    isUnread,
+  });
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, and failed.
@@ -348,44 +354,45 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
-  const topStatus = isExplicitlyUnread
-    ? {
-        label: "Unread",
-        icon: null,
-        className: "text-blue-600 dark:text-blue-300",
-      }
-    : status === "working"
+  const topStatus =
+    topStatusKind === "working"
       ? {
           label: "Working",
           icon: "working" as const,
           className:
             "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
         }
-      : status === "approval"
+      : topStatusKind === "approval"
         ? {
             label: "Approval",
             icon: null,
             className: "text-amber-700 dark:text-amber-300",
           }
-        : status === "input"
+        : topStatusKind === "input"
           ? {
               label: "Input",
               icon: null,
               className: "text-indigo-600 dark:text-indigo-300",
             }
-          : status === "failed"
+          : topStatusKind === "failed"
             ? {
                 label: "Failed",
                 icon: null,
                 className: "text-red-700 dark:text-red-300",
               }
-            : isUnread
+            : topStatusKind === "unread"
               ? {
-                  label: "Done",
-                  icon: "done" as const,
-                  className: "text-emerald-700 dark:text-emerald-300",
+                  label: "Unread",
+                  icon: null,
+                  className: "text-blue-600 dark:text-blue-300",
                 }
-              : null;
+              : topStatusKind === "done"
+                ? {
+                    label: "Done",
+                    icon: "done" as const,
+                    className: "text-emerald-700 dark:text-emerald-300",
+                  }
+                : null;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
