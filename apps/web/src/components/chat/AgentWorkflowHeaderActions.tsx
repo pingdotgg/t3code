@@ -8,13 +8,22 @@ import {
   ChevronDownIcon,
   ClipboardCheckIcon,
   GitCompareArrowsIcon,
+  GitPullRequestIcon,
   LoaderIcon,
 } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const REVIEW_SCOPE_LABELS = {
@@ -124,10 +133,7 @@ function AgentWorkflowActionButton({
                 <span className="sr-only">{REVIEW_SCOPE_LABELS[defaultReviewScope!]}</span>
               </Button>
               <GroupSeparator />
-              <Menu
-                highlightItemOnHover={false}
-                onOpenChange={(open) => open && loadPullRequests()}
-              >
+              <Menu highlightItemOnHover={false}>
                 <MenuTrigger
                   render={
                     <Button
@@ -150,35 +156,43 @@ function AgentWorkflowActionButton({
                     <GitCompareArrowsIcon className="size-4" />
                     Review against base branch
                   </MenuItem>
-                  {isLoadingPullRequests ? (
-                    <MenuItem disabled>
-                      <LoaderIcon className="size-4 animate-spin" />
-                      Loading pull requests...
-                    </MenuItem>
-                  ) : pullRequestError ? (
-                    <MenuItem disabled>Could not load pull requests</MenuItem>
-                  ) : pullRequests?.length ? (
-                    pullRequests.map((pullRequest) => (
-                      <MenuItem
-                        key={pullRequest.number}
-                        onClick={() =>
-                          onRun({
-                            workflowId: action.id,
-                            input: {
-                              scope: "pull-request",
-                              pullRequestNumber: pullRequest.number,
-                            },
-                            destinationMode: "child-chat",
-                          })
-                        }
-                      >
-                        <GitCompareArrowsIcon className="size-4" />#{pullRequest.number}{" "}
-                        {pullRequest.title}
-                      </MenuItem>
-                    ))
-                  ) : pullRequests !== null ? (
-                    <MenuItem disabled>No open pull requests</MenuItem>
-                  ) : null}
+                  <MenuSub onOpenChange={(open) => open && loadPullRequests()}>
+                    <MenuSubTrigger>
+                      <GitPullRequestIcon className="size-4" />
+                      Open pull requests
+                    </MenuSubTrigger>
+                    <MenuSubPopup>
+                      {isLoadingPullRequests ? (
+                        <MenuItem disabled>
+                          <LoaderIcon className="size-4 animate-spin" />
+                          Loading pull requests...
+                        </MenuItem>
+                      ) : pullRequestError ? (
+                        <MenuItem disabled>Could not load pull requests</MenuItem>
+                      ) : pullRequests?.length ? (
+                        pullRequests.map((pullRequest) => (
+                          <MenuItem
+                            key={pullRequest.number}
+                            onClick={() =>
+                              onRun({
+                                workflowId: action.id,
+                                input: {
+                                  scope: "pull-request",
+                                  pullRequestNumber: pullRequest.number,
+                                },
+                                destinationMode: "child-chat",
+                              })
+                            }
+                          >
+                            <GitPullRequestIcon className="size-4" />#{pullRequest.number}{" "}
+                            {pullRequest.title}
+                          </MenuItem>
+                        ))
+                      ) : pullRequests !== null ? (
+                        <MenuItem disabled>No open pull requests</MenuItem>
+                      ) : null}
+                    </MenuSubPopup>
+                  </MenuSub>
                 </MenuPopup>
               </Menu>
             </Group>
