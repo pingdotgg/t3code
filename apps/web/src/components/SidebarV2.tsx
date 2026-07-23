@@ -94,10 +94,12 @@ import { cn } from "~/lib/utils";
 import {
   filterVisibleSidebarThreads,
   firstValidTimestampMs,
+  getArchivedProjectRemovalWarning,
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
+  resolveArchivedProjectRemovalCommandOptions,
   resolveSidebarV2Status,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -977,9 +979,10 @@ export default function SidebarV2() {
                         : []),
                     ]
                   : [`This removes ${members.length} grouped project entries.`]),
-                `This permanently clears conversation history for those threads and any archived conversations in ${
-                  members.length === 1 ? "this project" : "these projects"
-                }.`,
+                getArchivedProjectRemovalWarning({
+                  memberCount: members.length,
+                  hasLiveThreads: true,
+                }),
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
@@ -995,9 +998,10 @@ export default function SidebarV2() {
                         : []),
                     ]
                   : [`This removes ${members.length} grouped project entries.`]),
-                `If ${
-                  members.length === 1 ? "this project has" : "these projects have"
-                } archived conversations, their history will also be permanently deleted.`,
+                getArchivedProjectRemovalWarning({
+                  memberCount: members.length,
+                  hasLiveThreads: false,
+                }),
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
@@ -1026,14 +1030,7 @@ export default function SidebarV2() {
           environmentId: project.environmentId,
           input: {
             projectId: project.id,
-            ...(memberThreads.length > 0
-              ? { force: true }
-              : {
-                  // Archived shells are intentionally absent from `threads`.
-                  // Keep the server's live-thread precondition while opting
-                  // this member's cold bundles into project removal.
-                  deleteArchivedThreads: true,
-                }),
+            ...resolveArchivedProjectRemovalCommandOptions(memberThreads.length > 0),
           },
         });
         if (result._tag === "Failure") {

@@ -4,6 +4,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   filterVisibleSidebarThreads,
+  getArchivedProjectRemovalWarning,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -15,6 +16,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveArchivedProjectRemovalCommandOptions,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
@@ -1079,6 +1081,43 @@ describe("filterVisibleSidebarThreads", () => {
         new Set([optimisticThreadKey]),
       ).map((thread) => thread.id),
     ).toEqual([visibleThread.id]);
+  });
+});
+
+describe("archived project removal with grouped project actions", () => {
+  it("keeps archived-bundle command scope independent for each project member", () => {
+    expect(
+      [true, false].map((hasLiveThreads) =>
+        resolveArchivedProjectRemovalCommandOptions(hasLiveThreads),
+      ),
+    ).toEqual([{ force: true }, { deleteArchivedThreads: true }]);
+  });
+
+  it("describes archived deletion for standalone and grouped removals", () => {
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 1,
+        hasLiveThreads: true,
+      }),
+    ).toBe(
+      "This permanently clears conversation history for those threads and any archived conversations in this project.",
+    );
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 1,
+        hasLiveThreads: false,
+      }),
+    ).toBe(
+      "If this project has archived conversations, their history will also be permanently deleted.",
+    );
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 2,
+        hasLiveThreads: false,
+      }),
+    ).toBe(
+      "If these projects have archived conversations, their history will also be permanently deleted.",
+    );
   });
 });
 

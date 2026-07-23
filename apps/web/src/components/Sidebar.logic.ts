@@ -662,6 +662,31 @@ export function filterVisibleSidebarThreads<
   );
 }
 
+export function getArchivedProjectRemovalWarning(input: {
+  memberCount: number;
+  hasLiveThreads: boolean;
+}): string {
+  const projectLabel = input.memberCount === 1 ? "this project" : "these projects";
+  if (input.hasLiveThreads) {
+    return `This permanently clears conversation history for those threads and any archived conversations in ${projectLabel}.`;
+  }
+  const verb = input.memberCount === 1 ? "has" : "have";
+  return `If ${projectLabel} ${verb} archived conversations, their history will also be permanently deleted.`;
+}
+
+export function resolveArchivedProjectRemovalCommandOptions(
+  hasLiveThreads: boolean,
+): { readonly force: true } | { readonly deleteArchivedThreads: true } {
+  if (hasLiveThreads) {
+    return { force: true };
+  }
+
+  // Archived shells are intentionally absent from the client's live thread
+  // list. Preserve the server's live-thread precondition while opting this
+  // project member's cold bundles into removal.
+  return { deleteArchivedThreads: true };
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
