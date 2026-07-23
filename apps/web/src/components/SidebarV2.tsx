@@ -90,6 +90,7 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
   shouldNavigateAfterProjectRemoval,
+  sortLogicalProjectsForSidebar,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
