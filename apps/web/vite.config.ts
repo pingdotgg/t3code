@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { VitePWA } from "vite-plugin-pwa";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
@@ -102,6 +103,19 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindcss(),
+      VitePWA({
+        // manifest.json is hand-authored and linked from index.html (see wayfinder #3);
+        // this plugin only owns service worker generation and precaching here.
+        manifest: false,
+        injectRegister: false,
+        registerType: "autoUpdate",
+        workbox: {
+          globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
+          // The main entry chunk pulls in the full syntax-highlighting/editor
+          // surface and comfortably exceeds Workbox's 2 MiB default cap.
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+        },
+      }),
     ],
     optimizeDeps: {
       include: [

@@ -28,6 +28,18 @@ describe("brand-assets", () => {
         sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
         targetRelativePath: "dist/client/apple-touch-icon.png",
       },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebPwaIcon192Png,
+        targetRelativePath: "dist/client/pwa-192x192.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebPwaIcon512Png,
+        targetRelativePath: "dist/client/pwa-512x512.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebMaskableIcon512Png,
+        targetRelativePath: "dist/client/maskable-icon-512x512.png",
+      },
     ]);
   });
 
@@ -56,6 +68,18 @@ describe("brand-assets", () => {
         sourceRelativePath: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
         targetRelativePath: "apps/web/public/apple-touch-icon.png",
       },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebPwaIcon192Png,
+        targetRelativePath: "apps/web/public/pwa-192x192.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebPwaIcon512Png,
+        targetRelativePath: "apps/web/public/pwa-512x512.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebMaskableIcon512Png,
+        targetRelativePath: "apps/web/public/maskable-icon-512x512.png",
+      },
     ]);
   });
 
@@ -63,6 +87,17 @@ describe("brand-assets", () => {
     expect(resolveWebIconOverrides("production", "apps/web/dist")).toContainEqual({
       sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
       targetRelativePath: "apps/web/dist/apple-touch-icon.png",
+    });
+  });
+
+  it("maps hosted web assets to PWA and maskable icons", () => {
+    expect(resolveWebIconOverrides("production", "apps/web/dist")).toContainEqual({
+      sourceRelativePath: BRAND_ASSET_PATHS.productionWebPwaIcon512Png,
+      targetRelativePath: "apps/web/dist/pwa-512x512.png",
+    });
+    expect(resolveWebIconOverrides("production", "apps/web/dist")).toContainEqual({
+      sourceRelativePath: BRAND_ASSET_PATHS.productionWebMaskableIcon512Png,
+      targetRelativePath: "apps/web/dist/maskable-icon-512x512.png",
     });
   });
 
