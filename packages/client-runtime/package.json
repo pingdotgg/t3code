@@ -35,6 +35,10 @@
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
     },
+    "./thread-forking": {
+      "types": "./src/threadForking.ts",
+      "default": "./src/threadForking.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"

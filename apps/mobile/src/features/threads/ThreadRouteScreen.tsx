@@ -6,10 +6,14 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ProjectScript, type TurnId } from "@t3tools/contracts";
+import { supportsSelectedResponseFork } from "@t3tools/client-runtime/thread-forking";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { truncate } from "@t3tools/shared/String";
+import * as Haptics from "expo-haptics";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -59,6 +63,7 @@ import { useSelectedThreadRequests } from "../../state/use-selected-thread-reque
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
+import { uuidv4 } from "../../lib/uuid";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,
@@ -196,6 +201,8 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
+  const [forkingTurnId, setForkingTurnId] = useState<TurnId | null>(null);
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -478,6 +485,44 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  const handleForkFromTurn = useCallback(
+    async (sourceTurnId: TurnId) => {
+      if (selectedThread === null || forkingTurnId !== null) {
+        return;
+      }
+
+      const nextThreadId = ThreadId.make(uuidv4());
+      setForkingTurnId(sourceTurnId);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      try {
+        const result = await forkThread({
+          environmentId: selectedThread.environmentId,
+          input: {
+            threadId: nextThreadId,
+            sourceThreadId: selectedThread.id,
+            sourceTurnId,
+            title: truncate(`${selectedThread.title} (fork)`),
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          const error = Cause.squash(result.cause);
+          Alert.alert(
+            "Could not fork thread",
+            error instanceof Error ? error.message : "The thread could not be forked.",
+          );
+          return;
+        }
+        navigation.navigate("Thread", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: String(nextThreadId),
+        });
+      } finally {
+        setForkingTurnId(null);
+      }
+    },
+    [forkThread, forkingTurnId, navigation, selectedThread],
+  );
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -741,6 +786,11 @@ function ThreadRouteContent(
     connectionState: routeConnectionState,
   });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const selectedProviderDriver =
+    serverConfig?.providers.find(
+      (provider) => provider.instanceId === selectedThread.modelSelection.instanceId,
+    )?.driver ?? null;
+  const canForkSelectedResponse = supportsSelectedResponseFork(selectedProviderDriver);
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -781,6 +831,12 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
+          {...(canForkSelectedResponse
+            ? {
+                onForkFromTurn: handleForkFromTurn,
+                isForkingFromTurn: forkingTurnId !== null,
+              }
+            : {})}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

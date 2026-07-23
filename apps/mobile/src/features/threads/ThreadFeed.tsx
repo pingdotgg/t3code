@@ -141,6 +141,8 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly onForkFromTurn?: (turnId: TurnId) => void;
+  readonly isForkingFromTurn?: boolean;
 }
 
 function MessageAttachmentImage(props: {
@@ -807,6 +809,8 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    readonly onForkFromTurn: ((turnId: TurnId) => void) | null;
+    readonly isForkingFromTurn: boolean;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -978,6 +982,32 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
+            {message.turnId !== null && props.onForkFromTurn !== null ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Fork from this message"
+                disabled={props.isForkingFromTurn}
+                hitSlop={4}
+                className={cn(
+                  "h-7 w-7 items-center justify-center rounded-full",
+                  props.isForkingFromTurn
+                    ? "opacity-40"
+                    : "active:bg-neutral-200 dark:active:bg-white/10",
+                )}
+                onPress={() => {
+                  if (message.turnId !== null) {
+                    props.onForkFromTurn?.(message.turnId);
+                  }
+                }}
+              >
+                <SymbolView
+                  name="arrow.triangle.branch"
+                  size={13}
+                  tintColor={iconSubtleColor}
+                  type="monochrome"
+                />
+              </Pressable>
+            ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
@@ -1389,6 +1419,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      canForkFromTurn: props.onForkFromTurn !== undefined,
+      isForkingFromTurn: props.isForkingFromTurn ?? false,
     }),
     [
       copiedRowId,
@@ -1398,6 +1430,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      props.onForkFromTurn,
+      props.isForkingFromTurn,
     ],
   );
   const reportHeaderMaterialVisibility = useCallback(
@@ -1650,6 +1684,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
+        onForkFromTurn: props.onForkFromTurn ?? null,
+        isForkingFromTurn: props.isForkingFromTurn ?? false,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -1671,6 +1707,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleMaxWidth,
       onCopyWorkRow,
       onMarkdownLinkPress,
+      props.onForkFromTurn,
+      props.isForkingFromTurn,
       onPressImage,
       onToggleTurnFold,
       onToggleWorkGroup,
