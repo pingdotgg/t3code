@@ -17,10 +17,10 @@ import {
   executeAtomQuery,
   isAtomCommandInterrupted,
   mapAtomCommandResult,
+  refreshQueryOnSuccess,
   runAtomCommand,
   settleAsyncResult,
   settlePromise,
-  shouldRefreshQueryOnMount,
   squashAtomCommandFailure,
 } from "./runtime.ts";
 
@@ -62,17 +62,41 @@ describe("settleAsyncResult", () => {
   });
 });
 
-describe("shouldRefreshQueryOnMount", () => {
-  it("refreshes settled cached results without duplicating initial or active requests", () => {
-    const success = AsyncResult.success("contents");
-    const failure = AsyncResult.failure(Cause.fail(new Error("missing")));
+describe("refreshQueryOnSuccess", () => {
+  it.effect("refreshes the query for new success signals without replaying a cached signal", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const query = Atom.make(
+        Effect.sync(() => {
+          reads += 1;
+          return reads;
+        }),
+      );
+      const signal = Atom.make<AsyncResult.AsyncResult<string, never>>(
+        AsyncResult.initial<string, never>(false),
+      );
+      const liveQuery = refreshQueryOnSuccess(query, signal);
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(liveQuery);
 
-    expect(shouldRefreshQueryOnMount(success, true)).toBe(true);
-    expect(shouldRefreshQueryOnMount(failure, true)).toBe(true);
-    expect(shouldRefreshQueryOnMount(AsyncResult.initial(false), true)).toBe(false);
-    expect(shouldRefreshQueryOnMount(AsyncResult.waiting(success), true)).toBe(false);
-    expect(shouldRefreshQueryOnMount(success, false)).toBe(false);
-  });
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe(1);
+      expect(reads).toBe(1);
+
+      registry.set(signal, AsyncResult.success("changed"));
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe(2);
+
+      unmount();
+      registry.dispose();
+    }),
+  );
 });
 
 describe("atom command result helpers", () => {

@@ -314,6 +314,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
+  [WS_METHODS.projectsWatchFile, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
@@ -1652,6 +1653,21 @@ const makeWsRpcLayer = (
             WS_METHODS.projectsReadFile,
             workspaceFileSystem.readFile(input).pipe(
               Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsWatchFile]: (input) =>
+          observeRpcStream(
+            WS_METHODS.projectsWatchFile,
+            workspaceFileSystem.watchFile(input).pipe(
+              Stream.mapError(
                 (cause) =>
                   new ProjectReadFileError({
                     ...input,

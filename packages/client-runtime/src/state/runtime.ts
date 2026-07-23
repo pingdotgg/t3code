@@ -68,11 +68,27 @@ export interface AtomCommandReporter {
   readonly error: (message: string, cause: Cause.Cause<unknown>) => void;
 }
 
-export function shouldRefreshQueryOnMount(
-  result: AsyncResult.AsyncResult<unknown, unknown>,
-  enabled: boolean,
-): boolean {
-  return enabled && result._tag !== "Initial" && !result.waiting;
+export function refreshQueryOnSuccess<A, E, B, E2>(
+  queryAtom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  signalAtom: Atom.Atom<AsyncResult.AsyncResult<B, E2>>,
+): Atom.Atom<AsyncResult.AsyncResult<A, E>> {
+  return Atom.transform(
+    queryAtom,
+    (get) => {
+      const current = get.once(queryAtom);
+      get.once(signalAtom);
+      get.subscribe(queryAtom, (result) => {
+        get.setSelf(result);
+      });
+      get.subscribe(signalAtom, (result) => {
+        if (AsyncResult.isSuccess(result)) {
+          get.refresh(queryAtom);
+        }
+      });
+      return current;
+    },
+    { initialValueTarget: queryAtom },
+  );
 }
 
 export interface AtomCommand<W, A, E> {

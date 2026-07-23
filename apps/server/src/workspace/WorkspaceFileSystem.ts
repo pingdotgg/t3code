@@ -10,17 +10,20 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type {
+  ProjectFileChangeEvent,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -37,10 +40,12 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
     operation: Schema.Literals([
       "realpath-workspace-root",
       "realpath-target",
+      "realpath-watch-directory",
       "open",
       "stat",
       "read",
       "close",
+      "watch",
       "make-directory",
       "write-file",
     ]),
@@ -109,6 +114,13 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectReadFileInput,
     ) => Effect.Effect<
       ProjectReadFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /** Watch a workspace-relative file and emit after its directory entry changes. */
+    readonly watchFile: (
+      input: ProjectReadFileInput,
+    ) => Stream.Stream<
+      ProjectFileChangeEvent,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
     /**
@@ -259,6 +271,79 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+        const watchDirectory = path.dirname(target.absolutePath);
+        const realWorkspaceRoot = yield* Effect.tryPromise({
+          try: () => NodeFSP.realpath(input.cwd),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: target.absolutePath,
+              operationPath: input.cwd,
+              operation: "realpath-workspace-root",
+              cause,
+            }),
+        });
+        const realWatchDirectory = yield* Effect.tryPromise({
+          try: () => NodeFSP.realpath(watchDirectory),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: target.absolutePath,
+              operationPath: watchDirectory,
+              operation: "realpath-watch-directory",
+              cause,
+            }),
+        });
+        const relativeRealDirectory = path.relative(realWorkspaceRoot, realWatchDirectory);
+        if (
+          relativeRealDirectory.startsWith(`..${path.sep}`) ||
+          relativeRealDirectory === ".." ||
+          path.isAbsolute(relativeRealDirectory)
+        ) {
+          return yield* new WorkspaceFilePathEscapeError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedWorkspaceRoot: realWorkspaceRoot,
+            resolvedPath: realWatchDirectory,
+          });
+        }
+
+        const targetFileName = path.basename(target.absolutePath);
+        const watchedAbsolutePath = path.join(realWatchDirectory, targetFileName);
+        return fileSystem.watch(realWatchDirectory).pipe(
+          Stream.filter((event) => {
+            return (
+              event.path === targetFileName ||
+              event.path === watchedAbsolutePath ||
+              path.resolve(realWatchDirectory, event.path) === watchedAbsolutePath
+            );
+          }),
+          Stream.debounce(Duration.millis(100)),
+          Stream.map(() => ({ relativePath: target.relativePath })),
+          Stream.mapError(
+            (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: target.absolutePath,
+                operationPath: realWatchDirectory,
+                operation: "watch",
+                cause,
+              }),
+          ),
+        );
+      }),
+    );
+
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
@@ -297,7 +382,7 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ readFile, writeFile });
+  return WorkspaceFileSystem.of({ readFile, watchFile, writeFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

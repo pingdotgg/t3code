@@ -2,8 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -262,6 +265,24 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+
+  describe("watchFile", () => {
+    it.effect("emits when a missing workspace file is created", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const eventFiber = yield* workspaceFileSystem
+          .watchFile({ cwd, relativePath: "t3.json" })
+          .pipe(Stream.runHead, Effect.timeout("5 seconds"), Effect.forkChild);
+
+        yield* Effect.sleep("100 millis");
+        yield* writeTextFile(cwd, "t3.json", '{"scripts":[]}');
+
+        const event = yield* Fiber.join(eventFiber);
+        expect(Option.getOrUndefined(event)).toEqual({ relativePath: "t3.json" });
       }),
     );
   });
