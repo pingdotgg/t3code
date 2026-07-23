@@ -384,6 +384,24 @@ it.effect("writes snapshot screenshots into the workspace when savePath is set",
       expect(traversal.isError).toBe(true);
       expect(NodeFS.existsSync(NodePath.join(testWorkspaceRoot, "..", "outside.png"))).toBe(false);
 
+      // A directory symlink pointing outside the workspace must be rejected
+      // before mkdir creates anything at the symlink target.
+      const outsideDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcp-outside-"));
+      NodeFS.symlinkSync(outsideDir, NodePath.join(testWorkspaceRoot, "escape-dir"));
+      const dirSymlink = yield* callSnapshot("escape-dir/sub/leak.png");
+      expect(dirSymlink.isError).toBe(true);
+      expect(NodeFS.existsSync(NodePath.join(outsideDir, "sub"))).toBe(false);
+
+      // An existing file symlink at the destination must not be followed
+      // outside the workspace.
+      const victimPath = NodePath.join(outsideDir, "victim.png");
+      NodeFS.writeFileSync(victimPath, "original");
+      NodeFS.mkdirSync(NodePath.join(testWorkspaceRoot, "evidence"), { recursive: true });
+      NodeFS.symlinkSync(victimPath, NodePath.join(testWorkspaceRoot, "evidence", "escape.png"));
+      const fileSymlink = yield* callSnapshot("evidence/escape.png");
+      expect(fileSymlink.isError).toBe(true);
+      expect(NodeFS.readFileSync(victimPath, "utf8")).toBe("original");
+
       const bothDestinations = yield* server
         .callTool({
           name: "preview_snapshot",

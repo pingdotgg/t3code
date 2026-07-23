@@ -141,25 +141,68 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
         ),
       );
 
-    // Lexical containment is not enough: a symlinked directory inside the
-    // workspace could point outside it. Create the parent, then verify its
-    // canonical location is still inside the canonical workspace root.
+    // Lexical containment is not enough: symlinks inside the workspace could
+    // point outside it. Every filesystem step below re-verifies canonical
+    // containment before it acts.
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
+    const realPathOrNull = (target: string) =>
+      fileSystem.realPath(target).pipe(
+        Effect.map((canonical): string | null => canonical),
+        Effect.catchTags({
+          PlatformError: (error) =>
+            error.reason._tag === "NotFound"
+              ? Effect.succeed(null)
+              : Effect.fail(fail("failed to resolve the save path", error)),
+        }),
+      );
+    const isOutsideRoot = (canonicalRoot: string, canonical: string) => {
+      const relative = path.relative(canonicalRoot, canonical);
+      return relative.startsWith("..") || path.isAbsolute(relative);
+    };
+
+    const canonicalRoot = yield* fileSystem
+      .realPath(workspaceRoot)
+      .pipe(Effect.mapError((cause) => fail("failed to resolve the workspace root", cause)));
+
+    // Before creating anything: the deepest EXISTING ancestor of the target
+    // must canonicalize inside the root, or recursive mkdir would follow an
+    // outward directory symlink and create directories outside the workspace.
+    const lexicalParent = path.dirname(resolved.absolutePath);
+    let existingAncestor = lexicalParent;
+    let canonicalAncestor = yield* realPathOrNull(existingAncestor);
+    while (canonicalAncestor === null) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) {
+        return yield* fail("failed to resolve the save directory");
+      }
+      existingAncestor = parent;
+      canonicalAncestor = yield* realPathOrNull(existingAncestor);
+    }
+    if (isOutsideRoot(canonicalRoot, canonicalAncestor)) {
+      return yield* fail("savePath must stay inside the workspace root");
+    }
+
     yield* fileSystem
-      .makeDirectory(path.dirname(resolved.absolutePath), { recursive: true })
+      .makeDirectory(lexicalParent, { recursive: true })
       .pipe(Effect.mapError((cause) => fail("failed to create the save directory", cause)));
-    const [canonicalRoot, canonicalParent] = yield* Effect.all([
-      fileSystem.realPath(workspaceRoot),
-      fileSystem.realPath(path.dirname(resolved.absolutePath)),
-    ]).pipe(Effect.mapError((cause) => fail("failed to resolve the save directory", cause)));
-    const canonicalRelative = path.relative(canonicalRoot, canonicalParent);
-    if (canonicalRelative.startsWith("..") || path.isAbsolute(canonicalRelative)) {
+    const canonicalParent = yield* fileSystem
+      .realPath(lexicalParent)
+      .pipe(Effect.mapError((cause) => fail("failed to resolve the save directory", cause)));
+    if (isOutsideRoot(canonicalRoot, canonicalParent)) {
+      return yield* fail("savePath must stay inside the workspace root");
+    }
+
+    // If the destination already exists it may itself be a symlink; writing
+    // would follow it, so its canonical location must also stay inside.
+    const destination = path.join(canonicalParent, path.basename(resolved.absolutePath));
+    const canonicalDestination = yield* realPathOrNull(destination);
+    if (canonicalDestination !== null && isOutsideRoot(canonicalRoot, canonicalDestination)) {
       return yield* fail("savePath must stay inside the workspace root");
     }
 
     yield* writeScreenshotFile({
-      absolutePath: path.join(canonicalParent, path.basename(resolved.absolutePath)),
+      absolutePath: destination,
       screenshotBase64: input.screenshotBase64,
     }).pipe(Effect.mapError((cause) => fail("failed to write the screenshot file", cause)));
     return resolved.relativePath;
