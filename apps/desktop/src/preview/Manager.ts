@@ -1349,8 +1349,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
-    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-    if (!tab) return;
+    if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
     yield* Effect.all(
       [
         cancelPickElement(tabId),
@@ -1362,15 +1361,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         discard: true,
       },
     );
-    if (tab.webContentsId != null) {
+    const tab = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
+      return [
+        Option.some(current),
+        replaceMap(tabs, (copy) => {
+          copy.delete(tabId);
+        }),
+      ] as const;
+    });
+    if (Option.isNone(tab)) return;
+    const closedTab = tab.value;
+    if (closedTab.webContentsId != null) {
       yield* Effect.all(
-        [detachControlSession(tab.webContentsId), detachListeners(tab.webContentsId)],
+        [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
         { concurrency: 2, discard: true },
       );
     }
     const updatedAt = yield* currentIso;
     const closed: PreviewTabState = {
-      ...tab,
+      ...closedTab,
       webContentsId: null,
       navStatus: { kind: "Idle" },
       canGoBack: false,
@@ -1381,11 +1392,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       controller: "none",
       updatedAt,
     };
-    yield* SynchronizedRef.update(tabsRef, (tabs) =>
-      replaceMap(tabs, (copy) => {
-        copy.delete(tabId);
-      }),
-    );
     yield* emit(tabId, closed);
   });
 
@@ -1444,7 +1450,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.getZoomFactor(),
           );
     yield* attachListeners(tabId, wc);
-    runFork(restoreControlSession(tabId, wc));
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -1475,9 +1480,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (Option.isNone(registration)) {
+      yield* Effect.all([detachControlSession(webContentsId), detachListeners(webContentsId)], {
+        concurrency: 2,
+        discard: true,
+      });
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
+    runFork(restoreControlSession(tabId, wc));
     yield* emit(tabId, registered);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
       wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
@@ -1771,14 +1781,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // session attaches so a concurrent setColorScheme is not overwritten with
   // a stale snapshot.
   const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
-    ensureControlSession(wc).pipe(
-      Effect.andThen(SynchronizedRef.get(tabsRef)),
-      Effect.flatMap((tabs) => {
-        const colorScheme = tabs.get(tabId)?.colorScheme ?? "system";
-        return colorScheme === "system" ? Effect.void : applyColorScheme(tabId, wc, colorScheme);
-      }),
-      Effect.ignore,
-    );
+    Effect.gen(function* () {
+      const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      if (beforeAttach?.webContentsId !== wc.id) return;
+      yield* ensureControlSession(wc);
+      const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      if (afterAttach?.webContentsId !== wc.id) {
+        yield* detachControlSession(wc.id);
+        return;
+      }
+      if (afterAttach.colorScheme !== "system") {
+        yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
+          wc.debugger.sendCommand("Emulation.setEmulatedMedia", {
+            features: [
+              {
+                name: "prefers-color-scheme",
+                value: afterAttach.colorScheme,
+              },
+            ],
+          }),
+        );
+      }
+    }).pipe(Effect.ignore);
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
     tabId: string,
@@ -1970,6 +1994,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
+    const captureNextFrame = Effect.sleep(RECORDING_FRAME_INTERVAL_MS).pipe(
+      Effect.andThen(capturePreviewFrame(tabId)),
+      Effect.catch((error) =>
+        Effect.logWarning("Background preview frame capture failed.", {
+          tabId,
+          error,
+        }),
+      ),
+    );
     const created = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
       const current = sessions.get(tabId);
       if (current) {
@@ -1988,6 +2021,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
       return Effect.gen(function* () {
         const scope = yield* Scope.fork(parentScope, "sequential");
+        yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
         return [
           true,
           replaceMap(sessions, (copy) => {
@@ -2000,18 +2034,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     });
     if (!created) return;
-    const session = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
-    if (!session) return;
-    const captureNextFrame = Effect.sleep(RECORDING_FRAME_INTERVAL_MS).pipe(
-      Effect.andThen(capturePreviewFrame(tabId)),
-      Effect.catch((error) =>
-        Effect.logWarning("Background preview frame capture failed.", {
-          tabId,
-          error,
-        }),
-      ),
-    );
-    yield* Effect.forkIn(Effect.forever(captureNextFrame), session.scope);
     yield* capturePreviewFrame(tabId).pipe(Effect.onError(() => stopFrameCapture(tabId, consumer)));
   });
 

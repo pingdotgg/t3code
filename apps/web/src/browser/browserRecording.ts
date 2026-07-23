@@ -88,6 +88,7 @@ interface ActiveRecording {
   readonly mimeType: string;
   readonly startedAt: string;
   readonly startupSettled: Promise<void>;
+  frameSequence: number;
   lifecycle: BrowserRecordingLifecycle;
 }
 
@@ -116,12 +117,30 @@ const preferredMimeType = (): string => {
 const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
   const recording = activeRecordings.get(frame.tabId);
   if (!recording) return;
+  if (
+    !Number.isFinite(frame.width) ||
+    !Number.isFinite(frame.height) ||
+    frame.width <= 0 ||
+    frame.height <= 0
+  ) {
+    return;
+  }
+  const width = Math.max(1, Math.round(frame.width));
+  const height = Math.max(1, Math.round(frame.height));
+  const frameSequence = ++recording.frameSequence;
   const image = new Image();
   image.addEventListener(
     "load",
     () => {
-      if (activeRecordings.get(frame.tabId) !== recording) return;
-      recording.context.drawImage(image, 0, 0, recording.canvas.width, recording.canvas.height);
+      if (
+        activeRecordings.get(frame.tabId) !== recording ||
+        recording.frameSequence !== frameSequence
+      ) {
+        return;
+      }
+      if (recording.canvas.width !== width) recording.canvas.width = width;
+      if (recording.canvas.height !== height) recording.canvas.height = height;
+      recording.context.drawImage(image, 0, 0, width, height);
     },
     { once: true },
   );
@@ -246,6 +265,7 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
     mimeType,
     startedAt,
     startupSettled,
+    frameSequence: 0,
     lifecycle: { phase: "starting" },
   };
   activeRecordings.set(tabId, recording);

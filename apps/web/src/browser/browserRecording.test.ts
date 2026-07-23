@@ -8,7 +8,17 @@ const { events, onFrame, registrySet, save, startScreencast, stopScreencast, sur
     };
     return {
       events,
-      onFrame: vi.fn(() => vi.fn()),
+      onFrame: vi.fn(
+        (
+          _listener: (frame: {
+            readonly tabId: string;
+            readonly data: string;
+            readonly width: number;
+            readonly height: number;
+            readonly receivedAt: string;
+          }) => void,
+        ) => vi.fn(),
+      ),
       registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
         events.push(
           value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
@@ -130,6 +140,50 @@ describe("browser recording", () => {
 
     expect(startScreencast).toHaveBeenCalledWith("recording-tab");
     expect(events).toEqual(["start-screencast", "publish:recording-tab"]);
+
+    await stopBrowserRecording("recording-tab");
+  });
+
+  it("resizes a hidden recording canvas to the captured frame dimensions", async () => {
+    const drawImage = vi.fn();
+    const canvas = {
+      width: 0,
+      height: 0,
+      captureStream: () => ({}),
+      getContext: () => ({ drawImage }),
+    };
+    class FakeImage {
+      private loadListener: EventListenerOrEventListenerObject | undefined;
+
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+        if (type === "load") this.loadListener = listener;
+      }
+
+      set src(_value: string) {
+        const event = new Event("load");
+        if (typeof this.loadListener === "function") this.loadListener(event);
+        else this.loadListener?.handleEvent(event);
+      }
+    }
+    vi.stubGlobal("Image", FakeImage as unknown as typeof Image);
+    vi.stubGlobal("document", {
+      createElement: () => canvas,
+    });
+    surfaceState.byTabId = {};
+
+    await startBrowserRecording("recording-tab");
+    const frameListener = onFrame.mock.calls[0]?.[0];
+    expect(frameListener).toBeDefined();
+    frameListener?.({
+      tabId: "recording-tab",
+      data: "captured-frame",
+      width: 390,
+      height: 844,
+      receivedAt: "2026-06-26T00:00:00.000Z",
+    });
+
+    expect(canvas).toMatchObject({ width: 390, height: 844 });
+    expect(drawImage).toHaveBeenCalledWith(expect.any(FakeImage), 0, 0, 390, 844);
 
     await stopBrowserRecording("recording-tab");
   });

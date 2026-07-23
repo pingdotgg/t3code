@@ -2,6 +2,7 @@ import { it as effectIt } from "@effect/vitest";
 import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -505,6 +506,63 @@ describe("PreviewManager", () => {
           features: [{ name: "prefers-color-scheme", value: "" }],
         });
         expect(states.at(-1)?.colorScheme).toBe("system");
+      }),
+    ),
+  );
+
+  effectIt.effect("detaches a webview registered while tab close cleanup is in flight", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("close-race-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const firstWebContents = makeTestPreviewWebContents(capturePage, 42);
+        const replacementWebContents = makeTestPreviewWebContents(capturePage, 43);
+        const replacementListenerSpies = replacementWebContents as unknown as {
+          readonly off: ReturnType<typeof vi.fn>;
+          readonly ipc: { readonly off: ReturnType<typeof vi.fn> };
+        };
+        fromId.mockImplementation((id) => {
+          if (id === 42) return firstWebContents;
+          if (id === 43) return replacementWebContents;
+          return null;
+        });
+        const { pictureInPictureWindow } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+
+        yield* manager.createTab("tab_close_register_race");
+        yield* manager.registerWebview("tab_close_register_race", 42);
+        yield* manager.openPictureInPicture("tab_close_register_race");
+
+        const closeCleanupPaused = yield* Deferred.make<void>();
+        const continueCloseCleanup = yield* Deferred.make<void>();
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          !state.pictureInPicture && state.webContentsId === 42
+            ? Deferred.succeed(closeCleanupPaused, undefined).pipe(
+                Effect.andThen(Deferred.await(continueCloseCleanup)),
+              )
+            : Effect.void,
+        );
+
+        const closeFiber = yield* manager
+          .closeTab("tab_close_register_race")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(closeCleanupPaused);
+        yield* manager.registerWebview("tab_close_register_race", 43);
+        yield* Deferred.succeed(continueCloseCleanup, undefined);
+        yield* Fiber.join(closeFiber);
+
+        expect(replacementListenerSpies.off).toHaveBeenCalledWith(
+          "did-navigate",
+          expect.any(Function),
+        );
+        expect(replacementListenerSpies.ipc.off).toHaveBeenCalledWith(
+          "preview:human-input",
+          expect.any(Function),
+        );
       }),
     ),
   );
