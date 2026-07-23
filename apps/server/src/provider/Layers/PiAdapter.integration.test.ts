@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -92,10 +93,21 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
         });
       }),
     writeExtensionResponse: (response) =>
-      Effect.sync(() => {
-        extensionResponses.push(response);
+      Effect.suspend(() => {
+        if (nextWriteDefect !== undefined) {
+          const defect = nextWriteDefect;
+          nextWriteDefect = undefined;
+          return Effect.die(defect);
+        }
+        return Effect.sync(() => {
+          extensionResponses.push(response);
+        });
       }),
-    request: (command) => Effect.succeed(responses.get((command as { type: string }).type)),
+    request: (command) =>
+      Effect.sync(() => {
+        commands.push(command);
+        return responses.get((command as { type: string }).type);
+      }),
     messages,
     isClosed: Effect.succeed(false),
     kill: Effect.void,
@@ -496,6 +508,13 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       } as RpcExtensionUIRequest);
 
       const requestId = yield* Deferred.await(opened);
+      fake.failNextWrite();
+      const firstAttempt = yield* adapter
+        .respondToRequest(threadId, requestId, "accept")
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(firstAttempt)).toBe(true);
+      expect(fake.extensionResponses).toHaveLength(0);
+
       yield* adapter.respondToRequest(threadId, requestId, "accept");
       yield* Deferred.await(resolved);
       yield* Fiber.interrupt(fiber);
@@ -562,6 +581,15 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       if (requested && requested.type === "user-input.requested") {
         const questionId = requested.payload.questions[0]?.id;
         expect(questionId).toBeDefined();
+        fake.failNextWrite();
+        const firstAttempt = yield* adapter
+          .respondToUserInput(threadId, requestId, {
+            [String(questionId)]: "Option A",
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(firstAttempt)).toBe(true);
+        expect(fake.extensionResponses).toHaveLength(0);
+
         yield* adapter.respondToUserInput(threadId, requestId, {
           [String(questionId)]: "Option A",
         });
@@ -788,6 +816,35 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       if (turnStarted && turnStarted.type === "turn.started") {
         expect(turnStarted.payload.model).toBe("anthropic/claude-test");
       }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("ignores thinking options selected for another provider instance", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-foreign-thinking");
+      yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "openai/gpt-5",
+          options: [{ id: "thinking", value: "high" }],
+        },
+      });
+
+      expect(fake.commands.some((command) => command.type === "set_model")).toBe(false);
+      expect(fake.commands.some((command) => command.type === "set_thinking_level")).toBe(false);
 
       yield* adapter.stopSession(threadId);
     }),

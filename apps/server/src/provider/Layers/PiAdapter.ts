@@ -1048,8 +1048,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const sendTurn: PiAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
 
-    const requestedModel =
-      input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
+    const modelSelection =
+      input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+    const requestedModel = modelSelection?.model;
     const promptText = typeof input.input === "string" ? input.input : "";
     // resolve before mutating turn state so a bad attachment fails cleanly
     const images = yield* resolvePromptImages(input.attachments);
@@ -1068,7 +1069,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     // only on a fresh turn — changing options mid-stream would race the active turn
     if (!isMidTurn) {
       yield* maybeSwitchPiModel(context, requestedModel);
-      yield* applyThinkingLevel(context, input.modelSelection);
+      yield* applyThinkingLevel(context, modelSelection);
     }
 
     if (!context.turnState) {
@@ -1125,10 +1126,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
           detail: `Unknown pending approval request: ${requestId}.`,
         });
       }
-      context.pendingApprovals.delete(requestId);
-
       const response: RpcExtensionUIResponse = buildPiApprovalResponse(pending.piId, decision);
       yield* context.transport.writeExtensionResponse(response);
+      context.pendingApprovals.delete(requestId);
 
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -1155,11 +1155,10 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
           detail: `Unknown pending user-input request: ${requestId}.`,
         });
       }
-      context.pendingUserInputs.delete(requestId);
-
       const response: RpcExtensionUIResponse = buildPiUserInputResponse(pending, answers);
 
       yield* context.transport.writeExtensionResponse(response);
+      context.pendingUserInputs.delete(requestId);
 
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
