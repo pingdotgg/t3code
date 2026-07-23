@@ -1,0 +1,7 @@
+{
+  "name": "t3code",
+  "private": true,
+  "scripts": {
+    "test": "vp test"
+  }
+}
