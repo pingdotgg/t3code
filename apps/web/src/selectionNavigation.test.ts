@@ -154,6 +154,24 @@ describe("selection navigation", () => {
     expect(dispatchedKeys).toEqual(["ArrowUp"]);
   });
 
+  it("does not claim navigation for an empty composer suggestion menu", () => {
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+
+    const composer = new TestElement();
+    composer.attributes.set("data-chat-composer-form", "true");
+    const target = new TestElement();
+    target.parentElement = composer;
+    const emptySurface = new TestElement();
+    testDocument(target, [emptySurface]);
+    const event = keyboardEvent(target, { key: "n", ctrlKey: true });
+
+    handleSelectionNavigationKeyDown(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+  });
+
   it("does not claim navigation for an unrelated visible picker", () => {
     vi.stubGlobal("Element", TestElement);
     vi.stubGlobal("HTMLElement", TestElement);
