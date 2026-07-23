@@ -983,11 +983,15 @@ describe("PreviewManager", () => {
         expect(browserWindowConstructor).toHaveBeenCalledOnce();
         expect(initializingWindow.loadURL).toHaveBeenCalledOnce();
         expect(initializingWindow.close).toHaveBeenCalledOnce();
-        yield* Fiber.join(firstOpen);
-        yield* Fiber.join(secondOpen);
+        const [firstOpenExit, secondOpenExit] = yield* Effect.all([
+          Fiber.await(firstOpen),
+          Fiber.await(secondOpen),
+        ]);
         yield* Fiber.join(close);
 
-        expect(initializingWindow.showInactive).toHaveBeenCalledOnce();
+        expect(Exit.hasInterrupts(firstOpenExit)).toBe(true);
+        expect(Exit.hasInterrupts(secondOpenExit)).toBe(true);
+        expect(initializingWindow.showInactive).not.toHaveBeenCalled();
         expect(capturePage).not.toHaveBeenCalled();
         expect(states.at(-1)?.pictureInPicture).toBe(false);
 
@@ -1006,6 +1010,72 @@ describe("PreviewManager", () => {
         const capturesAfterClose = capturePage.mock.calls.length;
         yield* TestClock.adjust(200);
         expect(capturePage).toHaveBeenCalledTimes(capturesAfterClose);
+      }),
+    ),
+  );
+
+  effectIt.effect("rejects picture-in-picture when its webview changes during initialization", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const initialCapturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("stale-preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const replacementCapturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("replacement-preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const initialWebContents = makeTestPreviewWebContents(initialCapturePage, 42);
+        const replacementWebContents = makeTestPreviewWebContents(replacementCapturePage, 43);
+        fromId.mockImplementation((webContentsId?: number) => {
+          if (webContentsId === 42) return initialWebContents;
+          if (webContentsId === 43) return replacementWebContents;
+          return null;
+        });
+        let resolveLoad: (() => void) | undefined;
+        const { pictureInPictureWindow } = makeTestPictureInPictureWindow(
+          () =>
+            new Promise<void>((resolve) => {
+              resolveLoad = resolve;
+            }),
+        );
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+
+        yield* manager.createTab("tab_replaced_webview");
+        yield* manager.registerWebview("tab_replaced_webview", 42);
+        const open = yield* manager
+          .openPictureInPicture("tab_replaced_webview")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(pictureInPictureWindow.loadURL).toHaveBeenCalledOnce();
+        expect(resolveLoad).toBeDefined();
+        const concurrentOpen = yield* manager
+          .openPictureInPicture("tab_replaced_webview")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        yield* manager.registerWebview("tab_replaced_webview", 43);
+        resolveLoad?.();
+
+        const openExits = yield* Effect.all([Fiber.await(open), Fiber.await(concurrentOpen)]);
+        for (const openExit of openExits) {
+          expect(Exit.isFailure(openExit)).toBe(true);
+          if (Exit.isSuccess(openExit)) continue;
+          const error = Option.getOrThrow(Cause.findErrorOption(openExit.cause));
+          expect(error).toMatchObject({
+            _tag: "PreviewOperationError",
+            operation: "pictureInPicture.validateWebContents",
+            tabId: "tab_replaced_webview",
+            webContentsId: 42,
+          });
+        }
+        expect(browserWindowConstructor).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.showInactive).not.toHaveBeenCalled();
+        expect(initialCapturePage).not.toHaveBeenCalled();
+        expect(replacementCapturePage).not.toHaveBeenCalled();
       }),
     ),
   );

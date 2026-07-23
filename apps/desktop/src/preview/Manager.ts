@@ -33,6 +33,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -336,6 +337,8 @@ interface FrameCaptureSession {
 
 interface PictureInPictureSession {
   readonly window: BrowserWindow;
+  readonly webContentsId: number;
+  readonly ready: Deferred.Deferred<void, PreviewManagerError>;
   readonly initializationScope: Scope.Closeable;
 }
 
@@ -2029,6 +2032,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (!removed) return;
+    yield* Deferred.interrupt(expectedSession.ready);
     yield* Scope.close(expectedSession.initializationScope, Exit.void).pipe(Effect.ignore);
     yield* Ref.update(pictureInPictureAspectRatiosRef, (aspectRatios) =>
       replaceMap(aspectRatios, (copy) => {
@@ -2079,20 +2083,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
     tabId: string,
   ) {
-    const wc = yield* requireWebContents(tabId);
-    const pictureInPictureSession = yield* pictureInPictureMutationSemaphore.withPermit(
+    const claim = yield* pictureInPictureMutationSemaphore.withPermit(
       Effect.gen(function* () {
         const existing = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
         if (existing && !existing.window.isDestroyed()) {
-          yield* attempt({ operation: "pictureInPicture.showExisting", tabId }, () =>
-            existing.window.showInactive(),
-          );
-          return null;
+          return { kind: "existing" as const, session: existing };
         }
         if (existing) {
           yield* releasePictureInPicture(tabId, existing, false);
         }
-        const title = wc.getTitle().trim();
+        const wc = yield* requireWebContents(tabId);
+        const title = yield* attempt(
+          {
+            operation: "pictureInPicture.readTitle",
+            tabId,
+            webContentsId: wc.id,
+          },
+          () => wc.getTitle().trim(),
+        );
         const pictureInPictureWindow = yield* attempt(
           {
             operation: "pictureInPicture.create",
@@ -2126,8 +2134,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }),
         );
         const initializationScope = yield* Scope.fork(parentScope, "sequential");
+        const ready = yield* Deferred.make<void, PreviewManagerError>();
         const session: PictureInPictureSession = {
           window: pictureInPictureWindow,
+          webContentsId: wc.id,
+          ready,
           initializationScope,
         };
         const onClosed = () => {
@@ -2173,48 +2184,88 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             copy.set(tabId, session);
           }),
         );
-        return session;
+        return { kind: "created" as const, session };
       }),
     );
-    if (!pictureInPictureSession) return;
+    const pictureInPictureSession = claim.session;
+    if (claim.kind === "existing") {
+      yield* Deferred.await(pictureInPictureSession.ready);
+      return yield* pictureInPictureMutationSemaphore.withPermit(
+        Effect.gen(function* () {
+          const current = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
+          if (current !== pictureInPictureSession || pictureInPictureSession.window.isDestroyed()) {
+            return yield* new PreviewOperationError({
+              operation: "pictureInPicture.showExisting",
+              tabId,
+              webContentsId: pictureInPictureSession.webContentsId,
+              cause: new Error("Picture-in-picture session closed before it became visible."),
+            });
+          }
+          yield* attempt(
+            {
+              operation: "pictureInPicture.showExisting",
+              tabId,
+              webContentsId: pictureInPictureSession.webContentsId,
+            },
+            () => pictureInPictureSession.window.showInactive(),
+          );
+        }),
+      );
+    }
 
     const initialize = Effect.gen(function* () {
       yield* attemptPromise(
         {
           operation: "pictureInPicture.load",
           tabId,
-          webContentsId: wc.id,
+          webContentsId: pictureInPictureSession.webContentsId,
         },
         () => pictureInPictureSession.window.loadURL(buildPreviewPictureInPictureDataUrl()),
       );
+      const currentWebContents = yield* requireWebContents(tabId);
+      if (
+        currentWebContents.id !== pictureInPictureSession.webContentsId ||
+        currentWebContents.isDestroyed()
+      ) {
+        return yield* new PreviewOperationError({
+          operation: "pictureInPicture.validateWebContents",
+          tabId,
+          webContentsId: pictureInPictureSession.webContentsId,
+          cause: new Error("Preview webview changed while picture-in-picture was opening."),
+        });
+      }
       yield* startFrameCapture(tabId, "picture-in-picture");
       yield* attempt(
         {
           operation: "pictureInPicture.show",
           tabId,
-          webContentsId: wc.id,
+          webContentsId: pictureInPictureSession.webContentsId,
         },
         () => pictureInPictureSession.window.showInactive(),
       );
       yield* update(tabId, { pictureInPicture: true });
     });
-    const initializationFiber = yield* Effect.forkIn(
-      initialize,
-      pictureInPictureSession.initializationScope,
-    );
-    const initializationExit = yield* Fiber.await(initializationFiber).pipe(
+    const initializationExit = yield* Effect.gen(function* () {
+      const initializationFiber = yield* Effect.forkIn(
+        initialize,
+        pictureInPictureSession.initializationScope,
+      );
+      return yield* Fiber.await(initializationFiber);
+    }).pipe(
       Effect.onInterrupt(() =>
         pictureInPictureMutationSemaphore.withPermit(
           releasePictureInPicture(tabId, pictureInPictureSession, true),
         ),
       ),
     );
+    yield* Deferred.done(pictureInPictureSession.ready, initializationExit);
     if (Exit.isSuccess(initializationExit)) return;
     const current = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
-    if (current !== pictureInPictureSession) return;
-    yield* pictureInPictureMutationSemaphore.withPermit(
-      releasePictureInPicture(tabId, pictureInPictureSession, true),
-    );
+    if (current === pictureInPictureSession) {
+      yield* pictureInPictureMutationSemaphore.withPermit(
+        releasePictureInPicture(tabId, pictureInPictureSession, true),
+      );
+    }
     return yield* Effect.failCause(initializationExit.cause);
   });
 
