@@ -14,6 +14,7 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
+export const NEW_THREAD_PROJECT_VIEW_GROUP = "new-thread-projects";
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
@@ -66,6 +67,43 @@ export function enumerateCommandPaletteItems(
     const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
     return itemWithoutShortcut;
   });
+}
+
+export function prioritizeCommandPaletteItem(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  preferredValue: string | null,
+): CommandPaletteActionItem[] {
+  if (preferredValue === null) return [...items];
+
+  const preferredIndex = items.findIndex((item) => item.value === preferredValue);
+  if (preferredIndex <= 0) return [...items];
+
+  const preferredItem = items[preferredIndex];
+  if (preferredItem === undefined) return [...items];
+  return [preferredItem, ...items.slice(0, preferredIndex), ...items.slice(preferredIndex + 1)];
+}
+
+export function buildNewThreadPickerGroups(input: {
+  projectItems: ReadonlyArray<CommandPaletteActionItem>;
+  addProjectItem: CommandPaletteActionItem;
+  areProjectsLoading: boolean;
+}): CommandPaletteGroup[] {
+  if (input.areProjectsLoading && input.projectItems.length === 0) return [];
+
+  const groups: CommandPaletteGroup[] = [];
+  if (input.projectItems.length > 0) {
+    groups.push({
+      value: NEW_THREAD_PROJECT_VIEW_GROUP,
+      label: "Projects",
+      items: input.projectItems,
+    });
+  }
+  groups.push({
+    value: "new-thread-actions",
+    label: "Actions",
+    items: [input.addProjectItem],
+  });
+  return groups;
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
@@ -229,6 +267,10 @@ function rankCommandPaletteItemMatch(
   return 0;
 }
 
+function isCommandPaletteActionGroup(group: CommandPaletteGroup): boolean {
+  return group.value === "actions" || group.value === "new-thread-actions";
+}
+
 export function filterCommandPaletteGroups(input: {
   activeGroups: ReadonlyArray<CommandPaletteGroup>;
   query: string;
@@ -242,14 +284,14 @@ export function filterCommandPaletteGroups(input: {
 
   if (normalizedQuery.length === 0) {
     if (isActionsFilter) {
-      return input.activeGroups.filter((group) => group.value === "actions");
+      return input.activeGroups.filter(isCommandPaletteActionGroup);
     }
     return [...input.activeGroups];
   }
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
-    baseGroups = baseGroups.filter((group) => group.value === "actions");
+    baseGroups = baseGroups.filter(isCommandPaletteActionGroup);
   } else if (!input.isInSubmenu) {
     baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
   }

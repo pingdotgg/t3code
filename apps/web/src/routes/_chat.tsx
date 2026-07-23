@@ -2,16 +2,26 @@ import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
-import { isCommandPaletteOpen } from "../commandPaletteBus";
+import {
+  closeCommandPalette,
+  isCommandPaletteOpen,
+  openCommandPalette,
+} from "../commandPaletteBus";
 import { useClientSettings } from "../hooks/useSettings";
-import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  resolveThreadActionProjectRef,
+  startNewThreadFromContext,
+} from "../lib/chatThreadActions";
+import {
+  resolveChatNewShortcutBehavior,
+  shouldHandleChatRouteShortcut,
+} from "../lib/chatRouteShortcuts";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -67,7 +77,8 @@ function ChatRouteGlobalShortcuts() {
         },
       });
 
-      if (isCommandPaletteOpen()) {
+      const commandPaletteOpen = isCommandPaletteOpen();
+      if (!shouldHandleChatRouteShortcut({ command, commandPaletteOpen })) {
         return;
       }
 
@@ -95,9 +106,25 @@ function ChatRouteGlobalShortcuts() {
         // Sidebar v2 routes creation through the command palette whenever
         // there is a real choice to make; v1 (and single-project setups)
         // keep the immediate contextual create.
-        if (sidebarV2Enabled && projectGroupCount > 1) {
-          openCommandPalette({ open: "new-thread-in" });
+        const behavior = resolveChatNewShortcutBehavior({
+          sidebarV2Enabled,
+          projectCount: projectGroupCount,
+          commandPaletteOpen,
+        });
+        if (behavior === "open-project-picker") {
+          openCommandPalette({
+            open: "new-thread-in",
+            preferredProjectRef: resolveThreadActionProjectRef({
+              activeDraftThread,
+              activeThread: activeThread ?? undefined,
+              defaultProjectRef,
+              handleNewThread,
+            }),
+          });
           return;
+        }
+        if (behavior === "dismiss-and-create") {
+          closeCommandPalette();
         }
         void startNewThreadFromContext({
           activeDraftThread,

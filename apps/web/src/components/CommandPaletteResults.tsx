@@ -18,6 +18,7 @@ import { cn } from "~/lib/utils";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
+  leadingMessage?: string;
   groups: ReadonlyArray<CommandPaletteGroup>;
   highlightedItemValue?: string | null;
   isActionsOnly: boolean;
@@ -39,6 +40,9 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
 
   return (
     <CommandList>
+      {props.leadingMessage ? (
+        <div className="px-4 py-3 text-sm text-muted-foreground">{props.leadingMessage}</div>
+      ) : null}
       {props.groups.map((group) => (
         <CommandGroup items={group.items} key={group.value}>
           <CommandGroupLabel>{group.label}</CommandGroupLabel>
