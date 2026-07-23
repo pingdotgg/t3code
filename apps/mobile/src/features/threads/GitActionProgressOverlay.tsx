@@ -1,19 +1,18 @@
 import * as Haptics from "expo-haptics";
+import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useRef } from "react";
-import { ActivityIndicator, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, useColorScheme, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { isGlassEffectAPIAvailable } from "expo-glass-effect";
 
 import { AppText as Text } from "../../components/AppText";
-import { GlassSurface } from "../../components/GlassSurface";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
 const OVERLAY_LAYOUT_TRANSITION = LinearTransition.duration(220);
-const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
+const AnimatedLiquidGlassView = Animated.createAnimatedComponent(LiquidGlassView);
 
 export function GitActionProgressOverlay(props: {
   readonly progress: GitActionProgress;
@@ -50,7 +49,7 @@ export function GitActionProgressOverlay(props: {
 
   return (
     <Animated.View
-      entering={FadeIn.duration(200)}
+      entering={isLiquidGlassSupported ? undefined : FadeIn.duration(200)}
       exiting={FadeOut.duration(150)}
       className="absolute inset-x-3 z-[100]"
       style={{ top: insets.top + 48 }}
@@ -66,7 +65,9 @@ export function GitActionProgressOverlay(props: {
 function OverlayContent(props: { readonly progress: GitActionProgress }) {
   const { progress } = props;
   const iconColor = useThemeColor("--color-icon");
-  const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
+  const glassBorder = useThemeColor("--color-header-border");
+  const glassTint = useThemeColor("--color-glass-tint");
+  const isDarkMode = useColorScheme() === "dark";
   const content = (
     <>
       <OverlayIcon phase={progress.phase} iconColor={iconColor} />
@@ -90,19 +91,38 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
     </>
   );
 
-  if (supportsGlass) {
+  if (isLiquidGlassSupported) {
     return (
-      <AnimatedGlassSurface
-        chrome="none"
-        glassEffectStyle="regular"
+      <Animated.View
         layout={OVERLAY_LAYOUT_TRANSITION}
         style={{
+          backgroundColor: glassTint,
+          borderColor: glassBorder,
           borderCurve: "continuous",
           borderRadius: 26,
+          borderWidth: StyleSheet.hairlineWidth,
+          overflow: "hidden",
         }}
       >
-        <View className="flex-row items-center gap-2.5 px-3.5 py-3">{content}</View>
-      </AnimatedGlassSurface>
+        <AnimatedLiquidGlassView
+          colorScheme={isDarkMode ? "dark" : "light"}
+          effect="regular"
+          interactive
+          layout={OVERLAY_LAYOUT_TRANSITION}
+          style={{
+            borderCurve: "continuous",
+            borderRadius: 26,
+            overflow: "hidden",
+          }}
+        >
+          <Animated.View
+            entering={FadeIn.delay(60).duration(140)}
+            className="flex-row items-center gap-2.5 px-3.5 py-3"
+          >
+            {content}
+          </Animated.View>
+        </AnimatedLiquidGlassView>
+      </Animated.View>
     );
   }
 
