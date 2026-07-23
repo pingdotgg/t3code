@@ -1,4 +1,8 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type KeybindingCommand,
+  type FilesystemBrowseEntry,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -50,6 +54,18 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+}
+
+export function enumerateCommandPaletteItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+): CommandPaletteActionItem[] {
+  return items.map((item, index) => {
+    const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[index];
+    if (shortcutCommand) return { ...item, shortcutCommand };
+
+    const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
+    return itemWithoutShortcut;
+  });
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";

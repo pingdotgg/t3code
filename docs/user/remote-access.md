@@ -152,6 +152,19 @@ With mise/asdf/fnm/nodenv, make sure the tool's shim directory is installed and 
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 
+## Updating a Remote Server
+
+When the T3 Code web or desktop app and a remote server use different versions, a warning appears in
+the conversation and in **Settings** → **Connections**. Follow the action shown there: T3 Code may
+be able to update and reconnect the server for you, or it may ask you to update the desktop app or
+run a copied command on the server machine.
+
+Finish active work before updating because the server restarts briefly. For step-by-step guidance,
+see [Keeping T3 Code in Sync](./server-updates.md).
+
+On a Linux host, you can keep the server running after logout and manage it independently of the
+connection method. See [Running T3 Code in the Background](./background-service.md).
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.

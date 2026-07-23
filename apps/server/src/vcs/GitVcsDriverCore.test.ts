@@ -690,6 +690,61 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("remote operations", () => {
+    it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["remote", "add", "origin", "https://github.com/pingdotgg/t3code.git"]);
+
+        const reusedForSsh = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "git@github.com:pingdotgg/t3code.git",
+        });
+        assert.equal(reusedForSsh, "origin");
+
+        const reusedForSshScheme = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://git@github.com/pingdotgg/t3code",
+        });
+        assert.equal(reusedForSshScheme, "origin");
+
+        const reusedForBareSshScheme = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://github.com/pingdotgg/t3code",
+        });
+        assert.equal(reusedForBareSshScheme, "origin");
+
+        const reusedForSshPort = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://git@github.com:22/pingdotgg/t3code",
+        });
+        assert.equal(reusedForSshPort, "origin");
+
+        const reusedForSshWithPort = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://git@github.com:22/pingdotgg/t3code.git",
+        });
+        assert.equal(reusedForSshWithPort, "origin");
+
+        const addedForFork = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "octocat",
+          url: "git@github.com:octocat/t3code.git",
+        });
+        assert.equal(addedForFork, "octocat");
+        assert.equal(yield* git(cwd, ["remote"]), "octocat\norigin");
+      }),
+    );
+  });
+
   describe("commit context", () => {
     it.effect("stages selected files and commits only those files", () =>
       Effect.gen(function* () {
