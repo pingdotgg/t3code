@@ -7,7 +7,6 @@ import type {
   SourceControlProviderKind,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
-import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -215,10 +214,7 @@ export function buildProjectCreateCommand(input: {
     title: inferProjectTitleFromPath(input.workspaceRoot),
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
-    defaultModelSelection: {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: DEFAULT_MODEL,
-    },
+    defaultModelSelection: null,
     createdAt: input.createdAt,
   };
 }

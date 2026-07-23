@@ -4,12 +4,14 @@ import * as Schema from "effect/Schema";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
+  ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -28,6 +30,41 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings glass opacity", () => {
+  it("defaults to a readable translucent surface", () => {
+    expect(decodeClientSettings({}).glassOpacity).toBe(80);
+  });
+
+  it.each([49, 101, 72.5])("rejects an invalid glass opacity: %s", (value) => {
+    expect(() => decodeClientSettings({ glassOpacity: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ glassOpacity: value })).toThrow();
+  });
+
+  it.each([50, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
+    expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
+    expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+  });
+});
+
+describe("ClientSettings sidebar v2", () => {
+  it("defaults the beta off with a three-day auto-settle threshold", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.sidebarV2Enabled).toBe(false);
+    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+  });
+
+  it("allows auto-settle by inactivity to be disabled", () => {
+    expect(
+      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
+    ).toBeNull();
+  });
+
+  it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
+    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
   });
 });
 
@@ -88,14 +125,14 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
-  it("defaults start-from-origin off for legacy configs", () => {
-    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(false);
+  it("defaults start-from-origin on for legacy configs", () => {
+    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
 
   it("accepts start-from-origin updates", () => {
     expect(
-      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: true }).newWorktreesStartFromOrigin,
-    ).toBe(true);
+      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
+    ).toBe(false);
   });
 });
 
