@@ -73,6 +73,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
+  const pendingThreadEvictions = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
@@ -182,12 +183,25 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           .map((thread) => thread.id),
     });
 
+    const evictionCandidates = new Set([
+      ...(yield* Ref.get(pendingThreadEvictions)),
+      ...removedThreadIds,
+    ]);
+    for (const threadId of nextThreadIds) {
+      evictionCandidates.delete(threadId);
+    }
     // Advance cache tombstones before publishing the new shell so detail
     // observers cannot enqueue an obsolete write in the transition window.
-    yield* Effect.forEach(
-      removedThreadIds,
-      (threadId) => evictCachedThread(cache, environmentId, threadId),
-      { discard: true },
+    // Keep failed disk removals pending while the shell still omits the thread;
+    // a later snapshot or event can then retry instead of stranding stale data.
+    const evictionResults = yield* Effect.forEach(evictionCandidates, (threadId) =>
+      evictCachedThread(cache, environmentId, threadId).pipe(
+        Effect.map((removed) => [threadId, removed] as const),
+      ),
+    );
+    yield* Ref.set(
+      pendingThreadEvictions,
+      new Set(evictionResults.filter(([, removed]) => !removed).map(([threadId]) => threadId)),
     );
     yield* Effect.forEach(
       addedThreadIds,

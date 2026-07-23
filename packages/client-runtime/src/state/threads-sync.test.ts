@@ -678,6 +678,44 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("persists thread detail again after an authoritative active snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_THREAD,
+          archivedAt: "2026-04-01T02:00:00.000Z",
+        }),
+      );
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_THREAD,
+          title: "Restored from snapshot",
+          updatedAt: "2026-04-01T03:00:00.000Z",
+        }),
+      );
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.title === "Restored from snapshot",
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.thread).toMatchObject({
+        title: "Restored from snapshot",
+        archivedAt: null,
+      });
+    }),
+  );
+
   it.effect("does not resurrect a deleted thread when the app returns to the foreground", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

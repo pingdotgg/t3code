@@ -164,12 +164,13 @@ export const evictCachedThread = Effect.fn("EnvironmentThreadCache.evict")(funct
   environmentId: EnvironmentId,
   threadId: ThreadId,
 ) {
-  yield* withThreadCacheState(cache, environmentId, threadId, (state) =>
+  return yield* withThreadCacheState(cache, environmentId, threadId, (state) =>
     state.lock.withPermit(
       Effect.gen(function* () {
         state.generation += 1;
         state.evicted = true;
-        yield* cache.removeThread(environmentId, threadId).pipe(
+        return yield* cache.removeThread(environmentId, threadId).pipe(
+          Effect.as(true),
           Effect.catch((error) =>
             Effect.logWarning("Could not evict cached thread detail.").pipe(
               Effect.annotateLogs({
@@ -177,6 +178,7 @@ export const evictCachedThread = Effect.fn("EnvironmentThreadCache.evict")(funct
                 threadId,
                 ...safeErrorLogAttributes(error),
               }),
+              Effect.as(false),
             ),
           ),
         );

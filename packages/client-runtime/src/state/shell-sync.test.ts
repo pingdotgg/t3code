@@ -283,6 +283,99 @@ describe("environment shell synchronization", () => {
     }),
   );
 
+  it.effect("retries failed detail eviction while the thread remains absent", () =>
+    Effect.gen(function* () {
+      const staleThreadId = ThreadId.make("stale-thread");
+      const cachedSnapshot: OrchestrationShellSnapshot = {
+        snapshotSequence: 1,
+        projects: [],
+        threads: [{ id: staleThreadId } as never],
+        updatedAt: "2026-06-06T00:00:00.000Z",
+      };
+      const httpSnapshot: OrchestrationShellSnapshot = {
+        ...cachedSnapshot,
+        snapshotSequence: 2,
+        threads: [],
+        updatedAt: "2026-06-06T00:00:01.000Z",
+      };
+      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const capturedInput = yield* SubscriptionRef.make(false);
+      const evictionAttempts = yield* Ref.make(0);
+      const client = {
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: () =>
+          Stream.unwrap(
+            SubscriptionRef.set(capturedInput, true).pipe(Effect.as(Stream.fromQueue(events))),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.some(cachedSnapshot)),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () =>
+          Ref.updateAndGet(evictionAttempts, (attempts) => attempts + 1).pipe(
+            Effect.flatMap((attempts) =>
+              attempts === 1
+                ? Effect.fail(
+                    new Persistence.ConnectionPersistenceError({
+                      operation: "remove-thread",
+                      message: "temporary failure",
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(
+          ShellSnapshotLoader,
+          ShellSnapshotLoader.of({
+            load: () => Effect.succeed(Option.some(httpSnapshot)),
+          }),
+        ),
+      );
+
+      yield* SubscriptionRef.changes(capturedInput).pipe(
+        Stream.filter((subscribed) => subscribed),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(evictionAttempts)).toBe(1);
+
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: {
+          ...httpSnapshot,
+          snapshotSequence: 3,
+          updatedAt: "2026-06-06T00:00:02.000Z",
+        },
+      });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (value) => Option.isSome(value.snapshot) && value.snapshot.value.snapshotSequence === 3,
+        ),
+        Stream.runHead,
+      );
+
+      expect(yield* Ref.get(evictionAttempts)).toBe(2);
+    }),
+  );
+
   it.effect("refreshes the authoritative shell snapshot when the app becomes active", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
