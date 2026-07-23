@@ -7,16 +7,18 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CopyIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  EllipsisIcon,
   MessageSquareIcon,
   PlusIcon,
   SearchIcon,
@@ -58,9 +60,14 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
-import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import {
+  deriveProjectGroupingOverrideKey,
+  getProjectOrderKey,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -69,7 +76,8 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -102,8 +110,20 @@ import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../pr
 import { primaryServerProvidersAtom } from "../state/server";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { CommandDialogTrigger } from "./ui/command";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -113,6 +133,11 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -736,6 +761,32 @@ export default function SidebarV2() {
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
+  const updateSettings = useUpdateClientSettings();
+  const { copyToClipboard: copyProjectPath } = useCopyToClipboard<{ path: string }>({
+    onCopy: ({ path }) => {
+      toastManager.add({
+        type: "success",
+        title: "Path copied",
+        description: path,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+  const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
+    null,
+  );
+  const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -893,41 +944,50 @@ export default function SidebarV2() {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
-  const handleRemoveProject = useCallback(
-    async (projectGroup: SidebarProjectSnapshot) => {
+  const handleRemoveProjectMembers = useCallback(
+    async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
       const api = readLocalApi();
       if (!api) return;
 
-      const memberKeys = new Set(
-        projectGroup.memberProjectRefs.map(
-          (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-        ),
-      );
+      const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
       const projectThreads = threads.filter((thread) =>
         memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
+      const isWholeGroup = members.length === projectGroup.memberProjects.length;
+      const singleMember = members.length === 1 ? members[0]! : null;
+      const targetLabel = singleMember?.title ?? projectGroup.displayName;
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           projectThreads.length > 0
             ? [
-                `Remove project "${projectGroup.displayName}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
-                ...(projectGroup.memberProjects.length === 1
-                  ? [`Path: ${projectGroup.workspaceRoot}`]
-                  : [
-                      `This removes ${projectGroup.memberProjects.length} grouped project entries.`,
-                    ]),
+                `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
+                ...(singleMember
+                  ? [
+                      `Path: ${singleMember.workspaceRoot}`,
+                      ...(singleMember.environmentLabel
+                        ? [`Environment: ${singleMember.environmentLabel}`]
+                        : []),
+                    ]
+                  : [`This removes ${members.length} grouped project entries.`]),
                 "This permanently clears conversation history for those threads.",
-                "This removes only the project entries, not the files on disk.",
+                isWholeGroup
+                  ? "This removes only the project entries, not the files on disk."
+                  : "Other entries in this grouped project are unaffected.",
                 "This action cannot be undone.",
               ].join("\n")
             : [
-                `Remove project "${projectGroup.displayName}"?`,
-                ...(projectGroup.memberProjects.length === 1
-                  ? [`Path: ${projectGroup.workspaceRoot}`]
-                  : [
-                      `This removes ${projectGroup.memberProjects.length} grouped project entries.`,
-                    ]),
-                "This removes only the project entries, not the files on disk.",
+                `Remove project "${targetLabel}"?`,
+                ...(singleMember
+                  ? [
+                      `Path: ${singleMember.workspaceRoot}`,
+                      ...(singleMember.environmentLabel
+                        ? [`Environment: ${singleMember.environmentLabel}`]
+                        : []),
+                    ]
+                  : [`This removes ${members.length} grouped project entries.`]),
+                isWholeGroup
+                  ? "This removes only the project entries, not the files on disk."
+                  : "Other entries in this grouped project are unaffected.",
               ].join("\n"),
         ),
       );
@@ -935,7 +995,7 @@ export default function SidebarV2() {
 
       const draftStore = useComposerDraftStore.getState();
       let shouldNavigate = false;
-      for (const project of projectGroup.memberProjects) {
+      for (const project of members) {
         const memberThreads = projectThreads.filter(
           (thread) =>
             thread.environmentId === project.environmentId && thread.projectId === project.id,
@@ -984,6 +1044,56 @@ export default function SidebarV2() {
       }
     },
     [deleteProject, router, threads],
+  );
+
+  const renameProjectMember = useCallback(
+    async (member: SidebarProjectGroupMember, nextTitle: string) => {
+      const title = nextTitle.trim();
+      if (!title) {
+        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+        return;
+      }
+      if (title === member.title) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, title },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectGroupingPreference = useCallback(
+    (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
+      const overrideKey = deriveProjectGroupingOverrideKey(member);
+      const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
+      if (selection === "inherit") {
+        delete nextOverrides[overrideKey];
+      } else {
+        nextOverrides[overrideKey] = selection;
+      }
+      updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+    },
+    [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
+  );
+
+  const handleProjectActions = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setProjectScopeMenuOpen(false);
+      window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
+    },
+    [],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
@@ -1626,7 +1736,7 @@ export default function SidebarV2() {
         {projectGroups.length > 0 ? (
           <SidebarGroup className="px-2 pb-2 pt-0">
             <div className="flex items-center gap-1">
-              <Menu>
+              <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                 <MenuTrigger
                   aria-label="Filter threads by project"
                   className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
@@ -1677,17 +1787,15 @@ export default function SidebarV2() {
                           <span className="min-w-0 truncate text-sm">{project.displayName}</span>
                           <button
                             type="button"
-                            aria-label={`Remove project ${project.displayName}`}
-                            title={`Remove ${project.displayName}`}
-                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
+                            aria-label={`Project actions for ${project.displayName}`}
+                            title={`Project actions for ${project.displayName}`}
+                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              void handleRemoveProject(project);
+                              void handleProjectActions(event, project);
                             }}
                           >
-                            <Trash2Icon className="size-3.5" />
+                            <EllipsisIcon className="size-3.5" />
                           </button>
                         </MenuRadioItem>
                       );
@@ -1845,6 +1953,178 @@ export default function SidebarV2() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
+      <Dialog
+        open={projectActionsTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setProjectActionsTarget(null);
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader className="gap-1.5">
+            <DialogTitle className="text-balance">Project settings</DialogTitle>
+            <DialogDescription>
+              {projectActionsTarget && projectActionsTarget.memberProjects.length > 1
+                ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
+                : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="p-0">
+            <div className="divide-y divide-border/60">
+              {projectActionsTarget?.memberProjects.map((member) => (
+                <section
+                  key={member.physicalProjectKey}
+                  className="flex min-w-0 flex-col gap-4 px-6 py-5 sm:gap-3 sm:py-4"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <ProjectFavicon
+                      environmentId={member.environmentId}
+                      cwd={member.workspaceRoot}
+                      className="size-5 shrink-0 sm:size-4"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-1.5 text-base text-muted-foreground sm:text-sm">
+                        <ServerIcon className="size-4 shrink-0 stroke-muted-foreground" />
+                        <p className="min-w-0 truncate">
+                          {member.environmentLabel ?? "Current environment"}
+                        </p>
+                      </div>
+                      <p
+                        className="truncate font-mono text-base text-muted-foreground/72 sm:text-sm"
+                        title={member.workspaceRoot}
+                      >
+                        {member.workspaceRoot}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 sm:gap-3 sm:pl-7">
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Project name</span>
+                      <Input
+                        key={`${member.physicalProjectKey}:${member.title}`}
+                        size="sm"
+                        aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
+                        defaultValue={member.title}
+                        onBlur={(event) => {
+                          void renameProjectMember(member, event.currentTarget.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                    </label>
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Grouping rule</span>
+                      <Select
+                        value={
+                          projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                            deriveProjectGroupingOverrideKey(member)
+                          ] ?? "inherit"
+                        }
+                        onValueChange={(value) => {
+                          if (
+                            value === "inherit" ||
+                            value === "repository" ||
+                            value === "repository_path" ||
+                            value === "separate"
+                          ) {
+                            updateProjectGroupingPreference(member, value);
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full"
+                          aria-label={`Grouping rule for ${member.environmentLabel ?? "current environment"}`}
+                        >
+                          <SelectValue>
+                            {(() => {
+                              const selection =
+                                projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                                  deriveProjectGroupingOverrideKey(member)
+                                ] ?? "inherit";
+                              return selection === "inherit"
+                                ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                                : PROJECT_GROUPING_MODE_LABELS[selection];
+                            })()}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          <SelectItem hideIndicator value="inherit">
+                            Use global default
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository">
+                            {PROJECT_GROUPING_MODE_LABELS.repository}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository_path">
+                            {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="separate">
+                            {PROJECT_GROUPING_MODE_LABELS.separate}
+                          </SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:pl-7">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
+                      }
+                    >
+                      <CopyIcon />
+                      Copy path
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
+                      onClick={() => {
+                        const projectGroup = projectActionsTarget;
+                        if (!projectGroup) return;
+                        setProjectActionsTarget(null);
+                        void handleRemoveProjectMembers(projectGroup, [member]);
+                      }}
+                    >
+                      <Trash2Icon />
+                      Remove
+                    </Button>
+                  </div>
+                </section>
+              ))}
+            </div>
+            {projectActionsTarget && projectActionsTarget.memberProjects.length > 1 ? (
+              <div className="flex flex-col gap-3 border-t border-border/60 bg-muted/32 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-base font-medium text-foreground sm:text-sm">
+                    Remove this project everywhere
+                  </p>
+                  <p className="text-base text-pretty text-muted-foreground sm:text-sm">
+                    Deletes all grouped entries and their conversation history.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  className="shrink-0"
+                  onClick={() => {
+                    const projectGroup = projectActionsTarget;
+                    setProjectActionsTarget(null);
+                    void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
+                  }}
+                >
+                  <Trash2Icon />
+                  Remove all entries
+                </Button>
+              </div>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter variant="bare">
+            <Button onClick={() => setProjectActionsTarget(null)}>Done</Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       <SidebarChromeFooter />
     </>
   );
