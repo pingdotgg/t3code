@@ -18,17 +18,21 @@ import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
-export class DevAuthConfigurationError extends Schema.TaggedErrorClass<DevAuthConfigurationError>()(
-  "DevAuthConfigurationError",
-  {
-    reason: Schema.Literals(["missing-key", "non-loopback-host"]),
-    host: Schema.optional(Schema.String),
-  },
+export class MissingDevAuthKeyError extends Schema.TaggedErrorClass<MissingDevAuthKeyError>()(
+  "MissingDevAuthKeyError",
+  {},
 ) {
   override get message(): string {
-    return this.reason === "missing-key"
-      ? "T3CODE_DEV_AUTH_KEY is required when T3CODE_DEV_AUTH is enabled."
-      : `T3CODE_DEV_AUTH is only available on loopback hosts; received ${this.host ?? "unknown"}.`;
+    return "T3CODE_DEV_AUTH_KEY is required when T3CODE_DEV_AUTH is enabled.";
+  }
+}
+
+export class NonLoopbackDevAuthHostError extends Schema.TaggedErrorClass<NonLoopbackDevAuthHostError>()(
+  "NonLoopbackDevAuthHostError",
+  { host: Schema.String },
+) {
+  override get message(): string {
+    return `T3CODE_DEV_AUTH is only available on loopback hosts; received ${this.host}.`;
   }
 }
 
@@ -357,13 +361,10 @@ export const resolveServerConfig = (
     );
     const devAuthKey = env.devAuthEnabled ? env.devAuthKey?.trim() : undefined;
     if (env.devAuthEnabled && !devAuthKey) {
-      return yield* new DevAuthConfigurationError({ reason: "missing-key" });
+      return yield* new MissingDevAuthKeyError();
     }
     if (devAuthKey && !isLoopbackHost(host)) {
-      return yield* new DevAuthConfigurationError({
-        reason: "non-loopback-host",
-        ...(host ? { host } : {}),
-      });
+      return yield* new NonLoopbackDevAuthHostError({ host: host ?? "unknown" });
     }
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 

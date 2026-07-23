@@ -652,6 +652,45 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("requires a reusable development credential when dev auth is enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-dev-auth-missing-" });
+      const error = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(13_773),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.some(true),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_DEV_AUTH: "true" },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("MissingDevAuthKeyError");
+      expect(error.message).toContain("T3CODE_DEV_AUTH_KEY is required");
+    }),
+  );
+
   it.effect("rejects reusable development credentials on non-loopback hosts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -689,9 +728,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         Effect.flip,
       );
 
-      expect(error._tag).toBe("DevAuthConfigurationError");
-      if (error._tag === "DevAuthConfigurationError") {
-        expect(error.reason).toBe("non-loopback-host");
+      expect(error._tag).toBe("NonLoopbackDevAuthHostError");
+      if (error._tag === "NonLoopbackDevAuthHostError") {
+        expect(error.host).toBe("0.0.0.0");
         expect(error.message).toContain("only available on loopback hosts");
       }
     }),
