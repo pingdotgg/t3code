@@ -198,9 +198,9 @@ import {
   buildMultiSelectThreadContextMenuItems,
   filterSidebarThreadsForActiveRoute,
   getFlatSidebarRenderedThreads,
+  getGroupedSidebarRenderedThreads,
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
-  getVisibleThreadsForProject,
   hasActiveSidebarThreadFilters,
   hasNarrowingSidebarThreadFilters,
   matchesSidebarThreadFilters,
@@ -209,6 +209,7 @@ import {
   isTrailingDoubleClick,
   resolvePinnedCollapsedSidebarThread,
   resolveProjectStatusIndicator,
+  removeProjectKeysFromSidebarThreadFilters,
   resolveSidebarArchiveEnvironmentIds,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -1504,23 +1505,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       flatMode,
       isThreadListExpanded,
     });
-    const {
-      hasHiddenThreads,
-      hiddenThreads,
-      visibleThreads: previewThreads,
-    } = getVisibleThreadsForProject({
+    const preview = getGroupedSidebarRenderedThreads({
       threads: visibleProjectThreads,
       activeThreadKey: activeRouteThreadKey,
       getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      isThreadListExpanded: showAllThreads,
-      previewLimit: sidebarThreadPreviewCount,
+      previewLimit: flatMode ? null : sidebarThreadPreviewCount,
+      showAllThreads,
     });
-    const hasOverflowingThreads = !flatMode && hasHiddenThreads;
-    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+    const renderedThreads = pinnedCollapsedThread
+      ? [pinnedCollapsedThread]
+      : preview.renderedThreads;
     return {
-      hasOverflowingThreads,
+      hasOverflowingThreads: preview.hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
-        hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
+        preview.hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
       ),
       renderedThreads,
       showEmptyThreadState: projectExpanded && visibleProjectThreads.length === 0,
@@ -1639,9 +1637,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         draftStore.clearDraftThread(projectDraftThread.draftId);
       }
       draftStore.clearProjectDraftThreadId(memberProjectRef);
+      const nextSidebarThreadFilters = removeProjectKeysFromSidebarThreadFilters(
+        sidebarThreadFilters,
+        new Set([scopedProjectKey(memberProjectRef)]),
+      );
+      if (nextSidebarThreadFilters !== sidebarThreadFilters) {
+        updateSettings({ sidebarThreadFilters: nextSidebarThreadFilters });
+      }
       return result;
     },
-    [deleteProject],
+    [deleteProject, sidebarThreadFilters, updateSettings],
   );
 
   const handleRemoveProject = useCallback(
@@ -3398,6 +3403,19 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     () => buildFlatSidebarProjectSnapshot(sortedProjects),
     [sortedProjects],
   );
+  const { isMobile, setOpenMobile } = useSidebar();
+  const handleFlatNewThread = useCallback(() => {
+    if (!flatProject) return;
+    if (flatProject.memberProjects.length !== 1) {
+      openCommandPalette({ open: "new-thread-in" });
+      return;
+    }
+    const member = flatProject.memberProjects[0]!;
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void handleNewThread(scopeProjectRef(member.environmentId, member.id));
+  }, [flatProject, handleNewThread, isMobile, setOpenMobile]);
 
   return (
     <SidebarContent className="gap-0">
@@ -3454,6 +3472,26 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             {sidebarThreadFilters.groupByProject ? "Projects" : "Threads"}
           </span>
           <div className="flex items-center gap-1">
+            {!sidebarThreadFilters.groupByProject && flatProject ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="New thread"
+                      data-testid="flat-sidebar-new-thread-button"
+                      className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={handleFlatNewThread}
+                    />
+                  }
+                >
+                  <SquarePenIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="right">
+                  {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
             <SidebarFilterMenu
               filters={sidebarThreadFilters}
               environments={environments}
@@ -3499,6 +3537,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 project={flatProject}
                 archivedThreads={archivedThreads}
                 sidebarThreadFilters={sidebarThreadFilters}
+                sidebarFilterNowMs={sidebarFilterNowMs}
                 providerDriverKindByScopedInstanceKey={providerDriverKindByScopedInstanceKey}
                 isThreadListExpanded={expandedThreadListsByProject.has(flatProject.projectKey)}
                 activeRouteThreadKey={routeThreadKey}
@@ -4085,14 +4124,16 @@ export default function Sidebar() {
         return [];
       }
       const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-      const { visibleThreads: previewThreads } = getVisibleThreadsForProject({
+      const preview = getGroupedSidebarRenderedThreads({
         threads: projectThreads,
         activeThreadKey: routeThreadKey,
         getThreadKey,
-        isThreadListExpanded,
         previewLimit: sidebarThreadPreviewCount,
+        showAllThreads: isThreadListExpanded,
       });
-      const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+      const renderedThreads = pinnedCollapsedThread
+        ? [pinnedCollapsedThread]
+        : preview.renderedThreads;
       return renderedThreads.filter((thread) => thread.archivedAt === null).map(getThreadKey);
     });
   }, [

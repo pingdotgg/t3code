@@ -73,6 +73,7 @@ import {
 } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  getSidebarProjectRemovalRefs,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -104,8 +105,10 @@ import {
   isTrailingDoubleClick,
   matchesSidebarThreadFilters,
   orderItemsByPreferredIds,
+  removeProjectKeysFromSidebarThreadFilters,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  resolveSidebarArchiveEnvironmentIds,
   resolveSidebarV2Status,
   resolveSidebarV2TopStatus,
   resolveWorkingStartedAt,
@@ -1014,18 +1017,31 @@ export default function SidebarV2() {
           ),
     [projectGroups, sidebarThreadFilters.projectKeys],
   );
+  const projectActionEnvironmentIds = useMemo(
+    () =>
+      projectActionsTarget
+        ? [
+            ...new Set(
+              projectActionsTarget.memberProjectRefs.map((projectRef) => projectRef.environmentId),
+            ),
+          ]
+        : [],
+    [projectActionsTarget],
+  );
   const archiveEnvironmentIds = useMemo(
     () =>
-      sidebarThreadFilters.includeArchived
-        ? environments
-            .map((environment) => environment.environmentId)
-            .filter(
-              (environmentId) =>
-                sidebarThreadFilters.environmentIds.length === 0 ||
-                sidebarThreadFilters.environmentIds.includes(environmentId),
-            )
-        : [],
-    [environments, sidebarThreadFilters.environmentIds, sidebarThreadFilters.includeArchived],
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: environments.map((environment) => environment.environmentId),
+        selectedEnvironmentIds: sidebarThreadFilters.environmentIds,
+        includeArchived: sidebarThreadFilters.includeArchived,
+        requiredEnvironmentIds: projectActionEnvironmentIds,
+      }),
+    [
+      environments,
+      projectActionEnvironmentIds,
+      sidebarThreadFilters.environmentIds,
+      sidebarThreadFilters.includeArchived,
+    ],
   );
   const {
     snapshots: archivedSnapshots,
@@ -1041,6 +1057,34 @@ export default function SidebarV2() {
       ),
     [archivedSnapshots],
   );
+  const projectByRefKey = useMemo(
+    () =>
+      new Map(
+        projects.map(
+          (project) =>
+            [
+              scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+              project,
+            ] as const,
+        ),
+      ),
+    [projects],
+  );
+  const threadsWithArchived = useMemo(() => {
+    const byKey = new Map(
+      threads.map(
+        (thread) =>
+          [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+      ),
+    );
+    for (const thread of archivedThreads) {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      if (!byKey.has(threadKey)) {
+        byKey.set(threadKey, thread);
+      }
+    }
+    return [...byKey.values()];
+  }, [archivedThreads, threads]);
   const projectCwdByKey = useMemo(
     () =>
       new Map(
@@ -1133,11 +1177,16 @@ export default function SidebarV2() {
   const handleRemoveProjectMembers = useCallback(
     async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
       const api = readLocalApi();
-      if (!api) return;
+      if (!api || archiveLoading || archiveError !== null) return;
 
-      const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
-      const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+      const projectRefs = getSidebarProjectRemovalRefs({
+        projectGroup,
+        members,
+        projects,
+      });
+      const memberKeys = new Set(projectRefs.map(scopedProjectKey));
+      const projectThreads = threadsWithArchived.filter((thread) =>
+        memberKeys.has(scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId))),
       );
       const isWholeGroup = members.length === projectGroup.memberProjects.length;
       const singleMember = members.length === 1 ? members[0]! : null;
@@ -1154,7 +1203,7 @@ export default function SidebarV2() {
                         ? [`Environment: ${singleMember.environmentLabel}`]
                         : []),
                     ]
-                  : [`This removes ${members.length} grouped project entries.`]),
+                  : [`This removes ${projectRefs.length} grouped project entries.`]),
                 "This permanently clears conversation history for those threads.",
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
@@ -1170,7 +1219,7 @@ export default function SidebarV2() {
                         ? [`Environment: ${singleMember.environmentLabel}`]
                         : []),
                     ]
-                  : [`This removes ${members.length} grouped project entries.`]),
+                  : [`This removes ${projectRefs.length} grouped project entries.`]),
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
@@ -1181,12 +1230,12 @@ export default function SidebarV2() {
 
       const draftStore = useComposerDraftStore.getState();
       let shouldNavigate = false;
-      for (const project of members) {
+      for (const projectRef of projectRefs) {
         const memberThreads = projectThreads.filter(
           (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
+            thread.environmentId === projectRef.environmentId &&
+            thread.projectId === projectRef.projectId,
         );
-        const projectRef = scopeProjectRef(project.environmentId, project.id);
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
           routeTarget: routeTargetRef.current,
@@ -1195,9 +1244,9 @@ export default function SidebarV2() {
         });
 
         const result = await deleteProject({
-          environmentId: project.environmentId,
+          environmentId: projectRef.environmentId,
           input: {
-            projectId: project.id,
+            projectId: projectRef.projectId,
             ...(memberThreads.length > 0 ? { force: true } : {}),
           },
         });
@@ -1207,7 +1256,9 @@ export default function SidebarV2() {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: `Failed to remove "${project.title}"`,
+                title: `Failed to remove "${
+                  projectByRefKey.get(scopedProjectKey(projectRef))?.title ?? targetLabel
+                }"`,
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
@@ -1225,25 +1276,29 @@ export default function SidebarV2() {
         draftStore.clearProjectDraftThreadId(projectRef);
       }
 
-      const removedProjectKeys = new Set(
-        members.map((member) => scopedProjectKey(scopeProjectRef(member.environmentId, member.id))),
+      const nextSidebarThreadFilters = removeProjectKeysFromSidebarThreadFilters(
+        sidebarThreadFilters,
+        new Set(projectRefs.map(scopedProjectKey)),
       );
-      if (
-        sidebarThreadFilters.projectKeys.some((projectKey) => removedProjectKeys.has(projectKey))
-      ) {
-        handleSidebarThreadFiltersChange({
-          ...sidebarThreadFilters,
-          projectKeys: sidebarThreadFilters.projectKeys.filter(
-            (projectKey) => !removedProjectKeys.has(projectKey),
-          ),
-        });
+      if (nextSidebarThreadFilters !== sidebarThreadFilters) {
+        handleSidebarThreadFiltersChange(nextSidebarThreadFilters);
       }
 
       if (shouldNavigate) {
         void router.navigate({ to: "/" });
       }
     },
-    [deleteProject, handleSidebarThreadFiltersChange, router, sidebarThreadFilters, threads],
+    [
+      deleteProject,
+      archiveError,
+      archiveLoading,
+      handleSidebarThreadFiltersChange,
+      projectByRefKey,
+      projects,
+      router,
+      sidebarThreadFilters,
+      threadsWithArchived,
+    ],
   );
 
   const renameProjectMember = useCallback(
@@ -1296,21 +1351,6 @@ export default function SidebarV2() {
     [],
   );
 
-  const threadsWithArchived = useMemo(() => {
-    const byKey = new Map(
-      threads.map(
-        (thread) =>
-          [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
-      ),
-    );
-    for (const thread of archivedThreads) {
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      if (!byKey.has(threadKey)) {
-        byKey.set(threadKey, thread);
-      }
-    }
-    return [...byKey.values()];
-  }, [archivedThreads, threads]);
   const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const threadExplicitlyUnreadById = useUiStateStore((state) => state.threadExplicitlyUnreadById);
   const filtersActive = hasActiveSidebarThreadFilters(sidebarThreadFilters);
@@ -2293,6 +2333,15 @@ export default function SidebarV2() {
                 ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
                 : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
             </DialogDescription>
+            {archiveLoading ? (
+              <p className="text-xs text-muted-foreground">
+                Checking archived conversations before project removal…
+              </p>
+            ) : archiveError ? (
+              <p className="text-xs text-destructive-foreground">
+                Archived conversations could not be checked, so project removal is unavailable.
+              </p>
+            ) : null}
           </DialogHeader>
           <DialogPanel className="p-0">
             <div className="divide-y divide-border/60">
@@ -2405,6 +2454,7 @@ export default function SidebarV2() {
                     <Button
                       size="sm"
                       variant="ghost"
+                      disabled={archiveLoading || archiveError !== null}
                       className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
                       onClick={() => {
                         const projectGroup = projectActionsTarget;
@@ -2433,6 +2483,7 @@ export default function SidebarV2() {
                 <Button
                   size="sm"
                   variant="destructive-outline"
+                  disabled={archiveLoading || archiveError !== null}
                   className="shrink-0"
                   onClick={() => {
                     const projectGroup = projectActionsTarget;

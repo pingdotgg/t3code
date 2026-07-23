@@ -454,17 +454,15 @@ export function resolveSidebarArchiveEnvironmentIds(input: {
   readonly availableEnvironmentIds: readonly EnvironmentId[];
   readonly selectedEnvironmentIds: readonly EnvironmentId[];
   readonly includeArchived: boolean;
+  readonly requiredEnvironmentIds?: readonly EnvironmentId[];
 }): EnvironmentId[] {
-  if (!input.includeArchived) {
-    return [];
-  }
-  if (input.selectedEnvironmentIds.length === 0) {
-    return [...input.availableEnvironmentIds];
-  }
-
   const selectedEnvironmentIds = new Set(input.selectedEnvironmentIds);
-  return input.availableEnvironmentIds.filter((environmentId) =>
-    selectedEnvironmentIds.has(environmentId),
+  const requiredEnvironmentIds = new Set(input.requiredEnvironmentIds);
+  return input.availableEnvironmentIds.filter(
+    (environmentId) =>
+      requiredEnvironmentIds.has(environmentId) ||
+      (input.includeArchived &&
+        (selectedEnvironmentIds.size === 0 || selectedEnvironmentIds.has(environmentId))),
   );
 }
 
@@ -505,6 +503,60 @@ export function getFlatSidebarRenderedThreads<
     ),
     input.sortOrder,
   );
+}
+
+export function getGroupedSidebarRenderedThreads<
+  TThread extends {
+    readonly archivedAt: string | null;
+  },
+>(input: {
+  readonly threads: readonly TThread[];
+  readonly activeThreadKey: string | null;
+  readonly getThreadKey: (thread: TThread) => string;
+  readonly previewLimit: number | null;
+  readonly showAllThreads: boolean;
+}): {
+  readonly hasOverflowingThreads: boolean;
+  readonly hiddenThreads: TThread[];
+  readonly renderedThreads: TThread[];
+} {
+  const activeThreads = input.threads.filter((thread) => thread.archivedAt === null);
+  const archivedThreads = input.threads.filter((thread) => thread.archivedAt !== null);
+  const activePreview =
+    input.previewLimit === null
+      ? {
+          hasHiddenThreads: false,
+          hiddenThreads: [],
+          visibleThreads: activeThreads,
+        }
+      : getVisibleThreadsForProject({
+          threads: activeThreads,
+          activeThreadKey: input.activeThreadKey,
+          getThreadKey: input.getThreadKey,
+          isThreadListExpanded: input.showAllThreads,
+          previewLimit: input.previewLimit,
+        });
+
+  return {
+    hasOverflowingThreads: activePreview.hasHiddenThreads,
+    hiddenThreads: activePreview.hiddenThreads,
+    renderedThreads: [...activePreview.visibleThreads, ...archivedThreads],
+  };
+}
+
+export function removeProjectKeysFromSidebarThreadFilters(
+  filters: SidebarThreadFilters,
+  removedProjectKeys: ReadonlySet<string>,
+): SidebarThreadFilters {
+  const projectKeys = filters.projectKeys.filter(
+    (projectKey) => !removedProjectKeys.has(projectKey),
+  );
+  return projectKeys.length === filters.projectKeys.length
+    ? filters
+    : {
+        ...filters,
+        projectKeys,
+      };
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -1106,7 +1158,10 @@ function sortProjectsByActivity<TProject extends SidebarProject>(
 
 export function sortProjectsForSidebar<
   TProject extends SidebarProject,
-  TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> &
+    ThreadSortInput & {
+      readonly archivedAt?: string | null;
+    },
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],
@@ -1114,6 +1169,7 @@ export function sortProjectsForSidebar<
 ): TProject[] {
   const threadsByProjectId = new Map<string, TThread[]>();
   for (const thread of threads) {
+    if (thread.archivedAt != null) continue;
     const existing = threadsByProjectId.get(thread.projectId) ?? [];
     existing.push(thread);
     threadsByProjectId.set(thread.projectId, existing);

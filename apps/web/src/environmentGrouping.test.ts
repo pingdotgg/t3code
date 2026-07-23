@@ -12,6 +12,7 @@ import {
   buildFlatSidebarProjectSnapshot,
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
+  getSidebarProjectRemovalRefs,
   buildSidebarProjectSnapshots,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
@@ -257,6 +258,14 @@ describe("environment grouping", () => {
     });
     expect(pickerEntry?.isPreferred).toBe(true);
     expect(pickerEntry?.targetProject.id).toBe(canonical.id);
+
+    expect(
+      getSidebarProjectRemovalRefs({
+        projectGroup: snapshots[0]!,
+        members: [snapshots[0]!.memberProjects[0]!],
+        projects: [staleWithoutRepositoryIdentity, canonical, remote],
+      }).map((projectRef) => projectRef.projectId),
+    ).toEqual([staleWithoutRepositoryIdentity.id, canonical.id]);
   });
 
   it("routes duplicate physical project keys to the winning logical group", () => {
@@ -382,7 +391,6 @@ describe("environment grouping", () => {
 
     expect(flat?.displayName).toBe("Threads");
     expect(flat?.memberProjectRefs.map((projectRef) => projectRef.projectId)).toEqual([
-      stale.id,
       canonical.id,
       second.id,
     ]);

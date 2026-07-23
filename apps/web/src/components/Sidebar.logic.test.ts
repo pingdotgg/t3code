@@ -6,6 +6,7 @@ import {
   createThreadJumpHintVisibilityController,
   filterSidebarThreadsForActiveRoute,
   getFlatSidebarRenderedThreads,
+  getGroupedSidebarRenderedThreads,
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -22,6 +23,7 @@ import {
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolvePinnedCollapsedSidebarThread,
+  removeProjectKeysFromSidebarThreadFilters,
   resolveSidebarArchiveEnvironmentIds,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -690,6 +692,14 @@ describe("sidebar filter scoping", () => {
         includeArchived: false,
       }),
     ).toEqual([]);
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [],
+        includeArchived: false,
+        requiredEnvironmentIds: [remoteEnvironmentId],
+      }),
+    ).toEqual([remoteEnvironmentId]);
   });
 
   it("excludes archived rows from shift-range selection order", () => {
@@ -700,6 +710,70 @@ describe("sidebar filter scoping", () => {
         { threadKey: "active-2", archivedAt: null },
       ]),
     ).toEqual(["active-1", "active-2"]);
+  });
+
+  it("budgets grouped previews from active rows before appending archived rows", () => {
+    const activeOne = { id: "active-1", archivedAt: null };
+    const activeTwo = { id: "active-2", archivedAt: null };
+    const activeThree = { id: "active-3", archivedAt: null };
+    const archivedOne = { id: "archived-1", archivedAt: "2026-03-09T11:00:00.000Z" };
+    const archivedTwo = { id: "archived-2", archivedAt: "2026-03-09T10:00:00.000Z" };
+
+    const result = getGroupedSidebarRenderedThreads({
+      threads: [archivedOne, activeOne, archivedTwo, activeTwo, activeThree],
+      activeThreadKey: null,
+      getThreadKey: (thread) => thread.id,
+      previewLimit: 2,
+      showAllThreads: false,
+    });
+
+    expect(result.hasOverflowingThreads).toBe(true);
+    expect(result.renderedThreads.map((thread) => thread.id)).toEqual([
+      "active-1",
+      "active-2",
+      "archived-1",
+      "archived-2",
+    ]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual(["active-3"]);
+  });
+
+  it("pins an active row below the grouped preview without charging archived rows", () => {
+    const threads = [
+      { id: "active-1", archivedAt: null },
+      { id: "archived-1", archivedAt: "2026-03-09T11:00:00.000Z" },
+      { id: "active-2", archivedAt: null },
+      { id: "active-3", archivedAt: null },
+      { id: "active-4", archivedAt: null },
+    ];
+
+    const result = getGroupedSidebarRenderedThreads({
+      threads,
+      activeThreadKey: "active-4",
+      getThreadKey: (thread) => thread.id,
+      previewLimit: 2,
+      showAllThreads: false,
+    });
+
+    expect(result.hasOverflowingThreads).toBe(true);
+    expect(result.renderedThreads.map((thread) => thread.id)).toEqual([
+      "active-1",
+      "active-2",
+      "active-4",
+      "archived-1",
+    ]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual(["active-3"]);
+  });
+
+  it("removes only deleted project keys from persisted sidebar filters", () => {
+    expect(
+      removeProjectKeysFromSidebarThreadFilters(
+        {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          projectKeys: ["environment-local:project-1", "environment-remote:project-2"],
+        },
+        new Set(["environment-local:project-1"]),
+      ).projectKeys,
+    ).toEqual(["environment-remote:project-2"]);
   });
 });
 
@@ -2197,7 +2271,7 @@ describe("sortProjectsForSidebar", () => {
           updatedAt: "2026-03-09T10:10:00.000Z",
           archivedAt: "2026-03-09T10:11:00.000Z",
         }),
-      ].filter((thread) => thread.archivedAt === null),
+      ],
       "updated_at",
     );
 
