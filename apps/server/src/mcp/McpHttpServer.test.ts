@@ -402,6 +402,23 @@ it.effect("writes snapshot screenshots into the workspace when savePath is set",
       expect(fileSymlink.isError).toBe(true);
       expect(NodeFS.readFileSync(victimPath, "utf8")).toBe("original");
 
+      // A dangling destination symlink must not be followed into existence.
+      const danglingTarget = NodePath.join(outsideDir, "not-yet-created.png");
+      NodeFS.symlinkSync(
+        danglingTarget,
+        NodePath.join(testWorkspaceRoot, "evidence", "dangling.png"),
+      );
+      const danglingSymlink = yield* callSnapshot("evidence/dangling.png");
+      expect(danglingSymlink.isError).toBe(true);
+      expect(NodeFS.existsSync(danglingTarget)).toBe(false);
+
+      // A directory whose name merely starts with ".." is inside the root.
+      const dotDotName = yield* callSnapshot("..screenshots/ok.png");
+      expect(dotDotName.isError).toBe(false);
+      expect(
+        NodeFS.readFileSync(NodePath.join(testWorkspaceRoot, "..screenshots", "ok.png"), "utf8"),
+      ).toBe("png-bytes");
+
       const bothDestinations = yield* server
         .callTool({
           name: "preview_snapshot",

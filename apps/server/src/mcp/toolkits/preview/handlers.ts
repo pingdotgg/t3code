@@ -158,7 +158,7 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
       );
     const isOutsideRoot = (canonicalRoot: string, canonical: string) => {
       const relative = path.relative(canonicalRoot, canonical);
-      return relative.startsWith("..") || path.isAbsolute(relative);
+      return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
     };
 
     const canonicalRoot = yield* fileSystem
@@ -193,12 +193,16 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
       return yield* fail("savePath must stay inside the workspace root");
     }
 
-    // If the destination already exists it may itself be a symlink; writing
-    // would follow it, so its canonical location must also stay inside.
+    // Refuse to write through a destination that is itself a symlink: the
+    // write would follow it, and a dangling link (realPath reports NotFound)
+    // could silently create a file outside the workspace at its target.
     const destination = path.join(canonicalParent, path.basename(resolved.absolutePath));
-    const canonicalDestination = yield* realPathOrNull(destination);
-    if (canonicalDestination !== null && isOutsideRoot(canonicalRoot, canonicalDestination)) {
-      return yield* fail("savePath must stay inside the workspace root");
+    const destinationIsSymlink = yield* fileSystem.readLink(destination).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (destinationIsSymlink) {
+      return yield* fail("savePath must not be an existing symlink");
     }
 
     yield* writeScreenshotFile({
