@@ -220,6 +220,60 @@ describe("ProcessDiagnostics", () => {
     }),
   );
 
+  it.effect("queries Windows performance counters once per sample", () =>
+    Effect.gen(function* () {
+      const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+        [];
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const childProcess = command as unknown as {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+          };
+          commands.push({ command: childProcess.command, args: childProcess.args });
+          return Effect.succeed(
+            mockHandle({
+              stdout: JSON.stringify({
+                ProcessId: 4242,
+                ParentProcessId: process.pid,
+                Name: "agent.exe",
+                CommandLine: "agent.exe --serve",
+                Status: null,
+                WorkingSetSize: 2048,
+                PercentProcessorTime: 1.5,
+              }),
+            }),
+          );
+        }),
+      );
+
+      const rows = yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      expect(rows).toEqual([
+        {
+          pid: 4242,
+          ppid: process.pid,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 1.5,
+          rssBytes: 2048,
+          elapsed: "",
+          command: "agent.exe --serve",
+        },
+      ]);
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.command).toBe("powershell.exe");
+      const powershellCommand = commands[0]?.args.at(-1) ?? "";
+      expect(powershellCommand.match(/Get-CimInstance/g)).toHaveLength(2);
+      expect(powershellCommand).not.toContain("-Filter");
+      expect(powershellCommand).toContain("$perfById[[int]$_.ProcessId]");
+    }),
+  );
+
   it.effect("keeps bounded command diagnostics when the process query exits unsuccessfully", () =>
     Effect.gen(function* () {
       const spawnerLayer = Layer.succeed(
