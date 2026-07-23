@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -72,7 +74,19 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
-          '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
+          '  if (message.type !== "control_request") return;',
+          '  if (message.request?.subtype === "reload_skills") {',
+          "    process.stdout.write(JSON.stringify({",
+          '      type: "control_response",',
+          "      response: {",
+          '        subtype: "success",',
+          "        request_id: message.request_id,",
+          '        response: { skills: [{ name: "probe-fake-skill", description: "Fake skill (user)", argumentHint: "" }] },',
+          "      },",
+          '    }) + "\\n");',
+          "    return;",
+          "  }",
+          '  if (message.request?.subtype !== "initialize") return;',
           "  process.stdout.write(JSON.stringify({",
           '    type: "control_response",',
           "    response: {",
@@ -105,6 +119,15 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         workspaceCwd,
       );
 
+      // The fake skill dir doesn't exist on disk, so the mapper falls back to a
+      // constructed path under the default config dir (`~/.claude`) and takes
+      // the scope from the stripped `(user)` description suffix.
+      const expectedSkillPath = path.join(
+        NodeOS.homedir(),
+        ".claude",
+        "skills",
+        "probe-fake-skill",
+      );
       assert.deepEqual(capabilities, {
         email: "dev@example.com",
         subscriptionType: "pro",
@@ -115,6 +138,15 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             name: "review",
             description: "Review changes",
             input: { hint: "[path]" },
+          },
+        ],
+        skills: [
+          {
+            name: "probe-fake-skill",
+            path: expectedSkillPath,
+            enabled: true,
+            description: "Fake skill",
+            scope: "user",
           },
         ],
       });
