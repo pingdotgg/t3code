@@ -280,12 +280,12 @@ export function classifySidebarThreadFilterStatus(
     return "needs_attention";
   }
 
-  if (thread.isExplicitlyUnread) {
-    return "unread";
-  }
-
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
+  }
+
+  if (thread.isExplicitlyUnread) {
+    return "unread";
   }
 
   if (hasUnseenCompletion(thread)) {
@@ -317,12 +317,15 @@ export function matchesSidebarThreadFilters(input: {
     return false;
   }
 
-  const status = classifySidebarThreadFilterStatus({
+  const classifiedThread = {
     ...thread,
     ...(input.lastVisitedAt ? { lastVisitedAt: input.lastVisitedAt } : {}),
     ...(input.isExplicitlyUnread ? { isExplicitlyUnread: true } : {}),
-  });
-  if (filters.attentionOnly && status !== "needs_attention" && status !== "unread") {
+  };
+  const status = classifySidebarThreadFilterStatus(classifiedThread);
+  const isUnread =
+    classifiedThread.isExplicitlyUnread === true || hasUnseenCompletion(classifiedThread);
+  if (filters.attentionOnly && status !== "needs_attention" && !isUnread) {
     return false;
   }
   if (filters.recentOnly) {

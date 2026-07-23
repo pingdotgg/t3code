@@ -165,6 +165,24 @@ describe("sidebar thread filters", () => {
     ).toBe("needs_attention");
   });
 
+  it("keeps working status when a live thread is also explicitly unread", () => {
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        isExplicitlyUnread: true,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        },
+      }),
+    ).toBe("working");
+  });
+
   it("matches status, environment, source, and archived controls", () => {
     const archivedThread = {
       ...filterableThread,
@@ -211,6 +229,25 @@ describe("sidebar thread filters", () => {
     expect(
       matchesSidebarThreadFilters({
         thread: { ...filterableThread, hasPendingUserInput: true },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-03-09T10:00:00.000Z",
+          },
+        },
+        isExplicitlyUnread: true,
         providerDriverKind: ProviderDriverKind.make("codex"),
         filters,
       }),
