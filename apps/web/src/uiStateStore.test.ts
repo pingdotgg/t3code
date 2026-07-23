@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   addThreadLabel,
+  deleteThreadLabel,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -17,6 +18,7 @@ import {
   setThreadLabelAssigned,
   setThreadChangedFilesExpanded,
   type UiState,
+  updateThreadLabel,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
@@ -192,6 +194,81 @@ describe("uiStateStore pure functions", () => {
       }),
     ).toBe(state);
     expect(setThreadLabelAssigned(state, "environment:thread-1", "missing", true)).toBe(state);
+  });
+
+  it("renames and recolors an existing label without changing its assignments", () => {
+    const assigned = setThreadLabelAssigned(
+      addThreadLabel(makeUiState(), {
+        id: "label-research",
+        name: "Research",
+        color: "#2563eb",
+      }),
+      "environment:thread-1",
+      "label-research",
+      true,
+    );
+
+    const updated = updateThreadLabel(assigned, "label-research", "  Deep research  ", "#16A34A");
+
+    expect(updated.threadLabels).toEqual([
+      { id: "label-research", name: "Deep research", color: "#16a34a" },
+    ]);
+    expect(updated.threadLabelIdsByThreadKey).toEqual(assigned.threadLabelIdsByThreadKey);
+  });
+
+  it("rejects invalid or duplicate label updates", () => {
+    const withLabels = addThreadLabel(
+      addThreadLabel(makeUiState(), {
+        id: "label-research",
+        name: "Research",
+        color: "#2563eb",
+      }),
+      {
+        id: "label-review",
+        name: "Review",
+        color: "#16a34a",
+      },
+    );
+
+    expect(updateThreadLabel(withLabels, "label-review", "research", "#dc2626")).toBe(withLabels);
+    expect(updateThreadLabel(withLabels, "label-review", "Review", "red")).toBe(withLabels);
+    expect(updateThreadLabel(withLabels, "missing", "Review", "#dc2626")).toBe(withLabels);
+  });
+
+  it("deletes a label and removes it from every thread assignment", () => {
+    const withLabels = addThreadLabel(
+      addThreadLabel(makeUiState(), {
+        id: "label-research",
+        name: "Research",
+        color: "#2563eb",
+      }),
+      {
+        id: "label-review",
+        name: "Review",
+        color: "#16a34a",
+      },
+    );
+    const assigned = setThreadLabelAssigned(
+      setThreadLabelAssigned(
+        setThreadLabelAssigned(withLabels, "environment:thread-1", "label-research", true),
+        "environment:thread-1",
+        "label-review",
+        true,
+      ),
+      "environment:thread-2",
+      "label-research",
+      true,
+    );
+
+    const deleted = deleteThreadLabel(assigned, "label-research");
+
+    expect(deleted.threadLabels).toEqual([
+      { id: "label-review", name: "Review", color: "#16a34a" },
+    ]);
+    expect(deleted.threadLabelIdsByThreadKey).toEqual({
+      "environment:thread-1": ["label-review"],
+    });
+    expect(deleteThreadLabel(deleted, "missing")).toBe(deleted);
   });
 });
 

@@ -408,6 +408,59 @@ export function addThreadLabel(state: UiState, label: ThreadLabel): UiState {
   };
 }
 
+export function updateThreadLabel(
+  state: UiState,
+  labelId: string,
+  name: string,
+  color: string,
+): UiState {
+  const labelIndex = state.threadLabels.findIndex((label) => label.id === labelId);
+  const normalizedName = normalizeThreadLabelName(name);
+  const normalizedColor = normalizeThreadLabelColor(color);
+  if (labelIndex < 0 || !normalizedName || !normalizedColor) {
+    return state;
+  }
+  const duplicateName = state.threadLabels.some(
+    (label) =>
+      label.id !== labelId && label.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase(),
+  );
+  if (duplicateName) {
+    return state;
+  }
+  const currentLabel = state.threadLabels[labelIndex]!;
+  if (currentLabel.name === normalizedName && currentLabel.color === normalizedColor) {
+    return state;
+  }
+  const threadLabels = [...state.threadLabels];
+  threadLabels[labelIndex] = {
+    ...currentLabel,
+    name: normalizedName,
+    color: normalizedColor,
+  };
+  return {
+    ...state,
+    threadLabels,
+  };
+}
+
+export function deleteThreadLabel(state: UiState, labelId: string): UiState {
+  if (!state.threadLabels.some((label) => label.id === labelId)) {
+    return state;
+  }
+  const threadLabelIdsByThreadKey: Record<string, string[]> = {};
+  for (const [threadKey, labelIds] of Object.entries(state.threadLabelIdsByThreadKey)) {
+    const nextLabelIds = labelIds.filter((candidate) => candidate !== labelId);
+    if (nextLabelIds.length > 0) {
+      threadLabelIdsByThreadKey[threadKey] = nextLabelIds;
+    }
+  }
+  return {
+    ...state,
+    threadLabels: state.threadLabels.filter((label) => label.id !== labelId),
+    threadLabelIdsByThreadKey,
+  };
+}
+
 export function setThreadLabelAssigned(
   state: UiState,
   threadKeys: string | readonly string[],
@@ -530,6 +583,8 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   createThreadLabel: (name: string, color: string) => string | null;
+  updateThreadLabel: (labelId: string, name: string, color: string) => boolean;
+  deleteThreadLabel: (labelId: string) => void;
   setThreadLabelAssigned: (
     threadKeys: string | readonly string[],
     labelId: string,
@@ -569,6 +624,16 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
     set((state) => addThreadLabel(state, { id, name: normalizedName, color: normalizedColor }));
     return id;
   },
+  updateThreadLabel: (labelId, name, color) => {
+    const currentState = get();
+    const nextState = updateThreadLabel(currentState, labelId, name, color);
+    if (nextState === currentState) {
+      return false;
+    }
+    set(nextState);
+    return true;
+  },
+  deleteThreadLabel: (labelId) => set((state) => deleteThreadLabel(state, labelId)),
   setThreadLabelAssigned: (threadKeys, labelId, assigned) =>
     set((state) => setThreadLabelAssigned(state, threadKeys, labelId, assigned)),
   setProjectExpanded: (projectIds, expanded) =>
