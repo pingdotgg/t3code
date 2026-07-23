@@ -453,6 +453,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     inset: 0;
     border: 1px solid var(--chat-composer-outline);
     border-radius: inherit;
+    content: "";
+  }
+
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
     /* Keep the attachment seam open; the strip continues the outer outline below. */
     clip-path: polygon(
       0 0,
@@ -464,7 +468,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       22px 100%,
       0 100%
     );
-    content: "";
   }
 
   .chat-composer-context-strip {
@@ -510,6 +513,36 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       ),
       rgb(255 255 255 / 2%);
     box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  }
+
+  @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
+    .chat-composer-glass-shell-with-context::before {
+      inset-block-end: var(--chat-composer-context-extension);
+      border-radius: 22px;
+      clip-path: none;
+    }
+
+    .chat-composer-context-strip::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    .dark .chat-composer-context-strip::before {
+      background:
+        linear-gradient(
+          to bottom,
+          transparent 0 1rem,
+          rgb(0 0 0 / 18%) 1rem,
+          transparent calc(1rem + 10px)
+        ),
+        linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+        color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+    }
   }
 
   .alert-glass {
