@@ -9,14 +9,7 @@ import {
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import {
-  memo,
-  useCallback,
-  useImperativeHandle,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-} from "react";
+import { memo, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
@@ -35,6 +28,7 @@ import {
   resolveEffectiveEnvMode,
   resolveBranchToolbarRunContextShortcutTarget,
   resolveBranchToolbarPickerOpenChange,
+  resolveBranchToolbarPickerToggle,
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
@@ -401,21 +395,24 @@ export const BranchToolbar = memo(function BranchToolbar({
     },
     [setActivePicker],
   );
+  const handlePickerToggle = useCallback(
+    (picker: BranchToolbarPicker) => {
+      setActivePicker((current) => resolveBranchToolbarPickerToggle(current, picker));
+    },
+    [setActivePicker],
+  );
 
   useImperativeHandle(
     toolbarRef,
     () => ({
       toggleEnvironmentPicker: () => {
         if (environmentShortcutTarget === null) return false;
-        handlePickerOpenChange(
-          environmentShortcutTarget,
-          activePicker !== environmentShortcutTarget,
-        );
+        handlePickerToggle(environmentShortcutTarget);
         return true;
       },
       toggleEnvModePicker: () => {
         if (envModeShortcutTarget === null) return false;
-        handlePickerOpenChange(envModeShortcutTarget, activePicker !== envModeShortcutTarget);
+        handlePickerToggle(envModeShortcutTarget);
         return true;
       },
       toggleBranchPicker: () => {
@@ -423,13 +420,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         return branchSelectorRef.current?.togglePicker() ?? false;
       },
     }),
-    [
-      activePicker,
-      environmentShortcutTarget,
-      envModeShortcutTarget,
-      handlePickerOpenChange,
-      isRendered,
-    ],
+    [environmentShortcutTarget, envModeShortcutTarget, handlePickerToggle, isRendered],
   );
 
   // Hold-modifier hint badges, mirroring the composer footer controls.

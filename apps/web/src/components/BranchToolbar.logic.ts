@@ -92,6 +92,13 @@ export function resolveBranchToolbarPickerOpenChange(
   return current === picker ? null : current;
 }
 
+export function resolveBranchToolbarPickerToggle(
+  current: BranchToolbarPicker | null,
+  picker: BranchToolbarPicker,
+): BranchToolbarPicker | null {
+  return current === picker ? null : picker;
+}
+
 export function resolveBranchPickerQueryForOpenState(query: string, open: boolean): string {
   return open ? query : "";
 }

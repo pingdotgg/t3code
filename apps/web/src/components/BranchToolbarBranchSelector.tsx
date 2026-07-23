@@ -237,6 +237,8 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   const [uncontrolledBranchMenuOpen, setUncontrolledBranchMenuOpen] = useState(false);
   const isBranchMenuOpen = open ?? uncontrolledBranchMenuOpen;
+  const branchMenuOpenRef = useRef(isBranchMenuOpen);
+  branchMenuOpenRef.current = isBranchMenuOpen;
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
@@ -338,6 +340,7 @@ export function BranchToolbarBranchSelector({
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
+      branchMenuOpenRef.current = nextOpen;
       onOpenChange?.(nextOpen);
       if (open === undefined) {
         setUncontrolledBranchMenuOpen(nextOpen);
@@ -538,7 +541,7 @@ export function BranchToolbarBranchSelector({
     () => ({
       togglePicker: () => {
         const nextOpen = resolveBranchPickerShortcutOpenState({
-          open: isBranchMenuOpen,
+          open: branchMenuOpenRef.current,
           unavailable: isInitialBranchesLoadPending || isBranchActionPending,
         });
         if (nextOpen === null) return false;
@@ -546,7 +549,7 @@ export function BranchToolbarBranchSelector({
         return true;
       },
     }),
-    [handleOpenChange, isBranchActionPending, isBranchMenuOpen, isInitialBranchesLoadPending],
+    [handleOpenChange, isBranchActionPending, isInitialBranchesLoadPending],
   );
 
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
