@@ -524,6 +524,8 @@ describe("isCursorDesktopAgentForwarderScript", () => {
   it("recognizes shell wrappers that invoke the desktop CLI's agent argument", () => {
     expect(isCursorDesktopAgentForwarderScript("@echo off\r\ncursor agent %*\r\n")).toBe(true);
     expect(isCursorDesktopAgentForwarderScript('exec "/opt/Cursor/cursor" agent "$@"')).toBe(true);
+    expect(isCursorDesktopAgentForwarderScript('exec /usr/local/bin/cursor agent "$@"')).toBe(true);
+    expect(isCursorDesktopAgentForwarderScript("C:\\tools\\cursor.exe agent %*")).toBe(true);
     expect(isCursorDesktopAgentForwarderScript("cursor-agent about")).toBe(false);
     expect(isCursorDesktopAgentForwarderScript('# cursor agent "$@"')).toBe(false);
   });

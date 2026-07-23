@@ -629,7 +629,7 @@ function buildCursorCliCommandMissingMessage(binaryPath: string): string {
 }
 
 export function isCursorDesktopAgentForwarderScript(script: string): boolean {
-  return /^[^\S\r\n]*(?!(?:#|::|rem(?:[^\S\r\n]|$)))(?:(?:exec|@?call|&)[^\S\r\n]+)?@?(?:"[^"\r\n]*[\\/]cursor(?:\.exe|\.cmd|\.bat)?"|cursor(?:\.exe|\.cmd|\.bat)?)[^\S\r\n]+agent(?:[^\S\r\n]|$)/im.test(
+  return /^[^\S\r\n]*(?!(?:#|::|rem(?:[^\S\r\n]|$)))(?:(?:exec|@?call|&)[^\S\r\n]+)?@?(?:"[^"\r\n]*[\\/]cursor(?:\.exe|\.cmd|\.bat)?"|(?:[^\s"'&|<>]+[\\/])?cursor(?:\.exe|\.cmd|\.bat)?)[^\S\r\n]+agent(?:[^\S\r\n]|$)/im.test(
     script,
   );
 }
