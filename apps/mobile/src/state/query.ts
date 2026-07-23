@@ -1,7 +1,9 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { shouldRefreshQueryOnMount } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { useEffect, useRef } from "react";
 
 const EMPTY_ASYNC_RESULT_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
   Atom.withLabel("mobile-environment-query:empty"),
@@ -23,10 +25,21 @@ function formatError(cause: Cause.Cause<unknown>): string {
 
 export function useEnvironmentQuery<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
+  options: {
+    readonly refreshOnMount?: boolean;
+  } = {},
 ): EnvironmentQueryView<A> {
   const selectedAtom = atom ?? EMPTY_ASYNC_RESULT_ATOM;
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);
+  const mountResultRef = useRef(result);
+  mountResultRef.current = result;
+  useEffect(() => {
+    const mountResult = mountResultRef.current;
+    if (shouldRefreshQueryOnMount(mountResult, atom !== null && options.refreshOnMount === true)) {
+      refresh();
+    }
+  }, [atom, options.refreshOnMount, refresh]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: result._tag === "Failure" ? formatError(result.cause) : null,
