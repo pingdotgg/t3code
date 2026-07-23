@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { type CloseFocusContext, createCloseFocusTracker } from "./closeFocus";
+import {
+  type CloseFocusContext,
+  createCloseFocusTracker,
+  sharedCloseFocusTracker,
+} from "./closeFocus";
 
 class MockElement extends EventTarget {
   isConnected = true;
   owner: "drawer" | "right-panel" | null = null;
   inRightPanel = false;
   inRightPanelDragRegion = false;
+  inRightPanelTab = false;
   interactive = false;
   inPortaledInteractive = false;
   inPreviewViewport = false;
@@ -17,6 +22,7 @@ class MockElement extends EventTarget {
     if (!this.isConnected) return null;
     if (selector === "[data-terminal-owner]" && this.owner !== null) return this;
     if (selector === "[data-right-panel-drag-region]" && this.inRightPanelDragRegion) return this;
+    if (selector.includes("[data-right-panel-tab]") && this.inRightPanelTab) return this;
     if (selector.startsWith("button") && this.interactive) return this;
     if (selector.includes('[data-slot="menu-popup"]') && this.inPortaledInteractive) return this;
     if (selector === "[data-preview-viewport]" && this.inPreviewViewport) return this;
@@ -40,6 +46,7 @@ const originalDocument = globalThis.document;
 const originalElement = globalThis.Element;
 
 afterEach(() => {
+  sharedCloseFocusTracker.clear();
   if (originalDocument === undefined) {
     delete (globalThis as { document?: Document }).document;
   } else {
@@ -71,6 +78,16 @@ function closeFocusContext(overrides: Partial<CloseFocusContext> = {}): CloseFoc
 }
 
 describe("close focus", () => {
+  it("shares sheet-panel focus with global shortcut resolution", () => {
+    const sheetPanel = new MockElement();
+    sheetPanel.inRightPanel = true;
+    installDom(sheetPanel);
+
+    sharedCloseFocusTracker.recordFocus(sheetPanel, closeFocusContext());
+
+    expect(sharedCloseFocusTracker.current(closeFocusContext())).toBe("right-panel");
+  });
+
   it("does not let a hidden-panel control claim close ownership", () => {
     const panelControl = new MockElement();
     panelControl.inRightPanel = true;
@@ -263,6 +280,20 @@ describe("close focus", () => {
     panelControl.inRightPanelDragRegion = true;
     panelControl.interactive = true;
     tracker.recordPointer(panelControl, context);
+    expect(tracker.current(context)).toBe("right-panel");
+  });
+
+  it("keeps right-panel ownership when pointerdown lands on tab row chrome", () => {
+    const context = closeFocusContext();
+    const tracker = createCloseFocusTracker();
+    const tabRow = new MockElement();
+    tabRow.inRightPanel = true;
+    tabRow.inRightPanelDragRegion = true;
+    tabRow.inRightPanelTab = true;
+    installDom(tabRow);
+
+    tracker.recordPointer(tabRow, context);
+
     expect(tracker.current(context)).toBe("right-panel");
   });
 

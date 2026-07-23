@@ -306,6 +306,78 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("migrates the legacy terminal close default before adding panel close", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const terminalClose = persisted.find((entry) => entry.command === "terminal.close");
+      const panelClose = persisted.find(
+        (entry) => entry.command === "rightPanel.closeActiveSurface",
+      );
+
+      assert.deepEqual(terminalClose, {
+        key: "mod+w",
+        command: "terminal.close",
+        when: "terminalFocus && !rightPanelFocus",
+      });
+      assert.deepEqual(panelClose, {
+        key: "mod+w",
+        command: "rightPanel.closeActiveSurface",
+        when: "rightPanelFocus",
+      });
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("persists a legacy terminal close migration when no defaults are missing", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const legacyConfig = Keybindings.DEFAULT_KEYBINDINGS.map((entry) =>
+        entry.command === "terminal.close"
+          ? { key: "mod+w", command: "terminal.close" as const, when: "terminalFocus" }
+          : entry,
+      );
+      yield* writeKeybindingsConfig(keybindingsConfigPath, legacyConfig);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(persisted, Keybindings.DEFAULT_KEYBINDINGS);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("preserves customized terminal close rules during default migration", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+x", command: "terminal.close", when: "terminalFocus" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(
+        persisted.find((entry) => entry.command === "terminal.close"),
+        { key: "mod+x", command: "terminal.close", when: "terminalFocus" },
+      );
+      assert.isTrue(persisted.some((entry) => entry.command === "rightPanel.closeActiveSurface"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
     const messages: string[] = [];
     const logger = Logger.make(({ message }) => {

@@ -19,7 +19,8 @@ export interface CloseFocusTracker {
 }
 
 const RIGHT_PANEL_SELECTOR = "[data-preview-panel-mode], [data-right-panel-control]";
-const RIGHT_PANEL_DRAG_INTERACTIVE_SELECTOR = "button, input, textarea, select, a";
+const RIGHT_PANEL_DRAG_INTERACTIVE_SELECTOR =
+  "button, input, textarea, select, a, [data-right-panel-tab]";
 
 function previewTabIdForElement(element: Element): string | null {
   if (element.tagName.toLowerCase() === "webview") {
@@ -204,3 +205,6 @@ export function createCloseFocusTracker(): CloseFocusTracker {
     },
   };
 }
+
+// Both window-level shortcut listeners must read the same retained focus history.
+export const sharedCloseFocusTracker = createCloseFocusTracker();

@@ -4,6 +4,10 @@ import type { CloseFocusOwner } from "./closeFocus";
 export const CLOSE_FOCUSED_REGION_EVENT = "t3:close-focused-region";
 
 export type CloseRequestTarget = "drawer-terminal" | "right-panel" | "right-panel-terminal";
+export type CloseRequestAction =
+  | "close-drawer-terminal"
+  | "close-right-panel-terminal"
+  | "close-right-panel-surface";
 
 export function resolveCloseRequestTarget({
   focusOwner,
@@ -23,15 +27,16 @@ export function resolveCloseRequestTarget({
   return rightPanelSurfaceKind === "terminal" ? "right-panel-terminal" : "right-panel";
 }
 
-export function shouldHandleCloseRequest(
+export function resolveCloseRequestAction(
   target: CloseRequestTarget,
   command: string | null,
-): boolean {
-  if (target === "drawer-terminal") return command === "terminal.close";
-  return (
-    command === "rightPanel.closeActiveSurface" ||
-    (target === "right-panel-terminal" && command === "terminal.close")
-  );
+): CloseRequestAction | null {
+  if (command === "rightPanel.closeActiveSurface") {
+    return target === "drawer-terminal" ? null : "close-right-panel-surface";
+  }
+  if (command !== "terminal.close") return null;
+  if (target === "drawer-terminal") return "close-drawer-terminal";
+  return target === "right-panel-terminal" ? "close-right-panel-terminal" : null;
 }
 
 export function requestCloseFocusedRegion(target: Pick<Window, "dispatchEvent"> = window): boolean {

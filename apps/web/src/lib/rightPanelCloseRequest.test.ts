@@ -3,8 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   CLOSE_FOCUSED_REGION_EVENT,
   requestCloseFocusedRegion,
+  resolveCloseRequestAction,
   resolveCloseRequestTarget,
-  shouldHandleCloseRequest,
 } from "./rightPanelCloseRequest";
 
 describe("requestCloseFocusedRegion", () => {
@@ -84,18 +84,24 @@ describe("resolveCloseRequestTarget", () => {
   });
 });
 
-describe("shouldHandleCloseRequest", () => {
-  it("honors the command resolved from the current keymap", () => {
-    expect(shouldHandleCloseRequest("right-panel", "rightPanel.closeActiveSurface")).toBe(true);
-    expect(shouldHandleCloseRequest("right-panel", "terminal.close")).toBe(false);
-    expect(shouldHandleCloseRequest("right-panel-terminal", "terminal.close")).toBe(true);
-    expect(shouldHandleCloseRequest("right-panel-terminal", "rightPanel.closeActiveSurface")).toBe(
-      true,
+describe("resolveCloseRequestAction", () => {
+  it("maps the resolved command to the focused region's close operation", () => {
+    expect(resolveCloseRequestAction("right-panel", "rightPanel.closeActiveSurface")).toBe(
+      "close-right-panel-surface",
     );
-    expect(shouldHandleCloseRequest("drawer-terminal", "terminal.close")).toBe(true);
-    expect(shouldHandleCloseRequest("drawer-terminal", "rightPanel.closeActiveSurface")).toBe(
-      false,
+    expect(resolveCloseRequestAction("right-panel", "terminal.close")).toBeNull();
+    expect(resolveCloseRequestAction("right-panel-terminal", "terminal.close")).toBe(
+      "close-right-panel-terminal",
     );
-    expect(shouldHandleCloseRequest("right-panel", null)).toBe(false);
+    expect(resolveCloseRequestAction("right-panel-terminal", "rightPanel.closeActiveSurface")).toBe(
+      "close-right-panel-surface",
+    );
+    expect(resolveCloseRequestAction("drawer-terminal", "terminal.close")).toBe(
+      "close-drawer-terminal",
+    );
+    expect(
+      resolveCloseRequestAction("drawer-terminal", "rightPanel.closeActiveSurface"),
+    ).toBeNull();
+    expect(resolveCloseRequestAction("right-panel", null)).toBeNull();
   });
 });
