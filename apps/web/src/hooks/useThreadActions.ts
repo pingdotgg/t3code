@@ -3,7 +3,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { canSettle } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -167,6 +171,23 @@ export function useThreadActions() {
       return archiveResult;
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, resolveThreadTarget],
+  );
+
+  const attemptArchiveThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      const result = await archiveThread(target);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [archiveThread],
   );
 
   const unarchiveThread = useCallback(
@@ -472,6 +493,7 @@ export function useThreadActions() {
   return useMemo(
     () => ({
       archiveThread,
+      attemptArchiveThread,
       unarchiveThread,
       deleteThread,
       confirmAndDeleteThread,
@@ -480,6 +502,7 @@ export function useThreadActions() {
     }),
     [
       archiveThread,
+      attemptArchiveThread,
       confirmAndDeleteThread,
       deleteThread,
       settleThread,
