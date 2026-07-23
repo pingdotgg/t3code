@@ -417,7 +417,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dark .model-picker-surface.model-picker-surface {
-    background: color-mix(in srgb, var(--background) 90%, transparent);
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   }
 
   .dark .command-menu-surface,
