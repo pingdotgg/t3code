@@ -172,6 +172,9 @@ importers:
 
   apps/marketing:
     dependencies:
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       astro:
         specifier: ^7.0.3
         version: 7.0.7(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.2)(@types/node@24.12.4)(aws4fetch@1.0.20)(ioredis@5.11.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0)
