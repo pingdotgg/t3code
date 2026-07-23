@@ -59,6 +59,15 @@
       "android": {
         "track": "internal"
       }
+    },
+    "personal": {
+      "ios": {
+        "ascAppId": "6793805091",
+        "appleTeamId": "C7X9BCC7LP",
+        "ascApiKeyPath": "/Users/emanuel/code/decent-measure/apps/expo/credentials/ios/AuthKey_5287YYUU8B.p8",
+        "ascApiKeyId": "5287YYUU8B",
+        "ascApiKeyIssuerId": "69a6de96-923d-47e3-e053-5b8c7c11a4d1"
+      }
     }
   }
 }
