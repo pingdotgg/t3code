@@ -456,7 +456,10 @@ function ThreadNavigationSidebarPane(
     const delayMs = Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647);
     const id = setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
     return () => clearTimeout(id);
-  }, [nextSnoozeWakeAt]);
+    // snoozeWakeTick must re-arm the timer even when nextSnoozeWakeAt is
+    // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
+    // range) the boundary string is identical and the chain would die.
+  }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
     // Queued offline tasks render above the thread rows (mirrors the
