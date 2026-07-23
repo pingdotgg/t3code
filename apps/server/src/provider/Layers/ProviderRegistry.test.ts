@@ -349,6 +349,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("includes Codex subscription usage from the app-server snapshot", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                rateLimits: {
+                  rateLimits: {
+                    primary: { usedPercent: 20, windowDurationMins: 300 },
+                    secondary: { usedPercent: 40, windowDurationMins: 10_080 },
+                  },
+                },
+              }),
+            ),
+          );
+
+          assert.deepStrictEqual(status.usageLimits?.windows, [
+            { label: "Session", usedPercent: 20, windowDurationMins: 300 },
+            { label: "Weekly", usedPercent: 40, windowDurationMins: 10_080 },
+          ]);
+        }),
+      );
+
       it.effect("passes configured launch args to the Codex provider probe", () =>
         Effect.gen(function* () {
           let observedLaunchArgs: string | undefined;
@@ -1818,6 +1840,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      it.effect("includes best-effort Claude subscription usage", () =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse("2026-07-22T12:00:00.000Z"));
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.deepStrictEqual(status.usageLimits?.windows, [
+            {
+              label: "Session",
+              usedPercent: 30,
+              windowDurationMins: 300,
+              resetsAt: "2026-07-23T06:30:00.000Z",
+            },
+          ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+              if (joined.startsWith("--print /usage --output-format json")) {
+                return {
+                  stdout: JSON.stringify({
+                    result:
+                      "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+                  }),
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
         Effect.gen(function* () {
           // Bedrock authenticates via external AWS credentials, so the SDK init
@@ -2094,7 +2153,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "ready");
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
-            [claudeConfigDir],
+            [claudeConfigDir, claudeConfigDir],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
@@ -2204,6 +2263,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   code: 0,
                 };
               throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("skips Claude subscription usage for API key auth", () =>
+        Effect.gen(function* () {
+          let usageProbeCalls = 0;
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ tokenSource: "ANTHROPIC_AUTH_TOKEN" }),
+            undefined,
+            () => {
+              usageProbeCalls += 1;
+              return Effect.void.pipe(Effect.as(undefined as ServerProvider["usageLimits"]));
+            },
+          );
+
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.usageLimits, undefined);
+          assert.strictEqual(usageProbeCalls, 0);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version") {
+                return { stdout: "2.1.218\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
             }),
           ),
         ),

@@ -68,6 +68,16 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings provider usage", () => {
+  it("keeps context-popover usage opt-in", () => {
+    expect(decodeClientSettings({}).showProviderUsageInContextPopover).toBe(false);
+    expect(
+      decodeClientSettings({ showProviderUsageInContextPopover: true })
+        .showProviderUsageInContextPopover,
+    ).toBe(true);
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

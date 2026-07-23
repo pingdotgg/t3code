@@ -71,4 +71,28 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
+
+  it("decodes dynamic provider usage windows", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      version: "2.1.218",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-22T12:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "claudePrint",
+        checkedAt: "2026-07-22T12:00:00.000Z",
+        windows: [
+          { label: "Session", usedPercent: 30, windowDurationMins: 300 },
+          { label: "Weekly (Fable)", usedPercent: 26, windowDurationMins: 10_080 },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows).toHaveLength(2);
+  });
 });
