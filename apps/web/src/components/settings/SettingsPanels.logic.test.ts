@@ -70,6 +70,8 @@ function makeThread(
     archivedAt: "2026-06-02T00:00:00.000Z",
     session: null,
     latestUserMessageAt: null,
+    settledOverride: null,
+    settledAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,

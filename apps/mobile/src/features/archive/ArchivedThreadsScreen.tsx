@@ -1,6 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
+import type { MenuAction, NativeActionEvent } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { useNavigation } from "@react-navigation/native";
@@ -535,7 +535,7 @@ function ProjectGroupHeader(props: {
         ) : (
           <ControlPillMenu
             actions={actions}
-            onPressAction={({ nativeEvent }) => {
+            onPressAction={({ nativeEvent }: NativeActionEvent) => {
               if (nativeEvent.event === "unarchive" || nativeEvent.event === "delete") {
                 props.onProjectAction(nativeEvent.event);
               }
