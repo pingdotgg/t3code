@@ -22,7 +22,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { FileDiff } from "@pierre/diffs/react";
+import { FileDiff, useWorkerPool } from "@pierre/diffs/react";
 import {
   Archive,
   AlertTriangle,
@@ -48,11 +48,20 @@ import {
   Upload,
 } from "lucide-react";
 import type {
+  ComponentProps,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from "react";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import { useTheme } from "~/hooks/useTheme";
@@ -1121,7 +1130,7 @@ function InlineFileDiff({
   return (
     <div className="max-h-96 overflow-auto rounded border border-border/60 bg-background/60">
       {renderablePatch.files.map((fileDiff) => (
-        <FileDiff
+        <WorkerRefreshedFileDiff
           key={fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name ?? "none"}`}
           fileDiff={fileDiff}
           options={{
@@ -1133,6 +1142,27 @@ function InlineFileDiff({
       ))}
     </div>
   );
+}
+
+function WorkerRefreshedFileDiff(props: ComponentProps<typeof FileDiff>) {
+  const workerPool = useWorkerPool();
+  const subscribe = useCallback(
+    (listener: () => void) => workerPool?.subscribeToStatChanges(listener) ?? (() => {}),
+    [workerPool],
+  );
+  const getSnapshot = useCallback(
+    () => workerPool?.getDiffResultCache(props.fileDiff) !== undefined,
+    [props.fileDiff, workerPool],
+  );
+  const highlightCached = useSyncExternalStore(subscribe, getSnapshot, () => false);
+  const renderKey = props.fileDiff.cacheKey
+    ? `${props.fileDiff.cacheKey}:${highlightCached ? "highlighted" : "pending"}`
+    : undefined;
+
+  // Pierre caches the first worker result even when its original FileDiff
+  // instance misses the completion repaint. Remount once that cache entry
+  // arrives so the open viewer consumes the highlighted AST immediately.
+  return <FileDiff {...props} key={renderKey} />;
 }
 
 export function SourceControlPanel({
