@@ -2941,6 +2941,165 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
+    "pins hasPendingBackgroundWork while carryover holds a live subagent after root settle",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const instanceId = ProviderInstanceId.make("acp-test");
+        let subagentPhase: "spawn" | "complete" = "spawn";
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            deferFinalizeForBackgroundWork: true,
+            enablePostSettleContinuation: true,
+            extractSubagentUpdate: (toolCall) =>
+              toolCall.toolCallId !== "tool-call-generic-1"
+                ? undefined
+                : subagentPhase === "spawn"
+                  ? {
+                      nativeTaskId: "task-generic-1",
+                      prompt: "background subagent",
+                      title: "background subagent",
+                      model: null,
+                      status: "running",
+                      childSessionId: null,
+                      result: null,
+                    }
+                  : {
+                      nativeTaskId: "task-generic-1",
+                      prompt: "",
+                      title: null,
+                      model: null,
+                      status: "completed",
+                      childSessionId: null,
+                      result: "SUB_DONE",
+                    },
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              protocolEvents,
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: { offer: () => Effect.void },
+        });
+        const threadId = ThreadId.make("thread-acp-carryover-pending-pin");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-carryover-pending-pin"),
+          modelSelection,
+          runtimePolicy,
+        });
+        if (runtime.hasPendingBackgroundWork === undefined) {
+          return yield* Effect.die(
+            "ACP runtime must expose hasPendingBackgroundWork when post-settle continuation is enabled.",
+          );
+        }
+        const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+        );
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) =>
+              event.direction === "incoming" &&
+              event.stage === "raw" &&
+              typeof event.payload === "string" &&
+              event.payload.includes('"stopReason"'),
+          ),
+          Stream.runHead,
+        );
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        const firstProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        const interruptFiber = yield* runtime
+          .interruptTurn({ providerThread, providerTurnId: firstProviderTurnId })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(interruptFiber);
+
+        let firstTerminalStatus: string | null = null;
+        while (firstTerminalStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) {
+            firstTerminalStatus = event.status;
+          }
+        }
+        assert.equal(firstTerminalStatus, "interrupted");
+        // Root settled with a live projected subagent in carryover: pin idle release.
+        assert.isTrue(
+          yield* hasPendingBackgroundWork,
+          "carryover live subagent must pin hasPendingBackgroundWork after root settle",
+        );
+
+        subagentPhase = "complete";
+        const secondNow = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: secondNow,
+            ordinal: 2,
+          }),
+        );
+        const secondProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:2",
+        });
+        let secondTerminalStatus: string | null = null;
+        while (secondTerminalStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === secondProviderTurnId) {
+            secondTerminalStatus = event.status;
+          }
+        }
+        assert.equal(secondTerminalStatus, "completed");
+        // Carryover is consumed into the next turn and terminalized; pin clears.
+        assert.isFalse(
+          yield* hasPendingBackgroundWork,
+          "hasPendingBackgroundWork must clear after carryover subagent terminals",
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
     "preserveRuntimeOnSettledInterrupt keeps the process alive and carries subagents through a settled steering interrupt",
     () =>
       Effect.gen(function* () {

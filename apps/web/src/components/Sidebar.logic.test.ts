@@ -720,6 +720,57 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("shows waiting when the latest run settled with pending background tasks", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestRun: makeLatestRun(),
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+          runtime: {
+            ...baseThread.runtime,
+            status: "completed",
+            activeRunId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Waiting", pulse: true });
+  });
+
+  it("shows durable background waiting over the checkpoint waiting runtime status", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestRun: makeLatestRun(),
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+          runtime: {
+            ...baseThread.runtime,
+            status: "waiting",
+            activeRunId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Waiting", pulse: true });
+  });
+
+  it("shows normalized post-settle background waiting over a stale running shell status", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestRun: makeLatestRun(),
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+          runtime: {
+            ...baseThread.runtime,
+            status: "running",
+            activeRunId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Waiting", pulse: true });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
