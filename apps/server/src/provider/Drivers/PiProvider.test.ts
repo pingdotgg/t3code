@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { PiSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,9 +15,7 @@ const settings = (overrides: Partial<PiSettings> = {}): PiSettings => ({
   ...overrides,
 });
 
-const withProcessResult = (
-  result: ReturnType<ProcessRunner["Service"]["run"]>,
-) =>
+const withProcessResult = (result: ReturnType<ProcessRunner["Service"]["run"]>) =>
   checkPiProviderStatus(settings(), process.env).pipe(
     Effect.provideService(ProcessRunner, ProcessRunner.of({ run: () => result })),
   );
@@ -27,7 +26,7 @@ describe("checkPiProviderStatus", () => {
       Effect.succeed({
         stdout: "pi 0.81.1\n",
         stderr: "",
-        code: 0,
+        code: ChildProcessSpawner.ExitCode(0),
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -45,10 +44,9 @@ describe("checkPiProviderStatus", () => {
 
   it.effect("passes the selected Pi config directory to the status probe", () => {
     let receivedEnvironment: NodeJS.ProcessEnv | undefined;
-    return checkPiProviderStatus(
-      settings({ configDirectory: "/Users/example/.pi-work" }),
-      { EXAMPLE: "value" },
-    ).pipe(
+    return checkPiProviderStatus(settings({ configDirectory: "/Users/example/.pi-work" }), {
+      EXAMPLE: "value",
+    }).pipe(
       Effect.provideService(
         ProcessRunner,
         ProcessRunner.of({
@@ -57,7 +55,7 @@ describe("checkPiProviderStatus", () => {
             return Effect.succeed({
               stdout: "pi 0.81.1\n",
               stderr: "",
-              code: 0,
+              code: ChildProcessSpawner.ExitCode(0),
               timedOut: false,
               stdoutTruncated: false,
               stderrTruncated: false,
@@ -96,7 +94,7 @@ describe("checkPiProviderStatus", () => {
       Effect.succeed({
         stdout: "pi 0.81.0\n",
         stderr: "",
-        code: 0,
+        code: ChildProcessSpawner.ExitCode(0),
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -113,9 +111,7 @@ describe("checkPiProviderStatus", () => {
   );
 
   it.effect("reports a missing or invalid Pi binary", () =>
-    withProcessResult(
-      Effect.fail({ _tag: "ProcessSpawnError" } as never),
-    ).pipe(
+    withProcessResult(Effect.fail({ _tag: "ProcessSpawnError" } as never)).pipe(
       Effect.tap((snapshot) =>
         Effect.sync(() => {
           expect(snapshot.installed).toBe(false);
@@ -131,7 +127,7 @@ describe("checkPiProviderStatus", () => {
       Effect.succeed({
         stdout: "not a Pi version\n",
         stderr: "",
-        code: 0,
+        code: ChildProcessSpawner.ExitCode(0),
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -152,7 +148,7 @@ describe("checkPiProviderStatus", () => {
       Effect.succeed({
         stdout: "pi 0.81.1\n",
         stderr: "fatal error",
-        code: 1,
+        code: ChildProcessSpawner.ExitCode(1),
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,

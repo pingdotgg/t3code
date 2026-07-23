@@ -74,16 +74,16 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   const processRunner = yield* ProcessRunner;
-  const result = yield* processRunner
-    .run({
+  const versionExit = yield* Effect.exit(
+    processRunner.run({
       command: settings.binaryPath || "pi",
       args: ["--version"],
       env: settings.configDirectory
         ? { ...environment, PI_AGENT_DIR: settings.configDirectory }
         : environment,
-    })
-    .pipe(Effect.either);
-  if (result._tag === "Left") {
+    }),
+  );
+  if (versionExit._tag === "Failure") {
     return buildServerProvider({
       driver: PI_DRIVER,
       presentation: PI_PRESENTATION,
@@ -100,7 +100,8 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
-  if (result.right.timedOut || result.right.code !== 0) {
+  const result = versionExit.value;
+  if (result.timedOut || result.code !== 0) {
     return buildServerProvider({
       driver: PI_DRIVER,
       presentation: PI_PRESENTATION,
@@ -112,14 +113,14 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: result.right.timedOut
+        message: result.timedOut
           ? "Pi CLI version check timed out. Check the selected binary and try again."
           : "Pi CLI version check failed. Check the selected binary and try again.",
       },
     });
   }
 
-  const parsed = parsePiVersion(`${result.right.stdout}\n${result.right.stderr}`);
+  const parsed = parsePiVersion(`${result.stdout}\n${result.stderr}`);
   if (parsed._tag === "Invalid") {
     return buildServerProvider({
       driver: PI_DRIVER,
@@ -148,10 +149,11 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       version: parsed.version,
       status: parsed._tag === "Supported" ? "ready" : "error",
       auth: { status: "unknown" },
-      message:
-        parsed._tag === "Supported"
-          ? undefined
-          : `Pi v${parsed.version} is too old. Upgrade to v${PI_MINIMUM_VERSION} or later.`,
+      ...(parsed._tag === "Unsupported"
+        ? {
+            message: `Pi v${parsed.version} is too old. Upgrade to v${PI_MINIMUM_VERSION} or later.`,
+          }
+        : {}),
     },
   });
 });
