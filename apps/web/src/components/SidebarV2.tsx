@@ -76,7 +76,7 @@ import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
-import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
@@ -86,6 +86,7 @@ import {
   isTrailingDoubleClick,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
+  shouldNavigateAfterProjectRemoval,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -740,11 +741,14 @@ export default function SidebarV2() {
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const routeThreadRef = useParams({
+  const routeTarget = useParams({
     strict: false,
-    select: (params) => resolveThreadRouteRef(params),
+    select: (params) => resolveThreadRouteTarget(params),
   });
+  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const routeTargetRef = useRef(routeTarget);
+  routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
   // captured when the settle started: if the user navigated elsewhere while
   // the command was in flight, completing it must not yank them away.
@@ -894,23 +898,21 @@ export default function SidebarV2() {
 
       const draftStore = useComposerDraftStore.getState();
       const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+      const shouldNavigate = shouldNavigateAfterProjectRemoval({
+        routeTarget: routeTargetRef.current,
+        projectThreads,
+        projectDraftId: projectDraftThread?.draftId ?? null,
+      });
       if (projectDraftThread) {
         draftStore.clearDraftThread(projectDraftThread.draftId);
       }
       draftStore.clearProjectDraftThreadId(projectRef);
 
-      if (
-        routeThreadRef &&
-        projectThreads.some(
-          (thread) =>
-            thread.environmentId === routeThreadRef.environmentId &&
-            thread.id === routeThreadRef.threadId,
-        )
-      ) {
+      if (shouldNavigate) {
         void router.navigate({ to: "/" });
       }
     },
-    [deleteProject, routeThreadRef, router, threads],
+    [deleteProject, router, threads],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so

@@ -591,6 +591,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       appearance: auto;
       accent-color: Highlight;
     }
+
+    .glass-opacity-slider::-webkit-slider-runnable-track,
+    .glass-opacity-slider::-webkit-slider-thumb {
+      all: revert;
+    }
+
+    .glass-opacity-slider::-moz-range-track,
+    .glass-opacity-slider::-moz-range-progress,
+    .glass-opacity-slider::-moz-range-thumb {
+      all: revert;
+    }
   }
 
   @media (min-width: 40rem) {
@@ -620,7 +631,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     .command-menu-surface,
     .command-palette-dialog-surface,
     .workflow-dialog-surface {
-      background: var(--popover);
+      background: var(--popover) !important;
     }
   }
 }
