@@ -125,6 +125,8 @@ struct SergeCodeApp: App {
                     }
                     multi.start()
                     appDelegate.multi = multi
+                    AgentNotificationService.shared.selectionHandler = multi
+                    AgentNotificationService.shared.prepare()
                     #if DEBUG
                         UIProbe.runIfRequested(multi: multi, scenery: scenery)
                     #endif

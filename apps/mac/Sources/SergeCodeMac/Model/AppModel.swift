@@ -728,8 +728,10 @@ public final class AppModel {
             // rewriting threads[index] invalidates every sidebar row — and
             // stash the fresh timestamp for insertion-position searches.
             let previousStatus: ThreadStatus?
+            let previousStalled: Bool
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
                 previousStatus = threads[index].status
+                previousStalled = threads[index].isStalled
                 let existing = threads[index]
                 if existing.displayEquivalent(to: thread) {
                     effectiveUpdatedAt[thread.id] = thread.updatedAt
@@ -739,6 +741,7 @@ public final class AppModel {
                 }
             } else {
                 previousStatus = nil
+                previousStalled = false
                 // New rows still slot in by the sidebar's sort key: snapshot
                 // replays after a reconnect arrive as upserts, and blind
                 // insertion at 0 would show them in reverse snapshot order.
@@ -753,6 +756,10 @@ public final class AppModel {
             if shouldSendQueuedMessage(previousStatus: previousStatus, newStatus: thread.status) {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
+            considerAgentNotification(
+                previousStatus: previousStatus,
+                previousStalled: previousStalled,
+                thread: thread)
             updateProjectPathIndex(for: thread)
         case .threadRemoved(let id):
             subagentTaskAggregator.remove(threadID: id)
@@ -784,8 +791,10 @@ public final class AppModel {
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             StreamingMarkdownCache.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
-        case .approvalRequested, .userInputRequested:
-            break
+        case .approvalRequested(let request):
+            considerApprovalNotification(request)
+        case .userInputRequested(let request):
+            considerUserInputNotification(request)
         case .diffInvalidated(let threadID):
             // Diff invalidation always coincides with a checkpoint change
             // (new checkpoint completed, or a revert pruned some), so refresh
@@ -942,7 +951,10 @@ public final class AppModel {
             async let threads = backend.threads()
             async let providers = backend.providers()
             async let models = backend.models()
-            let previousStatuses = Dictionary(uniqueKeysWithValues: self.threads.map { ($0.id, $0.status) })
+            let previousByID = Dictionary(
+                uniqueKeysWithValues: self.threads.map {
+                    ($0.id, (status: $0.status, stalled: $0.isStalled))
+                })
             let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
             self.threads = refreshedThreads
@@ -960,11 +972,21 @@ public final class AppModel {
             self.models = refreshedModels
             self.modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
-            for thread in refreshedThreads
-            where shouldSendQueuedMessage(
-                previousStatus: previousStatuses[thread.id], newStatus: thread.status)
-            {
-                dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
+            for thread in refreshedThreads {
+                let previous = previousByID[thread.id]
+                if shouldSendQueuedMessage(
+                    previousStatus: previous?.status, newStatus: thread.status)
+                {
+                    dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
+                }
+                // Only notify on refresh when we already knew the thread —
+                // a full reconnect snapshot must not spam every settled turn.
+                if let previous {
+                    considerAgentNotification(
+                        previousStatus: previous.status,
+                        previousStalled: previous.stalled,
+                        thread: thread)
+                }
             }
             await refreshArchivedThreads()
         } catch {
@@ -1387,6 +1409,50 @@ public final class AppModel {
 
     private func threadStatus(for threadID: String) -> ThreadStatus? {
         threads.first { $0.id == threadID }?.status
+    }
+
+    private func projectName(for thread: ChatThread) -> String? {
+        projects.first { $0.id == thread.projectID }?.name
+    }
+
+    private func projectName(forThreadID threadID: String) -> String? {
+        threads.first { $0.id == threadID }.flatMap { projectName(for: $0) }
+    }
+
+    private func considerAgentNotification(
+        previousStatus: ThreadStatus?,
+        previousStalled: Bool,
+        thread: ChatThread
+    ) {
+        AgentNotificationService.shared.considerThreadTransition(
+            previousStatus: previousStatus,
+            previousStalled: previousStalled,
+            thread: thread,
+            projectName: projectName(for: thread),
+            deviceID: deviceID,
+            selectedThreadID: selectedThreadID)
+    }
+
+    private func considerApprovalNotification(_ request: ApprovalRequest) {
+        let thread = threads.first { $0.id == request.threadID }
+        AgentNotificationService.shared.considerApproval(
+            request: request,
+            thread: thread,
+            projectName: thread.flatMap { projectName(for: $0) }
+                ?? projectName(forThreadID: request.threadID),
+            deviceID: deviceID,
+            selectedThreadID: selectedThreadID)
+    }
+
+    private func considerUserInputNotification(_ request: UserInputRequest) {
+        let thread = threads.first { $0.id == request.threadID }
+        AgentNotificationService.shared.considerUserInput(
+            request: request,
+            thread: thread,
+            projectName: thread.flatMap { projectName(for: $0) }
+                ?? projectName(forThreadID: request.threadID),
+            deviceID: deviceID,
+            selectedThreadID: selectedThreadID)
     }
 
     private func scheduleQueuedSendRetryIfNeeded(
