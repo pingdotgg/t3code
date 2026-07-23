@@ -50,6 +50,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import {
   attachmentRelativePath,
+  createForkedAttachmentId,
   parseAttachmentIdFromRelativePath,
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
@@ -102,6 +103,7 @@ interface ProjectorDefinition {
 }
 
 interface AttachmentSideEffects {
+  readonly copiedAttachmentRelativePaths: Map<string, string>;
   readonly deletedThreadIds: Set<string>;
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
 }
@@ -229,7 +231,7 @@ function retainProjectionMessagesAfterRevert(
   }
 
   for (const message of messages) {
-    if (message.role === "system") {
+    if (message.role === "system" || message.messageId.startsWith(`${message.threadId}:fork:`)) {
       retainedMessageIds.add(message.messageId);
       continue;
     }
@@ -362,6 +364,27 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
   const readAttachmentRootEntries = fileSystem
     .readDirectory(attachmentsRootDir, { recursive: false })
     .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+
+  const copyForkedAttachment = Effect.fn("copyForkedAttachment")(function* (
+    destinationRelativePath: string,
+    sourceRelativePath: string,
+  ) {
+    if (destinationRelativePath === sourceRelativePath) {
+      return;
+    }
+    yield* fileSystem.makeDirectory(attachmentsRootDir, { recursive: true });
+    yield* fileSystem.copyFile(
+      path.join(attachmentsRootDir, sourceRelativePath),
+      path.join(attachmentsRootDir, destinationRelativePath),
+    );
+  });
+
+  yield* Effect.forEach(
+    sideEffects.copiedAttachmentRelativePaths.entries(),
+    ([destinationRelativePath, sourceRelativePath]) =>
+      copyForkedAttachment(destinationRelativePath, sourceRelativePath),
+    { concurrency: 1 },
+  );
 
   const removeDeletedThreadAttachmentEntry = Effect.fn("removeDeletedThreadAttachmentEntry")(
     function* (threadSegment: string, entry: string) {
@@ -913,20 +936,36 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.forked":
           yield* Effect.forEach(
             event.payload.inheritedMessages,
-            (message) =>
-              projectionThreadMessageRepository.upsert({
+            (message) => {
+              const attachments = message.attachments?.map((attachment) => {
+                const sourceAttachmentId = createForkedAttachmentId(
+                  event.payload.forkedFrom.threadId,
+                  attachment.id,
+                );
+                if (sourceAttachmentId !== null) {
+                  const sourceAttachment = {
+                    ...attachment,
+                    id: sourceAttachmentId,
+                  };
+                  attachmentSideEffects.copiedAttachmentRelativePaths.set(
+                    attachmentRelativePath(attachment),
+                    attachmentRelativePath(sourceAttachment),
+                  );
+                }
+                return attachment;
+              });
+              return projectionThreadMessageRepository.upsert({
                 messageId: message.id,
                 threadId: event.payload.threadId,
                 turnId: message.turnId,
                 role: message.role,
                 text: message.text,
-                ...(message.attachments !== undefined
-                  ? { attachments: [...message.attachments] }
-                  : {}),
+                ...(attachments !== undefined ? { attachments } : {}),
                 isStreaming: message.streaming,
                 createdAt: message.createdAt,
                 updatedAt: message.updatedAt,
-              }),
+              });
+            },
             { concurrency: 1, discard: true },
           );
           return;
@@ -1632,6 +1671,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       event: OrchestrationEvent,
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
+        copiedAttachmentRelativePaths: new Map<string, string>(),
         deletedThreadIds: new Set<string>(),
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };

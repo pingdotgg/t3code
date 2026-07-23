@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { beforeEach } from "vite-plus/test";
+import { beforeEach, describe } from "vite-plus/test";
 
 import {
   OpenCodeSettings,
@@ -37,6 +37,7 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  resolveOpenCodeAssistantForkPoint,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -287,6 +288,22 @@ const OpenCodeAdapterTestLayer = Layer.effect(
 
 beforeEach(() => {
   runtimeMock.reset();
+});
+
+describe("resolveOpenCodeAssistantForkPoint", () => {
+  it("selects the terminal assistant response for each human turn", () => {
+    const messages: MessageEntry[] = [
+      { info: { id: "user-1", role: "user" }, parts: [] },
+      { info: { id: "assistant-1a", role: "assistant" }, parts: [] },
+      { info: { id: "assistant-1b", role: "assistant" }, parts: [] },
+      { info: { id: "user-2", role: "user" }, parts: [] },
+      { info: { id: "assistant-2", role: "assistant" }, parts: [] },
+    ];
+
+    NodeAssert.equal(resolveOpenCodeAssistantForkPoint(messages, 0), "assistant-1b");
+    NodeAssert.equal(resolveOpenCodeAssistantForkPoint(messages, 1), "assistant-2");
+    NodeAssert.equal(resolveOpenCodeAssistantForkPoint(messages, undefined), "assistant-2");
+  });
 });
 
 const advanceTestClock = (ms: number) =>

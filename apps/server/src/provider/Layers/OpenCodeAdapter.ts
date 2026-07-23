@@ -163,6 +163,41 @@ export function isSameOpenCodeDirectory(
   );
 }
 
+export function resolveOpenCodeAssistantForkPoint(
+  messages: ReadonlyArray<{
+    readonly info: {
+      readonly id: string;
+      readonly role: string;
+    };
+  }>,
+  sourceTurnIndex: number | undefined,
+): string | undefined {
+  const terminalAssistantMessageIds: string[] = [];
+  let currentTurnAssistantMessageId: string | undefined;
+  let hasHumanTurn = false;
+
+  for (const message of messages) {
+    if (message.info.role === "user") {
+      if (hasHumanTurn && currentTurnAssistantMessageId !== undefined) {
+        terminalAssistantMessageIds.push(currentTurnAssistantMessageId);
+      }
+      hasHumanTurn = true;
+      currentTurnAssistantMessageId = undefined;
+      continue;
+    }
+    if (message.info.role === "assistant" && hasHumanTurn) {
+      currentTurnAssistantMessageId = message.info.id;
+    }
+  }
+  if (hasHumanTurn && currentTurnAssistantMessageId !== undefined) {
+    terminalAssistantMessageIds.push(currentTurnAssistantMessageId);
+  }
+
+  return sourceTurnIndex === undefined
+    ? terminalAssistantMessageIds.at(-1)
+    : terminalAssistantMessageIds[sourceTurnIndex];
+}
+
 interface OpenCodeTurnSnapshot {
   readonly id: TurnId;
   readonly items: Array<unknown>;
@@ -1247,15 +1282,12 @@ export function makeOpenCodeAdapter(
                   const sourceMessages = yield* runOpenCodeSdk("session.messages", () =>
                     client.session.messages({ sessionID: forkSessionId }),
                   );
-                  const assistantMessages = (sourceMessages.data ?? []).filter(
-                    (entry) => entry.info.role === "assistant",
-                  );
                   const sourceTurnIndex = input.forkFrom?.sourceTurnIndex;
-                  const sourceMessage =
-                    sourceTurnIndex === undefined
-                      ? assistantMessages.at(-1)
-                      : assistantMessages[sourceTurnIndex];
-                  if (!sourceMessage) {
+                  const sourceMessageId = resolveOpenCodeAssistantForkPoint(
+                    sourceMessages.data ?? [],
+                    sourceTurnIndex,
+                  );
+                  if (!sourceMessageId) {
                     return yield* new OpenCodeRuntimeError({
                       operation: "session.fork",
                       detail:
@@ -1269,7 +1301,7 @@ export function makeOpenCodeAdapter(
                     client.session.fork({
                       sessionID: forkSessionId,
                       directory,
-                      messageID: sourceMessage.info.id,
+                      messageID: sourceMessageId,
                     }),
                   );
                   const forked = forkedResponse.data;

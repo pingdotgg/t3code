@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   createAttachmentId,
+  createForkedAttachmentId,
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
@@ -42,6 +43,13 @@ describe("attachmentStore", () => {
       return;
     }
     expect(parseThreadSegmentFromAttachmentId(attachmentId)).toBe("thread-foo");
+  });
+
+  it("rebinds a valid attachment uuid to the fork thread", () => {
+    expect(
+      createForkedAttachmentId("Thread Fork", "thread-source-00000000-0000-4000-8000-000000000001"),
+    ).toBe("thread-fork-00000000-0000-4000-8000-000000000001");
+    expect(createForkedAttachmentId("thread-fork", "legacy-attachment")).toBeNull();
   });
 
   it("resolves attachment path by id using the extension that exists on disk", () => {

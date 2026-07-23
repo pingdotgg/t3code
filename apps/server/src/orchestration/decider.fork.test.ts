@@ -58,7 +58,15 @@ const seedReadModel = (): OrchestrationReadModel => ({
           id: MessageId.make("user-1"),
           role: "user",
           text: "First question",
-          attachments: [],
+          attachments: [
+            {
+              type: "image",
+              id: "thread-source-00000000-0000-4000-8000-000000000001",
+              name: "question.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
           turnId: turnOneId,
           streaming: false,
           createdAt: now,
@@ -158,6 +166,19 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       expect(event.payload.inheritedMessages.map((message) => message.text)).toEqual([
         "First question",
         "First answer",
+      ]);
+      expect(event.payload.inheritedMessages.map((message) => message.turnId)).toEqual([
+        TurnId.make("thread-fork:fork-turn:0"),
+        TurnId.make("thread-fork:fork-turn:0"),
+      ]);
+      expect(event.payload.inheritedMessages[0]?.attachments).toEqual([
+        {
+          type: "image",
+          id: "thread-fork-00000000-0000-4000-8000-000000000001",
+          name: "question.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+        },
       ]);
 
       const projected = yield* projectEvent(seedReadModel(), {

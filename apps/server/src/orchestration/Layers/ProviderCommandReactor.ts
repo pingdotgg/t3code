@@ -530,10 +530,24 @@ const make = Effect.gen(function* () {
           ? yield* Effect.gen(function* () {
               const sourceThread = yield* resolveThread(forkedFrom.threadId);
               const sourceTurnId = forkedFrom.turnId;
+              if (sourceTurnId !== null && sourceThread === undefined) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: desiredInfo.driverKind,
+                  method: "thread.turn.start",
+                  detail: `Cannot fork from turn '${sourceTurnId}' because source thread '${forkedFrom.threadId}' is unavailable.`,
+                });
+              }
               const sourceTurnIndex =
-                sourceThread != null && sourceTurnId !== null
+                sourceThread !== undefined && sourceTurnId !== null
                   ? findCompletedTurnIndex(sourceThread.messages, sourceTurnId)
                   : undefined;
+              if (sourceTurnId !== null && sourceTurnIndex === undefined) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: desiredInfo.driverKind,
+                  method: "thread.turn.start",
+                  detail: `Cannot fork from turn '${sourceTurnId}' because its completed response was not found in source thread '${forkedFrom.threadId}'.`,
+                });
+              }
               return {
                 threadId: forkedFrom.threadId,
                 ...(sourceTurnId !== null ? { sourceTurnId } : {}),

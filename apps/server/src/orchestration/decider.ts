@@ -4,12 +4,14 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  TurnId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
+import { createForkedAttachmentId } from "../attachmentStore.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
@@ -409,13 +411,48 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const cutoffIndex = sourceThread.messages.findLastIndex(
         (message) => message.turnId === sourceTurnId,
       );
-      const inheritedMessages = sourceThread.messages
+      const sourceMessages = sourceThread.messages
         .slice(0, cutoffIndex + 1)
-        .filter((message) => !message.streaming)
-        .map((message, index) => ({
+        .filter((message) => !message.streaming);
+      const forkedTurnIds = new Map<string, TurnId>();
+      const inheritedMessages = [];
+
+      for (let index = 0; index < sourceMessages.length; index += 1) {
+        const message = sourceMessages[index];
+        if (!message) {
+          continue;
+        }
+        let forkedTurnId: TurnId | null = null;
+        if (message.turnId !== null) {
+          forkedTurnId =
+            forkedTurnIds.get(message.turnId) ??
+            TurnId.make(`${command.threadId}:fork-turn:${forkedTurnIds.size}`);
+          forkedTurnIds.set(message.turnId, forkedTurnId);
+        }
+
+        const attachments =
+          message.attachments === undefined
+            ? undefined
+            : yield* Effect.forEach(message.attachments, (attachment) => {
+                const attachmentId = createForkedAttachmentId(command.threadId, attachment.id);
+                return attachmentId === null
+                  ? new OrchestrationCommandInvariantError({
+                      commandType: command.type,
+                      detail: `Cannot fork attachment '${attachment.id}' into thread '${command.threadId}'.`,
+                    })
+                  : Effect.succeed({
+                      ...attachment,
+                      id: attachmentId,
+                    });
+              });
+
+        inheritedMessages.push({
           ...message,
           id: MessageId.make(`${command.threadId}:fork:${index}`),
-        }));
+          turnId: forkedTurnId,
+          ...(attachments !== undefined ? { attachments } : {}),
+        });
+      }
 
       return {
         ...(yield* withEventBase({
