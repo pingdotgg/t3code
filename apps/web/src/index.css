@@ -375,6 +375,35 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     backdrop-filter: blur(16px);
   }
 
+  .alert-glass {
+    --alert-glass-tint: transparent;
+
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
+      ),
+      color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(1.1);
+    backdrop-filter: blur(16px) saturate(1.1);
+  }
+
+  .alert-glass[data-variant="error"] {
+    --alert-glass-tint: var(--destructive);
+  }
+
+  .alert-glass[data-variant="info"] {
+    --alert-glass-tint: var(--info);
+  }
+
+  .alert-glass[data-variant="success"] {
+    --alert-glass-tint: var(--success);
+  }
+
+  .alert-glass[data-variant="warning"] {
+    --alert-glass-tint: var(--warning);
+  }
+
   .dropdown-glass,
   .dialog-glass,
   .workflow-dialog-surface,
@@ -566,6 +595,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     .chat-composer-glass,
+    .alert-glass {
+      background: var(--background) !important;
+    }
+
     .chat-composer-glass-host {
       background: var(--background);
     }

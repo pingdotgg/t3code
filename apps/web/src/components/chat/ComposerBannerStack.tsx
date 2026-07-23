@@ -16,11 +16,10 @@ const stackedExitStyle = {
 } satisfies CSSProperties;
 const restingStyle = {
   opacity: 1,
-  transform: "translate3d(0, 0, 0)",
+  transform: "none",
 } satisfies CSSProperties;
 const exitTransitionStyle = {
   transition: `transform ${DISMISS_TRANSITION_MS}ms ease-in, opacity ${DISMISS_TRANSITION_MS}ms ease-in`,
-  willChange: "transform, opacity",
 } satisfies CSSProperties;
 
 export interface ComposerBannerStackItem {
@@ -173,7 +172,11 @@ function ComposerBannerStackAlert({
   const dismissOnly = item.onDismiss && !item.actions;
 
   return (
-    <Alert variant={item.variant} className={item.className}>
+    <Alert
+      variant={item.variant}
+      className={cn("alert-glass", item.className)}
+      data-variant={item.variant}
+    >
       {item.icon}
       <AlertTitle>{item.title}</AlertTitle>
       {item.description ? <AlertDescription>{item.description}</AlertDescription> : null}
