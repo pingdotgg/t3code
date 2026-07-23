@@ -9,6 +9,7 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
+  "@google/genai": false
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
@@ -18,6 +19,7 @@ allowBuilds:
   msgpackr-extract: true
   msw: false
   node-pty: true
+  protobufjs: false
   sharp: true
   utf-8-validate: false
   workerd: false

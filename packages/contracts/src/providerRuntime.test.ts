@@ -181,4 +181,64 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
   });
+
+  it("decodes a content.delta carrying a pi.rpc.event raw source", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "content.delta",
+      eventId: "event-pi-1",
+      provider: "pi",
+      providerInstanceId: "pi",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: { streamKind: "assistant_text", delta: "hi" },
+      raw: {
+        source: "pi.rpc.event",
+        method: "message_update",
+        payload: { type: "message_update" },
+      },
+    });
+    expect(parsed.type).toBe("content.delta");
+    if (parsed.type !== "content.delta") throw new Error("expected content.delta");
+    expect(parsed.raw?.source).toBe("pi.rpc.event");
+    expect(parsed.raw?.method).toBe("message_update");
+  });
+
+  it("decodes a request.opened carrying a pi.rpc.extension-ui raw source", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "request.opened",
+      eventId: "event-pi-2",
+      provider: "pi",
+      providerInstanceId: "pi",
+      createdAt: "2026-02-28T00:00:01.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      requestId: "req-1",
+      payload: { requestType: "command_execution_approval", detail: "bash\nls -la" },
+      raw: {
+        source: "pi.rpc.extension-ui",
+        method: "confirm",
+        payload: { type: "extension_ui_request", id: "ui-1", method: "confirm" },
+      },
+    });
+    expect(parsed.type).toBe("request.opened");
+    if (parsed.type !== "request.opened") throw new Error("expected request.opened");
+    expect(parsed.raw?.source).toBe("pi.rpc.extension-ui");
+  });
+
+  it("rejects an unknown pi raw source literal", () => {
+    expect(() =>
+      decodeRuntimeEvent({
+        type: "content.delta",
+        eventId: "event-pi-3",
+        provider: "pi",
+        providerInstanceId: "pi",
+        createdAt: "2026-02-28T00:00:02.000Z",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        payload: { streamKind: "assistant_text", delta: "x" },
+        raw: { source: "pi.rpc.unknown", payload: {} },
+      }),
+    ).toThrow();
+  });
 });

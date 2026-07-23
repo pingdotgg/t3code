@@ -180,6 +180,17 @@ const buildCmd = Command.make(
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
+      // Pi loads the approval-gate extension at runtime; vp pack won't emit it, so copy it next to the bundle.
+      const piExtensionSource = path.join(serverDir, "src/provider/assets/pi/t3-approvals.ts");
+      const piAssetTargetDir = path.join(serverDir, "dist/assets/pi");
+      if (yield* fs.exists(piExtensionSource)) {
+        yield* fs.makeDirectory(piAssetTargetDir, { recursive: true });
+        yield* fs.copyFile(piExtensionSource, path.join(piAssetTargetDir, "t3-approvals.ts"));
+        yield* Effect.log("[cli] Bundled Pi approval extension into dist/assets/pi");
+      } else {
+        yield* Effect.logWarning("[cli] Pi approval extension not found — skipping asset copy.");
+      }
+
       if (yield* fs.exists(webDist)) {
         yield* fs.copy(webDist, clientTarget);
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
