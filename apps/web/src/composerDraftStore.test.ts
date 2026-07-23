@@ -1867,6 +1867,18 @@ describe("createDebouncedStorage", () => {
     expect(base.setItem).not.toHaveBeenCalled();
   });
 
+  it("cancel drops a pending write without removing persisted state", () => {
+    const base = createMockStorage();
+    const storage = createDebouncedStorage(base);
+
+    storage.setItem("key", "v1");
+    storage.cancel();
+    vi.advanceTimersByTime(300);
+
+    expect(base.setItem).not.toHaveBeenCalled();
+    expect(base.removeItem).not.toHaveBeenCalled();
+  });
+
   it("setItem works normally after removeItem cancels a pending write", () => {
     const base = createMockStorage();
     const storage = createDebouncedStorage(base);

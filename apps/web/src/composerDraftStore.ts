@@ -49,7 +49,10 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
-import { createAppRendererStateStorage } from "./rendererStateStorage";
+import {
+  createAppRendererStateStorage,
+  readRendererStateWithRetries,
+} from "./rendererStateStorage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
@@ -79,13 +82,19 @@ const composerPreferencesDebouncedStorage = createDebouncedStorage(
 );
 let composerPreferencesHydrated = false;
 let composerPreferencesHydrationPromise: Promise<void> | null = null;
+let composerPreferencesHydrationGeneration = 0;
+let composerPreferencesHydrationBaseline: PersistedComposerPreferences | null = null;
+let composerPreferencesDocumentInvalid = false;
+let applyingComposerPreferencesHydration = false;
 let lastPersistedComposerPreferences: string | null = null;
 
 // Flush pending composer draft writes before page unload to prevent data loss.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     composerDebouncedStorage.flush();
-    composerPreferencesDebouncedStorage.flush();
+    void flushComposerPreferencesPersistence().catch((error) => {
+      console.error("[RENDERER_STATE] Composer preference shutdown flush failed.", error);
+    });
   });
 }
 
@@ -3423,47 +3432,167 @@ function hasComposerPreferences(preferences: PersistedComposerPreferences): bool
   );
 }
 
+function snapshotComposerPreferences(
+  state: Pick<ComposerDraftStoreState, "stickyModelSelectionByProvider" | "stickyActiveProvider">,
+): PersistedComposerPreferences {
+  return {
+    version: 1,
+    stickyModelSelectionByProvider: compactModelSelectionByProvider(
+      state.stickyModelSelectionByProvider,
+    ),
+    stickyActiveProvider: state.stickyActiveProvider,
+  };
+}
+
+function reconcileComposerPreferenceModels(
+  persisted: PersistedComposerPreferences["stickyModelSelectionByProvider"],
+  current: PersistedComposerPreferences["stickyModelSelectionByProvider"],
+  baseline: PersistedComposerPreferences["stickyModelSelectionByProvider"],
+): PersistedComposerPreferences["stickyModelSelectionByProvider"] {
+  const reconciled: Record<ProviderInstanceId, ModelSelection> = {};
+  const providers = new Set([
+    ...Object.keys(persisted),
+    ...Object.keys(current),
+    ...Object.keys(baseline),
+  ]);
+  for (const provider of providers) {
+    const instanceId = ProviderInstanceId.make(provider);
+    const currentHasProvider = Object.hasOwn(current, instanceId);
+    const baselineHasProvider = Object.hasOwn(baseline, instanceId);
+    const changedLocally =
+      currentHasProvider !== baselineHasProvider ||
+      (currentHasProvider &&
+        JSON.stringify(current[instanceId]) !== JSON.stringify(baseline[instanceId]));
+    if (changedLocally) {
+      if (currentHasProvider) {
+        reconciled[instanceId] = current[instanceId] as ModelSelection;
+      }
+      continue;
+    }
+    if (Object.hasOwn(persisted, instanceId)) {
+      reconciled[instanceId] = persisted[instanceId] as ModelSelection;
+    }
+  }
+  return reconciled;
+}
+
+function reconcileHydratedComposerPreferences(
+  persisted: PersistedComposerPreferences,
+  current: PersistedComposerPreferences,
+  baseline: PersistedComposerPreferences,
+): PersistedComposerPreferences {
+  return {
+    version: 1,
+    stickyModelSelectionByProvider: reconcileComposerPreferenceModels(
+      persisted.stickyModelSelectionByProvider,
+      current.stickyModelSelectionByProvider,
+      baseline.stickyModelSelectionByProvider,
+    ),
+    stickyActiveProvider:
+      current.stickyActiveProvider === baseline.stickyActiveProvider
+        ? persisted.stickyActiveProvider
+        : current.stickyActiveProvider,
+  };
+}
+
+export function continueComposerPreferencesHydrationInBackground(): void {
+  if (
+    composerPreferencesHydrated ||
+    composerPreferencesDocumentInvalid ||
+    !composerPreferencesStorage.requiresExplicitHydration
+  ) {
+    return;
+  }
+  composerPreferencesHydrationGeneration += 1;
+  composerPreferencesHydrationPromise = null;
+  void hydrateComposerPreferences();
+}
+
 export async function hydrateComposerPreferences(): Promise<void> {
-  if (composerPreferencesHydrated) {
+  if (composerPreferencesHydrated || composerPreferencesDocumentInvalid) {
     return;
   }
   if (composerPreferencesHydrationPromise) {
     return composerPreferencesHydrationPromise;
   }
 
+  const hydrationGeneration = composerPreferencesHydrationGeneration;
+  const isCurrentHydration = () => hydrationGeneration === composerPreferencesHydrationGeneration;
+  composerPreferencesHydrationBaseline ??= snapshotComposerPreferences(
+    useComposerDraftStore.getState(),
+  );
   const hydrationPromise = (async () => {
     try {
-      const raw = await composerPreferencesStorage.storage.getItem(
-        COMPOSER_PREFERENCES_STORAGE_KEY,
+      const raw = await readRendererStateWithRetries(() =>
+        composerPreferencesStorage.storage.getItem(COMPOSER_PREFERENCES_STORAGE_KEY),
       );
+      if (!isCurrentHydration()) {
+        return;
+      }
+      let persistedPreferences: PersistedComposerPreferences;
+      let shouldSeedPreferences = false;
       if (raw !== null) {
         const preferences = parsePersistedComposerPreferences(raw);
         if (!preferences) {
-          throw new Error("Desktop composer preferences document is not valid JSON state.");
+          composerPreferencesDocumentInvalid = true;
+          console.error(
+            "[RENDERER_STATE] Desktop composer preferences document is not valid JSON state; preserving it without enabling writes.",
+          );
+          return;
         }
-        useComposerDraftStore.setState({
-          stickyModelSelectionByProvider: preferences.stickyModelSelectionByProvider,
-          stickyActiveProvider: preferences.stickyActiveProvider,
-        });
+        persistedPreferences = preferences;
       } else {
-        const legacyPreferences = parsePersistedComposerPreferences(
-          serializeComposerPreferences(useComposerDraftStore.getState()),
-        );
-        if (legacyPreferences && hasComposerPreferences(legacyPreferences)) {
-          await composerPreferencesStorage.seedHydratedValue(
+        persistedPreferences = snapshotComposerPreferences(useComposerDraftStore.getState());
+        shouldSeedPreferences = hasComposerPreferences(persistedPreferences);
+      }
+
+      const baseline =
+        composerPreferencesHydrationBaseline ??
+        snapshotComposerPreferences(useComposerDraftStore.getState());
+      const current = snapshotComposerPreferences(useComposerDraftStore.getState());
+      const hadLocalChanges = JSON.stringify(current) !== JSON.stringify(baseline);
+      const reconciledPreferences = reconcileHydratedComposerPreferences(
+        persistedPreferences,
+        current,
+        baseline,
+      );
+      applyingComposerPreferencesHydration = true;
+      try {
+        useComposerDraftStore.setState({
+          stickyModelSelectionByProvider: reconciledPreferences.stickyModelSelectionByProvider,
+          stickyActiveProvider: reconciledPreferences.stickyActiveProvider,
+        });
+      } finally {
+        applyingComposerPreferencesHydration = false;
+      }
+      if (!isCurrentHydration()) {
+        return;
+      }
+      const serializedPreferences = serializeComposerPreferences(reconciledPreferences);
+      lastPersistedComposerPreferences = serializedPreferences;
+      composerPreferencesStorage.enableWrites();
+      composerPreferencesHydrated = true;
+      composerPreferencesHydrationBaseline = null;
+      if (shouldSeedPreferences || hadLocalChanges) {
+        try {
+          await composerPreferencesStorage.writeHydratedValue(
             COMPOSER_PREFERENCES_STORAGE_KEY,
-            serializeComposerPreferences(legacyPreferences),
+            serializedPreferences,
+          );
+        } catch (error) {
+          console.error(
+            "[RENDERER_STATE] Reconciled composer preference persistence failed.",
+            error,
           );
         }
       }
-
-      lastPersistedComposerPreferences = serializeComposerPreferences(
-        useComposerDraftStore.getState(),
-      );
-      composerPreferencesStorage.enableWrites();
-      composerPreferencesHydrated = true;
     } catch (error) {
-      console.error("[RENDERER_STATE] Composer preference hydration failed.", error);
+      if (isCurrentHydration()) {
+        console.error(
+          "[RENDERER_STATE] Composer preference hydration failed after bounded retries; writes remain guarded until a later read succeeds.",
+          error,
+        );
+      }
     }
   })().finally(() => {
     if (composerPreferencesHydrationPromise === hydrationPromise) {
@@ -3474,8 +3603,24 @@ export async function hydrateComposerPreferences(): Promise<void> {
   return hydrationPromise;
 }
 
+export async function flushComposerPreferencesPersistence(): Promise<void> {
+  composerPreferencesDebouncedStorage.cancel();
+  if (!composerPreferencesHydrated || !composerPreferencesStorage.writesEnabled()) {
+    return;
+  }
+  const serialized = serializeComposerPreferences(useComposerDraftStore.getState());
+  lastPersistedComposerPreferences = serialized;
+  await composerPreferencesStorage.writeHydratedValue(COMPOSER_PREFERENCES_STORAGE_KEY, serialized);
+}
+
 useComposerDraftStore.subscribe((state) => {
+  if (applyingComposerPreferencesHydration) {
+    return;
+  }
   if (!composerPreferencesHydrated) {
+    if (!composerPreferencesDocumentInvalid) {
+      continueComposerPreferencesHydrationInBackground();
+    }
     return;
   }
   const serialized = serializeComposerPreferences(state);

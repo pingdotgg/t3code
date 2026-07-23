@@ -12,8 +12,23 @@ export interface HydrationGuardedRendererStateStorage {
   readonly storage: StateStorage;
   readonly requiresExplicitHydration: boolean;
   readonly enableWrites: () => void;
-  readonly seedHydratedValue: (name: string, value: string) => unknown;
+  readonly writeHydratedValue: (name: string, value: string) => Promise<void>;
   readonly writesEnabled: () => boolean;
+}
+
+export async function readRendererStateWithRetries<T>(
+  read: () => T | Promise<T>,
+  maxAttempts = 3,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 export function createHydrationGuardedRendererStateStorage(input: {
@@ -24,16 +39,20 @@ export function createHydrationGuardedRendererStateStorage(input: {
   const browserStorage = resolveStorage(input.browserStorage);
   const desktopPersistence = input.desktopPersistence;
   let writesEnabled = desktopPersistence === undefined;
+  const writeHydratedValue = async (name: string, value: string): Promise<void> => {
+    if (desktopPersistence === undefined) {
+      await browserStorage.setItem(name, value);
+      return;
+    }
+    await desktopPersistence.setRendererState(input.key, value);
+  };
 
   return {
     requiresExplicitHydration: desktopPersistence !== undefined,
     enableWrites: () => {
       writesEnabled = true;
     },
-    seedHydratedValue: (name, value) =>
-      desktopPersistence === undefined
-        ? browserStorage.setItem(name, value)
-        : desktopPersistence.setRendererState(input.key, value),
+    writeHydratedValue,
     writesEnabled: () => writesEnabled,
     storage:
       desktopPersistence === undefined
@@ -44,7 +63,7 @@ export function createHydrationGuardedRendererStateStorage(input: {
               if (!writesEnabled) {
                 return Promise.resolve();
               }
-              return desktopPersistence.setRendererState(input.key, value).catch((error) => {
+              return writeHydratedValue(_name, value).catch((error) => {
                 console.error(`[RENDERER_STATE] ${input.key} persistence failed.`, error);
               });
             },

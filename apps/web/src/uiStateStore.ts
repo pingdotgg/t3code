@@ -1,7 +1,10 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
-import { createAppRendererStateStorage } from "./rendererStateStorage";
+import {
+  createAppRendererStateStorage,
+  readRendererStateWithRetries,
+} from "./rendererStateStorage";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -19,6 +22,10 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 const uiStateStorage = createAppRendererStateStorage("ui-state");
 let uiStatePersistenceHydrated = !uiStateStorage.requiresExplicitHydration;
 let uiStateHydrationPromise: Promise<void> | null = null;
+let uiStateHydrationGeneration = 0;
+let uiStateHydrationBaseline: UiState | null = null;
+let uiStateDocumentInvalid = false;
+let applyingUiStateHydration = false;
 
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
@@ -54,6 +61,86 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
+
+function snapshotUiState(state: UiState): UiState {
+  return {
+    projectExpandedById: { ...state.projectExpandedById },
+    projectOrder: [...state.projectOrder],
+    threadLastVisitedAtById: { ...state.threadLastVisitedAtById },
+    threadChangedFilesExpandedById: Object.fromEntries(
+      Object.entries(state.threadChangedFilesExpandedById).map(([threadId, turns]) => [
+        threadId,
+        { ...turns },
+      ]),
+    ),
+    defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+  };
+}
+
+function persistedValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function reconcilePersistedRecord<T>(
+  persisted: Readonly<Record<string, T>>,
+  current: Readonly<Record<string, T>>,
+  baseline: Readonly<Record<string, T>>,
+): Record<string, T> {
+  const reconciled: Record<string, T> = {};
+  const keys = new Set([
+    ...Object.keys(persisted),
+    ...Object.keys(current),
+    ...Object.keys(baseline),
+  ]);
+  for (const key of keys) {
+    const currentHasKey = Object.hasOwn(current, key);
+    const baselineHasKey = Object.hasOwn(baseline, key);
+    const changedLocally =
+      currentHasKey !== baselineHasKey ||
+      (currentHasKey && !persistedValuesEqual(current[key], baseline[key]));
+    if (changedLocally) {
+      if (currentHasKey) {
+        reconciled[key] = current[key] as T;
+      }
+      continue;
+    }
+    if (Object.hasOwn(persisted, key)) {
+      reconciled[key] = persisted[key] as T;
+    }
+  }
+  return reconciled;
+}
+
+function reconcileHydratedUiState(
+  persisted: UiState,
+  current: UiState,
+  baseline: UiState,
+): UiState {
+  return {
+    projectExpandedById: reconcilePersistedRecord(
+      persisted.projectExpandedById,
+      current.projectExpandedById,
+      baseline.projectExpandedById,
+    ),
+    projectOrder: persistedValuesEqual(current.projectOrder, baseline.projectOrder)
+      ? persisted.projectOrder
+      : current.projectOrder,
+    threadLastVisitedAtById: reconcilePersistedRecord(
+      persisted.threadLastVisitedAtById,
+      current.threadLastVisitedAtById,
+      baseline.threadLastVisitedAtById,
+    ),
+    threadChangedFilesExpandedById: reconcilePersistedRecord(
+      persisted.threadChangedFilesExpandedById,
+      current.threadChangedFilesExpandedById,
+      baseline.threadChangedFilesExpandedById,
+    ),
+    defaultAdvertisedEndpointKey:
+      current.defaultAdvertisedEndpointKey === baseline.defaultAdvertisedEndpointKey
+        ? persisted.defaultAdvertisedEndpointKey
+        : current.defaultAdvertisedEndpointKey,
+  };
+}
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
 const LEGACY_PROJECT_EXPANSION_DEFAULT_KEY = "legacy-project-expansion-default";
@@ -255,6 +342,18 @@ export function persistState(state: UiState): void {
 }
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+
+export async function flushUiStatePersistence(): Promise<void> {
+  debouncedPersistState.cancel();
+  if (!uiStatePersistenceHydrated || !uiStateStorage.writesEnabled()) {
+    return;
+  }
+  await uiStateStorage.writeHydratedValue(
+    PERSISTED_STATE_KEY,
+    serializePersistedState(useUiStateStore.getState()),
+  );
+  cleanUpLegacyPersistedStateKeys();
+}
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);
@@ -472,38 +571,95 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
+export function continueUiStatePersistenceHydrationInBackground(): void {
+  if (
+    uiStatePersistenceHydrated ||
+    uiStateDocumentInvalid ||
+    !uiStateStorage.requiresExplicitHydration
+  ) {
+    return;
+  }
+  uiStateHydrationGeneration += 1;
+  uiStateHydrationPromise = null;
+  void hydrateUiStateStore();
+}
+
 export async function hydrateUiStateStore(): Promise<void> {
-  if (uiStatePersistenceHydrated || !uiStateStorage.requiresExplicitHydration) {
+  if (
+    uiStatePersistenceHydrated ||
+    uiStateDocumentInvalid ||
+    !uiStateStorage.requiresExplicitHydration
+  ) {
     return;
   }
   if (uiStateHydrationPromise) {
     return uiStateHydrationPromise;
   }
 
+  const hydrationGeneration = uiStateHydrationGeneration;
+  const isCurrentHydration = () => hydrationGeneration === uiStateHydrationGeneration;
+  uiStateHydrationBaseline ??= snapshotUiState(useUiStateStore.getState());
   const hydrationPromise = (async () => {
     try {
-      const raw = await uiStateStorage.storage.getItem(PERSISTED_STATE_KEY);
+      const raw = await readRendererStateWithRetries(() =>
+        uiStateStorage.storage.getItem(PERSISTED_STATE_KEY),
+      );
+      if (!isCurrentHydration()) {
+        return;
+      }
+      let persistedState: UiState;
+      let migratedLegacyState = false;
       if (raw !== null) {
-        const persistedState = parsePersistedStateJson(raw);
-        if (!persistedState) {
-          throw new Error("Desktop UI state document is not valid JSON state.");
+        const parsedState = parsePersistedStateJson(raw);
+        if (!parsedState) {
+          uiStateDocumentInvalid = true;
+          console.error(
+            "[RENDERER_STATE] Desktop UI state document is not valid JSON state; preserving it without enabling writes.",
+          );
+          return;
         }
-        useUiStateStore.setState(persistedState);
+        persistedState = parsedState;
       } else {
         const legacyState = readLegacyPersistedState();
-        if (legacyState) {
-          useUiStateStore.setState(legacyState.state);
-          await uiStateStorage.seedHydratedValue(
-            PERSISTED_STATE_KEY,
-            serializePersistedState(legacyState.state),
-          );
-          cleanUpLegacyPersistedStateKeys();
-        }
+        persistedState = legacyState?.state ?? initialState;
+        migratedLegacyState = legacyState !== null;
+      }
+      const baseline = uiStateHydrationBaseline ?? initialState;
+      const current = snapshotUiState(useUiStateStore.getState());
+      const hadLocalChanges = !persistedValuesEqual(current, baseline);
+      const reconciledState = reconcileHydratedUiState(persistedState, current, baseline);
+      applyingUiStateHydration = true;
+      try {
+        useUiStateStore.setState(reconciledState);
+      } finally {
+        applyingUiStateHydration = false;
+      }
+      if (!isCurrentHydration()) {
+        return;
       }
       uiStateStorage.enableWrites();
       uiStatePersistenceHydrated = true;
+      uiStateHydrationBaseline = null;
+      if (migratedLegacyState || hadLocalChanges) {
+        try {
+          await uiStateStorage.writeHydratedValue(
+            PERSISTED_STATE_KEY,
+            serializePersistedState(reconciledState),
+          );
+          if (migratedLegacyState) {
+            cleanUpLegacyPersistedStateKeys();
+          }
+        } catch (error) {
+          console.error("[RENDERER_STATE] Reconciled UI state persistence failed.", error);
+        }
+      }
     } catch (error) {
-      console.error("[RENDERER_STATE] UI state hydration failed.", error);
+      if (isCurrentHydration()) {
+        console.error(
+          "[RENDERER_STATE] UI state hydration failed after bounded retries; writes remain guarded until a later read succeeds.",
+          error,
+        );
+      }
     }
   })().finally(() => {
     if (uiStateHydrationPromise === hydrationPromise) {
@@ -515,13 +671,22 @@ export async function hydrateUiStateStore(): Promise<void> {
 }
 
 useUiStateStore.subscribe((state) => {
+  if (applyingUiStateHydration) {
+    return;
+  }
   if (uiStatePersistenceHydrated) {
     debouncedPersistState.maybeExecute(state);
+    return;
+  }
+  if (!uiStateDocumentInvalid) {
+    continueUiStatePersistenceHydrationInBackground();
   }
 });
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
-    debouncedPersistState.flush();
+    void flushUiStatePersistence().catch((error) => {
+      console.error("[RENDERER_STATE] UI state shutdown flush failed.", error);
+    });
   });
 }

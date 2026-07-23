@@ -3,19 +3,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
-import * as References from "effect/References";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "./DesktopClientSettings.ts";
-
-interface LogRecord {
-  readonly message: unknown;
-  readonly annotations: Readonly<Record<string, unknown>>;
-}
 
 const baseDir = "/virtual-home";
 
@@ -41,44 +34,29 @@ function makeLayer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
   );
 }
 
-const readWithLogs = (fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) => {
-  const records: Array<LogRecord> = [];
-  const logger = Logger.make(({ fiber, message }) => {
-    records.push({
-      message,
-      annotations: { ...fiber.getRef(References.CurrentLogAnnotations) },
-    });
-  });
-
-  return Effect.gen(function* () {
+const readResult = (fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) =>
+  Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const settings = yield* DesktopClientSettings.DesktopClientSettings;
     return {
-      result: yield* settings.get,
+      result: yield* Effect.result(settings.get),
       settingsPath: environment.clientSettingsPath,
-      records,
     };
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        makeLayer(fileSystemLayer),
-        Logger.layer([logger], { mergeWithExisting: false }),
-      ),
-    ),
-  );
-};
+  }).pipe(Effect.provide(makeLayer(fileSystemLayer)));
 
 describe("DesktopClientSettings diagnostics", () => {
-  it.effect("treats a missing settings file as expected without warning", () =>
+  it.effect("treats a missing settings file as expected", () =>
     Effect.gen(function* () {
-      const result = yield* readWithLogs(FileSystem.layerNoop({}));
+      const result = yield* readResult(FileSystem.layerNoop({}));
 
-      assert.isTrue(Option.isNone(result.result));
-      assert.deepEqual(result.records, []);
+      assert.equal(result.result._tag, "Success");
+      if (result.result._tag === "Success") {
+        assert.isTrue(Option.isNone(result.result.success));
+      }
     }),
   );
 
-  it.effect("logs non-missing filesystem failures with the settings path", () => {
+  it.effect("fails non-missing filesystem reads with the settings path", () => {
     const permissionError = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
@@ -87,43 +65,47 @@ describe("DesktopClientSettings diagnostics", () => {
     });
 
     return Effect.gen(function* () {
-      const result = yield* readWithLogs(
+      const result = yield* readResult(
         FileSystem.layerNoop({
           readFileString: () => Effect.fail(permissionError),
         }),
       );
 
-      assert.isTrue(Option.isNone(result.result));
-      assert.equal(result.records.length, 1);
-      assert.deepEqual(result.records[0]?.message, [
-        "Could not read desktop client settings.",
-        permissionError,
-      ]);
-      assert.equal(result.records[0]?.annotations.settingsPath, result.settingsPath);
+      assert.equal(result.result._tag, "Failure");
+      if (result.result._tag === "Failure") {
+        assert.instanceOf(
+          result.result.failure,
+          DesktopClientSettings.DesktopClientSettingsReadError,
+        );
+        assert.equal(result.result.failure.operation, "read-settings-file");
+        assert.equal(result.result.failure.path, result.settingsPath);
+        assert.equal(result.result.failure.cause, permissionError);
+      }
     });
   });
 
-  it.effect("logs malformed settings documents with the settings path", () =>
+  it.effect("fails malformed settings documents with the settings path", () =>
     Effect.gen(function* () {
-      const result = yield* readWithLogs(
+      const result = yield* readResult(
         FileSystem.layerNoop({
           readFileString: () => Effect.succeed("{not-json"),
         }),
       );
 
-      assert.isTrue(Option.isNone(result.result));
-      assert.equal(result.records.length, 1);
-      const message = result.records[0]?.message;
-      if (!Array.isArray(message)) {
-        return assert.fail("expected structured warning arguments");
+      assert.equal(result.result._tag, "Failure");
+      if (result.result._tag === "Failure") {
+        assert.instanceOf(
+          result.result.failure,
+          DesktopClientSettings.DesktopClientSettingsReadError,
+        );
+        assert.equal(result.result.failure.operation, "decode-document");
+        assert.equal(result.result.failure.path, result.settingsPath);
+        const schemaError = result.result.failure.cause;
+        if (schemaError === null || typeof schemaError !== "object") {
+          return assert.fail("expected the schema error as the failure cause");
+        }
+        assert.equal("_tag" in schemaError ? schemaError._tag : undefined, "SchemaError");
       }
-      assert.equal(message[0], "Could not decode desktop client settings.");
-      const schemaError = message[1];
-      if (schemaError === null || typeof schemaError !== "object") {
-        return assert.fail("expected the schema error in the warning");
-      }
-      assert.equal("_tag" in schemaError ? schemaError._tag : undefined, "SchemaError");
-      assert.equal(result.records[0]?.annotations.settingsPath, result.settingsPath);
     }),
   );
 });

@@ -195,7 +195,7 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("treats malformed client settings documents as absent", () =>
+  it.effect("protects malformed client settings documents from replacement", () =>
     withClientSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -204,7 +204,11 @@ describe("DesktopClientSettings", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.clientSettingsPath, "{not-json");
 
-        assert.isTrue(Option.isNone(yield* settings.get));
+        const error = yield* settings.get.pipe(Effect.flip);
+        assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
+        assert.equal(error.operation, "decode-document");
+        assert.equal(error.path, environment.clientSettingsPath);
+        assert.equal(yield* fileSystem.readFileString(environment.clientSettingsPath), "{not-json");
       }),
     ),
   );

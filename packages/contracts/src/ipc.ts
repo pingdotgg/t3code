@@ -991,6 +991,7 @@ export interface DesktopBridge {
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getRendererState: (key: DesktopRendererStateKey) => Promise<string | null>;
   setRendererState: (key: DesktopRendererStateKey, value: string | null) => Promise<void>;
+  onRendererStateFlush?: (listener: () => Promise<void>) => () => void;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
