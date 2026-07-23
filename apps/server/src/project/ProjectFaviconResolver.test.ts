@@ -77,6 +77,50 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("prefers a configured icon outside the workspace", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        const iconDirectory = yield* makeTempDir;
+        yield* writeTextFile(iconDirectory, "custom.svg", "<svg>custom</svg>");
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd, {
+          customIconPath: `${iconDirectory}/custom.svg`,
+        });
+
+        expect(resolved).toBe(`${iconDirectory}/custom.svg`);
+      }),
+    );
+
+    it.effect("resolves configured relative paths from the workspace", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, ".local/icon.svg", "<svg>custom</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd, {
+          customIconPath: ".local/icon.svg",
+        });
+
+        expect(resolved).toBe(`${cwd}/.local/icon.svg`);
+      }),
+    );
+
+    it.effect("falls back to discovery when the configured icon does not exist", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd, {
+          customIconPath: "/missing/custom.svg",
+        });
+
+        expect(resolved).toBe(`${cwd}/favicon.svg`);
+      }),
+    );
+
     it.effect("falls back to well-known files when the t3.json iconPath does not exist", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

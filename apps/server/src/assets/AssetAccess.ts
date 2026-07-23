@@ -38,6 +38,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -82,6 +83,12 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("project-favicon"),
     workspaceRoot: Schema.String,
     relativePath: Schema.NullOr(Schema.String),
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(2),
+    kind: Schema.Literal("project-icon"),
+    absolutePath: Schema.NullOr(Schema.String),
     expiresAt: Schema.Number,
   }),
 ]);
@@ -282,8 +289,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-      const faviconPath = yield* faviconResolver.resolvePath(workspaceRoot).pipe(
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const serverSettings = yield* settings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
             new AssetProjectFaviconResolutionError({
@@ -292,39 +299,40 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
-      if (
-        relativePath &&
-        !(yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
+      const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+      const customIconPath = serverSettings.projectIcons[workspaceRoot];
+      const faviconPath = yield* faviconResolver
+        .resolvePath(workspaceRoot, customIconPath === undefined ? undefined : { customIconPath })
+        .pipe(
           Effect.mapError(
             (cause) =>
-              new AssetProjectFaviconInspectionError({
+              new AssetProjectFaviconResolutionError({
                 resource: input.resource,
                 cause,
               }),
           ),
-        ))
-      ) {
-        return yield* new AssetProjectFaviconNotFoundError({
-          resource: input.resource,
-        });
+        );
+      const canonicalFaviconPath = faviconPath
+        ? yield* optionOnNotFound(fileSystem.realPath(faviconPath)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AssetProjectFaviconInspectionError({
+                  resource: input.resource,
+                  cause,
+                }),
+            ),
+          )
+        : Option.none<string>();
+      if (faviconPath && Option.isNone(canonicalFaviconPath)) {
+        return yield* new AssetProjectFaviconNotFoundError({ resource: input.resource });
       }
       claims = {
-        version: 1,
-        kind: "project-favicon",
-        workspaceRoot: yield* fileSystem.realPath(workspaceRoot).pipe(
-          Effect.mapError(
-            (cause) =>
-              new AssetWorkspaceResolutionError({
-                resource: input.resource,
-                cause,
-              }),
-          ),
-        ),
-        relativePath,
+        version: 2,
+        kind: "project-icon",
+        absolutePath: Option.getOrNull(canonicalFaviconPath),
         expiresAt,
       };
-      fileName = relativePath ? path.basename(relativePath) : PROJECT_FAVICON_FALLBACK_MARKER;
+      fileName = faviconPath ? path.basename(faviconPath) : PROJECT_FAVICON_FALLBACK_MARKER;
       break;
     }
   }
@@ -395,6 +403,22 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       relativePath: claims.relativePath,
     });
     return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
+  }
+  if (claims.kind === "project-icon") {
+    if (claims.absolutePath === null) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const info = yield* optionOnNotFound(fileSystem.stat(claims.absolutePath)).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to inspect configured project icon.", {
+          path: claims.absolutePath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File"
+      ? ({ kind: "file", path: claims.absolutePath } satisfies ResolvedAsset)
+      : null;
   }
 
   const decodedPath = decodeRelativePath(relativePath);

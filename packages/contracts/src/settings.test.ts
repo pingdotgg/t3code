@@ -136,6 +136,32 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings project icons", () => {
+  it("defaults to an empty map for existing settings files", () => {
+    expect(decodeServerSettings({}).projectIcons).toEqual({});
+  });
+
+  it("trims project roots and icon paths in settings and patches", () => {
+    const input = {
+      projectIcons: {
+        "  /workspace/t3code  ": "  ~/.config/t3code/icons/t3code.svg  ",
+      },
+    };
+
+    expect(decodeServerSettings(input).projectIcons).toEqual({
+      "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
+    });
+    expect(decodeServerSettingsPatch(input).projectIcons).toEqual({
+      "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
+    });
+  });
+
+  it("rejects empty project roots and icon paths", () => {
+    expect(() => decodeServerSettings({ projectIcons: { "": "/icons/project.svg" } })).toThrow();
+    expect(() => decodeServerSettingsPatch({ projectIcons: { "/workspace": "  " } })).toThrow();
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});

@@ -488,6 +488,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "~/Development",
+        projectIcons: {
+          "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
@@ -510,6 +513,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.deepEqual(JSON.parse(raw), {
         addProjectBaseDirectory: "~/Development",
+        projectIcons: {
+          "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",

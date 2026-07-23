@@ -125,6 +125,11 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
+import {
+  ProjectIconDialog,
+  ProjectIconPathField,
+  type ProjectIconTarget,
+} from "./ProjectIconSettings";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -377,6 +382,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   isRenaming: boolean;
   renamingTitle: string;
   onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onProjectIconContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+  ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
@@ -543,6 +552,17 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
     },
     [onContextMenu, threadRef],
+  );
+  const handleProjectIconContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLSpanElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      props.onProjectIconContextMenu(threadRef, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [props.onProjectIconContextMenu, threadRef],
   );
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
@@ -752,6 +772,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 !props.isActive &&
                   "opacity-40 grayscale group-hover/v2-row:opacity-100 group-hover/v2-row:grayscale-0",
               )}
+              onContextMenu={handleProjectIconContextMenu}
             >
               <ProjectFavicon
                 environmentId={thread.environmentId}
@@ -855,11 +876,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         >
           <div className="relative z-10 h-[4.875rem] px-2.5 py-2">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
-                className="size-4 shrink-0"
-              />
+              <span className="shrink-0" onContextMenu={handleProjectIconContextMenu}>
+                <ProjectFavicon
+                  environmentId={thread.environmentId}
+                  cwd={props.projectCwd ?? ""}
+                  className="size-4 shrink-0"
+                />
+              </span>
               {props.projectTitle ? (
                 <span
                   className={cn(
@@ -1032,6 +1055,7 @@ export default function SidebarV2() {
   const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
     null,
   );
+  const [projectIconTarget, setProjectIconTarget] = useState<ProjectIconTarget | null>(null);
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
@@ -1131,6 +1155,19 @@ export default function SidebarV2() {
       ),
     [projectGroups],
   );
+  const projectMemberByKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjects.map(
+            (member) => [`${member.environmentId}:${member.id}`, member] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
+  const projectMemberByKeyRef = useRef(projectMemberByKey);
+  projectMemberByKeyRef.current = projectMemberByKey;
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
   // churn on every render; auto-settle thresholds are day-granular anyway.
@@ -1529,6 +1566,42 @@ export default function SidebarV2() {
   // event and defeat row memoization during streaming.
   const threadByKeyRef = useRef(threadByKey);
   threadByKeyRef.current = threadByKey;
+  const handleProjectIconContextMenu = useCallback(
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const thread = threadByKeyRef.current.get(scopedThreadKey(threadRef));
+        if (!thread) return;
+        const member = projectMemberByKeyRef.current.get(
+          `${thread.environmentId}:${thread.projectId}`,
+        );
+        if (!member) return;
+        const configuredIcon = serverConfigs.get(member.environmentId)?.settings.projectIcons[
+          member.workspaceRoot
+        ];
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            [
+              {
+                id: "configure-project-icon",
+                label: configuredIcon ? "Change project icon..." : "Set project icon...",
+              },
+            ],
+            position,
+          ),
+        );
+        if (clicked._tag === "Failure" || clicked.value !== "configure-project-icon") return;
+        setProjectIconTarget({
+          environmentId: member.environmentId,
+          environmentLabel: member.environmentLabel,
+          title: member.title,
+          workspaceRoot: member.workspaceRoot,
+        });
+      })();
+    },
+    [serverConfigs],
+  );
   // handleNewThread is inherently unstable (depends on the projects list);
   // a ref keeps it out of attemptSettle's dependency array.
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
@@ -2434,6 +2507,7 @@ export default function SidebarV2() {
                       isRenaming={renamingThreadKey === threadKey}
                       renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                       onContextMenu={handleThreadContextMenu}
+                      onProjectIconContextMenu={handleProjectIconContextMenu}
                       onSettle={attemptSettle}
                       onUnsettle={attemptUnsettle}
                       onSnooze={attemptSnooze}
@@ -2547,6 +2621,12 @@ export default function SidebarV2() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
+      <ProjectIconDialog
+        target={projectIconTarget}
+        onOpenChange={(open) => {
+          if (!open) setProjectIconTarget(null);
+        }}
+      />
       <Dialog
         open={projectActionsTarget !== null}
         onOpenChange={(open) => {
@@ -2658,6 +2738,14 @@ export default function SidebarV2() {
                         </SelectPopup>
                       </Select>
                     </label>
+                    <ProjectIconPathField
+                      target={{
+                        environmentId: member.environmentId,
+                        environmentLabel: member.environmentLabel,
+                        title: member.title,
+                        workspaceRoot: member.workspaceRoot,
+                      }}
+                    />
                   </div>
                   <div className="flex flex-wrap items-center gap-2 sm:pl-7">
                     <Button

@@ -6,6 +6,8 @@
  *
  * @module ProjectFaviconResolver
  */
+import * as NodeOS from "node:os";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -91,6 +93,7 @@ export class ProjectFaviconResolver extends Context.Service<
      */
     readonly resolvePath: (
       cwd: string,
+      options?: { readonly customIconPath?: string },
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
@@ -101,6 +104,16 @@ function extractIconHref(source: string): string | null {
   const objMatch = source.match(LINK_ICON_OBJ_RE);
   if (objMatch?.[1]) return objMatch[1];
   return null;
+}
+
+function expandHomePath(input: string, path: Path.Path): string {
+  if (input === "~") {
+    return NodeOS.homedir();
+  }
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return path.join(NodeOS.homedir(), input.slice(2));
+  }
+  return input;
 }
 
 const optionOnNotFound = <A, R>(
@@ -168,7 +181,7 @@ export const make = Effect.gen(function* () {
 
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd) {
+  )(function* (cwd, options) {
     const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -179,6 +192,30 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // User-local settings override checked-in metadata and automatic discovery.
+    // Relative paths are resolved from the workspace; absolute and home-relative
+    // paths may point at a central icon directory outside the repository.
+    if (options?.customIconPath !== undefined) {
+      const expandedIconPath = expandHomePath(options.customIconPath.trim(), path);
+      const customIconPath = path.isAbsolute(expandedIconPath)
+        ? path.resolve(expandedIconPath)
+        : path.resolve(projectCwd, expandedIconPath);
+      const customIconStats = yield* optionOnNotFound(fileSystem.stat(customIconPath)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "stat-candidate",
+              workspaceRoot: projectCwd,
+              absolutePath: customIconPath,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isSome(customIconStats) && customIconStats.value.type === "File") {
+        return customIconPath;
+      }
+    }
+
     // A t3.json iconPath takes precedence over the well-known locations.
     const projectFile = yield* projectFileLoader.load(projectCwd);
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {

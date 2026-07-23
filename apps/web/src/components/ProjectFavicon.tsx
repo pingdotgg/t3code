@@ -4,6 +4,7 @@ import { FolderIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useState } from "react";
 import { useAssetUrl } from "../assets/assetUrls";
+import { useEnvironmentSettings } from "../hooks/useSettings";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
@@ -13,9 +14,14 @@ export function ProjectFavicon(input: {
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
+  const configuredIconPath = useEnvironmentSettings(
+    input.environmentId,
+    (settings) => settings.projectIcons[input.cwd],
+  );
   const src = useAssetUrl(input.environmentId, {
     _tag: "project-favicon",
     cwd: input.cwd,
+    ...(configuredIconPath ? { revision: configuredIconPath } : {}),
   });
   const FallbackIcon = input.fallbackIcon ?? FolderIcon;
 

@@ -194,4 +194,24 @@ describe("serverSettings helpers", () => {
       config: { homePath: "~/.codex" },
     });
   });
+
+  it("replaces project icon maps so clearing an override removes it", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectIcons: {
+        "/workspace/one": "/icons/one.svg",
+        "/workspace/two": "/icons/two.svg",
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        projectIcons: {
+          "/workspace/two": "/icons/two-next.svg",
+        },
+      }).projectIcons,
+    ).toEqual({
+      "/workspace/two": "/icons/two-next.svg",
+    });
+  });
 });

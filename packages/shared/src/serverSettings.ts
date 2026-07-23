@@ -80,6 +80,7 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacements = {
     ...next,
+    ...(patch.projectIcons !== undefined ? { projectIcons: patch.projectIcons } : {}),
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
