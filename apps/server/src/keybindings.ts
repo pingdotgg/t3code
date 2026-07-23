@@ -64,7 +64,7 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
     Schema.toType(ResolvedKeybindingRule),
     SchemaTransformation.transformOrFail({
       decode: (rule) =>
-        Effect.succeed(compileResolvedKeybindingRule(rule)).pipe(
+        Effect.succeed(compileResolvedKeybindingRule(rule, rule.source ?? "user")).pipe(
           Effect.filterOrFail(
             Predicate.isNotNull,
             () =>
@@ -91,6 +91,7 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
             key,
             command: resolved.command,
             when,
+            ...(resolved.source === undefined ? {} : { source: resolved.source }),
           };
         }),
     }),
@@ -99,6 +100,10 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
 
 export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFromConfig).check(
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
+);
+
+const persistedDefaultKeybindings: ReadonlyArray<KeybindingRule> = DEFAULT_KEYBINDINGS.map(
+  (rule) => ({ ...rule, source: "default" }),
 );
 
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
@@ -114,12 +119,7 @@ function compileRuntimeKeybindingsConfig(
 ): ResolvedKeybindingsConfig {
   const compiled: ResolvedKeybindingRule[] = [];
   for (const rule of config) {
-    const source = DEFAULT_KEYBINDINGS.some((defaultRule) =>
-      isSameKeybindingRule(rule, defaultRule),
-    )
-      ? "default"
-      : "user";
-    const resolved = compileResolvedKeybindingRule(rule, source);
+    const resolved = compileResolvedKeybindingRule(rule, rule.source ?? "user");
     if (resolved) compiled.push(resolved);
   }
   return compiled.slice(-MAX_KEYBINDINGS_COUNT);
@@ -142,8 +142,8 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
 
 function keybindingRuleFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule {
   return input.when === undefined
-    ? { key: input.key, command: input.command }
-    : { key: input.key, command: input.command, when: input.when };
+    ? { key: input.key, command: input.command, source: "user" }
+    : { key: input.key, command: input.command, when: input.when, source: "user" };
 }
 
 function replaceTargetFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule | null {
@@ -492,7 +492,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const configExists = yield* readConfigExists;
       if (!configExists) {
-        yield* writeConfigAtomically(DEFAULT_KEYBINDINGS);
+        yield* writeConfigAtomically(persistedDefaultKeybindings);
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
@@ -534,7 +534,7 @@ const make = Effect.gen(function* () {
           });
           continue;
         }
-        missingDefaults.push(defaultRule);
+        missingDefaults.push({ ...defaultRule, source: "default" });
       }
       for (const conflict of shortcutConflictWarnings) {
         yield* Effect.logWarning("skipping default keybinding due to shortcut conflict", {

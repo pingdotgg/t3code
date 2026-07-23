@@ -1176,9 +1176,35 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
   const skillMetadata = useMemo(() => skillMetadataByName(props.skills), [props.skills]);
 
   useEffect(() => {
-    if (!enabled) return;
+    const rootElement = editor.getRootElement();
+    const syncReadlineReadiness = (editorState: EditorState = editor.getEditorState()) => {
+      let ready = false;
+      if (enabled && editor.isEditable()) {
+        editorState.read(() => {
+          const selection = $getSelection();
+          ready =
+            $isRangeSelection(selection) && getSelectionRangeForComposerOffsets(selection) !== null;
+        });
+      }
+      rootElement?.toggleAttribute("data-emacs-readline-ready", ready);
+    };
+    syncReadlineReadiness();
+    const unregisterUpdate = editor.registerUpdateListener(({ editorState }) => {
+      syncReadlineReadiness(editorState);
+    });
+    const unregisterEditable = editor.registerEditableListener(() => {
+      syncReadlineReadiness();
+    });
 
-    return editor.registerCommand(
+    if (!enabled) {
+      return () => {
+        unregisterUpdate();
+        unregisterEditable();
+        rootElement?.removeAttribute("data-emacs-readline-ready");
+      };
+    }
+
+    const unregisterCommand = editor.registerCommand(
       KEY_DOWN_COMMAND,
       (event) => {
         if (!editor.isEditable()) return false;
@@ -1268,6 +1294,12 @@ function ComposerEmacsReadlinePlugin(props: { skills: ReadonlyArray<ServerProvid
       },
       COMMAND_PRIORITY_HIGH,
     );
+    return () => {
+      unregisterCommand();
+      unregisterUpdate();
+      unregisterEditable();
+      rootElement?.removeAttribute("data-emacs-readline-ready");
+    };
   }, [editor, enabled, skillMetadata]);
 
   return null;

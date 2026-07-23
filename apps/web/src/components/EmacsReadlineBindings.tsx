@@ -6,6 +6,7 @@ import { createEmacsReadlineKeydownHandler } from "../emacsReadlineBindings";
 import { useClientSettings } from "../hooks/useSettings";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { isModelPickerOpen } from "../modelPickerVisibility";
 import { resolveCustomShortcutCommand, type ShortcutMatchOptions } from "../keybindings";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -30,6 +31,7 @@ export function getActiveShortcutMatchOptions(router: AppRouter): ShortcutMatchO
       terminalOpen,
       previewFocus: isPreviewFocused(),
       previewOpen,
+      modelPickerOpen: isModelPickerOpen(),
     },
   };
 }

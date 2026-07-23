@@ -39,6 +39,7 @@ const MUTATING_ACTIONS: ReadonlySet<EmacsReadlineAction> = new Set([
 ]);
 
 const CANDIDATE_SURFACE_SELECTOR = [
+  "[data-composer-command-menu]",
   '[data-slot="command-dialog-popup"]',
   '[data-slot="command-list"]',
   '[data-slot="combobox-popup"]',
@@ -729,6 +730,7 @@ export function createEmacsReadlineKeydownHandler(options?: {
     // claiming the chord, but allow the original keydown to keep propagating
     // to the editor plugin.
     if (editableHost?.hasAttribute("data-emacs-readline-managed")) {
+      if (!editableHost.hasAttribute("data-emacs-readline-ready")) return;
       managedEditorEvents.add(event);
       event.preventDefault();
       return;

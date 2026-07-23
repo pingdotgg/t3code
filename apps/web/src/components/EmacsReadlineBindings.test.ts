@@ -22,7 +22,7 @@ describe("EmacsReadlineBindings", () => {
       readonly testElement = true;
     }
     vi.stubGlobal("HTMLElement", TestElement);
-    vi.stubGlobal("document", { activeElement: null });
+    vi.stubGlobal("document", { activeElement: null, querySelector: () => null });
     useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
     const router = {
       state: {
@@ -42,7 +42,23 @@ describe("EmacsReadlineBindings", () => {
       terminalOpen: true,
       previewFocus: false,
       previewOpen: false,
+      modelPickerOpen: false,
     });
+  });
+
+  it("includes model-picker visibility in shortcut match options", () => {
+    class TestElement {
+      readonly testElement = true;
+    }
+    vi.stubGlobal("HTMLElement", TestElement);
+    vi.stubGlobal("document", {
+      activeElement: null,
+      querySelector: (selector: string) =>
+        selector === "[data-model-picker-content]" ? new TestElement() : null,
+    });
+    const router = { state: { matches: [] } } as unknown as AppRouter;
+
+    expect(getActiveShortcutMatchOptions(router).context?.modelPickerOpen).toBe(true);
   });
 
   it("honors when-guard context while resolving custom shortcut precedence", () => {

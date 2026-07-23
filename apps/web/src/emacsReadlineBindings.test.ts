@@ -136,11 +136,15 @@ describe("resolveEmacsReadlineAction", () => {
     const candidateList = new TestElement();
     target.parentElement = localContainer;
     candidateList.parentElement = localContainer;
+    let candidateSelector = "";
     const document = {
       activeElement: target,
       body: new TestElement(),
       defaultView: { KeyboardEvent: TestKeyboardEvent },
-      querySelectorAll: () => [candidateList],
+      querySelectorAll: (selector: string) => {
+        candidateSelector = selector;
+        return [candidateList];
+      },
     } as unknown as Document;
     target.ownerDocument = document;
     const dispatchedKeys: string[] = [];
@@ -159,6 +163,7 @@ describe("resolveEmacsReadlineAction", () => {
     } as unknown as KeyboardEvent);
 
     expect(dispatchedKeys).toEqual(["ArrowDown"]);
+    expect(candidateSelector).toContain("[data-composer-command-menu]");
     expect(yieldToAppShortcut).not.toHaveBeenCalled();
   });
 
@@ -230,7 +235,7 @@ describe("resolveEmacsReadlineAction", () => {
       }
 
       hasAttribute(name: string): boolean {
-        return name === "data-emacs-readline-managed";
+        return name === "data-emacs-readline-managed" || name === "data-emacs-readline-ready";
       }
     }
     class TestInputElement {
@@ -266,6 +271,38 @@ describe("resolveEmacsReadlineAction", () => {
     expect(editorHandler).toHaveBeenCalledOnce();
     expect(resolveEmacsReadlineAction(event)).toBeNull();
     expect(resolveManagedEmacsReadlineAction(event)).toBe("backward-char");
+  });
+
+  it("does not consume managed-editor chords until the editor can handle them", () => {
+    class TestElement {
+      readonly ownerDocument = { querySelectorAll: () => [] } as unknown as Document;
+
+      closest(selector: string): TestElement | null {
+        return selector.includes("contenteditable") ? this : null;
+      }
+
+      hasAttribute(name: string): boolean {
+        return name === "data-emacs-readline-managed";
+      }
+    }
+    class TestInputElement {
+      readonly testElement = true;
+    }
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+    vi.stubGlobal("HTMLInputElement", TestInputElement);
+    vi.stubGlobal("HTMLTextAreaElement", TestInputElement);
+
+    const event = {
+      ...keyboardEvent({ ctrlKey: true, key: "b" }),
+      preventDefault: vi.fn(),
+      target: new TestElement(),
+    } as unknown as KeyboardEvent;
+
+    createEmacsReadlineKeydownHandler()(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(resolveManagedEmacsReadlineAction(event)).toBeNull();
   });
 
   it("leaves readline chords outside editable hosts available to app shortcuts", () => {

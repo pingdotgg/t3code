@@ -98,6 +98,7 @@ export const KeybindingRule = Schema.Struct({
   key: KeybindingValue,
   command: KeybindingCommand,
   when: Schema.optional(KeybindingWhen),
+  source: Schema.optional(Schema.Literals(["default", "user"])),
 });
 export type KeybindingRule = typeof KeybindingRule.Type;
 

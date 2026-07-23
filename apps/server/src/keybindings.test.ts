@@ -184,7 +184,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.deepEqual(persisted, Keybindings.DEFAULT_KEYBINDINGS);
+      assert.deepEqual(
+        persisted,
+        Keybindings.DEFAULT_KEYBINDINGS.map((rule) => ({ ...rule, source: "default" })),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
@@ -198,6 +201,27 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.equal(snapshot.keybindings.length, Keybindings.DEFAULT_KEYBINDINGS.length);
       assert.isTrue(snapshot.keybindings.every((binding) => binding.source === "default"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("preserves explicit user intent when a rule is identical to a default", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const sidebarDefault = Keybindings.DEFAULT_KEYBINDINGS.find(
+        (rule) => rule.command === "sidebar.toggle",
+      );
+      assert.isDefined(sidebarDefault);
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [sidebarDefault]);
+
+      const snapshot = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.loadConfigState;
+      });
+      const sidebarBinding = snapshot.keybindings.find(
+        (binding) => binding.command === "sidebar.toggle",
+      );
+
+      assert.equal(sidebarBinding?.source, "user");
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
