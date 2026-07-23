@@ -159,6 +159,7 @@ describe("parsePersistedState", () => {
         invalid: "not-a-date",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -183,6 +184,18 @@ describe("parsePersistedState", () => {
         },
       },
     });
+  });
+
+  it("ignores changed-file expansion values saved with legacy folder semantics", () => {
+    const parsed = parsePersistedState({
+      threadChangedFilesExpandedById: {
+        "environment:thread-1": {
+          "turn-1": false,
+        },
+      },
+    });
+
+    expect(parsed.threadChangedFilesExpandedById).toEqual({});
   });
 
   it("migrates legacy CWD project preferences into local alias keys", () => {
@@ -283,6 +296,7 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
