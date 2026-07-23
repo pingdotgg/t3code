@@ -1,5 +1,3 @@
-import * as NodeOS from "node:os";
-
 import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -7,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
@@ -41,7 +40,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
-  it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
+  it.effect("serializes probe options and keeps core capabilities independent from skills", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -49,6 +48,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const executablePath = path.join(tempDir, "fake-claude.mjs");
       const invocationPath = path.join(tempDir, "invocation.json");
       const workspaceCwd = path.join(tempDir, "workspace");
+      const inheritedConfigDir = path.join(tempDir, "inherited-claude-config");
       yield* fs.makeDirectory(workspaceCwd, { recursive: true });
 
       yield* fs.writeFileString(
@@ -76,6 +76,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "  const message = JSON.parse(line);",
           '  if (message.type !== "control_request") return;',
           '  if (message.request?.subtype === "reload_skills") {',
+          '    if (process.env.T3_PROBE_SKIP_SKILL_RESPONSE === "true") return;',
           "    process.stdout.write(JSON.stringify({",
           '      type: "control_response",',
           "      response: {",
@@ -113,6 +114,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         decodeClaudeSettings({ binaryPath: executablePath }),
         {
           ...process.env,
+          CLAUDE_CONFIG_DIR: inheritedConfigDir,
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
         },
@@ -120,14 +122,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       );
 
       // The fake skill dir doesn't exist on disk, so the mapper falls back to a
-      // constructed path under the default config dir (`~/.claude`) and takes
-      // the scope from the stripped `(user)` description suffix.
-      const expectedSkillPath = path.join(
-        NodeOS.homedir(),
-        ".claude",
-        "skills",
-        "probe-fake-skill",
-      );
+      // constructed path under the inherited config dir and takes the scope
+      // from the stripped `(user)` description suffix.
+      const expectedSkillPath = path.join(inheritedConfigDir, "skills", "probe-fake-skill");
       assert.deepEqual(capabilities, {
         email: "dev@example.com",
         subscriptionType: "pro",
@@ -149,6 +146,36 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             scope: "user",
           },
         ],
+      });
+
+      const capabilitiesWithoutSkills = yield* probeClaudeCapabilities(
+        decodeClaudeSettings({ binaryPath: executablePath }),
+        {
+          ...process.env,
+          T3_PROBE_INVOCATION_PATH: invocationPath,
+          T3_PROBE_SKIP_SKILL_RESPONSE: "true",
+        },
+        workspaceCwd,
+        {
+          // A reload may outlive the initialization budget without erasing the
+          // account and command data that initialization already returned.
+          initializationMs: 1_000,
+          skillsReloadMs: 1_250,
+        },
+      ).pipe(TestClock.withLive);
+      assert.deepEqual(capabilitiesWithoutSkills, {
+        email: "dev@example.com",
+        subscriptionType: "pro",
+        tokenSource: "oauth",
+        apiProvider: undefined,
+        slashCommands: [
+          {
+            name: "review",
+            description: "Review changes",
+            input: { hint: "[path]" },
+          },
+        ],
+        skills: [],
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off

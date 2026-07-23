@@ -126,7 +126,7 @@ describe("parseClaudeReloadedSkills", () => {
     });
   });
 
-  it("dedupes by lowercased name, first entry wins and later fills a missing description", () => {
+  it("dedupes by lowercased name and backfills missing parsed metadata", () => {
     const skills = parseClaudeReloadedSkills(
       [
         { name: "Review" },
@@ -139,6 +139,7 @@ describe("parseClaudeReloadedSkills", () => {
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("Review");
     expect(skills[0]?.description).toBe("Filled in later");
+    expect(skills[0]?.scope).toBe("user");
   });
 
   it("skips entries with empty or whitespace-only names", () => {

@@ -75,12 +75,16 @@ export function parseClaudeReloadedSkills(
     const key = name.toLowerCase();
     const existing = byName.get(key);
     if (existing) {
-      // First entry wins; later duplicates only fill in a missing description.
-      if (!existing.description) {
-        const description = parseDescription(skill.description).description;
-        if (description) {
-          byName.set(key, { ...existing, description });
-        }
+      // First entry wins; later duplicates only fill missing parsed metadata.
+      const parsed = parseDescription(skill.description);
+      if ((!existing.description && parsed.description) || (!existing.scope && parsed.scope)) {
+        byName.set(key, {
+          ...existing,
+          ...(!existing.description && parsed.description
+            ? { description: parsed.description }
+            : {}),
+          ...(!existing.scope && parsed.scope ? { scope: parsed.scope } : {}),
+        });
       }
       continue;
     }

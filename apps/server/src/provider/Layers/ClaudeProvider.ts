@@ -42,7 +42,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment, resolveClaudeHomePath } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { parseClaudeReloadedSkills, pathExistsSync } from "./ClaudeSkillDiscovery.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -516,6 +516,11 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
 const SKILLS_RELOAD_TIMEOUT_MS = 5_000;
 
+type ClaudeCapabilitiesProbeTimeouts = {
+  readonly initializationMs?: number;
+  readonly skillsReloadMs?: number;
+};
+
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
  * health check from configured MCP servers.
@@ -662,6 +667,7 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  timeouts: ClaudeCapabilitiesProbeTimeouts = {},
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -671,12 +677,12 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
-    // The effective config dir is `~/.claude` for the default home, or the
-    // configured home path itself (exported as CLAUDE_CONFIG_DIR).
-    const claudeConfigDir =
-      claudeSettings.homePath.trim().length > 0
-        ? yield* resolveClaudeHomePath(claudeSettings)
-        : path.join(NodeOS.homedir(), ".claude");
+    const environmentConfigDir = claudeEnvironment.CLAUDE_CONFIG_DIR?.trim();
+    // Derive this from the exact environment passed to the CLI. In particular,
+    // an inherited CLAUDE_CONFIG_DIR remains effective when homePath is empty.
+    const claudeConfigDir = environmentConfigDir
+      ? path.resolve(cwd ?? process.cwd(), environmentConfigDir)
+      : path.join(NodeOS.homedir(), ".claude");
     const q = claudeQuery({
       // Never yield — we only need initialization data, not a conversation.
       // This prevents any prompt from reaching the Anthropic API.
@@ -691,13 +697,21 @@ const probeClaudeCapabilities = (
         cwd,
       }),
     });
-    const init = yield* Effect.tryPromise(() => q.initializationResult());
+    const initResult = yield* Effect.tryPromise(() => q.initializationResult()).pipe(
+      Effect.timeoutOption(timeouts.initializationMs ?? CAPABILITIES_PROBE_TIMEOUT_MS),
+      Effect.result,
+    );
+    if (Result.isFailure(initResult) || Option.isNone(initResult.success)) {
+      return undefined;
+    }
+    const init = initResult.success.value;
     // `reloadSkills` is best-effort: older CLIs may not answer the control
-    // request (and the SDK never times it out), so bound it ourselves and fall
-    // back to an empty skill list rather than failing the whole probe.
+    // request (and the SDK never times it out). Give it a separate budget after
+    // initialization so it cannot discard already-resolved account and command
+    // capabilities.
     const reloadedSkills = yield* Effect.tryPromise(() => q.reloadSkills()).pipe(
       Effect.map((reloaded) => reloaded.skills),
-      Effect.timeoutOption(SKILLS_RELOAD_TIMEOUT_MS),
+      Effect.timeoutOption(timeouts.skillsReloadMs ?? SKILLS_RELOAD_TIMEOUT_MS),
       Effect.orElseSucceed(() => Option.none<ReadonlyArray<ClaudeSlashCommand>>()),
       Effect.map(Option.getOrElse(() => [] as ReadonlyArray<ClaudeSlashCommand>)),
     );
@@ -728,12 +742,6 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.result,
-    Effect.map((result) => {
-      if (Result.isFailure(result)) return undefined;
-      return Option.isSome(result.success) ? result.success.value : undefined;
-    }),
   );
 };
 
