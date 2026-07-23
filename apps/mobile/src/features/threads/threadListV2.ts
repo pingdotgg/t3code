@@ -12,6 +12,12 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 
+// Settled-tail paging: recent history is the common lookup; the deep tail
+// stays behind an explicit Show more. Shared by the compact Home list and
+// the iPad sidebar so both page identically.
+export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
+export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
+
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
 ): ThreadListV2Status {
