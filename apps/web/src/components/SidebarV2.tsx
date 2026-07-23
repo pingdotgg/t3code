@@ -863,15 +863,16 @@ export default function SidebarV2() {
             ? [
                 `Remove project "${project.title}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
                 `Path: ${project.workspaceRoot}`,
-                "This permanently clears conversation history for those threads and any archived threads.",
+                "This permanently clears conversation history for those threads and any archived conversations in this project.",
                 "This removes only the project entry, not the files on disk.",
                 "This action cannot be undone.",
               ].join("\n")
             : [
                 `Remove project "${project.title}"?`,
                 `Path: ${project.workspaceRoot}`,
-                "Any archived conversation history for this project will also be permanently deleted.",
+                "If this project has archived conversations, their history will also be permanently deleted.",
                 "This removes only the project entry, not the files on disk.",
+                "This action cannot be undone.",
               ].join("\n"),
         ),
       );

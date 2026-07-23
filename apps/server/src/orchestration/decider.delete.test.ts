@@ -6,6 +6,7 @@ import {
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationReadModel,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -102,6 +103,27 @@ const seedReadModel = Effect.gen(function* () {
   });
 });
 
+function archiveThread(readModel: OrchestrationReadModel, threadId: ThreadId, index: number) {
+  const archivedAt = `2026-01-01T00:0${index}:00.000Z`;
+  return projectEvent(readModel, {
+    sequence: readModel.snapshotSequence + 1,
+    eventId: asEventId(`evt-thread-archive-${index}`),
+    aggregateKind: "thread",
+    aggregateId: threadId,
+    type: "thread.archived",
+    occurredAt: archivedAt,
+    commandId: asCommandId(`cmd-thread-archive-${index}`),
+    causationEventId: null,
+    correlationId: asCommandId(`cmd-thread-archive-${index}`),
+    metadata: {},
+    payload: {
+      threadId,
+      archivedAt,
+      updatedAt: archivedAt,
+    },
+  });
+}
+
 type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
 function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>) {
@@ -154,26 +176,13 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
     }),
   );
 
-  it.effect("rejects archived-only deletion when the project has a live thread", () =>
+  it.effect("rejects deleteArchivedThreads when the project still has a live thread", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
-      const withArchivedThread = yield* projectEvent(readModel, {
-        sequence: 4,
-        eventId: asEventId("evt-thread-archive-1"),
-        aggregateKind: "thread",
-        aggregateId: asThreadId("thread-delete-1"),
-        type: "thread.archived",
-        occurredAt: "2026-01-01T00:01:00.000Z",
-        commandId: asCommandId("cmd-thread-archive-1"),
-        causationEventId: null,
-        correlationId: asCommandId("cmd-thread-archive-1"),
-        metadata: {},
-        payload: {
-          threadId: asThreadId("thread-delete-1"),
-          archivedAt: "2026-01-01T00:01:00.000Z",
-          updatedAt: "2026-01-01T00:01:00.000Z",
-        },
-      });
+      const withArchivedThread = yield* archiveThread(readModel, asThreadId("thread-delete-1"), 1);
+      expect(
+        withArchivedThread.threads.find((thread) => thread.id === "thread-delete-2")?.archivedAt,
+      ).toBeNull();
 
       const error = yield* Effect.flip(
         decideOrchestrationCommand({
@@ -187,6 +196,30 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         }),
       );
 
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("cannot be deleted without force=true");
+    }),
+  );
+
+  it.effect("rejects deleting archived threads without explicit opt-in", () =>
+    Effect.gen(function* () {
+      let readModel = yield* seedReadModel;
+      for (const [index, threadId] of ["thread-delete-1", "thread-delete-2"].entries()) {
+        readModel = yield* archiveThread(readModel, asThreadId(threadId), index + 1);
+      }
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.delete",
+            commandId: asCommandId("cmd-project-delete-archived-no-opt-in"),
+            projectId: asProjectId("project-delete"),
+          },
+          readModel,
+        }),
+      );
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
       expect(error.message).toContain("cannot be deleted without force=true");
     }),
   );
@@ -195,25 +228,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
     Effect.gen(function* () {
       let readModel = yield* seedReadModel;
       for (const [index, threadId] of ["thread-delete-1", "thread-delete-2"].entries()) {
-        const sequence = readModel.snapshotSequence + 1;
-        const archivedAt = `2026-01-01T00:0${index + 1}:00.000Z`;
-        readModel = yield* projectEvent(readModel, {
-          sequence,
-          eventId: asEventId(`evt-thread-archive-${index + 1}`),
-          aggregateKind: "thread",
-          aggregateId: asThreadId(threadId),
-          type: "thread.archived",
-          occurredAt: archivedAt,
-          commandId: asCommandId(`cmd-thread-archive-${index + 1}`),
-          causationEventId: null,
-          correlationId: asCommandId(`cmd-thread-archive-${index + 1}`),
-          metadata: {},
-          payload: {
-            threadId: asThreadId(threadId),
-            archivedAt,
-            updatedAt: archivedAt,
-          },
-        });
+        readModel = yield* archiveThread(readModel, asThreadId(threadId), index + 1);
       }
 
       const result = yield* decideOrchestrationCommand({

@@ -158,6 +158,19 @@ it.effect("decodes project.create with createWorkspaceRootIfMissing enabled", ()
   }),
 );
 
+it.effect("decodes project.delete without an archived-thread opt-in", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "project.delete",
+      commandId: "cmd-project-delete",
+      projectId: "project-delete",
+    });
+
+    assert.strictEqual(parsed.type, "project.delete");
+    assert.strictEqual(parsed.deleteArchivedThreads, undefined);
+  }),
+);
+
 it.effect("decodes historical project.created payloads with a default provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({
