@@ -544,9 +544,12 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={handleOpenChange}>
-      <DialogPopup className="max-w-xl overflow-hidden">
-        <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-background shadow-2xl">
-          <DialogHeader className="border-b border-border/70 bg-background">
+      <DialogPopup
+        backdropClassName="bg-black/40 backdrop-blur-none"
+        className="workflow-dialog-surface max-w-xl overflow-hidden before:hidden"
+      >
+        <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-transparent">
+          <DialogHeader className="border-b border-border/70 bg-foreground/[0.025] dark:border-transparent dark:bg-transparent">
             <DialogTitle>Publish repository</DialogTitle>
             <DialogDescription>
               Pick where to host it, then point us at a repo to push to.
@@ -567,10 +570,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     className={cn(
                       "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
                       index === publishWizardStep
-                        ? "border-primary bg-primary/10 ring-1 ring-primary/25"
+                        ? "border-primary bg-primary/10 ring-1 ring-primary/25 dark:border-transparent"
                         : isComplete
-                          ? "border-border bg-background"
-                          : "border-border bg-muted/40",
+                          ? "border-border bg-background dark:border-transparent dark:bg-white/[0.05]"
+                          : "border-border bg-muted/40 dark:border-transparent dark:bg-white/[0.025]",
                       !isClickable && "cursor-default",
                     )}
                   >
@@ -602,7 +605,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             </div>
           </DialogHeader>
 
-          <DialogPanel className="space-y-5 border-b border-border/70 bg-muted/20 px-6 py-5">
+          <DialogPanel className="space-y-5 border-b border-border/70 bg-muted/20 px-6 py-5 dark:border-transparent dark:bg-transparent">
             <AnimatedHeight>
               <div className={cn("space-y-2", publishWizardStep !== 0 && "hidden")}>
                 <span
@@ -627,7 +630,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       return (
                         <div
                           key={option.value}
-                          className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55"
+                          className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
                         >
                           <option.Icon
                             className="size-5 shrink-0 text-muted-foreground"
@@ -670,8 +673,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                           "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
                           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                           isSelected
-                            ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
-                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
+                            ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
                         )}
                       >
                         <option.Icon className="size-5 shrink-0" aria-hidden />
@@ -756,8 +759,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                             "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
                             "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                             isSelected
-                              ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
-                              : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
+                              ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                              : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
                           )}
                         >
                           <option.Icon
@@ -831,8 +834,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                                   "rounded-md border px-3 py-1.5 text-center text-sm font-medium outline-none transition",
                                   "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                                   isSelected
-                                    ? "border-primary bg-background ring-2 ring-primary/35 text-foreground"
-                                    : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+                                    ? "border-primary bg-background ring-2 ring-primary/35 text-foreground dark:border-transparent dark:bg-primary/10 dark:ring-1 dark:ring-primary/30"
+                                    : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:text-foreground dark:border-transparent dark:bg-white/[0.035]",
                                 )}
                               >
                                 {value === "ssh" ? "SSH" : "HTTPS"}
@@ -849,7 +852,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   <div
                     role="status"
                     aria-live="polite"
-                    className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                    className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]"
                   >
                     <Spinner className="size-3.5" aria-hidden />
                     Publishing repository to {publishProviderLabel}...
@@ -884,7 +887,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                           : `Remote "${publishResult.remoteName}" is set up. Make a commit and push it to share your code.`}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-2">
+                    <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-2 dark:border-transparent dark:bg-white/[0.035]">
                       <currentPublishProvider.Icon className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
                         {publishResult.repository.nameWithOwner}
@@ -905,7 +908,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     </Button>
                   </>
                 ) : (
-                  <div className="rounded-md border border-input bg-background px-3 py-2 text-xs text-muted-foreground">
+                  <div className="rounded-md border border-input bg-background px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]">
                     Publish result unavailable.
                   </div>
                 )}
@@ -913,7 +916,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             </AnimatedHeight>
           </DialogPanel>
 
-          <DialogFooter>
+          <DialogFooter className="dark:border-transparent dark:bg-transparent">
             {publishWizardStep === 2 ? (
               <Button size="sm" onClick={() => handleOpenChange(false)}>
                 Done
@@ -1117,12 +1120,12 @@ export default function GitActionsControl({
     activeDraftThread.worktreePath === null;
 
   useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase) {
+    if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
       return;
     }
 
     const branchUpdate = resolveLiveThreadBranchUpdate({
-      threadBranch: activeServerThread?.branch ?? activeDraftThread?.branch ?? null,
+      threadBranch: activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
     });
     if (!branchUpdate) {
@@ -1131,7 +1134,7 @@ export default function GitActionsControl({
 
     persistThreadBranchSync(branchUpdate.branch);
   }, [
-    activeServerThread?.branch,
+    activeServerThread,
     activeDraftThread?.branch,
     gitStatusForActions,
     isGitActionRunning,
@@ -1825,13 +1828,16 @@ export default function GitActionsControl({
           }
         }}
       >
-        <DialogPopup>
+        <DialogPopup
+          backdropClassName="bg-black/40 backdrop-blur-none"
+          className="command-palette-dialog-surface workflow-dialog-surface before:hidden"
+        >
           <DialogHeader>
             <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
-            <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
+            <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs dark:border-transparent dark:bg-white/[0.035]">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
                 <span className="flex items-center justify-between gap-2">
@@ -1880,7 +1886,7 @@ export default function GitActionsControl({
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">
-                    <ScrollArea className="h-44 rounded-md border border-input bg-background">
+                    <ScrollArea className="h-44 rounded-md border border-input bg-background dark:border-transparent dark:bg-white/[0.025]">
                       <div className="space-y-1 p-1">
                         {allFiles.map((file) => {
                           const isExcluded = excludedFiles.has(file.path);
@@ -1955,7 +1961,7 @@ export default function GitActionsControl({
               />
             </div>
           </DialogPanel>
-          <DialogFooter>
+          <DialogFooter className="dark:border-transparent dark:bg-transparent">
             <Button
               variant="outline"
               size="sm"
@@ -1998,14 +2004,17 @@ export default function GitActionsControl({
           }
         }}
       >
-        <DialogPopup className="max-w-xl">
+        <DialogPopup
+          backdropClassName="bg-black/40 backdrop-blur-none"
+          className="workflow-dialog-surface max-w-xl before:hidden"
+        >
           <DialogHeader>
             <DialogTitle>
               {pendingDefaultBranchActionCopy?.title ?? "Run action on default refName?"}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="sm:flex-wrap sm:items-center">
+          <DialogFooter className="dark:border-transparent dark:bg-transparent sm:flex-wrap sm:items-center">
             <Button
               className="w-full sm:mr-auto sm:w-auto"
               variant="outline"
