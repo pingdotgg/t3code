@@ -193,6 +193,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         },
       });
 
+      expect(withOnlyArchivedThreads.threads).toHaveLength(2);
       expect(withOnlyArchivedThreads.threads.every((thread) => thread.archivedAt !== null)).toBe(
         true,
       );
@@ -208,6 +209,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         }),
       );
 
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
       expect(error.message).toContain("cannot be deleted without force=true");
     }),
   );
