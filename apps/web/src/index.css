@@ -305,8 +305,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
      visible even when the header and timeline share the same background. */
-  .chat-timeline-scroll-fade {
-    --timeline-top-fade-height: 2.5rem;
+  .chat-timeline-scroll-fade,
+  .settings-page-scroll-fade {
+    --topbar-scroll-fade-height: 2.5rem;
     -webkit-mask-image:
       linear-gradient(
         to bottom,
@@ -322,8 +323,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     -webkit-mask-position: top, bottom;
     -webkit-mask-repeat: no-repeat;
     -webkit-mask-size:
-      100% var(--timeline-top-fade-height),
-      100% calc(100% - var(--timeline-top-fade-height));
+      100% var(--topbar-scroll-fade-height),
+      100% calc(100% - var(--topbar-scroll-fade-height));
     mask-image:
       linear-gradient(
         to bottom,
@@ -339,8 +340,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     mask-position: top, bottom;
     mask-repeat: no-repeat;
     mask-size:
-      100% var(--timeline-top-fade-height),
-      100% calc(100% - var(--timeline-top-fade-height));
+      100% var(--topbar-scroll-fade-height),
+      100% calc(100% - var(--topbar-scroll-fade-height));
   }
 
   .workspace-titlebar-controls {
@@ -593,8 +594,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 40rem) {
-    .chat-timeline-scroll-fade {
-      --timeline-top-fade-height: 3rem;
+    .chat-timeline-scroll-fade,
+    .settings-page-scroll-fade {
+      --topbar-scroll-fade-height: 3rem;
     }
 
     .chat-composer-horizontal-inset {
