@@ -45,7 +45,10 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  finalizeTrackedAssistantMessages,
+  ProviderRuntimeIngestionLive,
+} from "./ProviderRuntimeIngestion.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -3244,6 +3247,23 @@ describe("ProviderRuntimeIngestion", () => {
       )?.streaming,
     ).toBe(true);
   });
+
+  effectIt.effect("releases each successful message after a partial turn finalization", () =>
+    Effect.gen(function* () {
+      const releasedMessageIds: string[] = [];
+      const results = yield* finalizeTrackedAssistantMessages(
+        ["successful", "failed"],
+        (messageId) => Effect.succeed(messageId === "successful"),
+        (messageId) =>
+          Effect.sync(() => {
+            releasedMessageIds.push(messageId);
+          }),
+      );
+
+      expect(results).toEqual([true, false]);
+      expect(releasedMessageIds).toEqual(["successful"]);
+    }),
+  );
 
   it("finalizes pending coalesced assistant text on runtime error", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });

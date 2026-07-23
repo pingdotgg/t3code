@@ -148,6 +148,24 @@ type RuntimeIngestionInput =
       isDeferred: true;
     };
 
+export const finalizeTrackedAssistantMessages = <MessageIdValue, FinalizeError, FinalizeServices>(
+  messageIds: Iterable<MessageIdValue>,
+  finalize: (messageId: MessageIdValue) => Effect.Effect<boolean, FinalizeError, FinalizeServices>,
+  release: (messageId: MessageIdValue) => Effect.Effect<void>,
+) =>
+  Effect.forEach(
+    messageIds,
+    (messageId) =>
+      Effect.gen(function* () {
+        const finalized = yield* finalize(messageId);
+        if (finalized) {
+          yield* release(messageId);
+        }
+        return finalized;
+      }),
+    { concurrency: 1 },
+  );
+
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
 }
@@ -2252,7 +2270,7 @@ const make = Effect.gen(function* () {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
-          const finalizedAssistantMessages = yield* Effect.forEach(
+          const finalizedAssistantMessages = yield* finalizeTrackedAssistantMessages(
             assistantMessageIds,
             (assistantMessageId) =>
               finalizeAssistantMessage({
@@ -2265,7 +2283,8 @@ const make = Effect.gen(function* () {
                 finalDeltaCommandTag: "assistant-delta-finalize-fallback",
                 hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
               }),
-            { concurrency: 1 },
+            (assistantMessageId) =>
+              releaseFinalizedAssistantMessageForTurn(thread.id, turnId, assistantMessageId),
           );
           if (finalizedAssistantMessages.every(Boolean)) {
             yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
