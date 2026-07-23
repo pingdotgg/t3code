@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -74,12 +77,14 @@ const saveSnapshotScreenshotArtifact = Effect.fn("PreviewToolkit.saveSnapshotScr
     readonly screenshotBase64: string;
   }) {
     const config = yield* ServerConfig.ServerConfig;
-    const fileName = `browser-screenshot-${(yield* Clock.currentTimeMillis).toString(36)}.png`;
+    // Timestamp for ordering plus a random component so concurrent
+    // same-millisecond captures never overwrite each other.
+    const fileName = `browser-screenshot-${(yield* Clock.currentTimeMillis).toString(36)}-${NodeCrypto.randomUUID().slice(0, 8)}.png`;
     const path = yield* Path.Path;
     const absolutePath = path.join(config.browserArtifactsDir, fileName);
     yield* writeScreenshotFile({ absolutePath, screenshotBase64: input.screenshotBase64 }).pipe(
       Effect.mapError(
-        () =>
+        (cause) =>
           new PreviewAutomationScreenshotSaveError({
             operation: "snapshot",
             environmentId: input.scope.environmentId,
@@ -88,6 +93,7 @@ const saveSnapshotScreenshotArtifact = Effect.fn("PreviewToolkit.saveSnapshotScr
             providerInstanceId: input.scope.providerInstanceId,
             savePath: fileName,
             reason: "failed to write the screenshot artifact",
+            cause,
           }),
       ),
     );
@@ -102,7 +108,7 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
     readonly screenshotBase64: string;
   }) {
     const { savePath, scope } = input;
-    const fail = (reason: string) =>
+    const fail = (reason: string, cause?: unknown) =>
       new PreviewAutomationScreenshotSaveError({
         operation: "snapshot",
         environmentId: scope.environmentId,
@@ -111,6 +117,7 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
         providerInstanceId: scope.providerInstanceId,
         savePath,
         reason,
+        ...(cause === undefined ? {} : { cause }),
       });
     if (!savePath.toLowerCase().endsWith(".png")) {
       return yield* fail("savePath must end with .png");
@@ -119,7 +126,7 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const threadContext = yield* projectionSnapshotQuery
       .getThreadCheckpointContext(scope.threadId)
-      .pipe(Effect.mapError(() => fail("failed to resolve the thread workspace")));
+      .pipe(Effect.mapError((cause) => fail("failed to resolve the thread workspace", cause)));
     if (Option.isNone(threadContext)) {
       return yield* fail("thread was not found");
     }
@@ -128,12 +135,33 @@ const saveSnapshotScreenshot = Effect.fn("PreviewToolkit.saveSnapshotScreenshot"
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const resolved = yield* workspacePaths
       .resolveRelativePathWithinRoot({ workspaceRoot, relativePath: savePath })
-      .pipe(Effect.mapError(() => fail("savePath must be a relative path inside the workspace")));
+      .pipe(
+        Effect.mapError((cause) =>
+          fail("savePath must be a relative path inside the workspace", cause),
+        ),
+      );
+
+    // Lexical containment is not enough: a symlinked directory inside the
+    // workspace could point outside it. Create the parent, then verify its
+    // canonical location is still inside the canonical workspace root.
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem
+      .makeDirectory(path.dirname(resolved.absolutePath), { recursive: true })
+      .pipe(Effect.mapError((cause) => fail("failed to create the save directory", cause)));
+    const [canonicalRoot, canonicalParent] = yield* Effect.all([
+      fileSystem.realPath(workspaceRoot),
+      fileSystem.realPath(path.dirname(resolved.absolutePath)),
+    ]).pipe(Effect.mapError((cause) => fail("failed to resolve the save directory", cause)));
+    const canonicalRelative = path.relative(canonicalRoot, canonicalParent);
+    if (canonicalRelative.startsWith("..") || path.isAbsolute(canonicalRelative)) {
+      return yield* fail("savePath must stay inside the workspace root");
+    }
 
     yield* writeScreenshotFile({
-      absolutePath: resolved.absolutePath,
+      absolutePath: path.join(canonicalParent, path.basename(resolved.absolutePath)),
       screenshotBase64: input.screenshotBase64,
-    }).pipe(Effect.mapError(() => fail("failed to write the screenshot file")));
+    }).pipe(Effect.mapError((cause) => fail("failed to write the screenshot file", cause)));
     return resolved.relativePath;
   },
 );

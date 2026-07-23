@@ -65,21 +65,29 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
+const SNAPSHOT_SAVE_DESCRIPTION =
+  "When true, the screenshot is persisted as a browser evidence artifact outside the workspace and the result includes savedScreenshotPath. Embed that exact path in your final reply with markdown image syntax (e.g. ![after](<savedScreenshotPath>)) so the human sees the screenshot in chat. Preferred for before/after evidence of UI work. Cannot be combined with savePath.";
+
+const SNAPSHOT_SAVE_PATH_DESCRIPTION =
+  "Optional workspace-relative file path ending in .png. Use only when the screenshot should live inside the repo (e.g. committed docs or fixtures); prefer save:true for chat evidence. The file is written into the thread workspace and can be embedded with markdown image syntax, e.g. ![login page](screenshots/login.png).";
+
 export const PreviewAutomationSnapshotInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   save: Schema.optional(
-    Schema.Boolean.annotate({
-      description:
-        "When true, the screenshot is persisted as a browser evidence artifact outside the workspace and the result includes savedScreenshotPath. Embed that exact path in your final reply with markdown image syntax (e.g. ![after](<savedScreenshotPath>)) so the human sees the screenshot in chat. Preferred for before/after evidence of UI work.",
-    }),
-  ),
+    Schema.Boolean.annotate({ description: SNAPSHOT_SAVE_DESCRIPTION }),
+  ).annotate({ description: SNAPSHOT_SAVE_DESCRIPTION }),
   savePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
-      description:
-        "Optional workspace-relative file path ending in .png. Use only when the screenshot should live inside the repo (e.g. committed docs or fixtures); prefer save:true for chat evidence. The file is written into the thread workspace and can be embedded with markdown image syntax, e.g. ![login page](screenshots/login.png).",
+      description: SNAPSHOT_SAVE_PATH_DESCRIPTION,
     }),
+  ).annotate({ description: SNAPSHOT_SAVE_PATH_DESCRIPTION }),
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      !(input.save === true && input.savePath !== undefined) ||
+      "save cannot be combined with savePath; choose one destination.",
   ),
-});
+);
 export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
 
 export const PreviewAutomationStatus = Schema.Struct({
@@ -855,6 +863,7 @@ export class PreviewAutomationScreenshotSaveError extends Schema.TaggedErrorClas
     ...PreviewAutomationScopeErrorFields,
     savePath: TrimmedNonEmptyString,
     reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

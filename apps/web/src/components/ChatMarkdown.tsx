@@ -186,8 +186,39 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkPreserveCodeMeta,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
+interface HastNodeLike {
+  readonly type: string;
+  readonly tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNodeLike[];
+}
+
+const WINDOWS_DRIVE_SRC_PATTERN = /^[A-Za-z]:[\\/]/;
+
+// rehype-sanitize parses a Windows drive path source such as "C:\shot.png"
+// as an unknown "c:" protocol and strips it. Escape media sources to
+// "/C:/…" before sanitization runs; MarkdownMedia unescapes when resolving.
+function rehypeEscapeWindowsDriveMediaSrc() {
+  const escapeNode = (node: HastNodeLike): void => {
+    if (
+      node.type === "element" &&
+      (node.tagName === "img" || node.tagName === "video") &&
+      node.properties &&
+      typeof node.properties.src === "string" &&
+      WINDOWS_DRIVE_SRC_PATTERN.test(node.properties.src)
+    ) {
+      node.properties.src = `/${node.properties.src}`;
+    }
+    for (const child of node.children ?? []) {
+      escapeNode(child);
+    }
+  };
+  return escapeNode;
+}
+
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
+  rehypeEscapeWindowsDriveMediaSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -1504,7 +1535,11 @@ function ChatMarkdown({
       },
       video({ node: _node, src }) {
         return (
-          <MarkdownMedia src={typeof src === "string" ? src : undefined} threadRef={threadRef} />
+          <MarkdownMedia
+            src={typeof src === "string" ? src : undefined}
+            threadRef={threadRef}
+            kind="video"
+          />
         );
       },
       table({ node: _node, ...props }) {

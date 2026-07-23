@@ -384,6 +384,17 @@ it.effect("writes snapshot screenshots into the workspace when savePath is set",
       expect(traversal.isError).toBe(true);
       expect(NodeFS.existsSync(NodePath.join(testWorkspaceRoot, "..", "outside.png"))).toBe(false);
 
+      const bothDestinations = yield* server
+        .callTool({
+          name: "preview_snapshot",
+          arguments: { save: true, savePath: "evidence/login.png" },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(bothDestinations.isError).toBe(true);
+
       const savedArtifact = yield* server
         .callTool({ name: "preview_snapshot", arguments: { save: true } })
         .pipe(

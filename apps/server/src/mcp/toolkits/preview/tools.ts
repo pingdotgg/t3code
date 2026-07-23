@@ -192,7 +192,7 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description:
-      "Stop the active browser recording and save it as a local evidence artifact (.webm). To show the recording to the human, embed the returned path directly in your final reply with markdown image syntax, e.g. ![demo](<path>) — the chat renders it as a playable video.",
+      "Stop the active browser recording and save it as a local evidence artifact (.webm). To show the recording to the human, embed the returned path directly in your final reply with markdown image syntax, e.g. ![demo](<path>) — the chat renders it as a playable video. The recording is saved on the machine running the desktop app; if the server runs on a different machine the embed can show as unavailable — in that case copy the file into the workspace and embed the workspace-relative path instead.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,

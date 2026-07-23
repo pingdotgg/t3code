@@ -7,7 +7,13 @@ import { useAssetUrlState } from "../../assets/assetUrls";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
 /** Sources the browser can load directly without a signed workspace asset URL. */
-const DIRECT_MEDIA_SRC_PATTERN = /^(?:https?:|data:|blob:)/i;
+const DIRECT_MEDIA_SRC_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
+
+/** `markdownUrlTransform` escapes Windows drive paths as `/C:/…` so they survive sanitization. */
+const ESCAPED_WINDOWS_DRIVE_PATH_PATTERN = /^\/[A-Za-z]:[\\/]/;
+
+/** Paths that are absolute on either platform (after Windows-drive unescaping). */
+const ABSOLUTE_PATH_PATTERN = /^(?:[/\\]|[A-Za-z]:[\\/])/;
 
 const MEDIA_FRAME_CLASS_NAME =
   "my-2 block max-h-96 max-w-full rounded-lg border border-border/60 bg-background object-contain";
@@ -16,6 +22,8 @@ interface MarkdownMediaProps {
   src: string | undefined;
   alt?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
+  /** Force the media kind; when omitted it is inferred from the file extension. */
+  kind?: "image" | "video" | undefined;
 }
 
 function safeDecode(value: string): string {
@@ -33,14 +41,30 @@ function mediaFileName(src: string): string {
 }
 
 /**
+ * Normalize a non-direct markdown src into a filesystem-style path: strip
+ * query/fragment, decode percent escapes, and unescape the `/C:/…` form the
+ * markdown URL transform uses to carry Windows drive paths through
+ * sanitization.
+ */
+function mediaPathFromSrc(src: string): string {
+  const withoutQuery = src.split(/[?#]/, 1)[0] ?? src;
+  const decoded = safeDecode(withoutQuery);
+  return ESCAPED_WINDOWS_DRIVE_PATH_PATTERN.test(decoded) ? decoded.slice(1) : decoded;
+}
+
+/**
  * Browser evidence artifacts (screenshots/recordings from the embedded
  * browser) are referenced by the absolute path the preview tools return,
  * e.g. `/…/userdata/browser-artifacts/browser-recording-x.webm`. They are
- * served by file name from the server's browser-artifacts directory.
+ * served by file name from the server's browser-artifacts directory. Only
+ * absolute paths qualify — a workspace-relative path like
+ * `docs/browser-artifacts/x.png` is an ordinary repo file.
  */
-function browserArtifactFileName(src: string): string | null {
-  const withoutQuery = src.split(/[?#]/, 1)[0] ?? src;
-  const match = /[/\\]browser-artifacts[/\\]([^/\\]+)$/.exec(safeDecode(withoutQuery));
+function browserArtifactFileName(path: string): string | null {
+  if (!ABSOLUTE_PATH_PATTERN.test(path)) {
+    return null;
+  }
+  const match = /[/\\]browser-artifacts[/\\]([^/\\]+)$/.exec(path);
   return match?.[1] ?? null;
 }
 
@@ -142,25 +166,27 @@ export const MarkdownMedia = memo(function MarkdownMedia({
   src,
   alt,
   threadRef,
+  kind,
 }: MarkdownMediaProps) {
   if (!src) {
     return null;
   }
   const name = alt && alt.trim().length > 0 ? alt.trim() : mediaFileName(src);
-  const isVideo = isWorkspaceVideoPreviewPath(src);
+  const isVideo = kind === "video" || (kind === undefined && isWorkspaceVideoPreviewPath(src));
   if (DIRECT_MEDIA_SRC_PATTERN.test(src)) {
     return <ResolvedMedia url={src} name={name} isVideo={isVideo} />;
   }
   if (!threadRef) {
     return <MediaUnavailable name={name} />;
   }
-  const artifactFileName = browserArtifactFileName(src);
+  const path = mediaPathFromSrc(src);
+  const artifactFileName = browserArtifactFileName(path);
   const resource: AssetResource = artifactFileName
     ? { _tag: "browser-artifact", fileName: artifactFileName }
     : {
         _tag: "workspace-file",
         threadId: threadRef.threadId,
-        path: safeDecode(src.startsWith("./") ? src.slice(2) : src),
+        path: path.startsWith("./") ? path.slice(2) : path,
       };
   return <ResourceMedia threadRef={threadRef} resource={resource} name={name} isVideo={isVideo} />;
 });
