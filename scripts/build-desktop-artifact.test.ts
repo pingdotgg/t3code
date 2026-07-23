@@ -1,9 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Option } from "effect";
+import { ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
 
 import {
   canReuseInstalledElectronDistribution,
+  hasReusableElectronDistribution,
   resolveBuildOptions,
   resolveDesktopAppId,
   resolveDesktopArtifactName,
@@ -72,6 +73,44 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(canReuseInstalledElectronDistribution("win", "x64", "win32", "x64"), true);
     assert.equal(canReuseInstalledElectronDistribution("linux", "x64", "darwin", "arm64"), false);
   });
+
+  it.effect("rejects macOS Electron distributions whose framework links were dereferenced", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const electronDist = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3code-electron-dist-",
+        });
+        const frameworksDir = path.join(electronDist, "Electron.app", "Contents", "Frameworks");
+        const frameworks = [
+          "Electron Framework.framework",
+          "Mantle.framework",
+          "ReactiveObjC.framework",
+          "Squirrel.framework",
+        ];
+
+        for (const framework of frameworks) {
+          const versionsDir = path.join(frameworksDir, framework, "Versions");
+          yield* fs.makeDirectory(path.join(versionsDir, "A"), { recursive: true });
+          yield* fs.symlink("A", path.join(versionsDir, "Current"));
+        }
+
+        assert.isTrue(yield* hasReusableElectronDistribution("mac", electronDist));
+
+        const currentVersion = path.join(
+          frameworksDir,
+          "ReactiveObjC.framework",
+          "Versions",
+          "Current",
+        );
+        yield* fs.remove(currentVersion);
+        yield* fs.makeDirectory(currentVersion);
+
+        assert.isFalse(yield* hasReusableElectronDistribution("mac", electronDist));
+      }),
+    ),
+  );
 
   it("uses separate bundle identity and artifact names for dev builds", () => {
     assert.equal(resolveDesktopAppId("alpha"), "com.t3tools.t3code");

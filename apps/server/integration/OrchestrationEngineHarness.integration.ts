@@ -332,6 +332,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(serverSettingsLayer),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
+      Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(
         Layer.succeed(GitStatusBroadcaster, {

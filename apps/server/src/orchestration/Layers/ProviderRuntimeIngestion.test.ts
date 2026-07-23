@@ -342,6 +342,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     return {
       engine,
+      ingestion,
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -389,6 +390,118 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("coalesces repeated tool progress and acknowledges events after projection", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const turnId = asTurnId("turn-tool-backlog");
+    const itemCompletedEventId = asEventId("evt-tool-backlog-item-completed");
+    const turnCompletedEventId = asEventId("evt-tool-backlog-turn-completed");
+    const processed = runtime!.runPromise(
+      harness.ingestion.awaitTurnCompletionProcessed(turnCompletedEventId),
+    );
+
+    for (let index = 0; index < 100; index += 1) {
+      harness.emit({
+        type: "item.updated",
+        eventId: asEventId(`evt-tool-backlog-${index}`),
+        provider: ProviderDriverKind.make("copilot"),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId("item-tool-backlog"),
+        createdAt: now,
+        payload: {
+          itemType: "command_execution",
+          status: "in_progress",
+          title: "Ran command",
+          detail: `output ${index}`,
+          data: {
+            toolCallId: "tool-backlog",
+            kind: "execute",
+            command: "pnpm test",
+          },
+        },
+      });
+    }
+    for (const [index, filePath] of ["src/first.ts", "src/second.ts"].entries()) {
+      harness.emit({
+        type: "item.updated",
+        eventId: asEventId(`evt-file-backlog-${index}`),
+        provider: ProviderDriverKind.make("copilot"),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId("item-file-backlog"),
+        createdAt: now,
+        payload: {
+          itemType: "file_change",
+          status: "in_progress",
+          title: "Edited files",
+          data: {
+            toolCallId: "file-backlog",
+            kind: "edit",
+            rawInput: `*** Begin Patch\n*** Update File: ${filePath}\n*** End Patch\n`,
+          },
+        },
+      });
+    }
+    harness.emit({
+      type: "item.completed",
+      eventId: itemCompletedEventId,
+      provider: ProviderDriverKind.make("copilot"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-tool-backlog"),
+      createdAt: now,
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Ran command",
+        detail: "done",
+        data: {
+          toolCallId: "tool-backlog",
+          kind: "execute",
+          command: "pnpm test",
+        },
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: turnCompletedEventId,
+      provider: ProviderDriverKind.make("copilot"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: now,
+      payload: { state: "completed" },
+    });
+
+    await processed;
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(
+      thread?.activities.filter(
+        (activity) =>
+          activity.turnId === turnId &&
+          activity.kind === "tool.updated" &&
+          (activity.payload as { itemId?: string }).itemId === "item-tool-backlog",
+      ),
+    ).toHaveLength(1);
+    expect(
+      thread?.activities.some(
+        (activity) =>
+          activity.id === itemCompletedEventId &&
+          activity.kind === "tool.completed" &&
+          activity.summary === "Ran command",
+      ),
+    ).toBe(true);
+    expect(
+      thread?.activities.filter(
+        (activity) =>
+          activity.turnId === turnId &&
+          activity.kind === "tool.updated" &&
+          (activity.payload as { itemId?: string }).itemId === "item-file-backlog",
+      ),
+    ).toHaveLength(2);
   });
 
   it("parses and persists a reviewer child thread's final structured result", async () => {

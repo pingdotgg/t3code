@@ -15,8 +15,21 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
-import { normalizeChangedFilePath } from "@t3tools/shared/toolChangedFiles";
-import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
+import {
+  extractChangedFilePathCandidatesFromToolPayload,
+  normalizeChangedFilePath,
+} from "@t3tools/shared/toolChangedFiles";
+import {
+  Cache,
+  Cause,
+  Deferred,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Stream,
+  SynchronizedRef,
+} from "effect";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -57,6 +70,11 @@ const RUNTIME_INGESTION_QUEUE_CAPACITY = 1_024;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type ProviderTurnDiffFile = OrchestrationCheckpointFile;
+
+interface ProcessedEventReceiptState {
+  readonly completed: ReadonlySet<string>;
+  readonly waiters: ReadonlyMap<string, Deferred.Deferred<void>>;
+}
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
@@ -643,6 +661,106 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const processedEventReceipts = yield* SynchronizedRef.make<ProcessedEventReceiptState>({
+    completed: new Set(),
+    waiters: new Map(),
+  });
+  const projectedToolUpdateStatuses = new Map<string, string>();
+
+  const toolUpdateKey = (event: Extract<ProviderRuntimeEvent, { type: "item.updated" }>) =>
+    event.itemId === undefined
+      ? undefined
+      : `${event.threadId}\u0000${event.turnId ?? ""}\u0000${event.itemId}`;
+
+  const shouldProjectToolUpdate = (
+    event: Extract<ProviderRuntimeEvent, { type: "item.updated" }>,
+  ): boolean => {
+    const key = toolUpdateKey(event);
+    if (key === undefined) {
+      return true;
+    }
+    const changedPaths = extractChangedFilePathCandidatesFromToolPayload(event.payload.data, {
+      maxDepth: 4,
+      maxPaths: 64,
+    });
+    const fingerprint = `${event.payload.status ?? ""}\u0000${changedPaths.join("\u0000")}`;
+    if (projectedToolUpdateStatuses.get(key) === fingerprint) {
+      return false;
+    }
+    projectedToolUpdateStatuses.set(key, fingerprint);
+    return true;
+  };
+
+  const clearProjectedToolUpdate = (event: ProviderRuntimeEvent): void => {
+    if (event.type === "item.completed" && event.itemId !== undefined) {
+      projectedToolUpdateStatuses.delete(
+        `${event.threadId}\u0000${event.turnId ?? ""}\u0000${event.itemId}`,
+      );
+      return;
+    }
+    if (event.type === "turn.completed") {
+      const prefix = `${event.threadId}\u0000${event.turnId ?? ""}\u0000`;
+      for (const key of projectedToolUpdateStatuses.keys()) {
+        if (key.startsWith(prefix)) {
+          projectedToolUpdateStatuses.delete(key);
+        }
+      }
+    }
+  };
+
+  const awaitTurnCompletionProcessed: ProviderRuntimeIngestionShape["awaitTurnCompletionProcessed"] =
+    (eventId) =>
+      Effect.gen(function* () {
+        const createdWaiter = yield* Deferred.make<void>();
+        const waiter = yield* SynchronizedRef.modify(
+          processedEventReceipts,
+          (state): readonly [Deferred.Deferred<void> | undefined, ProcessedEventReceiptState] => {
+            const key = String(eventId);
+            if (state.completed.has(key)) {
+              const completed = new Set(state.completed);
+              completed.delete(key);
+              return [undefined, { ...state, completed }];
+            }
+            const existingWaiter = state.waiters.get(key);
+            if (existingWaiter !== undefined) {
+              return [existingWaiter, state];
+            }
+            const waiters = new Map(state.waiters);
+            waiters.set(key, createdWaiter);
+            return [createdWaiter, { ...state, waiters }];
+          },
+        );
+        if (waiter !== undefined) {
+          yield* Deferred.await(waiter);
+        }
+      });
+
+  const markProcessed = (event: ProviderRuntimeEvent) =>
+    event.type !== "turn.completed" || event.turnId === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          const waiter = yield* SynchronizedRef.modify(
+            processedEventReceipts,
+            (state): readonly [Deferred.Deferred<void> | undefined, ProcessedEventReceiptState] => {
+              const key = String(event.eventId);
+              if (state.completed.has(key)) {
+                return [undefined, state];
+              }
+              const waiters = new Map(state.waiters);
+              const pending = waiters.get(key);
+              waiters.delete(key);
+
+              const completed = new Set(state.completed);
+              if (pending === undefined) {
+                completed.add(key);
+              }
+              return [pending, { completed, waiters }];
+            },
+          );
+          if (waiter !== undefined) {
+            yield* Deferred.succeed(waiter, undefined);
+          }
+        });
   const reviewSnapshotVerifier = yield* ReviewSnapshotVerifier;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
@@ -1776,7 +1894,10 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event);
+      const activities =
+        event.type === "item.updated" && !shouldProjectToolUpdate(event)
+          ? []
+          : runtimeEventToActivities(event);
       yield* Effect.forEach(activities, (activity) =>
         orchestrationEngine.dispatch({
           type: "thread.activity.append",
@@ -1786,6 +1907,7 @@ const make = Effect.gen(function* () {
           createdAt: activity.createdAt,
         }),
       ).pipe(Effect.asVoid);
+      clearProjectedToolUpdate(event);
     });
 
   const processRuntimeEventSafely = (event: ProviderRuntimeEvent) =>
@@ -1802,9 +1924,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processRuntimeEventSafely, {
-    capacity: RUNTIME_INGESTION_QUEUE_CAPACITY,
-  });
+  const worker = yield* makeDrainableWorker(
+    (event: ProviderRuntimeEvent) =>
+      processRuntimeEventSafely(event).pipe(Effect.andThen(markProcessed(event))),
+    {
+      capacity: RUNTIME_INGESTION_QUEUE_CAPACITY,
+    },
+  );
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
@@ -1814,6 +1940,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: worker.drain,
+    awaitTurnCompletionProcessed,
   } satisfies ProviderRuntimeIngestionShape;
 });
 

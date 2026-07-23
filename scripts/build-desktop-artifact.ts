@@ -675,6 +675,39 @@ export function canReuseInstalledElectronDistribution(
   return platform === hostBuildPlatform && arch === hostArch;
 }
 
+const MAC_ELECTRON_FRAMEWORKS = [
+  "Electron Framework.framework",
+  "Mantle.framework",
+  "ReactiveObjC.framework",
+  "Squirrel.framework",
+] as const;
+
+export const hasReusableElectronDistribution = Effect.fn("hasReusableElectronDistribution")(
+  function* (platform: typeof BuildPlatform.Type, electronDist: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if (!(yield* fs.exists(electronDist))) {
+      return false;
+    }
+    if (platform !== "mac") {
+      return true;
+    }
+
+    const frameworksDir = path.join(electronDist, "Electron.app", "Contents", "Frameworks");
+    for (const framework of MAC_ELECTRON_FRAMEWORKS) {
+      const currentVersion = path.join(frameworksDir, framework, "Versions", "Current");
+      const isSymbolicLink = yield* fs.readLink(currentVersion).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!isSymbolicLink) {
+        return false;
+      }
+    }
+    return true;
+  },
+);
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -972,7 +1005,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
           "electron",
           "dist",
         );
-        return (yield* fs.exists(electronDist)) ? electronDist : undefined;
+        return (yield* hasReusableElectronDistribution(options.platform, electronDist))
+          ? electronDist
+          : undefined;
       }),
     ),
     dependencies: {

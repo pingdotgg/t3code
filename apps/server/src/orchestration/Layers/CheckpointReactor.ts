@@ -27,6 +27,7 @@ import {
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
@@ -85,6 +86,7 @@ function isNonAuthoritativeCheckpoint(status: string): boolean {
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const runtimeIngestion = yield* ProviderRuntimeIngestionService;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
@@ -393,6 +395,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      yield* runtimeIngestion.awaitTurnCompletionProcessed(event.eventId);
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find((entry) => entry.id === event.threadId);
       if (!thread) {

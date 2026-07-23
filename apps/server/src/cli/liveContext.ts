@@ -192,6 +192,25 @@ export const withThreadRpc = <A, E, R>(
     }),
   );
 
+export const withThreadDetailRpc = <A, E, R>(
+  flags: CliLiveTargetFlags,
+  identifier: string,
+  run: (input: {
+    readonly thread: CliThread;
+    readonly detail: OrchestrationThread;
+    readonly snapshot: CliSnapshot;
+    readonly client: WsRpcClient;
+  }) => Effect.Effect<A, E, R>,
+) =>
+  withLiveSnapshotAndRpc(flags, ({ getSnapshot, getThreadSnapshot, client }) =>
+    Effect.gen(function* () {
+      const snapshot = yield* getSnapshot;
+      const thread = yield* findThreadForCli(snapshot, identifier);
+      const detail = yield* getThreadSnapshot(thread.id);
+      return yield* run({ thread, detail: detail.thread, snapshot, client });
+    }),
+  );
+
 // Resolve a project and issue WebSocket RPCs sharing a single borrowed token.
 export const withProjectRpc = <A, E, R>(
   flags: CliLiveTargetFlags,

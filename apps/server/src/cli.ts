@@ -115,16 +115,15 @@ import {
   findThreadForCli,
   normalizeWorkspaceRootForProjectCommand,
   projectSummary,
-  resolveThreadForCli,
   threadSummary,
   withProjectRpc,
   withTerminalRpc,
   withThreadDetail,
+  withThreadDetailRpc,
   withThreadDispatch,
   withThreadRpc,
   type ActiveProject,
   type CliSnapshot,
-  type CliThread,
 } from "./cli/liveContext.ts";
 
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
@@ -2658,7 +2657,7 @@ const ignoreWhitespaceFlag = Flag.boolean("ignore-whitespace").pipe(Flag.withDef
 // count from the maximum checkpoint turn count (mirroring the server) rather
 // than `checkpoints.length`, which diverges whenever turn counts are
 // non-contiguous (e.g. after a revert prunes later checkpoints).
-const latestCheckpointTurnCount = (thread: CliThread): number =>
+const latestCheckpointTurnCount = (thread: Pick<OrchestrationThread, "checkpoints">): number =>
   thread.checkpoints.reduce((max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount), 0);
 
 const diffTurnCommand = Command.make("turn", {
@@ -2693,10 +2692,10 @@ const diffThreadCommand = Command.make("thread", {
 }).pipe(
   Command.withDescription("Get the full thread diff."),
   Command.withHandler((flags) =>
-    withThreadRpc(flags, flags.chat, ({ thread, client }) =>
+    withThreadDetailRpc(flags, flags.chat, ({ thread, detail, client }) =>
       Effect.gen(function* () {
         const toTurnCount =
-          Option.getOrUndefined(flags.toTurn) ?? latestCheckpointTurnCount(thread);
+          Option.getOrUndefined(flags.toTurn) ?? latestCheckpointTurnCount(detail);
         const result = yield* client[ORCHESTRATION_WS_METHODS.getFullThreadDiff]({
           threadId: thread.id,
           toTurnCount,
@@ -2717,14 +2716,14 @@ const diffStateCommand = Command.make("state", {
 }).pipe(
   Command.withDescription("Get diff loading/error/state metadata."),
   Command.withHandler((flags) =>
-    withThreadRpc(flags, flags.chat, ({ thread, client }) =>
+    withThreadDetailRpc(flags, flags.chat, ({ thread, detail, client }) =>
       Effect.gen(function* () {
         const turn = Option.getOrUndefined(flags.turn);
         const result =
           turn === undefined
             ? yield* client[ORCHESTRATION_WS_METHODS.getFullThreadDiffState]({
                 threadId: thread.id,
-                toTurnCount: latestCheckpointTurnCount(thread),
+                toTurnCount: latestCheckpointTurnCount(detail),
                 ...(flags.ignoreWhitespace ? { ignoreWhitespace: true } : {}),
               })
             : yield* client[ORCHESTRATION_WS_METHODS.getTurnDiffState]({
@@ -2752,8 +2751,7 @@ const checkpointListCommand = Command.make("list", {
   Command.withDescription("List thread checkpoints."),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      const thread = yield* resolveThreadForCli(flags, flags.chat);
-      yield* printJson(thread.checkpoints);
+      yield* withThreadDetail(flags, flags.chat, ({ detail }) => printJson(detail.checkpoints));
     }),
   ),
 );

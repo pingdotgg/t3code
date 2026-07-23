@@ -6,6 +6,7 @@
  *
  * @module ProviderRuntimeIngestionService
  */
+import { type EventId } from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect, Scope } from "effect";
 
@@ -30,6 +31,11 @@ export interface ProviderRuntimeIngestionShape {
    */
   readonly drain: Effect.Effect<void>;
 
+  /**
+   * Resolves after the ingestion worker has processed the identified
+   * `turn.completed` event and every event queued before it.
+   */
+  readonly awaitTurnCompletionProcessed: (eventId: EventId) => Effect.Effect<void>;
 }
 
 /**

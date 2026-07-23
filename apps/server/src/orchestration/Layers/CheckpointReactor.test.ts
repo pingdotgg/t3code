@@ -22,7 +22,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.ts";
@@ -43,6 +43,7 @@ import {
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
+import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -257,6 +258,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly awaitRuntimeEventProcessed?: (eventId: EventId) => Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -300,6 +302,13 @@ describe("CheckpointReactor", () => {
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(RuntimeReceiptBusLive),
+      Layer.provideMerge(
+        Layer.succeed(ProviderRuntimeIngestionService, {
+          start: () => Effect.void,
+          drain: Effect.void,
+          awaitTurnCompletionProcessed: options?.awaitRuntimeEventProcessed ?? (() => Effect.void),
+        }),
+      ),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(gitStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStoreLive),
@@ -457,6 +466,104 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+  });
+
+  it("waits for runtime ingestion before deriving turn-scoped files", async () => {
+    const ingestionStarted = Effect.runSync(Deferred.make<void>());
+    const ingestionCompleted = Effect.runSync(Deferred.make<void>());
+    const completionEventId = EventId.make("evt-turn-completed-backlog");
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      awaitRuntimeEventProcessed: (eventId) =>
+        eventId !== completionEventId
+          ? Effect.void
+          : Deferred.succeed(ingestionStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(ingestionCompleted)),
+            ),
+    });
+    const createdAt = new Date().toISOString();
+    const turnId = asTurnId("turn-backlog");
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-backlog"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId,
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    );
+
+    fs.mkdirSync(path.join(harness.cwd, "src"), { recursive: true });
+    fs.writeFileSync(path.join(harness.cwd, "src/first.ts"), "export const first = true;\n");
+    fs.writeFileSync(path.join(harness.cwd, "src/second.ts"), "export const second = true;\n");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: completionEventId,
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    await Effect.runPromise(Deferred.await(ingestionStarted));
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(false);
+
+    for (const [index, filePath] of ["src/first.ts", "src/second.ts"].entries()) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`cmd-file-activity-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make(`evt-file-activity-${index}`),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Edited files",
+            payload: {
+              itemType: "file_change",
+              data: {
+                rawInput: `*** Begin Patch\n*** Add File: ${filePath}\n+content\n*** End Patch\n`,
+              },
+            },
+            turnId,
+            createdAt,
+          },
+          createdAt,
+        }),
+      );
+    }
+
+    await Effect.runPromise(Deferred.succeed(ingestionCompleted, undefined));
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+    );
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.checkpoints.some((checkpoint) => checkpoint.turnId === turnId),
+    );
+    expect(
+      thread.checkpoints.find((checkpoint) => checkpoint.turnId === turnId)?.turnFiles,
+    ).toEqual([
+      {
+        path: "src/first.ts",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        path: "src/second.ts",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+    ]);
   });
 
   it("promotes provider turn diff paths into the real checkpoint turn file list", async () => {

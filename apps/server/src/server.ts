@@ -144,9 +144,9 @@ const PlatformServicesLive = Layer.unwrap(
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
-  Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(QueuedTurnReactorLive),
   Layer.provideMerge(WorkflowCoordinatorReactorLive),
   Layer.provideMerge(ReviewSnapshotVerifierLive),
