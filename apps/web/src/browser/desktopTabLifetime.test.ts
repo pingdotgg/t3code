@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { closeTab, createTab, stopBrowserRecording } = vi.hoisted(() => ({
-  closeTab: vi.fn(async () => undefined),
+  closeTab: vi.fn<(tabId: string) => Promise<void>>(async () => undefined),
   createTab: vi.fn<() => Promise<void>>(),
   stopBrowserRecording: vi.fn(async () => null),
 }));
@@ -77,5 +77,30 @@ describe("desktopTabLifetime", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(closeTab).toHaveBeenCalledWith("tab_recording_cleanup");
+  });
+
+  it("waits for an in-flight close before recreating a reacquired tab", async () => {
+    vi.useFakeTimers();
+    let resolveClose: (() => void) | undefined;
+    createTab.mockResolvedValue(undefined);
+    closeTab.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveClose = resolve;
+      }),
+    );
+
+    const initial = acquireDesktopTab("tab_close_reacquire");
+    await initial.ready;
+    initial.release();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(closeTab).toHaveBeenCalledWith("tab_close_reacquire");
+
+    const reacquired = acquireDesktopTab("tab_close_reacquire");
+    expect(createTab).toHaveBeenCalledTimes(1);
+
+    resolveClose?.();
+    await reacquired.ready;
+    expect(createTab).toHaveBeenCalledTimes(2);
   });
 });
