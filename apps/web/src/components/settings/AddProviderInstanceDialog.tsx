@@ -1,6 +1,7 @@
 "use client";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
+import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   ProviderInstanceId,
@@ -223,7 +224,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden">
-          <DialogHeader className="border-b border-border/70">
+          <DialogHeader>
             <DialogTitle>Add provider instance</DialogTitle>
             <DialogDescription>
               Configure an additional provider instance — for example, a second Codex install
@@ -239,41 +240,37 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
 
           <div
             data-slot="dialog-panel"
-            className="space-y-4 border-b border-border/70 bg-foreground/[0.025] px-6 py-5"
+            className="space-y-4 bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5"
           >
             <AnimatedHeight>
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
-                <span
-                  id="add-instance-driver-label"
-                  className="text-xs font-medium text-foreground"
-                >
+                <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
                   Driver
-                </span>
+                </div>
                 <RadioGroup
                   value={driver}
                   onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
                   aria-labelledby="add-instance-driver-label"
-                  className="grid grid-cols-2 gap-2.5"
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
                 >
                   {DRIVER_OPTIONS.map((option) => {
                     const IconComponent = option.icon;
-                    const isSelected = option.value === driver;
                     return (
                       <RadioPrimitive.Root
                         key={option.value}
                         value={option.value}
-                        className={cn(
-                          "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
-                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                          isSelected
-                            ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
-                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
-                        )}
+                        className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
                       >
-                        <IconComponent className="size-5 shrink-0" aria-hidden />
+                        <IconComponent className="size-4 shrink-0" aria-hidden />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                           {option.label}
                         </span>
+                        <RadioPrimitive.Indicator
+                          className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                          aria-hidden
+                        >
+                          <CheckIcon className="size-3.5 shrink-0" />
+                        </RadioPrimitive.Indicator>
                         {option.badgeLabel ? (
                           <Badge variant="warning" size="sm">
                             {option.badgeLabel}
@@ -290,11 +287,11 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                         value={option.value}
                         disabled
                         className={cn(
-                          "relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 outline-none",
+                          "relative flex cursor-not-allowed items-center gap-3 rounded-lg bg-card/60 px-3 py-3 text-left opacity-55 outline-none ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
                         )}
                       >
                         <IconComponent
-                          className="size-5 shrink-0 text-muted-foreground"
+                          className="size-4 shrink-0 text-muted-foreground"
                           aria-hidden
                         />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -409,7 +406,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
             </AnimatedHeight>
           </div>
 
-          <DialogFooter className="border-t bg-transparent">
+          <DialogFooter variant="bare">
             <Button
               variant="outline"
               size="sm"

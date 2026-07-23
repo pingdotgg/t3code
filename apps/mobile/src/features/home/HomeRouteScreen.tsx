@@ -54,7 +54,6 @@ export function HomeRouteScreen() {
   const {
     options: listOptions,
     setSelectedEnvironmentId,
-    setProjectGroupingMode,
     setProjectSortOrder,
     setThreadSortOrder,
   } = useHomeListOptions(availableEnvironmentIds);
@@ -119,11 +118,9 @@ export function HomeRouteScreen() {
           selectedProjectKey={selectedProjectKey}
           projectSortOrder={listOptions.projectSortOrder}
           threadSortOrder={listOptions.threadSortOrder}
-          projectGroupingMode={listOptions.projectGroupingMode}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
-          onProjectGroupingModeChange={setProjectGroupingMode}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
@@ -146,7 +143,6 @@ export function HomeRouteScreen() {
             navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
           }
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
-          onProjectGroupingModeChange={setProjectGroupingMode}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={(thread) => {

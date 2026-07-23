@@ -1,25 +1,24 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CopyIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  EllipsisIcon,
   MessageSquareIcon,
   PlusIcon,
   SearchIcon,
@@ -61,13 +60,24 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
-import { useUiStateStore } from "../uiStateStore";
+import {
+  deriveProjectGroupingOverrideKey,
+  getProjectOrderKey,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
+import {
+  buildSidebarProjectSnapshots,
+  type SidebarProjectGroupMember,
+  type SidebarProjectSnapshot,
+} from "../sidebarProjectGrouping";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -84,9 +94,11 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
+  orderItemsByPreferredIds,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
   shouldNavigateAfterProjectRemoval,
+  sortLogicalProjectsForSidebar,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -98,8 +110,20 @@ import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../pr
 import { primaryServerProvidersAtom } from "../state/server";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { CommandDialogTrigger } from "./ui/command";
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -109,6 +133,11 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -569,7 +598,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   type="button"
                   aria-label="Un-settle thread"
                   onClick={handleUnsettleClick}
-                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
                 >
                   <Undo2Icon className="size-3" />
                 </button>
@@ -578,7 +607,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   type="button"
                   aria-label="Settle thread"
                   onClick={handleSettleClick}
-                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
                 >
                   <CheckIcon className="size-3" />
                 </button>
@@ -655,7 +684,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     type="button"
                     aria-label="Settle thread"
                     onClick={handleSettleClick}
-                    className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                    className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
                   >
                     <CheckIcon className="size-3" />
                     Settle
@@ -677,13 +706,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                 </span>
               ) : null}
-              <span className="ml-auto inline-flex shrink-0 items-center gap-1">
+              <span
+                aria-hidden
+                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+              >
                 {isRemote ? (
-                  <span
-                    aria-label={props.environmentLabel ?? "Remote environment"}
-                    className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
-                  >
-                    <ServerIcon aria-hidden className="size-4" />
+                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                    <ServerIcon aria-hidden className="size-3.5" />
                   </span>
                 ) : null}
                 {driverKind ? (
@@ -691,7 +720,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.session?.providerName ?? modelInstanceId}
-                      iconClassName="size-4"
+                      iconClassName="size-3.5"
                     />
                   </span>
                 ) : null}
@@ -716,12 +745,15 @@ function latestTurnDiff(
 
 export default function SidebarV2() {
   const projects = useProjects();
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+  const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, deleteThread } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -729,6 +761,32 @@ export default function SidebarV2() {
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
+  const updateSettings = useUpdateClientSettings();
+  const { copyToClipboard: copyProjectPath } = useCopyToClipboard<{ path: string }>({
+    onCopy: ({ path }) => {
+      toastManager.add({
+        type: "success",
+        title: "Path copied",
+        description: path,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+  const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
+    null,
+  );
+  const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -762,6 +820,40 @@ export default function SidebarV2() {
       ),
     [environments],
   );
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
+  const unsortedProjectGroups = useMemo(
+    () =>
+      buildSidebarProjectSnapshots({
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+      }),
+    [
+      environmentLabelById,
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+      sidebarProjectSortOrder,
+    ],
+  );
+  const projectGroups = useMemo(
+    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
+    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+  );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
     () =>
@@ -782,10 +874,16 @@ export default function SidebarV2() {
       ),
     [projects],
   );
-  const projectTitleByKey = useMemo(
+  const projectDisplayNameByKey = useMemo(
     () =>
-      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.title])),
-    [projects],
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjects.map(
+            (project) => [`${project.environmentId}:${project.id}`, group.displayName] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
   );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
@@ -823,96 +921,185 @@ export default function SidebarV2() {
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
-  const scopedProject = useMemo(
+  const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
         ? null
-        : (projects.find(
-            (project) => `${project.environmentId}:${project.id}` === projectScopeKey,
-          ) ?? null),
-    [projectScopeKey, projects],
+        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [projectGroups, projectScopeKey],
+  );
+  const scopedProjectKeys = useMemo(
+    () =>
+      scopedProjectGroup === null
+        ? null
+        : new Set(
+            scopedProjectGroup.memberProjectRefs.map(
+              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+            ),
+          ),
+    [scopedProjectGroup],
   );
   useEffect(() => {
-    if (
-      projectScopeKey !== null &&
-      !projects.some((project) => `${project.environmentId}:${project.id}` === projectScopeKey)
-    ) {
+    if (projectScopeKey !== null && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
-  }, [projectScopeKey, projects]);
+  }, [projectScopeKey, scopedProjectGroup]);
   // Scope flips drop the selection: rows selected under the old scope may be
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
-  const handleRemoveProject = useCallback(
-    async (project: EnvironmentProject) => {
+  const handleRemoveProjectMembers = useCallback(
+    async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
       const api = readLocalApi();
       if (!api) return;
 
-      const projectThreads = threads.filter(
-        (thread) =>
-          thread.environmentId === project.environmentId && thread.projectId === project.id,
+      const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
+      const projectThreads = threads.filter((thread) =>
+        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
+      const isWholeGroup = members.length === projectGroup.memberProjects.length;
+      const singleMember = members.length === 1 ? members[0]! : null;
+      const targetLabel = singleMember?.title ?? projectGroup.displayName;
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           projectThreads.length > 0
             ? [
-                `Remove project "${project.title}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
-                `Path: ${project.workspaceRoot}`,
+                `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
+                ...(singleMember
+                  ? [
+                      `Path: ${singleMember.workspaceRoot}`,
+                      ...(singleMember.environmentLabel
+                        ? [`Environment: ${singleMember.environmentLabel}`]
+                        : []),
+                    ]
+                  : [`This removes ${members.length} grouped project entries.`]),
                 "This permanently clears conversation history for those threads.",
-                "This removes only the project entry, not the files on disk.",
+                isWholeGroup
+                  ? "This removes only the project entries, not the files on disk."
+                  : "Other entries in this grouped project are unaffected.",
                 "This action cannot be undone.",
               ].join("\n")
             : [
-                `Remove project "${project.title}"?`,
-                `Path: ${project.workspaceRoot}`,
-                "This removes only the project entry, not the files on disk.",
+                `Remove project "${targetLabel}"?`,
+                ...(singleMember
+                  ? [
+                      `Path: ${singleMember.workspaceRoot}`,
+                      ...(singleMember.environmentLabel
+                        ? [`Environment: ${singleMember.environmentLabel}`]
+                        : []),
+                    ]
+                  : [`This removes ${members.length} grouped project entries.`]),
+                isWholeGroup
+                  ? "This removes only the project entries, not the files on disk."
+                  : "Other entries in this grouped project are unaffected.",
               ].join("\n"),
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
 
-      const projectRef = scopeProjectRef(project.environmentId, project.id);
-      const result = await deleteProject({
-        environmentId: project.environmentId,
-        input: {
-          projectId: project.id,
-          ...(projectThreads.length > 0 ? { force: true } : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `Failed to remove "${project.title}"`,
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-
       const draftStore = useComposerDraftStore.getState();
-      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-      const shouldNavigate = shouldNavigateAfterProjectRemoval({
-        routeTarget: routeTargetRef.current,
-        projectThreads,
-        projectDraftId: projectDraftThread?.draftId ?? null,
-      });
-      if (projectDraftThread) {
-        draftStore.clearDraftThread(projectDraftThread.draftId);
+      let shouldNavigate = false;
+      for (const project of members) {
+        const memberThreads = projectThreads.filter(
+          (thread) =>
+            thread.environmentId === project.environmentId && thread.projectId === project.id,
+        );
+        const projectRef = scopeProjectRef(project.environmentId, project.id);
+        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+        const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
+          routeTarget: routeTargetRef.current,
+          projectThreads: memberThreads,
+          projectDraftId: projectDraftThread?.draftId ?? null,
+        });
+
+        const result = await deleteProject({
+          environmentId: project.environmentId,
+          input: {
+            projectId: project.id,
+            ...(memberThreads.length > 0 ? { force: true } : {}),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: `Failed to remove "${project.title}"`,
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          if (shouldNavigate) {
+            void router.navigate({ to: "/" });
+          }
+          return;
+        }
+
+        shouldNavigate ||= memberRemovalNeedsNavigation;
+        if (projectDraftThread) {
+          draftStore.clearDraftThread(projectDraftThread.draftId);
+        }
+        draftStore.clearProjectDraftThreadId(projectRef);
       }
-      draftStore.clearProjectDraftThreadId(projectRef);
 
       if (shouldNavigate) {
         void router.navigate({ to: "/" });
       }
     },
     [deleteProject, router, threads],
+  );
+
+  const renameProjectMember = useCallback(
+    async (member: SidebarProjectGroupMember, nextTitle: string) => {
+      const title = nextTitle.trim();
+      if (!title) {
+        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+        return;
+      }
+      if (title === member.title) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, title },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectGroupingPreference = useCallback(
+    (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
+      const overrideKey = deriveProjectGroupingOverrideKey(member);
+      const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
+      if (selection === "inherit") {
+        delete nextOverrides[overrideKey];
+      } else {
+        nextOverrides[overrideKey] = selection;
+      }
+      updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+    },
+    [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
+  );
+
+  const handleProjectActions = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setProjectScopeMenuOpen(false);
+      window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
+    },
+    [],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
@@ -925,9 +1112,8 @@ export default function SidebarV2() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
-        (scopedProject === null ||
-          (thread.environmentId === scopedProject.environmentId &&
-            thread.projectId === scopedProject.id)),
+        (scopedProjectKeys === null ||
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
     const active: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
@@ -961,7 +1147,7 @@ export default function SidebarV2() {
     autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
-    scopedProject,
+    scopedProjectKeys,
     serverConfigs,
     threads,
   ]);
@@ -1479,7 +1665,7 @@ export default function SidebarV2() {
   // for multi-project setups.
   const handleNewThreadClick = useCallback(() => {
     // One project: nothing to pick, create immediately.
-    if (projects.length <= 1) {
+    if (projectGroups.length <= 1) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -1491,7 +1677,7 @@ export default function SidebarV2() {
     }
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projects.length, setOpenMobile]);
+  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
@@ -1553,25 +1739,25 @@ export default function SidebarV2() {
             </div>
           </div>
         </SidebarGroup>
-        {projects.length > 0 ? (
+        {projectGroups.length > 0 ? (
           <SidebarGroup className="px-2 pb-2 pt-0">
             <div className="flex items-center gap-1">
-              <Menu>
+              <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                 <MenuTrigger
                   aria-label="Filter threads by project"
                   className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                 >
-                  {scopedProject ? (
+                  {scopedProjectGroup ? (
                     <ProjectFavicon
-                      environmentId={scopedProject.environmentId}
-                      cwd={scopedProject.workspaceRoot}
+                      environmentId={scopedProjectGroup.environmentId}
+                      cwd={scopedProjectGroup.workspaceRoot}
                       className="size-4 shrink-0"
                     />
                   ) : (
                     <FolderIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
                   )}
                   <span className="min-w-0 flex-1 truncate">
-                    {scopedProject?.title ?? "All projects"}
+                    {scopedProjectGroup?.displayName ?? "All projects"}
                   </span>
                   <ChevronDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/70" />
                 </MenuTrigger>
@@ -1590,8 +1776,8 @@ export default function SidebarV2() {
                       <FolderIcon className="size-4 shrink-0" />
                       <span className="min-w-0 truncate text-sm">All projects</span>
                     </MenuRadioItem>
-                    {projects.map((project) => {
-                      const scopeKey = `${project.environmentId}:${project.id}`;
+                    {projectGroups.map((project) => {
+                      const scopeKey = project.projectKey;
                       return (
                         <MenuRadioItem
                           key={scopeKey}
@@ -1604,20 +1790,18 @@ export default function SidebarV2() {
                             cwd={project.workspaceRoot}
                             className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate text-sm">{project.title}</span>
+                          <span className="min-w-0 truncate text-sm">{project.displayName}</span>
                           <button
                             type="button"
-                            aria-label={`Remove project ${project.title}`}
-                            title={`Remove ${project.title}`}
-                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
+                            aria-label={`Project actions for ${project.displayName}`}
+                            title={`Project actions for ${project.displayName}`}
+                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              void handleRemoveProject(project);
+                              void handleProjectActions(event, project);
                             }}
                           >
-                            <Trash2Icon className="size-3.5" />
+                            <EllipsisIcon className="size-3.5" />
                           </button>
                         </MenuRadioItem>
                       );
@@ -1698,7 +1882,8 @@ export default function SidebarV2() {
                       projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                     }
                     projectTitle={
-                      projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                      projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                      null
                     }
                     providerEntryByInstanceId={providerEntryByInstanceId}
                     onThreadClick={handleThreadClick}
@@ -1766,8 +1951,8 @@ export default function SidebarV2() {
                     Add project
                   </button>
                 </>
-              ) : scopedProject ? (
-                `No threads in ${scopedProject.title} yet`
+              ) : scopedProjectGroup ? (
+                `No threads in ${scopedProjectGroup.displayName} yet`
               ) : (
                 "No threads yet"
               )}
@@ -1775,6 +1960,178 @@ export default function SidebarV2() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
+      <Dialog
+        open={projectActionsTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setProjectActionsTarget(null);
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader className="gap-1.5">
+            <DialogTitle className="text-balance">Project settings</DialogTitle>
+            <DialogDescription>
+              {projectActionsTarget && projectActionsTarget.memberProjects.length > 1
+                ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
+                : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="p-0">
+            <div className="divide-y divide-border/60">
+              {projectActionsTarget?.memberProjects.map((member) => (
+                <section
+                  key={member.physicalProjectKey}
+                  className="flex min-w-0 flex-col gap-4 px-6 py-5 sm:gap-3 sm:py-4"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <ProjectFavicon
+                      environmentId={member.environmentId}
+                      cwd={member.workspaceRoot}
+                      className="size-5 shrink-0 sm:size-4"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-1.5 text-base text-muted-foreground sm:text-sm">
+                        <ServerIcon className="size-4 shrink-0 stroke-muted-foreground" />
+                        <p className="min-w-0 truncate">
+                          {member.environmentLabel ?? "Current environment"}
+                        </p>
+                      </div>
+                      <p
+                        className="truncate font-mono text-base text-muted-foreground/72 sm:text-sm"
+                        title={member.workspaceRoot}
+                      >
+                        {member.workspaceRoot}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 sm:gap-3 sm:pl-7">
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Project name</span>
+                      <Input
+                        key={`${member.physicalProjectKey}:${member.title}`}
+                        size="sm"
+                        aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
+                        defaultValue={member.title}
+                        onBlur={(event) => {
+                          void renameProjectMember(member, event.currentTarget.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                    </label>
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Grouping rule</span>
+                      <Select
+                        value={
+                          projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                            deriveProjectGroupingOverrideKey(member)
+                          ] ?? "inherit"
+                        }
+                        onValueChange={(value) => {
+                          if (
+                            value === "inherit" ||
+                            value === "repository" ||
+                            value === "repository_path" ||
+                            value === "separate"
+                          ) {
+                            updateProjectGroupingPreference(member, value);
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full"
+                          aria-label={`Grouping rule for ${member.environmentLabel ?? "current environment"}`}
+                        >
+                          <SelectValue>
+                            {(() => {
+                              const selection =
+                                projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                                  deriveProjectGroupingOverrideKey(member)
+                                ] ?? "inherit";
+                              return selection === "inherit"
+                                ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                                : PROJECT_GROUPING_MODE_LABELS[selection];
+                            })()}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          <SelectItem hideIndicator value="inherit">
+                            Use global default
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository">
+                            {PROJECT_GROUPING_MODE_LABELS.repository}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository_path">
+                            {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="separate">
+                            {PROJECT_GROUPING_MODE_LABELS.separate}
+                          </SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:pl-7">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
+                      }
+                    >
+                      <CopyIcon />
+                      Copy path
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
+                      onClick={() => {
+                        const projectGroup = projectActionsTarget;
+                        if (!projectGroup) return;
+                        setProjectActionsTarget(null);
+                        void handleRemoveProjectMembers(projectGroup, [member]);
+                      }}
+                    >
+                      <Trash2Icon />
+                      Remove
+                    </Button>
+                  </div>
+                </section>
+              ))}
+            </div>
+            {projectActionsTarget && projectActionsTarget.memberProjects.length > 1 ? (
+              <div className="flex flex-col gap-3 border-t border-border/60 bg-muted/32 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-base font-medium text-foreground sm:text-sm">
+                    Remove this project everywhere
+                  </p>
+                  <p className="text-base text-pretty text-muted-foreground sm:text-sm">
+                    Deletes all grouped entries and their conversation history.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  className="shrink-0"
+                  onClick={() => {
+                    const projectGroup = projectActionsTarget;
+                    setProjectActionsTarget(null);
+                    void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
+                  }}
+                >
+                  <Trash2Icon />
+                  Remove all entries
+                </Button>
+              </div>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter variant="bare">
+            <Button onClick={() => setProjectActionsTarget(null)}>Done</Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       <SidebarChromeFooter />
     </>
   );
