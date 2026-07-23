@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { resolveThreadRouteRef } from "../threadRoutes";
+import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -37,6 +37,12 @@ function ChatThreadRouteView() {
     return store.hasDraftThreadsInEnvironment(threadRef.environmentId);
   });
   const routeThreadExists = threadExists || draftThreadExists;
+  const renderState = resolveThreadRouteRenderState({
+    bootstrapComplete,
+    serverThreadShellExists: serverThreadShell !== null,
+    serverThreadDetailExists: serverThreadDetail !== null,
+    draftThreadExists,
+  });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
 
@@ -57,7 +63,7 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || !bootstrapComplete || !routeThreadExists) {
+  if (!threadRef || renderState !== "ready") {
     return null;
   }
 

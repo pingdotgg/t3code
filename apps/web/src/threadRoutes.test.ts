@@ -7,6 +7,7 @@ import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
+  resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "./threadRoutes";
@@ -91,5 +92,54 @@ describe("threadRoutes", () => {
         promotedTo: null,
       }),
     ).toBeNull();
+  });
+
+  it("keeps shell-only server threads in the loading state", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadShellExists: true,
+        serverThreadDetailExists: false,
+        draftThreadExists: false,
+      }),
+    ).toBe("loading");
+  });
+
+  it("renders server details and local drafts when they are ready", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadShellExists: true,
+        serverThreadDetailExists: true,
+        draftThreadExists: false,
+      }),
+    ).toBe("ready");
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadShellExists: false,
+        serverThreadDetailExists: false,
+        draftThreadExists: true,
+      }),
+    ).toBe("ready");
+  });
+
+  it("distinguishes bootstrap loading from a missing thread", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: false,
+        serverThreadShellExists: false,
+        serverThreadDetailExists: false,
+        draftThreadExists: false,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadShellExists: false,
+        serverThreadDetailExists: false,
+        draftThreadExists: false,
+      }),
+    ).toBe("missing");
   });
 });
