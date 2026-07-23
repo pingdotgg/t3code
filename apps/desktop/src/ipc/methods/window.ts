@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopOpenRemoteZedInputSchema,
   DesktopThemeSchema,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -17,6 +18,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+import * as DesktopZedLauncher from "../../shell/DesktopZedLauncher.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -266,5 +268,15 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const openRemoteZed = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_REMOTE_ZED_CHANNEL,
+  payload: DesktopOpenRemoteZedInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.openRemoteZed")(function* (input) {
+    const launcher = yield* DesktopZedLauncher.DesktopZedLauncher;
+    yield* launcher.openRemoteWorkspace(input);
   }),
 });
