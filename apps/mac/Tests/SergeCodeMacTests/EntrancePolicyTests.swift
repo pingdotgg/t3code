@@ -36,7 +36,8 @@ struct EntrancePolicyTests {
         let policy = EntrancePolicy(reduceMotion: true)
 
         #expect(policy.delay(forIndex: 5) == 0)
-        for role in [EntranceRole.row, .card, .pane, .control] {
+        // Every role, so a role added later cannot quietly skip Reduce Motion.
+        for role in EntranceRole.allCases {
             #expect(policy.offset(for: role) == 0)
             #expect(policy.initialScale(for: role) == 1)
         }
@@ -49,9 +50,13 @@ struct EntrancePolicyTests {
         #expect(policy.offset(for: .row) > 0)
         #expect(policy.offset(for: .card) > 0)
         #expect(policy.offset(for: .pane) > 0)
-        // Controls fade and scale in place; sliding chrome reads as a glitch.
+        // Controls and the hero settle in place; sliding chrome reads as a
+        // glitch, and the hero has its scale to carry the arrival.
         #expect(policy.offset(for: .control) == 0)
+        #expect(policy.offset(for: .hero) == 0)
         #expect(policy.initialScale(for: .card) < 1)
+        // The hero is the app's one expressive arrival, so it travels furthest.
+        #expect(policy.initialScale(for: .hero) < policy.initialScale(for: .card))
     }
 
     @Test("entrance plays once and never while suppressed")

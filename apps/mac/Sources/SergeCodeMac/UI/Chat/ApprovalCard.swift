@@ -65,6 +65,10 @@ public struct ApprovalCard: View {
         }
         .padding(14)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+        // An approval prompt interrupts the user mid-read, so it is the one
+        // surface that most needs to announce itself rather than blink into
+        // the transcript.
+        .entrance(.card)
     }
 
     private var icon: String {

@@ -8,5 +8,9 @@ struct InspectorPanel: View {
 
     var body: some View {
         ChangesTimelineView(model: model, threadID: threadID)
+            // RootView keeps this panel alive across thread switches (see
+            // ThreadDetailView), so key the arrival on the thread it is showing.
+            .entrance(.pane)
+            .id(threadID)
     }
 }

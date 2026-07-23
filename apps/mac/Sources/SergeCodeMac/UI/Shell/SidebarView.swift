@@ -286,6 +286,12 @@ struct SidebarView: View {
             .tag(item.id)
             .disabled(!item.isSelectable)
             .opacity(item.isSelectable ? 1 : 0.5)
+            // Applied here rather than at each `ForEach` so all five sections
+            // (search, needs-you, running, pinned, project) share one rule and
+            // the project section's `.onMove` offsets stay untouched.
+            // Unstaggered: sections are short and re-sort as thread status
+            // changes, and a cascade on every re-sort would read as fidgeting.
+            .entrance(.row)
             .contextMenu {
                 let model = item.member.location.model
                 Button(

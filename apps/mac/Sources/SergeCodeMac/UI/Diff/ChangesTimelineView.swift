@@ -160,7 +160,7 @@ public struct ChangesTimelineView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
 
-                ForEach(fullDiff) { file in
+                ForEach(Array(fullDiff.enumerated()), id: \.element.id) { index, file in
                     Button {
                         withAnimation(Motion.structure) {
                             model.openReview(
@@ -170,6 +170,7 @@ public struct ChangesTimelineView: View {
                         changedFileRow(file)
                     }
                     .buttonStyle(.plain)
+                    .entrance(.row, index: index)
                 }
             }
         }
@@ -304,6 +305,7 @@ public struct ChangesTimelineView: View {
                     isLast: index == checkpoints.count - 1,
                     toolCount: toolCounts[checkpoint.id]
                 )
+                .entrance(.row, index: index)
             }
         }
     }
@@ -453,7 +455,7 @@ public struct ChangesTimelineView: View {
             .padding(.leading, 2)
         } else {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(files) { file in
+                ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
                     Button {
                         openCheckpoint(
                             checkpoint, previousTurn: previousTurn, focusPath: file.path)
@@ -461,6 +463,7 @@ public struct ChangesTimelineView: View {
                         fileRow(file)
                     }
                     .buttonStyle(.plain)
+                    .entrance(.row, index: index)
                 }
                 if files.count > 6 {
                     Button {

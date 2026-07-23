@@ -8,8 +8,6 @@ struct EmptyStateView: View {
     var onQuickChat: () -> Void
     var onNewSession: () -> Void
 
-    @UIState private var hasAppeared = false
-
     var body: some View {
         // dailyFeatured() reads rotationBucket/rotationDayKey via @Observable,
         // so a bucket/day change from App.onReceive reevaluates this body.
@@ -66,10 +64,7 @@ struct EmptyStateView: View {
             .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
             .sceneryChrome()
             // Hero card settles into place on arrival instead of popping.
-            .scaleEffect(hasAppeared ? 1.0 : 0.96)
-            .opacity(hasAppeared ? 1.0 : 0.0)
-            .animation(Motion.delight, value: hasAppeared)
-            .onAppear { hasAppeared = true }
+            .entrance(.hero)
         }
         .overlay(alignment: .bottomTrailing) {
             if let featured {

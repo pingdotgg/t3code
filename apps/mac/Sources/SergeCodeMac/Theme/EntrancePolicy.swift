@@ -12,6 +12,9 @@ enum EntranceRole: Equatable, Sendable, CaseIterable {
     case pane
     /// Chrome that fades in without travelling: toolbar items, pills, badges.
     case control
+    /// A rare, occasional scene worth a little personality: the empty-state
+    /// hero. Deliberately the only role that springs.
+    case hero
 }
 
 /// Pure timing and distance policy for content arriving on screen. Kept free of
@@ -48,6 +51,8 @@ struct EntrancePolicy: Equatable, Sendable {
         case .pane: return 4
         // Chrome sliding into a toolbar reads as a layout glitch, not motion.
         case .control: return 0
+        // The hero settles by scaling; travelling as well would be too much.
+        case .hero: return 0
         }
     }
 
@@ -57,6 +62,7 @@ struct EntrancePolicy: Equatable, Sendable {
         guard !reduceMotion else { return 1 }
         switch role {
         case .card: return 0.98
+        case .hero: return 0.96
         case .row, .pane, .control: return 1
         }
     }

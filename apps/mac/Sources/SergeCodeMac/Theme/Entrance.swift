@@ -37,6 +37,7 @@ extension EntranceRole {
         case .row: Motion.reveal
         case .card, .pane: Motion.structure
         case .control: Motion.feedback
+        case .hero: Motion.delight
         }
     }
 }
