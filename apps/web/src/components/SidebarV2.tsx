@@ -278,10 +278,7 @@ function SidebarV2SettledLifecycleControls({
         aria-label="Archive thread"
         disabled={archiveDisabled}
         onClick={onArchive}
-        className={cn(
-          SIDEBAR_V2_ICON_LIFECYCLE_BUTTON_CLASS_NAME,
-          "disabled:pointer-events-none disabled:opacity-50",
-        )}
+        className={cn(SIDEBAR_V2_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "disabled:opacity-50")}
       >
         <ArchiveIcon aria-hidden className="size-3" />
       </button>
@@ -1548,21 +1545,29 @@ export default function SidebarV2() {
     },
     [archiveThread],
   );
+  // One archive per thread at a time: repeated button clicks and menu picks
+  // must not overlap and surface a false failure after the first one wins.
+  const archivingThreadKeysRef = useRef(new Set<string>());
   const attemptArchive = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
-        const thread = threadByKeyRef.current.get(scopedThreadKey(threadRef));
-        if (
-          !(await confirmArchive(
-            thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
-          ))
-        ) {
-          return;
+        const threadKey = scopedThreadKey(threadRef);
+        if (archivingThreadKeysRef.current.has(threadKey)) return;
+        archivingThreadKeysRef.current.add(threadKey);
+        try {
+          const thread = threadByKeyRef.current.get(threadKey);
+          if (
+            !(await confirmArchive(
+              thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
+            ))
+          ) {
+            return;
+          }
+          const outcome = await archiveThreadEntries([{ threadKey, threadRef }]);
+          removeFromSelection(outcome.archivedThreadKeys);
+        } finally {
+          archivingThreadKeysRef.current.delete(threadKey);
         }
-        const outcome = await archiveThreadEntries([
-          { threadKey: scopedThreadKey(threadRef), threadRef },
-        ]);
-        removeFromSelection(outcome.archivedThreadKeys);
       })();
     },
     [archiveThreadEntries, confirmArchive, removeFromSelection],
