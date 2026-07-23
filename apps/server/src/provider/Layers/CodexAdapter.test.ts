@@ -597,6 +597,30 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("abandons completion polling after three consecutive provider read failures", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      runtime.reconcileTurnCompletionImpl.mockImplementation(() =>
+        Effect.die(new Error("thread/read unavailable")),
+      );
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-1"),
+        input: "poll carefully",
+        attachments: [],
+      });
+
+      yield* TestClock.adjust("30 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 1);
+      yield* TestClock.adjust("10 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 2);
+      yield* TestClock.adjust("10 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 3);
+      yield* TestClock.adjust("1 minute");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 3);
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

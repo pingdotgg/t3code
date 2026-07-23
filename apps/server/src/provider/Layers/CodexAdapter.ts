@@ -71,6 +71,7 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+const MAX_TURN_COMPLETION_RECONCILIATION_FAILURES = 3;
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -1582,26 +1583,40 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
 
-    const pollTurnCompletion = (): Effect.Effect<void> =>
+    const pollTurnCompletion = (consecutiveFailures = 0): Effect.Effect<void> =>
       Effect.gen(function* () {
         const currentSession = sessions.get(input.threadId);
         if (currentSession !== session || session.stopped) {
           return;
         }
-        const result = yield* session.runtime.reconcileTurnCompletion(turn.turnId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("codex.turn-completion.reconciliation-failed", {
+        const outcome = yield* session.runtime
+          .reconcileTurnCompletion(turn.turnId)
+          .pipe(Effect.exit);
+        if (Exit.isFailure(outcome)) {
+          const failureCount = consecutiveFailures + 1;
+          yield* Effect.logWarning("codex.turn-completion.reconciliation-failed", {
+            threadId: input.threadId,
+            turnId: turn.turnId,
+            failureCount,
+            maxFailures: MAX_TURN_COMPLETION_RECONCILIATION_FAILURES,
+            cause: outcome.cause,
+          });
+          if (failureCount >= MAX_TURN_COMPLETION_RECONCILIATION_FAILURES) {
+            yield* Effect.logWarning("codex.turn-completion.reconciliation-abandoned", {
               threadId: input.threadId,
               turnId: turn.turnId,
-              cause,
-            }).pipe(Effect.as("active" as const)),
-          ),
-        );
-        if (result !== "active") {
+              failureCount,
+            });
+            return;
+          }
+          yield* Effect.sleep(Duration.millis(turnCompletionRecoveryPollMs));
+          return yield* pollTurnCompletion(failureCount);
+        }
+        if (outcome.value !== "active") {
           return;
         }
         yield* Effect.sleep(Duration.millis(turnCompletionRecoveryPollMs));
-        return yield* pollTurnCompletion();
+        return yield* pollTurnCompletion(0);
       });
 
     yield* Effect.sleep(Duration.millis(turnCompletionRecoveryGraceMs)).pipe(

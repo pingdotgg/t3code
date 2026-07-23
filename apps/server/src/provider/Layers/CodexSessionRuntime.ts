@@ -703,6 +703,25 @@ function updateSession(
   });
 }
 
+export function applyTurnCompletionToSession(input: {
+  readonly session: ProviderSession;
+  readonly turnId: TurnId;
+  readonly status: EffectCodexSchema.V2ThreadReadResponse__TurnStatus;
+  readonly errorMessage?: string;
+  readonly updatedAt: string;
+}): ProviderSession {
+  if (input.status === "inProgress" || input.session.activeTurnId !== input.turnId) {
+    return input.session;
+  }
+  return {
+    ...input.session,
+    status: input.status === "failed" ? "error" : "ready",
+    activeTurnId: undefined,
+    ...(input.errorMessage ? { lastError: input.errorMessage } : {}),
+    updatedAt: input.updatedAt,
+  };
+}
+
 function parseThreadSnapshot(
   response: EffectCodexSchema.V2ThreadReadResponse | EffectCodexSchema.V2ThreadRollbackResponse,
 ): CodexThreadSnapshot {
@@ -941,20 +960,27 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerNotification("turn/completed", (payload) =>
       currentSessionProviderThreadId.pipe(
-        Effect.flatMap((providerThreadId) => {
-          if (providerThreadId && payload.threadId !== providerThreadId) {
-            return Effect.void;
-          }
-          const lastError =
-            payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
-              ? payload.turn.error.message
-              : undefined;
-          return updateSession(sessionRef, {
-            status: payload.turn.status === "failed" ? "error" : "ready",
-            activeTurnId: undefined,
-            ...(lastError ? { lastError } : {}),
-          });
-        }),
+        Effect.flatMap((providerThreadId) =>
+          Effect.gen(function* () {
+            if (providerThreadId && payload.threadId !== providerThreadId) {
+              return;
+            }
+            const errorMessage =
+              payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
+                ? payload.turn.error.message
+                : undefined;
+            const updatedAt = yield* nowIso;
+            yield* Ref.update(sessionRef, (session) =>
+              applyTurnCompletionToSession({
+                session,
+                turnId: TurnId.make(payload.turn.id),
+                status: payload.turn.status,
+                ...(errorMessage ? { errorMessage } : {}),
+                updatedAt,
+              }),
+            );
+          }),
+        ),
       ),
     );
 
@@ -1282,27 +1308,6 @@ export const makeCodexSessionRuntime = (
         return "active";
       }
 
-      const recoveredAt = yield* nowIso;
-      const claimed = yield* Ref.modify(sessionRef, (session) => {
-        if (session.status !== "running" || session.activeTurnId !== turnId) {
-          return [false, session] as const;
-        }
-        const lastError = turn.status === "failed" ? turn.error?.message : undefined;
-        return [
-          true,
-          {
-            ...session,
-            status: turn.status === "failed" ? ("error" as const) : ("ready" as const),
-            activeTurnId: undefined,
-            ...(lastError ? { lastError } : {}),
-            updatedAt: recoveredAt,
-          },
-        ] as const;
-      });
-      if (!claimed) {
-        return "obsolete";
-      }
-
       yield* emitEvent({
         kind: "notification",
         threadId: options.threadId,
@@ -1313,6 +1318,16 @@ export const makeCodexSessionRuntime = (
           turn,
         },
       });
+      const recoveredAt = yield* nowIso;
+      yield* Ref.update(sessionRef, (session) =>
+        applyTurnCompletionToSession({
+          session,
+          turnId,
+          status: turn.status,
+          ...(turn.error?.message ? { errorMessage: turn.error.message } : {}),
+          updatedAt: recoveredAt,
+        }),
+      );
       yield* Effect.logWarning("codex.turn-completion.recovered", {
         threadId: options.threadId,
         providerThreadId,

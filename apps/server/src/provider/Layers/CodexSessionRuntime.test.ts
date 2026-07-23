@@ -4,7 +4,13 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  ProviderDriverKind,
+  type ProviderSession,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -15,12 +21,54 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  applyTurnCompletionToSession,
   buildTurnStartParams,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("applyTurnCompletionToSession", () => {
+  const makeRunningSession = (activeTurnId: TurnId): ProviderSession => ({
+    provider: ProviderDriverKind.make("codex"),
+    status: "running",
+    runtimeMode: "full-access",
+    threadId: ThreadId.make("thread-1"),
+    activeTurnId,
+    createdAt: "2026-04-18T00:00:00.000Z",
+    updatedAt: "2026-04-18T00:01:00.000Z",
+  });
+
+  it("ignores a delayed completion for an older turn", () => {
+    const session = makeRunningSession(TurnId.make("turn-new"));
+    const updated = applyTurnCompletionToSession({
+      session,
+      turnId: TurnId.make("turn-old"),
+      status: "completed",
+      updatedAt: "2026-04-18T00:02:00.000Z",
+    });
+
+    NodeAssert.strictEqual(updated, session);
+    NodeAssert.equal(updated.status, "running");
+    NodeAssert.equal(updated.activeTurnId, "turn-new");
+  });
+
+  it("settles only the matching active turn", () => {
+    const updated = applyTurnCompletionToSession({
+      session: makeRunningSession(TurnId.make("turn-1")),
+      turnId: TurnId.make("turn-1"),
+      status: "failed",
+      errorMessage: "provider failed",
+      updatedAt: "2026-04-18T00:02:00.000Z",
+    });
+
+    NodeAssert.equal(updated.status, "error");
+    NodeAssert.equal(updated.activeTurnId, undefined);
+    NodeAssert.equal(updated.lastError, "provider failed");
+    NodeAssert.equal(updated.updatedAt, "2026-04-18T00:02:00.000Z");
+  });
+});
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {

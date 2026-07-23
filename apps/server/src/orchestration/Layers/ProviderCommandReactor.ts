@@ -32,7 +32,10 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
+} from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -114,6 +117,24 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
   return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
     ? trimmedCurrentTitle === trimmedTitleSeed
     : false;
+}
+
+function canReconcileStoppedRuntimeBinding(
+  session: OrchestrationSession,
+  binding: ProviderRuntimeBindingWithMetadata,
+): boolean {
+  const bindingLastSeenAt = Date.parse(binding.lastSeenAt);
+  const sessionUpdatedAt = Date.parse(session.updatedAt);
+  return (
+    (session.status === "running" || session.status === "starting") &&
+    binding.status === "stopped" &&
+    (session.providerName === null || session.providerName === binding.provider) &&
+    (session.providerInstanceId === undefined ||
+      session.providerInstanceId === binding.providerInstanceId) &&
+    !Number.isNaN(bindingLastSeenAt) &&
+    !Number.isNaN(sessionUpdatedAt) &&
+    bindingLastSeenAt >= sessionUpdatedAt
+  );
 }
 
 function findProviderAdapterRequestError(
@@ -297,42 +318,48 @@ const make = Effect.gen(function* () {
         (thread) => {
           const session = thread.session;
           const binding = bindingByThreadId.get(thread.id);
-          const bindingLastSeenAt = binding ? Date.parse(binding.lastSeenAt) : Number.NaN;
-          const sessionUpdatedAt = session ? Date.parse(session.updatedAt) : Number.NaN;
-          if (
-            (session?.status !== "running" && session?.status !== "starting") ||
-            binding?.status !== "stopped" ||
-            (session.providerName !== null && session.providerName !== binding.provider) ||
-            (session.providerInstanceId !== undefined &&
-              session.providerInstanceId !== binding.providerInstanceId) ||
-            Number.isNaN(bindingLastSeenAt) ||
-            Number.isNaN(sessionUpdatedAt) ||
-            bindingLastSeenAt < sessionUpdatedAt
-          ) {
+          if (!session || !binding || !canReconcileStoppedRuntimeBinding(session, binding)) {
             return Effect.void;
           }
 
-          return setThreadSession({
-            threadId: thread.id,
-            session: {
-              ...session,
-              status: "stopped",
-              activeTurnId: null,
-              updatedAt: binding.lastSeenAt,
-            },
-            createdAt: binding.lastSeenAt,
-          }).pipe(
-            Effect.tap(() =>
-              Effect.logWarning("provider.session.reconciled-stopped-runtime", {
-                threadId: thread.id,
-                previousStatus: session.status,
-                activeTurnId: session.activeTurnId,
-                provider: binding.provider,
-                providerInstanceId: binding.providerInstanceId,
-                stoppedAt: binding.lastSeenAt,
-              }),
-            ),
-          );
+          return Effect.gen(function* () {
+            const [latestThreadOption, latestBindings] = yield* Effect.all([
+              projectionSnapshotQuery.getThreadShellById(thread.id),
+              providerSessionDirectory.listBindings(),
+            ]);
+            const latestThread = Option.getOrUndefined(latestThreadOption);
+            const latestSession = latestThread?.session;
+            const latestBinding = latestBindings.find((entry) => entry.threadId === thread.id);
+            if (
+              !latestSession ||
+              !latestBinding ||
+              !canReconcileStoppedRuntimeBinding(latestSession, latestBinding)
+            ) {
+              return;
+            }
+
+            yield* setThreadSession({
+              threadId: thread.id,
+              session: {
+                ...latestSession,
+                status: "stopped",
+                activeTurnId: null,
+                updatedAt: latestBinding.lastSeenAt,
+              },
+              createdAt: latestBinding.lastSeenAt,
+            }).pipe(
+              Effect.tap(() =>
+                Effect.logWarning("provider.session.reconciled-stopped-runtime", {
+                  threadId: thread.id,
+                  previousStatus: latestSession.status,
+                  activeTurnId: latestSession.activeTurnId,
+                  provider: latestBinding.provider,
+                  providerInstanceId: latestBinding.providerInstanceId,
+                  stoppedAt: latestBinding.lastSeenAt,
+                }),
+              ),
+            );
+          });
         },
         { concurrency: 1, discard: true },
       );
@@ -1155,15 +1182,15 @@ const make = Effect.gen(function* () {
       }
     });
 
-    yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
-    );
     yield* reconcileStoppedRuntimeBindings().pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider.session.startup-reconciliation-failed", {
           cause: Cause.pretty(cause),
         }),
       ),
+    );
+    yield* Effect.forkScoped(
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
   });
 
