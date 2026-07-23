@@ -1,14 +1,19 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useRef } from "react";
-import { ActivityIndicator, Pressable, View } from "react-native";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { ActivityIndicator, Platform, Pressable, View } from "react-native";
+import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { isGlassEffectAPIAvailable } from "expo-glass-effect";
 
 import { AppText as Text } from "../../components/AppText";
+import { GlassSurface } from "../../components/GlassSurface";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
+
+const OVERLAY_LAYOUT_TRANSITION = LinearTransition.duration(220);
+const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
 export function GitActionProgressOverlay(props: {
   readonly progress: GitActionProgress;
@@ -61,16 +66,9 @@ export function GitActionProgressOverlay(props: {
 function OverlayContent(props: { readonly progress: GitActionProgress }) {
   const { progress } = props;
   const iconColor = useThemeColor("--color-icon");
-
-  const bgClass =
-    progress.phase === "error"
-      ? "bg-red-50 dark:bg-red-950/80 border-red-200 dark:border-red-800"
-      : "bg-card border-border";
-
-  return (
-    <View
-      className={`flex-row items-center gap-2.5 rounded-2xl border px-3.5 py-3 shadow-lg shadow-black/10 ${bgClass}`}
-    >
+  const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
+  const content = (
+    <>
       <OverlayIcon phase={progress.phase} iconColor={iconColor} />
 
       <View className="flex-1 gap-0.5">
@@ -89,7 +87,37 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
       {progress.prUrl ? (
         <SymbolView name="arrow.up.right" size={13} tintColor={iconColor} type="monochrome" />
       ) : null}
-    </View>
+    </>
+  );
+
+  if (supportsGlass) {
+    return (
+      <AnimatedGlassSurface
+        chrome="none"
+        glassEffectStyle="regular"
+        layout={OVERLAY_LAYOUT_TRANSITION}
+        style={{
+          borderCurve: "continuous",
+          borderRadius: 26,
+        }}
+      >
+        <View className="flex-row items-center gap-2.5 px-3.5 py-3">{content}</View>
+      </AnimatedGlassSurface>
+    );
+  }
+
+  const bgClass =
+    progress.phase === "error"
+      ? "bg-red-50 dark:bg-red-950/80 border-red-200 dark:border-red-800"
+      : "bg-card border-border";
+
+  return (
+    <Animated.View
+      layout={OVERLAY_LAYOUT_TRANSITION}
+      className={`flex-row items-center gap-2.5 rounded-[26px] border border-continuous px-3.5 py-3 shadow-lg shadow-black/10 ${bgClass}`}
+    >
+      {content}
+    </Animated.View>
   );
 }
 
