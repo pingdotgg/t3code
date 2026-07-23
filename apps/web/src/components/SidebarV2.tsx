@@ -109,7 +109,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
-  withReservedThreadArchiveEntries,
+  withCoordinatedThreadArchiveEntries,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
@@ -1607,15 +1607,16 @@ export default function SidebarV2() {
     [archiveThread],
   );
   // One archive per thread at a time across row, selection, and settled
-  // partition flows. Later flows skip entries already owned by an earlier one.
-  const archivingThreadKeysRef = useRef(new Set<string>());
+  // partition flows. Later flows wait for owners, then retry only entries that
+  // were not archived successfully by the earlier flow.
+  const archivingThreadReservationsRef = useRef(new Map<string, Promise<ReadonlySet<string>>>());
   const attemptArchive = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
         const threadKey = scopedThreadKey(threadRef);
-        await withReservedThreadArchiveEntries({
+        await withCoordinatedThreadArchiveEntries({
           entries: [{ threadKey, threadRef }],
-          reservedThreadKeys: archivingThreadKeysRef.current,
+          reservations: archivingThreadReservationsRef.current,
           run: async (entries) => {
             const thread = threadByKeyRef.current.get(threadKey);
             if (
@@ -1623,10 +1624,11 @@ export default function SidebarV2() {
                 thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
               ))
             ) {
-              return;
+              return [];
             }
             const outcome = await archiveThreadEntries(entries);
             removeFromSelection(outcome.archivedThreadKeys);
+            return outcome.archivedThreadKeys;
           },
         });
       })();
@@ -1641,12 +1643,12 @@ export default function SidebarV2() {
       archivingAllSettledRef.current = true;
       setIsArchivingAllSettled(true);
       try {
-        await withReservedThreadArchiveEntries({
+        await withCoordinatedThreadArchiveEntries({
           entries: archivableSettledThreads.map((thread) => {
             const threadRef = scopeThreadRef(thread.environmentId, thread.id);
             return { threadKey: scopedThreadKey(threadRef), threadRef };
           }),
-          reservedThreadKeys: archivingThreadKeysRef.current,
+          reservations: archivingThreadReservationsRef.current,
           run: async (entries) => {
             const count = entries.length;
             if (
@@ -1654,10 +1656,11 @@ export default function SidebarV2() {
                 `Archive all ${count} settled thread${count === 1 ? "" : "s"}?`,
               ))
             ) {
-              return;
+              return [];
             }
             const outcome = await archiveThreadEntries(entries);
             removeFromSelection(outcome.archivedThreadKeys);
+            return outcome.archivedThreadKeys;
           },
         });
       } finally {
@@ -1714,7 +1717,7 @@ export default function SidebarV2() {
         return;
       }
       if (clicked.value === "archive") {
-        await withReservedThreadArchiveEntries({
+        await withCoordinatedThreadArchiveEntries({
           entries: threadKeys.flatMap((threadKey) => {
             const thread = threadByKeyRef.current.get(threadKey);
             if (!thread) return [];
@@ -1725,7 +1728,7 @@ export default function SidebarV2() {
               },
             ];
           }),
-          reservedThreadKeys: archivingThreadKeysRef.current,
+          reservations: archivingThreadReservationsRef.current,
           run: async (entries) => {
             const archiveCount = entries.length;
             if (
@@ -1733,10 +1736,11 @@ export default function SidebarV2() {
                 `Archive ${archiveCount} thread${archiveCount === 1 ? "" : "s"}?`,
               ))
             ) {
-              return;
+              return [];
             }
             const outcome = await archiveThreadEntries(entries);
             removeFromSelection(outcome.archivedThreadKeys);
+            return outcome.archivedThreadKeys;
           },
         });
         return;

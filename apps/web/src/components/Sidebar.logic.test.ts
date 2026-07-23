@@ -34,7 +34,7 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
-  withReservedThreadArchiveEntries,
+  withCoordinatedThreadArchiveEntries,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -156,64 +156,77 @@ describe("archiveSelectedThreadEntries", () => {
   });
 });
 
-describe("withReservedThreadArchiveEntries", () => {
+describe("withCoordinatedThreadArchiveEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }] as const;
 
-  it("keeps entries reserved for the complete archive flow", async () => {
-    const reservedThreadKeys = new Set<string>();
-    let releaseFirstFlow: (() => void) | undefined;
-    const firstFlow = withReservedThreadArchiveEntries({
+  it("waits for owners and omits entries they successfully archived", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let finishFirstFlow: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
       entries: [entries[0]],
-      reservedThreadKeys,
+      reservations,
       run: async () =>
-        new Promise<void>((resolve) => {
-          releaseFirstFlow = resolve;
+        new Promise<readonly string[]>((resolve) => {
+          finishFirstFlow = () => resolve(["one"]);
         }),
     });
 
-    await vi.waitFor(() => expect(reservedThreadKeys).toEqual(new Set(["one"])));
-    const secondRun = vi.fn(async () => undefined);
-    const secondFlow = await withReservedThreadArchiveEntries({
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
       entries,
-      reservedThreadKeys,
+      reservations,
+      run: secondRun,
+    });
+    await Promise.resolve();
+    expect(secondRun).not.toHaveBeenCalled();
+
+    finishFirstFlow?.();
+    await expect(firstFlow).resolves.toEqual(["one"]);
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]]);
+    expect(reservations.size).toBe(0);
+  });
+
+  it("retries entries when their owner cancels without archiving", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let cancelFirstFlow: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[0]],
+      reservations,
+      run: async () =>
+        new Promise<readonly string[]>((resolve) => {
+          cancelFirstFlow = () => resolve([]);
+        }),
+    });
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+    const secondRun = vi.fn(async () => ["one", "two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
       run: secondRun,
     });
 
-    expect(secondFlow).toBeUndefined();
-    expect(secondRun).toHaveBeenCalledWith([entries[1]]);
-    expect(reservedThreadKeys).toEqual(new Set(["one"]));
-
-    releaseFirstFlow?.();
-    await firstFlow;
-    expect(reservedThreadKeys).toEqual(new Set());
-  });
-
-  it("ignores a flow when every requested thread is already reserved", async () => {
-    const run = vi.fn(async () => undefined);
-
-    await expect(
-      withReservedThreadArchiveEntries({
-        entries,
-        reservedThreadKeys: new Set(["one", "two"]),
-        run,
-      }),
-    ).resolves.toBeNull();
-    expect(run).not.toHaveBeenCalled();
+    cancelFirstFlow?.();
+    await expect(firstFlow).resolves.toEqual([]);
+    await expect(secondFlow).resolves.toEqual(["one", "two"]);
+    expect(secondRun).toHaveBeenCalledWith(entries);
+    expect(reservations.size).toBe(0);
   });
 
   it("releases reservations when the archive flow fails", async () => {
-    const reservedThreadKeys = new Set<string>();
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
 
     await expect(
-      withReservedThreadArchiveEntries({
+      withCoordinatedThreadArchiveEntries({
         entries,
-        reservedThreadKeys,
+        reservations,
         run: async () => {
           throw new Error("archive failed");
         },
       }),
     ).rejects.toThrow("archive failed");
-    expect(reservedThreadKeys).toEqual(new Set());
+    expect(reservations.size).toBe(0);
   });
 });
 

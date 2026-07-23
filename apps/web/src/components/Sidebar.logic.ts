@@ -80,29 +80,63 @@ export async function archiveSelectedThreadEntries<
   return { archivedThreadKeys, mutationFailure: null, followupFailures };
 }
 
-export async function withReservedThreadArchiveEntries<
+export async function withCoordinatedThreadArchiveEntries<
   TEntry extends { readonly threadKey: string },
-  TResult,
 >(input: {
   entries: readonly TEntry[];
-  reservedThreadKeys: Set<string>;
-  run: (entries: readonly TEntry[]) => Promise<TResult>;
-}): Promise<TResult | null> {
-  const reservedEntries: TEntry[] = [];
+  reservations: Map<string, Promise<ReadonlySet<string>>>;
+  run: (entries: readonly TEntry[]) => Promise<readonly string[]>;
+}): Promise<readonly string[]> {
+  const uniqueEntries: TEntry[] = [];
+  const uniqueThreadKeys = new Set<string>();
   for (const entry of input.entries) {
-    if (input.reservedThreadKeys.has(entry.threadKey)) continue;
-    input.reservedThreadKeys.add(entry.threadKey);
-    reservedEntries.push(entry);
+    if (uniqueThreadKeys.has(entry.threadKey)) continue;
+    uniqueThreadKeys.add(entry.threadKey);
+    uniqueEntries.push(entry);
   }
-  if (reservedEntries.length === 0) return null;
+  let pendingEntries = uniqueEntries;
 
-  try {
-    return await input.run(reservedEntries);
-  } finally {
-    for (const entry of reservedEntries) {
-      input.reservedThreadKeys.delete(entry.threadKey);
+  while (pendingEntries.length > 0) {
+    const activeReservations = [
+      ...new Set(
+        pendingEntries.flatMap((entry) => {
+          const reservation = input.reservations.get(entry.threadKey);
+          return reservation ? [reservation] : [];
+        }),
+      ),
+    ];
+    if (activeReservations.length > 0) {
+      const archivedByOwners = new Set(
+        (await Promise.all(activeReservations)).flatMap((threadKeys) => [...threadKeys]),
+      );
+      pendingEntries = pendingEntries.filter((entry) => !archivedByOwners.has(entry.threadKey));
+      continue;
+    }
+
+    let resolveReservation: (archivedThreadKeys: ReadonlySet<string>) => void = () => undefined;
+    const reservation = new Promise<ReadonlySet<string>>((resolve) => {
+      resolveReservation = resolve;
+    });
+    for (const entry of pendingEntries) {
+      input.reservations.set(entry.threadKey, reservation);
+    }
+    try {
+      const archivedThreadKeys = await input.run(pendingEntries);
+      resolveReservation(new Set(archivedThreadKeys));
+      return archivedThreadKeys;
+    } catch (error) {
+      resolveReservation(new Set());
+      throw error;
+    } finally {
+      for (const entry of pendingEntries) {
+        if (input.reservations.get(entry.threadKey) === reservation) {
+          input.reservations.delete(entry.threadKey);
+        }
+      }
     }
   }
+
+  return [];
 }
 
 export function buildMultiSelectThreadContextMenuItems(input: {
