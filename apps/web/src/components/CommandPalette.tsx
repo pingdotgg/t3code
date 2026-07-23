@@ -698,6 +698,8 @@ function OpenCommandPaletteDialog(props: {
               className={ITEM_ICON_CLASS}
             />
           ),
+          isRemoteProject: (project) =>
+            primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId,
           runProject: async (project) => {
             await startNewThreadInProjectFromContext(
               {
@@ -711,7 +713,14 @@ function OpenCommandPaletteDialog(props: {
           },
         }),
       ),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
+    [
+      activeDraftThread,
+      activeThread,
+      defaultProjectRef,
+      handleNewThread,
+      primaryEnvironmentId,
+      projects,
+    ],
   );
 
   const allThreadItems = useMemo(

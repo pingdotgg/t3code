@@ -28,6 +28,8 @@ export interface CommandPaletteItem {
   readonly titleLeadingContent?: ReactNode;
   /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
+  /** Whether this item represents a project from a non-primary environment. */
+  readonly isRemoteProject?: boolean;
   readonly shortcutCommand?: KeybindingCommand;
 }
 
@@ -110,21 +112,26 @@ export function buildProjectActionItems(input: {
   projects: ReadonlyArray<Project>;
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
+  isRemoteProject?: (project: Project) => boolean;
   runProject: (project: Project) => Promise<void>;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.title, project.workspaceRoot],
-    title: project.title,
-    description: project.workspaceRoot,
-    icon: input.icon(project),
-    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const value = `${input.valuePrefix}:${project.environmentId}:${project.id}`;
+    return {
+      kind: "action",
+      value,
+      searchTerms: [project.title, project.workspaceRoot],
+      title: project.title,
+      description: project.workspaceRoot,
+      icon: input.icon(project),
+      isRemoteProject: input.isRemoteProject?.(project) ?? false,
+      ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<

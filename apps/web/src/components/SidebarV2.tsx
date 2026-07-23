@@ -832,6 +832,10 @@ export default function SidebarV2() {
           ) ?? null),
     [projectScopeKey, projects],
   );
+  const scopedProjectIsRemote =
+    scopedProject !== null &&
+    primaryEnvironmentId !== null &&
+    scopedProject.environmentId !== primaryEnvironmentId;
   useEffect(() => {
     if (
       projectScopeKey !== null &&
@@ -1573,6 +1577,14 @@ export default function SidebarV2() {
                   <span className="min-w-0 flex-1 truncate">
                     {scopedProject?.title ?? "All projects"}
                   </span>
+                  {scopedProjectIsRemote ? (
+                    <span
+                      aria-label="Remote environment"
+                      className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                    >
+                      <ServerIcon aria-hidden className="size-4" />
+                    </span>
+                  ) : null}
                   <ChevronDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/70" />
                 </MenuTrigger>
                 <MenuPopup align="start" className="w-(--anchor-width)">
@@ -1592,6 +1604,9 @@ export default function SidebarV2() {
                     </MenuRadioItem>
                     {projects.map((project) => {
                       const scopeKey = `${project.environmentId}:${project.id}`;
+                      const projectIsRemote =
+                        primaryEnvironmentId !== null &&
+                        project.environmentId !== primaryEnvironmentId;
                       return (
                         <MenuRadioItem
                           key={scopeKey}
@@ -1604,7 +1619,15 @@ export default function SidebarV2() {
                             cwd={project.workspaceRoot}
                             className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate text-sm">{project.title}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm">{project.title}</span>
+                          {projectIsRemote ? (
+                            <span
+                              aria-label="Remote environment"
+                              className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                            >
+                              <ServerIcon aria-hidden className="size-4" />
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             aria-label={`Remove project ${project.title}`}
