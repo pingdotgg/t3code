@@ -77,6 +77,7 @@ import {
 } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  resolveScopedNewThreadProjectRef,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -85,7 +86,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -2195,11 +2196,18 @@ export default function SidebarV2() {
       return;
     }
     if (isMobile) setOpenMobile(false);
+    const contextualProjectRef = resolveThreadActionProjectRef({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
     openCommandPalette({
       open: "new-thread-in",
-      preferredProjectRef: scopedProjectGroup
-        ? scopeProjectRef(scopedProjectGroup.environmentId, scopedProjectGroup.id)
-        : null,
+      preferredProjectRef: resolveScopedNewThreadProjectRef({
+        scopedProjectGroup,
+        contextualProjectRef,
+      }),
     });
   }, [isMobile, newThreadContext, projectGroups.length, scopedProjectGroup, setOpenMobile]);
 
