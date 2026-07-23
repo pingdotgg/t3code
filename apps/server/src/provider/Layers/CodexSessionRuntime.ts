@@ -123,12 +123,17 @@ export interface CodexSessionRuntimeSendTurnInput {
 export interface CodexThreadTurnSnapshot {
   readonly id: TurnId;
   readonly items: ReadonlyArray<CodexThreadItem>;
+  readonly status: EffectCodexSchema.V2ThreadReadResponse__TurnStatus;
+  readonly completedAt?: number | null;
+  readonly errorMessage?: string;
 }
 
 export interface CodexThreadSnapshot {
   readonly threadId: string;
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
 }
+
+export type CodexTurnCompletionReconciliation = "active" | "settled" | "obsolete";
 
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
@@ -138,6 +143,9 @@ export interface CodexSessionRuntimeShape {
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly reconcileTurnCompletion: (
+    turnId: TurnId,
+  ) => Effect.Effect<CodexTurnCompletionReconciliation, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -703,6 +711,9 @@ function parseThreadSnapshot(
     turns: response.thread.turns.map((turn) => ({
       id: TurnId.make(turn.id),
       items: turn.items,
+      status: turn.status,
+      ...(turn.completedAt !== undefined ? { completedAt: turn.completedAt } : {}),
+      ...(turn.error?.message ? { errorMessage: turn.error.message } : {}),
     })),
   };
 }
@@ -1253,6 +1264,64 @@ export const makeCodexSessionRuntime = (
       return providerThreadId;
     });
 
+    const reconcileTurnCompletion: CodexSessionRuntimeShape["reconcileTurnCompletion"] = Effect.fn(
+      "CodexSessionRuntime.reconcileTurnCompletion",
+    )(function* (turnId) {
+      const sessionBeforeRead = yield* Ref.get(sessionRef);
+      if (sessionBeforeRead.status !== "running" || sessionBeforeRead.activeTurnId !== turnId) {
+        return "obsolete";
+      }
+
+      const providerThreadId = yield* readProviderThreadId;
+      const response = yield* client.request("thread/read", {
+        threadId: providerThreadId,
+        includeTurns: true,
+      });
+      const turn = response.thread.turns.find((candidate) => candidate.id === turnId);
+      if (!turn || turn.status === "inProgress") {
+        return "active";
+      }
+
+      const recoveredAt = yield* nowIso;
+      const claimed = yield* Ref.modify(sessionRef, (session) => {
+        if (session.status !== "running" || session.activeTurnId !== turnId) {
+          return [false, session] as const;
+        }
+        const lastError = turn.status === "failed" ? turn.error?.message : undefined;
+        return [
+          true,
+          {
+            ...session,
+            status: turn.status === "failed" ? ("error" as const) : ("ready" as const),
+            activeTurnId: undefined,
+            ...(lastError ? { lastError } : {}),
+            updatedAt: recoveredAt,
+          },
+        ] as const;
+      });
+      if (!claimed) {
+        return "obsolete";
+      }
+
+      yield* emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        method: "turn/completed",
+        turnId,
+        payload: {
+          threadId: providerThreadId,
+          turn,
+        },
+      });
+      yield* Effect.logWarning("codex.turn-completion.recovered", {
+        threadId: options.threadId,
+        providerThreadId,
+        turnId,
+        turnStatus: turn.status,
+      });
+      return "settled";
+    });
+
     const close = Effect.gen(function* () {
       const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
       if (alreadyClosed) {
@@ -1348,6 +1417,7 @@ export const makeCodexSessionRuntime = (
         });
         return parseThreadSnapshot(response);
       }),
+      reconcileTurnCompletion,
       rollbackThread: (numTurns) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;

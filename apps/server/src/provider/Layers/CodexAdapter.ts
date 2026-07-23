@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -83,6 +84,8 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly turnCompletionRecoveryGraceMs?: number;
+  readonly turnCompletionRecoveryPollMs?: number;
 }
 
 interface CodexAdapterSessionContext {
@@ -1373,6 +1376,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const turnCompletionRecoveryGraceMs = Math.max(
+    1,
+    options?.turnCompletionRecoveryGraceMs ?? 30_000,
+  );
+  const turnCompletionRecoveryPollMs = Math.max(1, options?.turnCompletionRecoveryPollMs ?? 10_000);
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1447,10 +1455,23 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        const settledTurnIds = new Set<string>();
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).filter(
+              (runtimeEvent) => {
+                if (runtimeEvent.type !== "turn.completed") {
+                  return true;
+                }
+                const turnId = String(runtimeEvent.turnId);
+                if (settledTurnIds.has(turnId)) {
+                  return false;
+                }
+                settledTurnIds.add(turnId);
+                return true;
+              },
+            );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1544,7 +1565,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
-    return yield* session.runtime
+    const turn = yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
         ...(input.modelSelection?.instanceId === boundInstanceId
@@ -1560,6 +1581,34 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
+
+    const pollTurnCompletion = (): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const currentSession = sessions.get(input.threadId);
+        if (currentSession !== session || session.stopped) {
+          return;
+        }
+        const result = yield* session.runtime.reconcileTurnCompletion(turn.turnId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("codex.turn-completion.reconciliation-failed", {
+              threadId: input.threadId,
+              turnId: turn.turnId,
+              cause,
+            }).pipe(Effect.as("active" as const)),
+          ),
+        );
+        if (result !== "active") {
+          return;
+        }
+        yield* Effect.sleep(Duration.millis(turnCompletionRecoveryPollMs));
+        return yield* pollTurnCompletion();
+      });
+
+    yield* Effect.sleep(Duration.millis(turnCompletionRecoveryGraceMs)).pipe(
+      Effect.andThen(pollTurnCompletion()),
+      Effect.forkIn(session.scope),
+    );
+    return turn;
   });
 
   const requireSession = Effect.fn("requireSession")(function* (threadId: ThreadId) {

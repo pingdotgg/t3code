@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import {
   ModelSelection,
+  type OrchestrationSession,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
@@ -26,6 +27,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -35,6 +37,10 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
+} from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -149,6 +155,8 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly initialSession?: OrchestrationSession;
+    readonly runtimeBindings?: ReadonlyArray<ProviderRuntimeBindingWithMetadata>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -353,10 +361,19 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const providerSessionDirectoryLayer = Layer.succeed(ProviderSessionDirectory, {
+      upsert: () => Effect.void,
+      getProvider: () =>
+        Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in this test")),
+      getBinding: () => Effect.succeed(Option.none()),
+      listThreadIds: () => Effect.succeed([]),
+      listBindings: () => Effect.succeed(input?.runtimeBindings ?? []),
+    });
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
@@ -387,8 +404,6 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
 
     await Effect.runPromise(
@@ -417,6 +432,19 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    if (input?.initialSession) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-initial-session-set"),
+          threadId: ThreadId.make("thread-1"),
+          session: input.initialSession,
+          createdAt: input.initialSession.updatedAt,
+        }),
+      );
+    }
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
 
     return {
       engine,
@@ -436,6 +464,71 @@ describe("ProviderCommandReactor", () => {
       drain,
     };
   }
+
+  it("settles a projected running turn when its persisted runtime already stopped", async () => {
+    const runningAt = "2026-01-01T00:01:00.000Z";
+    const stoppedAt = "2026-01-01T00:02:00.000Z";
+    const harness = await createHarness({
+      initialSession: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("orchestration-turn-1"),
+        lastError: null,
+        updatedAt: runningAt,
+      },
+      runtimeBindings: [
+        {
+          threadId: ThreadId.make("thread-1"),
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "stopped",
+          runtimeMode: "approval-required",
+          lastSeenAt: stoppedAt,
+        },
+      ],
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("stopped");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("does not settle a newer running projection from an older stopped binding", async () => {
+    const stoppedAt = "2026-01-01T00:01:00.000Z";
+    const runningAt = "2026-01-01T00:02:00.000Z";
+    const harness = await createHarness({
+      initialSession: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("orchestration-turn-1"),
+        lastError: null,
+        updatedAt: runningAt,
+      },
+      runtimeBindings: [
+        {
+          threadId: ThreadId.make("thread-1"),
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "stopped",
+          runtimeMode: "approval-required",
+          lastSeenAt: stoppedAt,
+        },
+      ],
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("orchestration-turn-1");
+    expect(thread?.latestTurn?.state).toBe("running");
+  });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();

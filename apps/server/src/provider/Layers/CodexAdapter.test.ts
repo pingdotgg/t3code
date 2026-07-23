@@ -12,6 +12,7 @@ import {
   ProviderItemId,
   type ProviderApprovalDecision,
   type ProviderEvent,
+  type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
@@ -23,15 +24,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
@@ -44,6 +48,7 @@ import {
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
+  type CodexTurnCompletionReconciliation,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
@@ -95,6 +100,11 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       }),
   );
 
+  public readonly reconcileTurnCompletionImpl = vi.fn(
+    (_turnId: TurnId): Effect.Effect<CodexTurnCompletionReconciliation> =>
+      Effect.succeed("obsolete"),
+  );
+
   public readonly rollbackThreadImpl = vi.fn(
     (_numTurns: number): Promise<CodexThreadSnapshot> =>
       Promise.resolve({
@@ -136,6 +146,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   readThread = Effect.promise(() => this.readThreadImpl());
+
+  reconcileTurnCompletion(turnId: TurnId) {
+    return this.reconcileTurnCompletionImpl(turnId);
+  }
 
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
@@ -512,6 +526,77 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("recovers terminal turns from provider state and suppresses late completion", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const firstReceived = yield* Deferred.make<void>();
+      const consumer = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Ref.update(receivedRef, (events) => [...events, event]).pipe(
+          Effect.andThen(Deferred.succeed(firstReceived, undefined).pipe(Effect.ignore)),
+        ),
+      ).pipe(Effect.forkChild);
+
+      runtime.reconcileTurnCompletionImpl.mockImplementation((turnId) =>
+        runtime
+          .emit({
+            id: asEventId("evt-recovered-completion"),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:30.000Z",
+            method: "turn/completed",
+            threadId: asThreadId("thread-1"),
+            turnId,
+            payload: {
+              threadId: "provider-thread-1",
+              turn: {
+                id: turnId,
+                items: [],
+                status: "completed",
+              },
+            },
+          })
+          .pipe(Effect.as("settled" as const)),
+      );
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-1"),
+        input: "recover me",
+        attachments: [],
+      });
+      yield* TestClock.adjust("30 seconds");
+      yield* Deferred.await(firstReceived);
+
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 1);
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls[0]?.[0], "turn-1");
+
+      yield* runtime.emit({
+        id: asEventId("evt-late-completion"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:31.000Z",
+        method: "turn/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "provider-thread-1",
+          turn: {
+            id: "turn-1",
+            items: [],
+            status: "completed",
+          },
+        },
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const received = yield* Ref.get(receivedRef);
+      NodeAssert.equal(received.length, 1);
+      NodeAssert.equal(received[0]?.type, "turn.completed");
+      yield* Fiber.interrupt(consumer);
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

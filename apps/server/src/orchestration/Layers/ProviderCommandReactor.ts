@@ -32,6 +32,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -192,6 +193,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -281,6 +283,61 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const reconcileStoppedRuntimeBindings = Effect.fn("reconcileStoppedRuntimeBindings")(
+    function* () {
+      const [snapshot, bindings] = yield* Effect.all([
+        projectionSnapshotQuery.getShellSnapshot(),
+        providerSessionDirectory.listBindings(),
+      ]);
+      const bindingByThreadId = new Map(bindings.map((binding) => [binding.threadId, binding]));
+
+      yield* Effect.forEach(
+        snapshot.threads,
+        (thread) => {
+          const session = thread.session;
+          const binding = bindingByThreadId.get(thread.id);
+          const bindingLastSeenAt = binding ? Date.parse(binding.lastSeenAt) : Number.NaN;
+          const sessionUpdatedAt = session ? Date.parse(session.updatedAt) : Number.NaN;
+          if (
+            (session?.status !== "running" && session?.status !== "starting") ||
+            binding?.status !== "stopped" ||
+            (session.providerName !== null && session.providerName !== binding.provider) ||
+            (session.providerInstanceId !== undefined &&
+              session.providerInstanceId !== binding.providerInstanceId) ||
+            Number.isNaN(bindingLastSeenAt) ||
+            Number.isNaN(sessionUpdatedAt) ||
+            bindingLastSeenAt < sessionUpdatedAt
+          ) {
+            return Effect.void;
+          }
+
+          return setThreadSession({
+            threadId: thread.id,
+            session: {
+              ...session,
+              status: "stopped",
+              activeTurnId: null,
+              updatedAt: binding.lastSeenAt,
+            },
+            createdAt: binding.lastSeenAt,
+          }).pipe(
+            Effect.tap(() =>
+              Effect.logWarning("provider.session.reconciled-stopped-runtime", {
+                threadId: thread.id,
+                previousStatus: session.status,
+                activeTurnId: session.activeTurnId,
+                provider: binding.provider,
+                providerInstanceId: binding.providerInstanceId,
+                stoppedAt: binding.lastSeenAt,
+              }),
+            ),
+          );
+        },
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -1100,6 +1157,13 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+    );
+    yield* reconcileStoppedRuntimeBindings().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider.session.startup-reconciliation-failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
     );
   });
 

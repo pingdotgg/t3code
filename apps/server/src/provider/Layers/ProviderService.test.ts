@@ -366,6 +366,85 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
   }),
 );
 
+it.effect("ProviderServiceLive stops only sessions owned by this process during shutdown", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [CODEX_DRIVER]: codex.adapter,
+    });
+    const providerAdapterLayer = Layer.succeed(
+      ProviderAdapterRegistry.ProviderAdapterRegistry,
+      registry,
+    );
+    const bindings = new Map<
+      ThreadId,
+      ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata
+    >();
+    const foreignThreadId = asThreadId("thread-owned-by-another-process");
+    bindings.set(foreignThreadId, {
+      threadId: foreignThreadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      status: "running",
+      runtimeMode: "full-access",
+      lastSeenAt: "2026-01-01T00:00:00.000Z",
+    });
+    const directoryLayer = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+      upsert: (binding: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+        Effect.sync(() => {
+          const existing = bindings.get(binding.threadId);
+          bindings.set(binding.threadId, {
+            ...existing,
+            ...binding,
+            lastSeenAt: "2026-01-01T00:01:00.000Z",
+          });
+        }),
+      getProvider: (threadId: ThreadId) =>
+        Effect.sync(() => bindings.get(threadId)?.provider ?? CODEX_DRIVER),
+      getBinding: (threadId: ThreadId) =>
+        Effect.sync(() => {
+          const binding = bindings.get(threadId);
+          return binding === undefined
+            ? Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>()
+            : Option.some(binding);
+        }),
+      listThreadIds: () => Effect.sync(() => Array.from(bindings.keys())),
+      listBindings: () => Effect.sync(() => Array.from(bindings.values())),
+    });
+    const providerLayer = Layer.mergeAll(
+      makeProviderServiceLive().pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provideMerge(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+      directoryLayer,
+      NodeServices.layer,
+    );
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+    const provider = yield* ProviderService.ProviderService.pipe(Effect.provide(runtimeServices));
+    const ownedThreadId = asThreadId("thread-owned-by-this-process");
+
+    yield* provider.startSession(ownedThreadId, {
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      threadId: ownedThreadId,
+      runtimeMode: "full-access",
+    });
+    yield* Scope.close(scope, Exit.void);
+
+    assert.equal(bindings.get(ownedThreadId)?.status, "stopped");
+    assert.equal(bindings.get(foreignThreadId)?.status, "running");
+  }),
+);
+
 it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
   Effect.gen(function* () {
     const codex = makeFakeCodexAdapter();
