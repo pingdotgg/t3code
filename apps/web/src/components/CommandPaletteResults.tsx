@@ -1,5 +1,5 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, ServerIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -86,7 +86,19 @@ function DisabledCommandPaletteResultRow(props: {
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.isRemoteProject ? <RemoteProjectIndicator /> : null}
     </div>
+  );
+}
+
+function RemoteProjectIndicator() {
+  return (
+    <span
+      aria-label="Remote environment"
+      className="inline-flex shrink-0 items-center text-muted-foreground/70"
+    >
+      <ServerIcon aria-hidden className="size-4" />
+    </span>
   );
 }
 
@@ -132,6 +144,7 @@ function CommandPaletteResultRow(props: {
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.isRemoteProject ? <RemoteProjectIndicator /> : null}
       {props.item.timestamp ? (
         <span className="min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
           {props.item.timestamp}

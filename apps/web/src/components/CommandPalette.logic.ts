@@ -28,6 +28,8 @@ export interface CommandPaletteItem {
   readonly titleLeadingContent?: ReactNode;
   /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
+  /** Whether this item represents a project from a non-primary environment. */
+  readonly isRemoteProject?: boolean;
   readonly shortcutCommand?: KeybindingCommand;
 }
 
@@ -110,13 +112,12 @@ export function buildProjectActionItems(input: {
   projects: ReadonlyArray<Project>;
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
-  titleTrailingContentByValue?: ReadonlyMap<string, ReactNode>;
+  isRemoteProject?: (project: Project) => boolean;
   runProject: (project: Project) => Promise<void>;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => {
     const value = `${input.valuePrefix}:${project.environmentId}:${project.id}`;
-    const titleTrailingContent = input.titleTrailingContentByValue?.get(value);
     return {
       kind: "action",
       value,
@@ -124,7 +125,7 @@ export function buildProjectActionItems(input: {
       title: project.title,
       description: project.workspaceRoot,
       icon: input.icon(project),
-      ...(titleTrailingContent !== undefined ? { titleTrailingContent } : {}),
+      isRemoteProject: input.isRemoteProject?.(project) ?? false,
       ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
       run: async () => {
         await input.runProject(project);

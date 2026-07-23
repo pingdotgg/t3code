@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import {
+  buildProjectActionItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
@@ -36,7 +37,48 @@ describe("enumerateCommandPaletteItems", () => {
 });
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const PROJECT_ID = ProjectId.make("project-1");
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: PROJECT_ID,
+    environmentId: LOCAL_ENVIRONMENT_ID,
+    title: "Project",
+    workspaceRoot: "/workspace/project",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("buildProjectActionItems", () => {
+  it("marks project items with remote environment state", () => {
+    const items = buildProjectActionItems({
+      projects: [
+        makeProject(),
+        makeProject({
+          id: ProjectId.make("project-remote"),
+          environmentId: REMOTE_ENVIRONMENT_ID,
+          title: "Remote project",
+          workspaceRoot: "/workspace/remote-project",
+        }),
+      ],
+      valuePrefix: "new-thread-in",
+      icon: () => null,
+      isRemoteProject: (project) => project.environmentId !== LOCAL_ENVIRONMENT_ID,
+      runProject: async () => undefined,
+    });
+
+    expect(items.map((item) => [item.value, item.isRemoteProject])).toEqual([
+      ["new-thread-in:environment-local:project-1", false],
+      ["new-thread-in:environment-remote:project-remote", true],
+    ]);
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
