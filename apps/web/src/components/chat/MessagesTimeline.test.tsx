@@ -603,7 +603,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("git status");
     expect(markup).not.toContain(">git status</button>");
     expect(markup).toContain('aria-label="Open file inside.ts"');
-    expect(markup).toContain(">inside.ts</button>");
+    expect(markup).toContain("lucide-file-text");
+    expect(markup).toContain('<span class="truncate">inside.ts</span>');
   });
 
   it("keeps detail text separate from its associated file link", () => {
@@ -632,7 +633,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Wrote requested content");
     expect(markup).not.toContain(">Wrote requested content</button>");
     expect(markup).toContain('aria-label="Open file inside.ts"');
-    expect(markup).toContain(">inside.ts</button>");
+    expect(markup).toContain("lucide-file-text");
+    expect(markup).toContain('<span class="truncate">inside.ts</span>');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {

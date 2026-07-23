@@ -49,6 +49,7 @@ import {
   CircleAlertIcon,
   EyeIcon,
   FileDiffIcon,
+  FileTextIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -2111,7 +2112,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 <button
                   type="button"
                   className={cn(
-                    "min-w-0 cursor-pointer truncate text-left text-muted-foreground/55 hover:text-foreground hover:underline",
+                    "inline-flex min-w-0 cursor-pointer items-center gap-1 truncate text-left font-medium text-foreground/70 underline decoration-foreground/25 underline-offset-2 hover:text-foreground hover:decoration-foreground/60",
                     previewIsOpenableFile ? "flex-1" : "max-w-[45%] shrink-0",
                   )}
                   aria-label={`Open file ${openableFilePath}`}
@@ -2122,7 +2123,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                     onOpenFile(openableFilePath);
                   }}
                 >
-                  {fileButtonText}
+                  <FileTextIcon className="size-3 shrink-0" aria-hidden />
+                  <span className="truncate">{fileButtonText}</span>
                 </button>
               ) : null}
             </p>
