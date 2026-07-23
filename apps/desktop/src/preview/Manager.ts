@@ -36,6 +36,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -333,6 +334,11 @@ interface FrameCaptureSession {
   readonly consumers: ReadonlySet<FrameCaptureConsumer>;
 }
 
+interface PictureInPictureSession {
+  readonly window: BrowserWindow;
+  readonly initializationScope: Scope.Closeable;
+}
+
 interface PickSession {
   readonly cancel: Effect.Effect<void>;
 }
@@ -456,8 +462,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const frameCaptureSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, FrameCaptureSession>
   >(new Map());
-  const pictureInPictureWindowsRef = yield* SynchronizedRef.make<
-    ReadonlyMap<string, BrowserWindow>
+  const pictureInPictureSessionsRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, PictureInPictureSession>
   >(new Map());
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
@@ -1905,9 +1911,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     }
     if (captureSession.consumers.has("picture-in-picture")) {
-      const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureWindowsRef)).get(
+      const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
         tabId,
-      );
+      )?.window;
       if (pictureInPictureWindow && !pictureInPictureWindow.isDestroyed()) {
         deliveries.push(
           Effect.gen(function* () {
@@ -2008,21 +2014,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const releasePictureInPicture = Effect.fn("PreviewManager.releasePictureInPicture")(function* (
     tabId: string,
-    expectedWindow: BrowserWindow,
+    expectedSession: PictureInPictureSession,
     closeWindow: boolean,
   ) {
-    const removed = yield* SynchronizedRef.modify(pictureInPictureWindowsRef, (windows) => {
-      if (windows.get(tabId) !== expectedWindow) {
-        return [false, windows] as const;
+    const removed = yield* SynchronizedRef.modify(pictureInPictureSessionsRef, (sessions) => {
+      if (sessions.get(tabId) !== expectedSession) {
+        return [false, sessions] as const;
       }
       return [
         true,
-        replaceMap(windows, (copy) => {
+        replaceMap(sessions, (copy) => {
           copy.delete(tabId);
         }),
       ] as const;
     });
     if (!removed) return;
+    yield* Scope.close(expectedSession.initializationScope, Exit.void).pipe(Effect.ignore);
     yield* Ref.update(pictureInPictureAspectRatiosRef, (aspectRatios) =>
       replaceMap(aspectRatios, (copy) => {
         copy.delete(tabId);
@@ -2033,23 +2040,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (tabs.has(tabId)) {
       yield* update(tabId, { pictureInPicture: false });
     }
-    if (closeWindow && !expectedWindow.isDestroyed()) {
+    if (closeWindow && !expectedSession.window.isDestroyed()) {
       yield* attempt({ operation: "pictureInPicture.close", tabId }, () =>
-        expectedWindow.close(),
+        expectedSession.window.close(),
       ).pipe(Effect.ignore);
     }
   });
 
   const closePictureInPictureUnlocked = Effect.fn("PreviewManager.closePictureInPictureUnlocked")(
     function* (tabId: string) {
-      const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureWindowsRef)).get(
+      const pictureInPictureSession = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
         tabId,
       );
-      if (!pictureInPictureWindow) {
+      if (!pictureInPictureSession) {
         yield* stopFrameCapture(tabId, "picture-in-picture");
         return;
       }
-      yield* releasePictureInPicture(tabId, pictureInPictureWindow, true);
+      yield* releasePictureInPicture(tabId, pictureInPictureSession, true);
     },
   );
 
@@ -2061,118 +2068,154 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const closeAllPictureInPicture = Effect.fn("PreviewManager.closeAllPictureInPicture")(
     function* () {
-      const windows = yield* SynchronizedRef.get(pictureInPictureWindowsRef);
-      yield* Effect.forEach(windows.keys(), closePictureInPicture, {
+      const sessions = yield* SynchronizedRef.get(pictureInPictureSessionsRef);
+      yield* Effect.forEach(sessions.keys(), closePictureInPicture, {
         concurrency: "unbounded",
         discard: true,
       });
     },
   );
 
-  const openPictureInPictureUnlocked = Effect.fn("PreviewManager.openPictureInPictureUnlocked")(
-    function* (tabId: string) {
-      const wc = yield* requireWebContents(tabId);
-      const existing = (yield* SynchronizedRef.get(pictureInPictureWindowsRef)).get(tabId);
-      if (existing && !existing.isDestroyed()) {
-        yield* attempt({ operation: "pictureInPicture.showExisting", tabId }, () =>
-          existing.showInactive(),
-        );
-        return;
-      }
-      const title = wc.getTitle().trim();
-      const pictureInPictureWindow = yield* attempt(
-        {
-          operation: "pictureInPicture.create",
-          tabId,
-          webContentsId: wc.id,
-        },
-        () =>
-          new BrowserWindow({
-            width: PICTURE_IN_PICTURE_INITIAL_WIDTH,
-            height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
-            minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,
-            minHeight: PICTURE_IN_PICTURE_MIN_HEIGHT,
-            title: title.length > 0 ? `Preview · ${title}` : "Browser preview",
-            show: false,
-            alwaysOnTop: true,
-            autoHideMenuBar: true,
-            fullscreenable: false,
-            maximizable: false,
-            minimizable: false,
-            resizable: true,
-            skipTaskbar: true,
-            backgroundColor: "#111111",
-            ...(hostPlatform === "darwin" ? { type: "panel" as const } : {}),
-            webPreferences: {
-              preload: pictureInPicturePreloadPath,
-              backgroundThrottling: false,
-              contextIsolation: true,
-              nodeIntegration: false,
-              sandbox: true,
-            },
-          }),
-      );
-      const onClosed = () => {
-        runFork(
-          pictureInPictureMutationSemaphore.withPermit(
-            releasePictureInPicture(tabId, pictureInPictureWindow, false),
-          ),
-        );
-      };
-      yield* attempt(
-        {
-          operation: "pictureInPicture.configure",
-          tabId,
-          webContentsId: wc.id,
-        },
-        () => {
-          pictureInPictureWindow.once("closed", onClosed);
-          pictureInPictureWindow.setAlwaysOnTop(
-            true,
-            hostPlatform === "darwin" ? "floating" : "normal",
-          );
-          if (hostPlatform === "darwin") {
-            pictureInPictureWindow.setVisibleOnAllWorkspaces(true, {
-              visibleOnFullScreen: true,
-            });
-          }
-        },
-      );
-      yield* SynchronizedRef.update(pictureInPictureWindowsRef, (windows) =>
-        replaceMap(windows, (copy) => {
-          copy.set(tabId, pictureInPictureWindow);
-        }),
-      );
-      const initialize = Effect.gen(function* () {
-        yield* attemptPromise(
-          {
-            operation: "pictureInPicture.load",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => pictureInPictureWindow.loadURL(buildPreviewPictureInPictureDataUrl()),
-        );
-        yield* startFrameCapture(tabId, "picture-in-picture");
-        yield* attempt(
-          {
-            operation: "pictureInPicture.show",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => pictureInPictureWindow.showInactive(),
-        );
-        yield* update(tabId, { pictureInPicture: true });
-      });
-      yield* initialize.pipe(
-        Effect.onError(() => releasePictureInPicture(tabId, pictureInPictureWindow, true)),
-      );
-    },
-  );
-
   const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
     tabId: string,
   ) {
-    yield* pictureInPictureMutationSemaphore.withPermit(openPictureInPictureUnlocked(tabId));
+    const wc = yield* requireWebContents(tabId);
+    const pictureInPictureSession = yield* pictureInPictureMutationSemaphore.withPermit(
+      Effect.gen(function* () {
+        const existing = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
+        if (existing && !existing.window.isDestroyed()) {
+          yield* attempt({ operation: "pictureInPicture.showExisting", tabId }, () =>
+            existing.window.showInactive(),
+          );
+          return null;
+        }
+        if (existing) {
+          yield* releasePictureInPicture(tabId, existing, false);
+        }
+        const title = wc.getTitle().trim();
+        const pictureInPictureWindow = yield* attempt(
+          {
+            operation: "pictureInPicture.create",
+            tabId,
+            webContentsId: wc.id,
+          },
+          () =>
+            new BrowserWindow({
+              width: PICTURE_IN_PICTURE_INITIAL_WIDTH,
+              height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
+              minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,
+              minHeight: PICTURE_IN_PICTURE_MIN_HEIGHT,
+              title: title.length > 0 ? `Preview · ${title}` : "Browser preview",
+              show: false,
+              alwaysOnTop: true,
+              autoHideMenuBar: true,
+              fullscreenable: false,
+              maximizable: false,
+              minimizable: false,
+              resizable: true,
+              skipTaskbar: true,
+              backgroundColor: "#111111",
+              ...(hostPlatform === "darwin" ? { type: "panel" as const } : {}),
+              webPreferences: {
+                preload: pictureInPicturePreloadPath,
+                backgroundThrottling: false,
+                contextIsolation: true,
+                nodeIntegration: false,
+                sandbox: true,
+              },
+            }),
+        );
+        const initializationScope = yield* Scope.fork(parentScope, "sequential");
+        const session: PictureInPictureSession = {
+          window: pictureInPictureWindow,
+          initializationScope,
+        };
+        const onClosed = () => {
+          runFork(
+            pictureInPictureMutationSemaphore.withPermit(
+              releasePictureInPicture(tabId, session, false),
+            ),
+          );
+        };
+        yield* attempt(
+          {
+            operation: "pictureInPicture.configure",
+            tabId,
+            webContentsId: wc.id,
+          },
+          () => {
+            pictureInPictureWindow.once("closed", onClosed);
+            pictureInPictureWindow.setAlwaysOnTop(
+              true,
+              hostPlatform === "darwin" ? "floating" : "normal",
+            );
+            if (hostPlatform === "darwin") {
+              pictureInPictureWindow.setVisibleOnAllWorkspaces(true, {
+                visibleOnFullScreen: true,
+              });
+            }
+          },
+        ).pipe(
+          Effect.onError(() =>
+            Effect.all(
+              [
+                Scope.close(initializationScope, Exit.void).pipe(Effect.ignore),
+                attempt({ operation: "pictureInPicture.close", tabId }, () =>
+                  pictureInPictureWindow.close(),
+                ).pipe(Effect.ignore),
+              ],
+              { discard: true },
+            ),
+          ),
+        );
+        yield* SynchronizedRef.update(pictureInPictureSessionsRef, (sessions) =>
+          replaceMap(sessions, (copy) => {
+            copy.set(tabId, session);
+          }),
+        );
+        return session;
+      }),
+    );
+    if (!pictureInPictureSession) return;
+
+    const initialize = Effect.gen(function* () {
+      yield* attemptPromise(
+        {
+          operation: "pictureInPicture.load",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => pictureInPictureSession.window.loadURL(buildPreviewPictureInPictureDataUrl()),
+      );
+      yield* startFrameCapture(tabId, "picture-in-picture");
+      yield* attempt(
+        {
+          operation: "pictureInPicture.show",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => pictureInPictureSession.window.showInactive(),
+      );
+      yield* update(tabId, { pictureInPicture: true });
+    });
+    const initializationFiber = yield* Effect.forkIn(
+      initialize,
+      pictureInPictureSession.initializationScope,
+    );
+    const initializationExit = yield* Fiber.await(initializationFiber).pipe(
+      Effect.onInterrupt(() =>
+        pictureInPictureMutationSemaphore.withPermit(
+          releasePictureInPicture(tabId, pictureInPictureSession, true),
+        ),
+      ),
+    );
+    if (Exit.isSuccess(initializationExit)) return;
+    const current = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
+    if (current !== pictureInPictureSession) return;
+    yield* pictureInPictureMutationSemaphore.withPermit(
+      releasePictureInPicture(tabId, pictureInPictureSession, true),
+    );
+    return yield* Effect.failCause(initializationExit.cause);
   });
 
   const startRecording = Effect.fn("PreviewManager.startRecording")(function* (tabId: string) {

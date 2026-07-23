@@ -936,7 +936,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("serializes concurrent picture-in-picture open and close operations", () =>
+  effectIt.effect("closes an initializing picture-in-picture without blocking later opens", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const capturePage = vi.fn(async () => ({
@@ -944,16 +944,20 @@ describe("PreviewManager", () => {
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
-        let resolveLoad: (() => void) | undefined;
-        const { pictureInPictureWindow } = makeTestPictureInPictureWindow(
+        const { pictureInPictureWindow: initializingWindow } = makeTestPictureInPictureWindow(
           () =>
-            new Promise<void>((resolve) => {
-              resolveLoad = resolve;
+            new Promise<void>(() => {
+              // Simulate a renderer load that never settles.
             }),
         );
-        browserWindowConstructor.mockImplementation(function () {
-          return pictureInPictureWindow;
-        });
+        const { pictureInPictureWindow: reopenedWindow } = makeTestPictureInPictureWindow();
+        browserWindowConstructor
+          .mockImplementationOnce(function () {
+            return initializingWindow;
+          })
+          .mockImplementationOnce(function () {
+            return reopenedWindow;
+          });
         const states: PreviewManager.PreviewTabState[] = [];
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
@@ -977,17 +981,27 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
 
         expect(browserWindowConstructor).toHaveBeenCalledOnce();
-        expect(pictureInPictureWindow.loadURL).toHaveBeenCalledOnce();
-        expect(pictureInPictureWindow.close).not.toHaveBeenCalled();
-
-        resolveLoad?.();
+        expect(initializingWindow.loadURL).toHaveBeenCalledOnce();
+        expect(initializingWindow.close).toHaveBeenCalledOnce();
         yield* Fiber.join(firstOpen);
         yield* Fiber.join(secondOpen);
         yield* Fiber.join(close);
 
-        expect(browserWindowConstructor).toHaveBeenCalledOnce();
-        expect(pictureInPictureWindow.showInactive).toHaveBeenCalledTimes(2);
-        expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
+        expect(initializingWindow.showInactive).toHaveBeenCalledOnce();
+        expect(capturePage).not.toHaveBeenCalled();
+        expect(states.at(-1)?.pictureInPicture).toBe(false);
+
+        yield* manager.openPictureInPicture("tab_concurrent_pip");
+
+        expect(browserWindowConstructor).toHaveBeenCalledTimes(2);
+        expect(reopenedWindow.showInactive).toHaveBeenCalledOnce();
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(states.at(-1)?.pictureInPicture).toBe(true);
+
+        yield* manager.closePictureInPicture("tab_concurrent_pip");
+
+        expect(browserWindowConstructor).toHaveBeenCalledTimes(2);
+        expect(reopenedWindow.close).toHaveBeenCalledOnce();
         expect(states.at(-1)?.pictureInPicture).toBe(false);
         const capturesAfterClose = capturePage.mock.calls.length;
         yield* TestClock.adjust(200);
