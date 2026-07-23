@@ -83,4 +83,14 @@ describe("parseClaudeUsageLimitsJson", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("uses the reset zone's local year around the UTC new-year boundary", () => {
+    const output = JSON.stringify({
+      result: "Current session: 30% used \u00b7 resets Dec 31, 11pm (America/Los_Angeles)",
+    });
+
+    expect(
+      parseClaudeUsageLimitsJson(output, "2027-01-01T00:30:00.000Z")?.windows[0]?.resetsAt,
+    ).toBe("2027-01-01T07:00:00.000Z");
+  });
 });
