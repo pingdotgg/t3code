@@ -369,10 +369,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-glass-host {
-    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-black));
+
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface) var(--glass-opacity),
+      transparent
+    );
     box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
+  }
+
+  .dark .chat-composer-glass-host {
+    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
   }
 
   .alert-glass {
@@ -600,7 +610,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
 
     .chat-composer-glass-host {
-      background: var(--background);
+      background: var(--chat-composer-glass-surface);
     }
 
     .dialog-glass,
