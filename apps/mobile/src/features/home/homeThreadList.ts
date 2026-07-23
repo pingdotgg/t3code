@@ -59,24 +59,31 @@ export function buildHomeProjectScopes(input: {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
+  const projectsByPhysicalKey = new Map<string, EnvironmentProject[]>();
+  for (const project of projects) {
+    const physicalKey = derivePhysicalProjectKey(project);
+    const existing = projectsByPhysicalKey.get(physicalKey);
+    if (existing) existing.push(project);
+    else projectsByPhysicalKey.set(physicalKey, [project]);
+  }
+
   const winnersByPhysicalKey = new Map<
     string,
     { readonly key: string; readonly project: EnvironmentProject }
   >();
-  for (const project of projects) {
-    const physicalKey = derivePhysicalProjectKey(project);
-    const existing = winnersByPhysicalKey.get(physicalKey);
-    if (
-      !existing ||
-      getProjectFreshnessTimestamp(project) > getProjectFreshnessTimestamp(existing.project) ||
-      (getProjectFreshnessTimestamp(project) === getProjectFreshnessTimestamp(existing.project) &&
-        project.id > existing.project.id)
-    ) {
-      winnersByPhysicalKey.set(physicalKey, {
-        key: deriveLogicalProjectKey(project, { groupingMode: input.projectGroupingMode }),
-        project,
-      });
-    }
+  for (const [physicalKey, members] of projectsByPhysicalKey) {
+    const project = members.reduce((winner, candidate) => {
+      const freshnessDelta =
+        getProjectFreshnessTimestamp(candidate) - getProjectFreshnessTimestamp(winner);
+      return freshnessDelta > 0 || (freshnessDelta === 0 && candidate.id > winner.id)
+        ? candidate
+        : winner;
+    });
+    const identitySource = members.find((member) => member.repositoryIdentity !== null) ?? project;
+    winnersByPhysicalKey.set(physicalKey, {
+      key: deriveLogicalProjectKey(identitySource, { groupingMode: input.projectGroupingMode }),
+      project,
+    });
   }
 
   const groups = new Map<string, EnvironmentProject[]>();

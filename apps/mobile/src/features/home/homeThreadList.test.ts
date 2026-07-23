@@ -177,6 +177,55 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.id).toBe(canonicalRemote.id);
   });
 
+  it("keeps repository identity from an older duplicate when the freshness winner lacks it", () => {
+    const localEnvironmentId = EnvironmentId.make("environment-local");
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+    };
+    const projects = [
+      makeProject({
+        environmentId: localEnvironmentId,
+        id: ProjectId.make("project-local"),
+        title: "t3code",
+        repositoryIdentity,
+      }),
+      makeProject({
+        environmentId: remoteEnvironmentId,
+        id: ProjectId.make("project-remote-with-identity"),
+        title: "t3code",
+        workspaceRoot: "/remote/t3code",
+        repositoryIdentity,
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }),
+      makeProject({
+        environmentId: remoteEnvironmentId,
+        id: ProjectId.make("project-remote-fresh"),
+        title: "t3code",
+        workspaceRoot: "/remote/t3code/",
+        updatedAt: "2026-06-02T00:00:00.000Z",
+      }),
+    ];
+
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+
+    expect(scopes).toHaveLength(1);
+    expect(scopes[0]?.representative.id).toBe(ProjectId.make("project-local"));
+    expect(scopes[0]?.projects.map((project) => project.id)).toContain(
+      ProjectId.make("project-remote-fresh"),
+    );
+    expect(scopes[0]?.projectRefs).toHaveLength(3);
+  });
+
   it("sorts v2 project scopes by their grouped thread activity", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const olderProject = makeProject({
