@@ -138,7 +138,6 @@ describe("source control right panel surface visibility", () => {
     const groupedProjectBCwd = "/repos/grouped-project-b";
 
     useRightPanelStore.getState().open(groupedProjectARef, "source-control");
-    useRightPanelStore.getState().open(groupedProjectARef, "source-control");
 
     const initialByThreadKey = useRightPanelStore.getState().byThreadKey;
     expect(selectActiveRightPanelSurface(initialByThreadKey, groupedProjectBRef)).toBeNull();
@@ -191,6 +190,18 @@ describe("source control right panel surface visibility", () => {
     );
     expect(selectSourceControlMetadataError(metadataErrors, projectBThreadKey)).toBeNull();
     expect(retainThreadKeyRecord(metadataErrors, new Set([projectBThreadKey]))).toEqual({});
+  });
+
+  it("does not update the store when retargeting to the same scoped thread", () => {
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+    const initialByThreadKey = useRightPanelStore.getState().byThreadKey;
+
+    retargetOpenSourceControlSurface({
+      currentThreadRef: activeThreadRef,
+      nextThreadRef: activeThreadRef,
+    });
+
+    expect(useRightPanelStore.getState().byThreadKey).toBe(initialByThreadKey);
   });
 });
 

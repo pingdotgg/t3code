@@ -185,6 +185,7 @@ export function retargetOpenSourceControlSurface(input: {
   readonly currentThreadRef: ScopedThreadRef;
   readonly nextThreadRef: ScopedThreadRef;
 }): void {
+  if (scopedThreadKey(input.currentThreadRef) === scopedThreadKey(input.nextThreadRef)) return;
   const store = useRightPanelStore.getState();
   const activeSurface = selectActiveRightPanelSurface(store.byThreadKey, input.currentThreadRef);
   if (activeSurface?.kind !== "source-control") return;
