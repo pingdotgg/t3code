@@ -1,9 +1,9 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
-import { useOpenAddProjectCommandPalette } from "~/commandPaletteContext";
+import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { sortScopedProjectsForSidebar } from "../Sidebar.logic";
@@ -29,7 +29,7 @@ export function DraftHeroHeadline({
   const projects = useProjects();
   const threads = useThreadShells();
   const handleNewThread = useNewThreadHandler();
-  const openAddProject = useOpenAddProjectCommandPalette();
+  const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   const orderedProjects = useMemo(
     () => sortScopedProjectsForSidebar(projects, threads, "updated_at"),

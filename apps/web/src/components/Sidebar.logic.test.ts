@@ -20,6 +20,7 @@ import {
   resolveThreadRowClassName,
   resolveSidebarV2Status,
   resolveThreadStatusPill,
+  shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
@@ -41,6 +42,56 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldNavigateAfterProjectRemoval", () => {
+  const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
+
+  it("navigates away from a draft route owned by the removed project", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: { kind: "draft", draftId: "draft-1" as never },
+        projectThreads,
+        projectDraftId: "draft-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not navigate away from a different draft route", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: { kind: "draft", draftId: "draft-2" as never },
+        projectThreads,
+        projectDraftId: "draft-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("navigates away from a server thread owned by the removed project", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: {
+          kind: "server",
+          threadRef: {
+            environmentId: EnvironmentId.make("environment-local"),
+            threadId: ThreadId.make("thread-1"),
+          },
+        },
+        projectThreads,
+        projectDraftId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not navigate from an unrelated route", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: null,
+        projectThreads,
+        projectDraftId: null,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("archiveSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -834,26 +885,24 @@ describe("resolveThreadStatusPill", () => {
 });
 
 describe("resolveThreadRowClassName", () => {
-  it("uses the darker selected palette when a thread is both selected and active", () => {
+  it("uses the active sidebar surface when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
-    expect(className).toContain("bg-primary/22");
-    expect(className).toContain("hover:bg-primary/26");
-    expect(className).toContain("dark:bg-primary/30");
-    expect(className).not.toContain("bg-accent/85");
+    expect(className).toContain("bg-sidebar-row-active");
+    expect(className).toContain("text-sidebar-foreground");
+    expect(className).not.toContain("bg-primary");
   });
 
   it("uses selected hover colors for selected threads", () => {
     const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-primary/15");
-    expect(className).toContain("hover:bg-primary/19");
-    expect(className).toContain("dark:bg-primary/22");
-    expect(className).not.toContain("hover:bg-accent");
+    expect(className).toContain("bg-sidebar-row-selected");
+    expect(className).toContain("hover:bg-sidebar-row-active");
+    expect(className).not.toContain("bg-primary");
   });
 
-  it("keeps the accent palette for active-only threads", () => {
+  it("uses the active sidebar surface for active-only threads", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
-    expect(className).toContain("bg-accent/85");
-    expect(className).toContain("hover:bg-accent");
+    expect(className).toContain("bg-sidebar-row-active");
+    expect(className).toContain("hover:bg-sidebar-row-active");
   });
 });
 

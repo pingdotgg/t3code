@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -16,6 +17,8 @@ import {
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
 import { listCodexProviderSkillsWithTimeout } from "../ProviderSkillsLister.ts";
+
+const CodexArgsLog = Schema.fromJsonString(Schema.Array(Schema.String));
 
 const resolveMockAppServerPath = Effect.fn("resolveMockAppServerPath")(function* () {
   const path = yield* Path.Path;
@@ -187,11 +190,10 @@ describe("listCodexProviderSkills", () => {
           enabled: true,
         },
       ]);
-      expect(JSON.parse((yield* waitForFileContent(fixture.argsLogPath)).trim())).toEqual([
-        "app-server",
-        "--enable",
-        "workspace-skill-test",
-      ]);
+      const args = yield* Schema.decodeUnknownEffect(CodexArgsLog)(
+        (yield* waitForFileContent(fixture.argsLogPath)).trim(),
+      );
+      expect(args).toEqual(["app-server", "--enable", "workspace-skill-test"]);
       expect((yield* waitForFileContent(fixture.cwdLogPath)).trim()).toBe(fixture.cwd);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
