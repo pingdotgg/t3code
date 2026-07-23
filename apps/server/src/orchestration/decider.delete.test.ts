@@ -154,6 +154,87 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
     }),
   );
 
+  it.effect("rejects archived-only deletion when the project has a live thread", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const withArchivedThread = yield* projectEvent(readModel, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-archive-1"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-1"),
+        type: "thread.archived",
+        occurredAt: "2026-01-01T00:01:00.000Z",
+        commandId: asCommandId("cmd-thread-archive-1"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-archive-1"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-1"),
+          archivedAt: "2026-01-01T00:01:00.000Z",
+          updatedAt: "2026-01-01T00:01:00.000Z",
+        },
+      });
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.delete",
+            commandId: asCommandId("cmd-project-delete-archived-only-mixed"),
+            projectId: asProjectId("project-delete"),
+            deleteArchivedThreads: true,
+          },
+          readModel: withArchivedThread,
+        }),
+      );
+
+      expect(error.message).toContain("cannot be deleted without force=true");
+    }),
+  );
+
+  it.effect("deletes a project containing only archived threads without force", () =>
+    Effect.gen(function* () {
+      let readModel = yield* seedReadModel;
+      for (const [index, threadId] of ["thread-delete-1", "thread-delete-2"].entries()) {
+        const sequence = readModel.snapshotSequence + 1;
+        const archivedAt = `2026-01-01T00:0${index + 1}:00.000Z`;
+        readModel = yield* projectEvent(readModel, {
+          sequence,
+          eventId: asEventId(`evt-thread-archive-${index + 1}`),
+          aggregateKind: "thread",
+          aggregateId: asThreadId(threadId),
+          type: "thread.archived",
+          occurredAt: archivedAt,
+          commandId: asCommandId(`cmd-thread-archive-${index + 1}`),
+          causationEventId: null,
+          correlationId: asCommandId(`cmd-thread-archive-${index + 1}`),
+          metadata: {},
+          payload: {
+            threadId: asThreadId(threadId),
+            archivedAt,
+            updatedAt: archivedAt,
+          },
+        });
+      }
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-archived-only"),
+          projectId: asProjectId("project-delete"),
+          deleteArchivedThreads: true,
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.deleted",
+        "thread.deleted",
+        "project.deleted",
+      ]);
+    }),
+  );
+
   it.effect("reuses thread.delete semantics when force-deleting a non-empty project", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;

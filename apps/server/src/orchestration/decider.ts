@@ -239,7 +239,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const activeThreads = listThreadsByProjectId(readModel, command.projectId).filter(
         (thread) => thread.deletedAt === null,
       );
-      if (activeThreads.length > 0 && command.force !== true) {
+      const hasLiveThreads = activeThreads.some((thread) => thread.archivedAt === null);
+      if (
+        activeThreads.length > 0 &&
+        command.force !== true &&
+        (command.deleteArchivedThreads !== true || hasLiveThreads)
+      ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,

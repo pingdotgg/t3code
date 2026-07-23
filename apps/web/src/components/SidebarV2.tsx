@@ -882,9 +882,14 @@ export default function SidebarV2() {
         environmentId: project.environmentId,
         input: {
           projectId: project.id,
-          // Archived shells are intentionally absent from `threads`, but the
-          // server still needs force=true to delete them and their cold bundle.
-          force: true,
+          ...(projectThreads.length > 0
+            ? { force: true }
+            : {
+                // Archived shells are intentionally absent from `threads`.
+                // Keep the server's live-thread precondition while opting their
+                // cold bundles into project removal.
+                deleteArchivedThreads: true,
+              }),
         },
       });
       if (result._tag === "Failure") {
