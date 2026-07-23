@@ -113,10 +113,7 @@ export function buildHomeProjectScopes(input: {
     const representative = projects[0]!;
     return {
       key,
-      title:
-        projects.length > 1
-          ? deriveProjectGroupLabel({ representative, members: projects })
-          : representative.title,
+      title: deriveProjectGroupLabel({ representative, members: projects }),
       representative,
       projects,
       projectRefs: projectRefsByGroup.get(key) ?? [],

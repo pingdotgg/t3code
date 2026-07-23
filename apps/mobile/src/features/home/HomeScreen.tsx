@@ -372,6 +372,21 @@ export function HomeScreen(props: HomeScreenProps) {
           ) ?? null),
     [v2ProjectScopeKey, v2ScopeProjects],
   );
+  const v2ProjectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        v2ScopeProjects.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
+      ),
+    [v2ScopeProjects],
+  );
   const v2ScopedProjectKeys = useMemo(
     () =>
       v2ScopedProjectGroup === null
@@ -493,6 +508,9 @@ export function HomeScreen(props: HomeScreenProps) {
           projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
           null
         }
+        projectTitle={v2ProjectTitleByProjectKey.get(
+          scopedProjectKey(item.thread.environmentId, item.thread.projectId),
+        )}
         providerDriver={
           serverConfigs
             .get(item.thread.environmentId)
@@ -536,6 +554,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
+      v2ProjectTitleByProjectKey,
     ],
   );
   const v2KeyExtractor = useCallback(
