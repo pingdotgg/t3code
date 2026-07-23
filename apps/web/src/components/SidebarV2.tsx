@@ -90,7 +90,6 @@ import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
   firstValidTimestampMs,
-  buildSidebarV2ProjectActionItems,
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -797,6 +796,9 @@ export default function SidebarV2() {
     null,
   );
   const [projectRenameTitle, setProjectRenameTitle] = useState("");
+  const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
+    null,
+  );
   const [projectGroupingTarget, setProjectGroupingTarget] =
     useState<SidebarProjectGroupMember | null>(null);
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
@@ -1118,44 +1120,12 @@ export default function SidebarV2() {
   ]);
 
   const handleProjectActions = useCallback(
-    async (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
+    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
-      const api = readLocalApi();
-      if (!api) return;
-      const clicked = await api.contextMenu.show(
-        buildSidebarV2ProjectActionItems(projectGroup.memberProjects),
-        { x: event.clientX, y: event.clientY },
-      );
-      if (!clicked) return;
-      if (clicked === "remove-all") {
-        await handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
-        return;
-      }
-      const member = projectGroup.memberProjects.find((candidate) =>
-        clicked.endsWith(`:${candidate.physicalProjectKey}`),
-      );
-      if (!member) return;
-      if (clicked.startsWith("rename:")) {
-        setProjectRenameTarget(member);
-        setProjectRenameTitle(member.title);
-      } else if (clicked.startsWith("grouping:")) {
-        const overrideKey = deriveProjectGroupingOverrideKey(member);
-        setProjectGroupingTarget(member);
-        setProjectGroupingSelection(
-          projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
-        );
-      } else if (clicked.startsWith("copy-path:")) {
-        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot });
-      } else if (clicked.startsWith("remove:")) {
-        await handleRemoveProjectMembers(projectGroup, [member]);
-      }
+      setProjectActionsTarget(projectGroup);
     },
-    [
-      copyProjectPath,
-      handleRemoveProjectMembers,
-      projectGroupingSettings.sidebarProjectGroupingOverrides,
-    ],
+    [],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
@@ -2015,6 +1985,123 @@ export default function SidebarV2() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
+      <Dialog
+        open={projectActionsTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setProjectActionsTarget(null);
+        }}
+      >
+        <DialogPopup className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Manage {projectActionsTarget?.displayName ?? "project"}</DialogTitle>
+            <DialogDescription>
+              {projectActionsTarget && projectActionsTarget.memberProjects.length > 1
+                ? "Manage each environment's project entry independently."
+                : "Rename, regroup, copy, or remove this project entry."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            {projectActionsTarget?.memberProjects.map((member) => (
+              <div
+                key={member.physicalProjectKey}
+                className="rounded-lg border border-border/70 bg-muted/20 p-3"
+              >
+                <div className="flex min-w-0 items-start gap-2">
+                  <ProjectFavicon
+                    environmentId={member.environmentId}
+                    cwd={member.workspaceRoot}
+                    className="mt-0.5 size-4 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {member.title}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {member.environmentLabel
+                        ? `${member.environmentLabel} · ${member.workspaceRoot}`
+                        : member.workspaceRoot}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setProjectActionsTarget(null);
+                      setProjectRenameTarget(member);
+                      setProjectRenameTitle(member.title);
+                    }}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setProjectActionsTarget(null);
+                      setProjectGroupingTarget(member);
+                      setProjectGroupingSelection(
+                        projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                          deriveProjectGroupingOverrideKey(member)
+                        ] ?? "inherit",
+                      );
+                    }}
+                  >
+                    Grouping
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
+                    }
+                  >
+                    Copy path
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="ml-auto"
+                    onClick={() => {
+                      const projectGroup = projectActionsTarget;
+                      if (!projectGroup) return;
+                      setProjectActionsTarget(null);
+                      void handleRemoveProjectMembers(projectGroup, [member]);
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {projectActionsTarget && projectActionsTarget.memberProjects.length > 1 ? (
+              <div className="flex items-center justify-between gap-4 border-t border-border/70 pt-3">
+                <p className="text-xs text-muted-foreground">
+                  Removes every grouped entry and its conversation history.
+                </p>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="shrink-0"
+                  onClick={() => {
+                    const projectGroup = projectActionsTarget;
+                    setProjectActionsTarget(null);
+                    void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
+                  }}
+                >
+                  Remove all entries
+                </Button>
+              </div>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProjectActionsTarget(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       <Dialog
         open={projectRenameTarget !== null}
         onOpenChange={(open) => {

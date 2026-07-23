@@ -44,63 +44,6 @@ type LogicalSidebarProject = SidebarProject & {
   }[];
 };
 
-type ProjectActionMember = {
-  readonly physicalProjectKey: string;
-  readonly title: string;
-  readonly workspaceRoot: string;
-  readonly environmentLabel: string | null;
-};
-
-export function buildSidebarV2ProjectActionItems(
-  members: readonly ProjectActionMember[],
-): ContextMenuItem<string>[] {
-  const memberLabel = (member: ProjectActionMember) =>
-    members.length > 1
-      ? member.environmentLabel
-        ? `${member.environmentLabel} — ${member.workspaceRoot}`
-        : member.workspaceRoot
-      : member.title;
-  const targetedItem = (
-    action: "rename" | "grouping" | "copy-path" | "remove",
-    label: string,
-    destructive = false,
-  ): ContextMenuItem<string> => {
-    if (members.length === 1) {
-      return {
-        id: `${action}:${members[0]!.physicalProjectKey}`,
-        label,
-        ...(destructive ? { destructive: true, icon: "trash" as const } : {}),
-      };
-    }
-    return {
-      id: `${action}:submenu`,
-      label,
-      children: members.map((member) => ({
-        id: `${action}:${member.physicalProjectKey}`,
-        label: memberLabel(member),
-        ...(destructive ? { destructive: true } : {}),
-      })),
-    };
-  };
-
-  return [
-    targetedItem("rename", members.length > 1 ? "Rename project entry" : "Rename"),
-    targetedItem("grouping", "Group into…"),
-    targetedItem("copy-path", "Copy Path"),
-    targetedItem("remove", "Remove", true),
-    ...(members.length > 1
-      ? [
-          {
-            id: "remove-all",
-            label: "Remove all grouped entries…",
-            destructive: true,
-            icon: "trash" as const,
-          },
-        ]
-      : []),
-  ];
-}
-
 export type ThreadTraversalDirection = "previous" | "next";
 
 export async function archiveSelectedThreadEntries<
