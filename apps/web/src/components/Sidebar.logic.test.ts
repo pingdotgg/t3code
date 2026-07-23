@@ -17,6 +17,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  pruneSidebarChangeRequestStates,
   resolveSidebarThreadGitCwd,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -793,6 +794,26 @@ describe("resolveSidebarThreadGitCwd", () => {
         sidebarProjectCwd: "/sidebar-project",
       }),
     ).toBe("/sidebar-project");
+  });
+});
+
+describe("pruneSidebarChangeRequestStates", () => {
+  it("drops state for removed and archived threads", () => {
+    expect(
+      pruneSidebarChangeRequestStates(
+        new Map([
+          ["active", "open"],
+          ["removed", "closed"],
+          ["archived", "merged"],
+        ]),
+        new Set(["active"]),
+      ),
+    ).toEqual(new Map([["active", "open"]]));
+  });
+
+  it("preserves map identity when every state still belongs to a live thread", () => {
+    const current = new Map([["active", "open"]]);
+    expect(pruneSidebarChangeRequestStates(current, new Set(["active"]))).toBe(current);
   });
 });
 

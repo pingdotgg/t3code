@@ -81,6 +81,19 @@ export function resolveSidebarThreadGitCwd(input: {
   return input.worktreePath ?? input.threadProjectCwd ?? input.sidebarProjectCwd;
 }
 
+export function pruneSidebarChangeRequestStates<T>(
+  current: ReadonlyMap<string, T>,
+  liveThreadKeys: ReadonlySet<string>,
+): ReadonlyMap<string, T> {
+  let next: Map<string, T> | null = null;
+  for (const threadKey of current.keys()) {
+    if (liveThreadKeys.has(threadKey)) continue;
+    next ??= new Map(current);
+    next.delete(threadKey);
+  }
+  return next ?? current;
+}
+
 export function isSidebarThreadEffectivelySettled(input: {
   readonly thread: SidebarThreadSummary;
   readonly settlementSupported: boolean;
