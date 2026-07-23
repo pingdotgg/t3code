@@ -15,7 +15,6 @@ struct SergeCodeApp: App {
     private let multi: MultiDeviceModel
     // Alpine identity: Dolomites photo pool + per-thread scene assignment.
     private let scenery = SceneryStore()
-    private let passport = PassportStore()
     // Sparkle auto-updater controller
     private let updaterController: SPUStandardUpdaterController
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -100,8 +99,7 @@ struct SergeCodeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(multi: multi, scenery: scenery, passport: passport)
-                .environment(passport)
+            RootView(multi: multi, scenery: scenery)
                 .environment(\.colorScheme, .dark)
                 .preferredColorScheme(.dark)
                 .background(DarkAppearanceConfigurator())
@@ -134,10 +132,6 @@ struct SergeCodeApp: App {
                 .task {
                     Task { await CodeHighlighter.shared.warm() }
                     await scenery.start()
-                    passport.backfill(
-                        sets: scenery.availableSets,
-                        namesBySet: scenery.passportNamesBySet,
-                        assignments: scenery.passportAssignments)
                 }
                 .onReceive(
                     NotificationCenter.default.publisher(
@@ -184,7 +178,7 @@ struct SergeCodeApp: App {
                 // own New Session sheet.
                 Button("New Session") {
                     NewSessionWindowController.shared.show(
-                        multi: multi, scenery: scenery, passport: passport)
+                        multi: multi, scenery: scenery)
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
@@ -195,7 +189,6 @@ struct SergeCodeApp: App {
                 model: multi.local,
                 scenery: scenery,
                 backend: SergeCodeApp.backend,
-                passport: passport,
                 multi: multi)
                 .environment(\.colorScheme, .dark)
                 .preferredColorScheme(.dark)

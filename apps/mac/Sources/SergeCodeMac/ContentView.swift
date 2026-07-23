@@ -5,12 +5,10 @@ import SwiftUI
 struct RootView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
-    let passport: PassportStore
 
     @UIState private var showInspector = true
     @UIState private var showAgentsPanel = false
     @UIState private var showNewSessionSheet = false
-    @UIState private var showPassportSheet = false
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var model: AppModel { multi.activeModel }
@@ -26,7 +24,7 @@ struct RootView: View {
                 }
             }
         )) {
-            SidebarView(multi: multi, scenery: scenery, passport: passport)
+            SidebarView(multi: multi, scenery: scenery)
                 .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 360)
         } detail: {
             Group {
@@ -116,16 +114,6 @@ struct RootView: View {
                 .disabled(model.selectedThread == nil)
             }
             .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showPassportSheet = true
-                } label: {
-                    Label("Passport", systemImage: "book.closed")
-                }
-                .buttonStyle(AlpineToolbarIconButtonStyle())
-                .help("Passport")
-            }
-            .sharedBackgroundVisibility(.hidden)
         }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
@@ -137,14 +125,7 @@ struct RootView: View {
             NewSessionSheet(
                 multi: multi,
                 scenery: scenery,
-                passport: passport,
                 isPresented: $showNewSessionSheet)
-        }
-        .sheet(isPresented: $showPassportSheet) {
-            PassportView(
-                scenery: scenery,
-                passport: passport,
-                isPresented: $showPassportSheet)
         }
     }
 
@@ -212,8 +193,7 @@ struct RootView: View {
             if let thread = await owner.createSceneThread(
                 projectID: projectID,
                 provider: provider,
-                scenery: scenery,
-                passport: passport)
+                scenery: scenery)
             {
                 multi.select(threadID: thread.id, on: deviceID)
             }

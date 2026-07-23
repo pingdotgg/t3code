@@ -12,7 +12,6 @@ private enum SidebarRowContext {
 struct SidebarView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
-    let passport: PassportStore
 
     private struct ProjectActionTarget {
         let model: AppModel
@@ -346,8 +345,7 @@ struct SidebarView: View {
             if let thread = await model.createSceneThread(
                 projectID: member.project.id,
                 provider: provider,
-                scenery: scenery,
-                passport: passport)
+                scenery: scenery)
             {
                 multi.select(threadID: thread.id, on: member.location.id)
             }

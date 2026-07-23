@@ -7,7 +7,6 @@ import SwiftUI
 struct NewSessionSheet: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
-    let passport: PassportStore
     @Binding var isPresented: Bool
 
     @UIState private var mode: Mode = .existing
@@ -336,7 +335,6 @@ struct NewSessionSheet: View {
                 projectID: projectID,
                 provider: provider,
                 scenery: scenery,
-                passport: passport,
                 scenerySetId: validScenerySetOverride)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -347,7 +345,6 @@ struct NewSessionSheet: View {
                     projectID: project.id,
                     provider: provider,
                     scenery: scenery,
-                    passport: passport,
                     scenerySetId: validScenerySetOverride)
             }
         }
@@ -455,7 +452,7 @@ final class NewSessionWindowController: NSObject, NSWindowDelegate {
     static let shared = NewSessionWindowController()
     private var window: NSWindow?
 
-    func show(multi: MultiDeviceModel, scenery: SceneryStore, passport: PassportStore) {
+    func show(multi: MultiDeviceModel, scenery: SceneryStore) {
         // Always mint a fresh sheet — reusing a cached window would leak the
         // previous invocation's typed path/selected provider into this one.
         window?.close()
@@ -468,7 +465,7 @@ final class NewSessionWindowController: NSObject, NSWindowDelegate {
             })
         let hosting = NSHostingController(
             rootView: NewSessionSheet(
-                multi: multi, scenery: scenery, passport: passport, isPresented: dismiss))
+                multi: multi, scenery: scenery, isPresented: dismiss))
         hosting.sizingOptions = [.preferredContentSize]
         let panel = NSWindow(contentViewController: hosting)
         DarkAppearanceConfigurator.applyAppearance(to: panel)

@@ -6,7 +6,7 @@ Use **SurgeCode** in all user-facing copy. The internal identifiers that intenti
 
 ## Mark
 
-The primary mark is `passportPeak`: a stamp ring enclosing twin peaks, tied to the Passport feature. `surgePeak` and `notchPeak` remain in code as unshipped explorations. Use the mark in the About window and empty state. Do not use it in the sidebar, toolbars, sheets, or Settings. Minimum size is 16pt. Clear space is 25% of the mark width on every side.
+The primary mark is `passportPeak`: a stamp ring enclosing twin peaks. The case name is historical brand geometry only; there is no Passport product feature. `surgePeak` and `notchPeak` remain in code as unshipped explorations. Use the mark in the About window and empty state. Do not use it in the sidebar, toolbars, sheets, or Settings. Minimum size is 16pt. Clear space is 25% of the mark width on every side.
 
 ## Palette
 

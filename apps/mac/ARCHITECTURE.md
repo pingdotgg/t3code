@@ -63,6 +63,15 @@ a supervised child process.
   ^22.16 || ^23.11 || >=24.10); bundling a Node runtime into the .app is a
   post-v1 packaging task.
 
+### Retired local data
+
+The collectible Passport feature has been removed. Existing installs may still
+have an unused file at
+`~/Library/Application Support/SergeCode/scenery/passport.json`. The app no
+longer reads, writes, or surfaces it. Leave it in place (safe no-op) or delete
+it manually; scenery image sets, place naming, and thread photo assignment are
+unaffected.
+
 ## Wire protocol
 
 See `docs/wire-protocol.md` (generated from packages/contracts +

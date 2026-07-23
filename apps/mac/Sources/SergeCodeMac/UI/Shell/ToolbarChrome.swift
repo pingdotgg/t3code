@@ -46,7 +46,7 @@ private struct AlpineToolbarChipModifier: ViewModifier {
 
 // MARK: - Icon button style
 
-/// 28×28 glass icon chip for toolbar icon buttons (Inspector, Passport).
+/// 28×28 glass icon chip for toolbar icon buttons (Inspector).
 struct AlpineToolbarIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         AlpineToolbarIconButtonBody(configuration: configuration)
