@@ -166,12 +166,35 @@ describe("buildThreadListV2Items", () => {
         }),
       ],
       environmentId: null,
-      projectRef: { environmentId, projectId: ProjectId.make("project-1") },
+      projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
       searchQuery: "",
       now: NOW,
     });
 
     expect(items.map((item) => item.thread.id)).toEqual(["included"]);
+  });
+
+  it("scopes the flat list to every environment member of a logical project", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("local"), title: "Local" }),
+        makeThread({
+          environmentId: remoteEnvironmentId,
+          id: ThreadId.make("remote"),
+          title: "Remote",
+        }),
+      ],
+      environmentId: null,
+      projectRefs: [
+        { environmentId, projectId: ProjectId.make("project-1") },
+        { environmentId: remoteEnvironmentId, projectId: ProjectId.make("project-1") },
+      ],
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["local", "remote"]);
   });
 });
 

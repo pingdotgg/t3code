@@ -22,7 +22,7 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
-  connectionStatusText,
+  connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import {
@@ -1815,7 +1815,7 @@ function ChatViewContent(props: ChatViewProps) {
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: connection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusText(connection)}`,
+        title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(connection)}`,
         description:
           connection.error ??
           "Reconnect this environment before sending messages or running actions.",
@@ -5592,7 +5592,7 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div className="chat-composer-glass-host mx-auto w-full max-w-3xl rounded-[22px]">
+                    <div className="chat-composer-glass-host relative z-10 mx-auto w-full max-w-3xl rounded-[22px]">
                       <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                         <ChatComposer
                           composerRef={composerRef}
@@ -5670,41 +5670,41 @@ function ChatViewContent(props: ChatViewProps) {
                           onExpandImage={onExpandTimelineImage}
                         />
                       </div>
-                      <div className="min-h-0">
-                        <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                          className="relative z-0"
-                        >
-                          {isGitRepo && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
-                                    }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
-                            </div>
-                          )}
-                        </div>
+                    </div>
+                    <div className="min-h-0">
+                      <div
+                        data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
+                        className="relative z-0"
+                      >
+                        {isGitRepo && (
+                          <div className="pointer-events-auto">
+                            <BranchToolbar
+                              environmentId={activeThread.environmentId}
+                              threadId={activeThread.id}
+                              {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                              onEnvModeChange={onEnvModeChange}
+                              startFromOrigin={startFromOrigin}
+                              onStartFromOriginChange={onStartFromOriginChange}
+                              {...(canOverrideServerThreadEnvMode
+                                ? { effectiveEnvModeOverride: envMode }
+                                : {})}
+                              {...(canOverrideServerThreadEnvMode
+                                ? {
+                                    activeThreadBranchOverride: activeThreadBranch,
+                                    onActiveThreadBranchOverrideChange:
+                                      setPendingServerThreadBranch,
+                                  }
+                                : {})}
+                              envLocked={envLocked}
+                              onComposerFocusRequest={scheduleComposerFocus}
+                              {...(canCheckoutPullRequestIntoThread
+                                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                                : {})}
+                              {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                              availableEnvironments={logicalProjectEnvironments}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div
