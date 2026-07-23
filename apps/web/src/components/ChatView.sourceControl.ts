@@ -9,7 +9,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerThreadTarget, DraftId } from "../composerDraftStore";
-import { type RightPanelSurface, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectActiveRightPanelSurface,
+  type RightPanelSurface,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import {
   clearThreadErrorRecord,
   retainThreadKeyRecord,
@@ -175,6 +179,16 @@ export function selectSourceControlMetadataError(
   activeThreadKey: string | null,
 ): string | null {
   return activeThreadKey === null ? null : (metadataErrorsByThreadKey[activeThreadKey] ?? null);
+}
+
+export function retargetOpenSourceControlSurface(input: {
+  readonly currentThreadRef: ScopedThreadRef;
+  readonly nextThreadRef: ScopedThreadRef;
+}): void {
+  const store = useRightPanelStore.getState();
+  const activeSurface = selectActiveRightPanelSurface(store.byThreadKey, input.currentThreadRef);
+  if (activeSurface?.kind !== "source-control") return;
+  store.open(input.nextThreadRef, "source-control");
 }
 
 export async function runSourceControlServerMetadataUpdate(

@@ -17,6 +17,7 @@ import {
   resolveSourceControlPanelTarget,
   resolveVisibleSourceControlSurface,
   resolveSourceControlDraftMetadataTarget,
+  retargetOpenSourceControlSurface,
   runSourceControlServerMetadataUpdate,
   selectSourceControlMetadataError,
   sourceControlMetadataErrorFromFailure,
@@ -138,18 +139,24 @@ describe("source control right panel surface visibility", () => {
 
     useRightPanelStore.getState().open(groupedProjectARef, "source-control");
     useRightPanelStore.getState().open(groupedProjectARef, "source-control");
-    useRightPanelStore.getState().open(groupedProjectBRef, "source-control");
+
+    const initialByThreadKey = useRightPanelStore.getState().byThreadKey;
+    expect(selectActiveRightPanelSurface(initialByThreadKey, groupedProjectBRef)).toBeNull();
+
+    retargetOpenSourceControlSurface({
+      currentThreadRef: groupedProjectARef,
+      nextThreadRef: groupedProjectBRef,
+    });
 
     const byThreadKey = useRightPanelStore.getState().byThreadKey;
-    const projectASurface = selectActiveRightPanelSurface(byThreadKey, groupedProjectARef);
-    const projectBSurface = selectActiveRightPanelSurface(byThreadKey, groupedProjectBRef);
-
     expect(selectThreadRightPanelState(byThreadKey, groupedProjectARef).surfaces).toEqual([
       sourceControlSurface,
     ]);
     expect(selectThreadRightPanelState(byThreadKey, groupedProjectBRef).surfaces).toEqual([
       sourceControlSurface,
     ]);
+    const projectASurface = selectActiveRightPanelSurface(byThreadKey, groupedProjectARef);
+    const projectBSurface = selectActiveRightPanelSurface(byThreadKey, groupedProjectBRef);
     expect(
       resolveSourceControlPanelTarget({
         activeThreadRef: groupedProjectARef,

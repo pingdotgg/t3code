@@ -255,6 +255,7 @@ import {
 } from "./ChatView.logic";
 import {
   resolveSourceControlPanelTarget,
+  retargetOpenSourceControlSurface,
   useSourceControlRightPanelSurfaceState,
   useSourceControlThreadMetadataRouting,
 } from "./ChatView.sourceControl";
@@ -2460,11 +2461,17 @@ function ChatViewContent(props: ChatViewProps) {
         (env) => env.environmentId === nextEnvironmentId,
       );
       if (!target) return;
+      if (activeThreadRef) {
+        retargetOpenSourceControlSurface({
+          currentThreadRef: activeThreadRef,
+          nextThreadRef: scopeThreadRef(target.environmentId, activeThreadRef.threadId),
+        });
+      }
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
       });
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [activeThreadRef, draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
   );
 
   const activeTerminalGroup =
