@@ -281,11 +281,23 @@ export const OrchestrationSession = Schema.Struct({
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
 
+/**
+ * Attribution of a checkpoint file change. "agent" means the content was
+ * authored during the turn (tool edits, command side effects, commits made in
+ * the turn). "git" means the byte-for-byte change is fully explained by
+ * pre-existing git history moving through the working tree (pull, checkout,
+ * cherry-pick, rebase). Absent on checkpoints captured before attribution
+ * shipped; treat absent as "agent".
+ */
+export const OrchestrationCheckpointFileOrigin = Schema.Literals(["agent", "git"]);
+export type OrchestrationCheckpointFileOrigin = typeof OrchestrationCheckpointFileOrigin.Type;
+
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
+  origin: Schema.optional(OrchestrationCheckpointFileOrigin),
 });
 export type OrchestrationCheckpointFile = typeof OrchestrationCheckpointFile.Type;
 
@@ -1236,6 +1248,14 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    /**
+     * Number of files in this range whose change is attributed to
+     * pre-existing git history. Reflects the same attribution pass that
+     * filtered (or, with includeGitChanges, deliberately kept) the patch in
+     * `diff`, so banners driven by it always agree with the rendered patch.
+     * Absent when attribution was unavailable.
+     */
+    gitFileCount: Schema.optionalKey(NonNegativeInt),
   }),
   { unsafePreserveChecks: true },
 );
@@ -1283,6 +1303,12 @@ export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+    /**
+     * Include changes attributed to pre-existing git history (pull, checkout,
+     * cherry-pick, rebase). Defaults to false: history-driven file sections
+     * are removed from the patch so it shows agent-authored work only.
+     */
+    includeGitChanges: Schema.optionalKey(Schema.Boolean),
   }),
   { unsafePreserveChecks: true },
 );
@@ -1295,6 +1321,8 @@ export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
   threadId: ThreadId,
   toTurnCount: NonNegativeInt,
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  /** See OrchestrationGetTurnDiffInput.includeGitChanges. */
+  includeGitChanges: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThreadDiffInput.Type;
 

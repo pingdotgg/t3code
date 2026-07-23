@@ -96,6 +96,24 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
   return [...subdirectories, ...files];
 }
 
+/**
+ * Split a turn's changed files into agent-authored work and changes that
+ * arrived via pre-existing git history (pull, checkout, cherry-pick, rebase).
+ * Files without an origin (captured before attribution shipped) count as
+ * agent work.
+ */
+export function partitionTurnDiffFiles(files: ReadonlyArray<TurnDiffFileChange>): {
+  agentFiles: ReadonlyArray<TurnDiffFileChange>;
+  gitFiles: ReadonlyArray<TurnDiffFileChange>;
+} {
+  const agentFiles: TurnDiffFileChange[] = [];
+  const gitFiles: TurnDiffFileChange[] = [];
+  for (const file of files) {
+    (file.origin === "git" ? gitFiles : agentFiles).push(file);
+  }
+  return { agentFiles, gitFiles };
+}
+
 export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffStat {
   return files.reduce(
     (acc, file) => {

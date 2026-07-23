@@ -46,6 +46,18 @@ export interface DeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+export interface AttributeCheckpointDiffInput {
+  readonly cwd: string;
+  readonly fromCheckpointRef: CheckpointRef;
+  readonly toCheckpointRef: CheckpointRef;
+}
+
+/**
+ * Per-path origin classification of a checkpoint tree delta, or null when
+ * attribution is unavailable (see VcsCheckpointAttribution).
+ */
+export type CheckpointAttribution = ReadonlyMap<string, "agent" | "git"> | null;
+
 /** Service tag for checkpoint persistence and restore operations. */
 export class CheckpointStore extends Context.Service<
   CheckpointStore,
@@ -93,6 +105,17 @@ export class CheckpointStore extends Context.Service<
     readonly deleteCheckpointRefs: (
       input: DeleteCheckpointRefsInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
+
+    /**
+     * Classify each path in a checkpoint-to-checkpoint tree delta as
+     * agent-authored or explained by pre-existing git history.
+     *
+     * Returns null when attribution is unavailable (legacy checkpoints
+     * without HEAD metadata, or truncated git output).
+     */
+    readonly attributeCheckpointDiff: (
+      input: AttributeCheckpointDiffInput,
+    ) => Effect.Effect<CheckpointAttribution, CheckpointStoreError>;
   }
 >()("t3/checkpointing/CheckpointStore") {}
 
@@ -157,6 +180,16 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.deleteCheckpointRefs(input);
   });
 
+  const attributeCheckpointDiff: CheckpointStore["Service"]["attributeCheckpointDiff"] = Effect.fn(
+    "attributeCheckpointDiff",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(
+      "CheckpointStore.attributeCheckpointDiff",
+      input.cwd,
+    );
+    return yield* checkpoints.attributeCheckpointDiff(input);
+  });
+
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
@@ -164,6 +197,7 @@ export const make = Effect.gen(function* () {
     restoreCheckpoint,
     diffCheckpoints,
     deleteCheckpointRefs,
+    attributeCheckpointDiff,
   });
 });
 
