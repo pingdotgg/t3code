@@ -56,6 +56,7 @@ import {
 import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { resizePreviewViewportTransaction } from "./previewResizeTransaction";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -425,28 +426,36 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationResizeInput;
             const setting = resolvePreviewViewport(input);
-            const result = await resize({
-              environmentId,
-              input: {
-                threadId: request.threadId,
-                tabId: ready.tabId,
-                viewport: setting,
-              },
-            });
-            if (result._tag === "Failure") {
-              return raiseAtomCommandFailure(result);
-            }
-            updatePreviewServerSnapshot(threadRef, result.value);
-            const viewport = await waitForRenderedViewport(
-              ready.tabId,
+            const previousSetting =
+              resolvePreviewAutomationTarget(readThreadPreviewState(threadRef), ready.tabId)
+                .snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
+            const timeoutMs = input.timeoutMs ?? request.timeoutMs;
+            const viewport = await resizePreviewViewportTransaction({
               setting,
-              input.timeoutMs ?? request.timeoutMs,
-              {
-                requestId: request.requestId,
-                environmentId,
-                threadId: request.threadId,
+              previousSetting,
+              timeoutMs,
+              applySetting: async (viewport) => {
+                const result = await resize({
+                  environmentId,
+                  input: {
+                    threadId: request.threadId,
+                    tabId: ready.tabId,
+                    viewport,
+                  },
+                });
+                if (result._tag === "Failure") {
+                  return raiseAtomCommandFailure(result);
+                }
+                return result.value;
               },
-            );
+              updateSnapshot: (snapshot) => updatePreviewServerSnapshot(threadRef, snapshot),
+              waitForViewport: (viewport, viewportTimeoutMs) =>
+                waitForRenderedViewport(ready.tabId, viewport, viewportTimeoutMs, {
+                  requestId: request.requestId,
+                  environmentId,
+                  threadId: request.threadId,
+                }),
+            });
             return {
               tabId: ready.tabId,
               setting,
