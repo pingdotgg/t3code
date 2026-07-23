@@ -120,7 +120,7 @@ export function effectiveSettled(
     // server's auto-unsettle lands.
     const serverAdjudicated =
       shell.settledOverride === "settled" &&
-      shell.settledAt !== null &&
+      shell.settledAt != null &&
       shell.latestUserMessageAt !== null &&
       Date.parse(shell.settledAt) >= Date.parse(shell.latestUserMessageAt);
     if (!serverAdjudicated) return false;

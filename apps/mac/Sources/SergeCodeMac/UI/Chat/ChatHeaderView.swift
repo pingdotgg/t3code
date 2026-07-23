@@ -120,6 +120,7 @@ private struct StatusBadge: View {
         case .backgroundWork: return "Background work"
         case .error: return "Error"
         case .archived: return "Archived"
+        case .settled: return "Settled"
         }
     }
 
@@ -133,6 +134,7 @@ private struct StatusBadge: View {
         case .backgroundWork: return "person.2.fill"
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
+        case .settled: return "checkmark.circle"
         }
     }
 
@@ -146,6 +148,7 @@ private struct StatusBadge: View {
         case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .secondary
+        case .settled: return .secondary
         }
     }
 }

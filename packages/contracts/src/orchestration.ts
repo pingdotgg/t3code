@@ -446,10 +446,10 @@ export const OrchestrationThread = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // Optional during the rolling migration: older persisted snapshots do not
+  // carry settled state, while current producers always emit explicit values.
+  settledOverride: Schema.optional(Schema.NullOr(Schema.Literals(["settled", "active"]))),
+  settledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -504,10 +504,10 @@ export const OrchestrationThreadShell = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // Optional during the rolling migration: older persisted snapshots do not
+  // carry settled state, while current producers always emit explicit values.
+  settledOverride: Schema.optional(Schema.NullOr(Schema.Literals(["settled", "active"]))),
+  settledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -942,6 +942,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
+  "thread.settled",
+  "thread.unsettled",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",

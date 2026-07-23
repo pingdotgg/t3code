@@ -915,6 +915,7 @@ private struct SidebarThreadStatus: View {
         case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .gray
+        case .settled: return .secondary
         }
     }
 
@@ -929,6 +930,7 @@ private struct SidebarThreadStatus: View {
         case .waitingApproval: return "exclamationmark.circle.fill"
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
+        case .settled: return "checkmark.circle"
         }
     }
 }

@@ -101,6 +101,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.unarchiveThread(id: id)
     }
 
+    public func settleThread(id: String) async throws {
+        await state.settleThread(id: id)
+    }
+
+    public func unsettleThread(id: String) async throws {
+        await state.unsettleThread(id: id)
+    }
+
     public func deleteThread(id: String) async throws {
         await state.deleteThread(id: id)
     }
@@ -613,6 +621,23 @@ private actor MockState {
 
     func unarchiveThread(id: String) {
         guard var thread = threadsByID[id], thread.status == .archived else { return }
+        thread.status = idleStatus(for: id)
+        thread.backgroundAgentCount = backgroundAgentsByThread[id] ?? 0
+        thread.updatedAt = Date()
+        threadsByID[id] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func settleThread(id: String) {
+        guard var thread = threadsByID[id], thread.status != .archived else { return }
+        thread.status = .settled
+        thread.updatedAt = Date()
+        threadsByID[id] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func unsettleThread(id: String) {
+        guard var thread = threadsByID[id], thread.status == .settled else { return }
         thread.status = idleStatus(for: id)
         thread.backgroundAgentCount = backgroundAgentsByThread[id] ?? 0
         thread.updatedAt = Date()

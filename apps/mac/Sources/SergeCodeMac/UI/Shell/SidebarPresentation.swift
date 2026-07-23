@@ -90,7 +90,7 @@ struct SidebarThreadItem {
     var isInProgress: Bool {
         return switch thread.status {
         case .running, .waiting, .waitingApproval, .backgroundWork: true
-        case .idle, .error, .archived: false
+        case .idle, .error, .archived, .settled: false
         }
     }
 
@@ -117,6 +117,7 @@ struct SidebarThreadItem {
         case .waitingApproval: "Needs approval"
         case .error: "Error"
         case .archived: "Archived"
+        case .settled: "Settled"
         }
     }
 }

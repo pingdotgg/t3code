@@ -134,7 +134,7 @@ struct AgentsPanel: View {
         if thread.isStalled { return true }
         switch thread.status {
         case .running, .backgroundWork, .waitingApproval: return true
-        case .idle, .waiting, .error, .archived: return false
+        case .idle, .waiting, .error, .archived, .settled: return false
         }
     }
 
@@ -380,6 +380,7 @@ private struct AgentsPanelSiblingRow: View {
         case .idle: return "idle"
         case .error: return "error"
         case .archived: return "archived"
+        case .settled: return "settled"
         }
     }
 
