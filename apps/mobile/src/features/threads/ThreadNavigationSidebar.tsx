@@ -257,10 +257,6 @@ function ThreadNavigationSidebarPane(
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
-  const scopedProjects = useMemo(
-    () => (selectedProjectScope === null ? projects : selectedProjectScope.projects),
-    [projects, selectedProjectScope],
-  );
   const selectedProjectRefs = useMemo(
     () =>
       selectedProjectScope === null
@@ -271,6 +267,15 @@ function ThreadNavigationSidebarPane(
             ),
           ),
     [selectedProjectScope],
+  );
+  const scopedProjects = useMemo(
+    () =>
+      selectedProjectRefs === null
+        ? projects
+        : projects.filter((project) =>
+            selectedProjectRefs.has(scopedProjectKey(project.environmentId, project.id)),
+          ),
+    [projects, selectedProjectRefs],
   );
   const scopedThreads = useMemo(
     () =>
