@@ -29,6 +29,19 @@ describe("resolveSnoozePresets", () => {
     expect(nextWeekDate.getDate()).toBe(13);
   });
 
+  it("whenLabel complements the label instead of repeating it", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
+    for (const preset of presets) {
+      // Day words live in the label column; the time column is time-only
+      // (plus a weekday for next week, which names a different day).
+      expect(preset.whenLabel.toLowerCase()).not.toContain("tomorrow");
+    }
+    const tomorrow = presets.find((preset) => preset.id === "tomorrow");
+    expect(tomorrow!.whenLabel).toMatch(/9/);
+    const nextWeek = presets.find((preset) => preset.id === "next-week");
+    expect(nextWeek!.whenLabel).toMatch(/Mon/);
+  });
+
   it("drops the evening preset once evening is near or past", () => {
     expect(resolveSnoozePresets(localDate(2026, 4, 8, 17, 30)).map((preset) => preset.id)).toEqual([
       "hour",

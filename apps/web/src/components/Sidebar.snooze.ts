@@ -13,8 +13,15 @@ type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
   readonly label: string;
+  /** Menu-row time column. Complements the label instead of repeating it:
+      "Tomorrow" pairs with "9:00 AM", not "tomorrow 9:00 AM". */
+  readonly whenLabel: string;
   /** ISO wake time. */
   readonly snoozedUntil: string;
+}
+
+function timeOfDayLabel(date: Date): string {
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 const EVENING_HOUR = 18;
@@ -43,11 +50,13 @@ function addDays(base: Date, days: number): Date {
  * the list starts at "Tomorrow".
  */
 export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+  const inAnHour = new Date(now.getTime() + HOUR_MS);
   const presets: SnoozePreset[] = [
     {
       id: "hour",
       label: "In 1 hour",
-      snoozedUntil: new Date(now.getTime() + HOUR_MS).toISOString(),
+      whenLabel: timeOfDayLabel(inAnHour),
+      snoozedUntil: inAnHour.toISOString(),
     },
   ];
 
@@ -55,16 +64,31 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   // Suppress the evening preset once it is within an hour (or past): it
   // would duplicate "In 1 hour" or point at the past.
   if (evening.getTime() - now.getTime() > HOUR_MS) {
-    presets.push({ id: "evening", label: "This evening", snoozedUntil: evening.toISOString() });
+    presets.push({
+      id: "evening",
+      label: "This evening",
+      whenLabel: timeOfDayLabel(evening),
+      snoozedUntil: evening.toISOString(),
+    });
   }
 
   const tomorrow = atHour(addDays(now, 1), MORNING_HOUR);
-  presets.push({ id: "tomorrow", label: "Tomorrow", snoozedUntil: tomorrow.toISOString() });
+  presets.push({
+    id: "tomorrow",
+    label: "Tomorrow",
+    whenLabel: timeOfDayLabel(tomorrow),
+    snoozedUntil: tomorrow.toISOString(),
+  });
 
   // Next Monday 9:00 (a week out when today is Monday).
   const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
   const nextWeek = atHour(addDays(now, daysUntilMonday), MORNING_HOUR);
-  presets.push({ id: "next-week", label: "Next week", snoozedUntil: nextWeek.toISOString() });
+  presets.push({
+    id: "next-week",
+    label: "Next week",
+    whenLabel: `${nextWeek.toLocaleDateString(undefined, { weekday: "short" })} ${timeOfDayLabel(nextWeek)}`,
+    snoozedUntil: nextWeek.toISOString(),
+  });
 
   return presets;
 }

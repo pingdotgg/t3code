@@ -236,6 +236,21 @@ function ThreadNavigationSidebarPane(
       })),
     [projectScopes],
   );
+  const projectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        projectScopes.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
+      ),
+    [projectScopes],
+  );
   const selectedProjectScope = useMemo(
     () =>
       selectedProjectKey === null
@@ -760,6 +775,7 @@ function ThreadNavigationSidebarPane(
               variant={item.item.variant}
               showSettledDivider={item.item.showSettledDivider}
               project={projectByKey.get(scopeKey) ?? null}
+              projectTitle={projectTitleByProjectKey.get(scopeKey)}
               providerDriver={
                 serverConfigs
                   .get(thread.environmentId)
@@ -889,6 +905,7 @@ function ThreadNavigationSidebarPane(
       openPendingTask,
       projectByKey,
       projectCwdByKey,
+      projectTitleByProjectKey,
       props.onNewThreadInProject,
       props.selectedThreadKey,
       props.width,

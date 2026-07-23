@@ -322,9 +322,6 @@ function SnoozePopoverButton(props: {
         <ClockIcon className="size-3" />
       </PopoverTrigger>
       <PopoverPopup side="bottom" align="end" className="w-56" viewportClassName="p-1">
-        <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground/60 uppercase">
-          Snooze until
-        </div>
         {presets.map((preset) => (
           <button
             key={preset.id}
@@ -338,25 +335,10 @@ function SnoozePopoverButton(props: {
           >
             <span className="flex-1">{preset.label}</span>
             <span className="font-mono text-[10px] text-muted-foreground/60 tabular-nums">
-              {snoozeWakeDescription(preset.snoozedUntil, new Date())}
+              {preset.whenLabel}
             </span>
           </button>
         ))}
-        <div className="mx-1.5 my-1 h-px bg-border/60" />
-        {/* Roadmap teasers: event-based wake conditions. Visible-but-disabled
-            on purpose — they teach the mental model before they exist. */}
-        <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground/45">
-          <span className="flex-1">Until PR merges</span>
-          <span className="rounded-full bg-primary/10 px-1.5 text-[9px] font-semibold tracking-wide text-primary/70">
-            SOON
-          </span>
-        </div>
-        <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground/45">
-          <span className="flex-1">Until next review</span>
-          <span className="rounded-full bg-primary/10 px-1.5 text-[9px] font-semibold tracking-wide text-primary/70">
-            SOON
-          </span>
-        </div>
       </PopoverPopup>
     </Popover>
   );
@@ -1825,7 +1807,7 @@ export default function SidebarV2() {
                     label: `Snooze (${count})`,
                     children: snoozePresets.map((preset) => ({
                       id: `snooze:${preset.id}`,
-                      label: `${preset.label} (${snoozeWakeDescription(preset.snoozedUntil, new Date())})`,
+                      label: `${preset.label} (${preset.whenLabel})`,
                     })),
                   },
                 ]
@@ -1969,7 +1951,7 @@ export default function SidebarV2() {
                           disabled: !canSnooze(thread, { now: new Date().toISOString() }),
                           children: snoozePresets.map((preset) => ({
                             id: `snooze:${preset.id}`,
-                            label: `${preset.label} (${snoozeWakeDescription(preset.snoozedUntil, new Date())})`,
+                            label: `${preset.label} (${preset.whenLabel})`,
                           })),
                         },
                   ]

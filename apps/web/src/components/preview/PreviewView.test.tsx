@@ -40,6 +40,7 @@ vi.mock("~/previewStateStore", () => ({
         canGoForward: false,
         loading: false,
         zoomFactor: 1,
+        colorScheme: "system",
         controller: "none",
       },
     },
