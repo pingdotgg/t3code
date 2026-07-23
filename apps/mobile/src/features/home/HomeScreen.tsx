@@ -15,17 +15,15 @@ import type {
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
-import { ProjectFavicon } from "../../components/ProjectFavicon";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { cn } from "../../lib/cn";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -54,7 +52,12 @@ import {
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "./homeListItems";
-import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  buildHomeThreadGroups,
+  sortHomeProjectScopes,
+  type HomeProjectSortOrder,
+} from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
@@ -79,7 +82,6 @@ interface HomeScreenProps {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   readonly onAddConnection: () => void;
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
@@ -334,22 +336,52 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
-  const setV2ProjectScopeKey = props.onProjectChange;
   const v2ScopeProjects = useMemo(
     () =>
-      props.selectedEnvironmentId === null
-        ? props.projects
-        : props.projects.filter((project) => project.environmentId === props.selectedEnvironmentId),
-    [props.projects, props.selectedEnvironmentId],
+      sortHomeProjectScopes({
+        scopes: buildHomeProjectScopes({
+          projects: props.projects,
+          environmentId: props.selectedEnvironmentId,
+          projectGroupingMode: props.projectGroupingMode,
+        }),
+        threads: props.threads,
+        pendingTasks: props.pendingTasks,
+        projectSortOrder: props.projectSortOrder,
+      }),
+    [
+      props.pendingTasks,
+      props.projectGroupingMode,
+      props.projects,
+      props.projectSortOrder,
+      props.selectedEnvironmentId,
+      props.threads,
+    ],
   );
-  const v2ScopedProject = useMemo(
+  const v2ScopedProjectGroup = useMemo(
     () =>
       v2ProjectScopeKey === null
         ? null
         : (v2ScopeProjects.find(
-            (project) => scopedProjectKey(project.environmentId, project.id) === v2ProjectScopeKey,
+            (scope) =>
+              scope.key === v2ProjectScopeKey ||
+              scope.projectRefs.some(
+                (projectRef) =>
+                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
+                  v2ProjectScopeKey,
+              ),
           ) ?? null),
     [v2ProjectScopeKey, v2ScopeProjects],
+  );
+  const v2ScopedProjectKeys = useMemo(
+    () =>
+      v2ScopedProjectGroup === null
+        ? null
+        : new Set(
+            v2ScopedProjectGroup.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
+          ),
+    [v2ScopedProjectGroup],
   );
   // Thread List v2 (beta): one flat list in creation order, no grouping.
   // Settled threads collapse into a recency tail below the card block.
@@ -431,13 +463,7 @@ export function HomeScreen(props: HomeScreenProps) {
     return buildThreadListV2Items({
       threads: props.threads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
-      projectRef:
-        v2ScopedProject === null
-          ? null
-          : {
-              environmentId: v2ScopedProject.environmentId,
-              projectId: v2ScopedProject.id,
-            },
+      projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
@@ -453,7 +479,7 @@ export function HomeScreen(props: HomeScreenProps) {
     props.selectedEnvironmentId,
     props.threads,
     threadListV2Enabled,
-    v2ScopedProject,
+    v2ScopedProjectGroup,
   ]);
   const threadListV2Items = threadListV2Layout.items;
 
@@ -699,9 +725,10 @@ export function HomeScreen(props: HomeScreenProps) {
     (pendingTask) =>
       (props.selectedEnvironmentId === null ||
         pendingTask.message.environmentId === props.selectedEnvironmentId) &&
-      (v2ScopedProject === null ||
-        (pendingTask.message.environmentId === v2ScopedProject.environmentId &&
-          pendingTask.creation.projectId === v2ScopedProject.id)) &&
+      (v2ScopedProjectKeys === null ||
+        v2ScopedProjectKeys.has(
+          scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+        )) &&
       (v2SearchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
   );
   // Project scoping lives in the header filter menu (no inline chip row on
@@ -750,9 +777,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-    ) : v2ScopedProject !== null ? (
+    ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProject.title}`}
+        title={`No threads in ${v2ScopedProjectGroup.title}`}
         detail="Choose another project or create a new task."
       />
     ) : (
