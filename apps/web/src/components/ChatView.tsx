@@ -5627,7 +5627,7 @@ function ChatViewContent(props: ChatViewProps) {
                 ref={attachDraftHeroTransitionGroupRef}
                 className="chat-composer-horizontal-inset w-full"
               >
-                <div className="pointer-events-auto relative z-10 isolate">
+                <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
                       <div
@@ -5658,8 +5658,8 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div className="chat-composer-glass-host mx-auto w-full max-w-3xl overflow-hidden rounded-[22px]">
-                      <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10 isolate">
+                    <div className="chat-composer-glass-host mx-auto w-full max-w-3xl rounded-[22px]">
+                      <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                         <ChatComposer
                           composerRef={composerRef}
                           composerDraftTarget={composerDraftTarget}
