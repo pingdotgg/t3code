@@ -14,7 +14,9 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 
 // The composer draft's `modelSelectionByProvider` and
@@ -60,11 +62,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
+  parsePersistedComposerPreferences,
   type ComposerImageAttachment,
   useComposerDraftStore,
   DraftId,
@@ -140,6 +144,31 @@ function modelSelection(
   options?: Record<string, string | boolean | undefined>,
 ): ModelSelection {
   return createModelSelection(defaultInstanceIdForDriver(provider), model, toSelections(options));
+}
+
+function providerWithModels(
+  provider: ProviderDriverKind,
+  models: ReadonlyArray<{ slug: string; isDefault?: boolean }>,
+): ServerProvider {
+  return {
+    instanceId: defaultInstanceIdForDriver(provider),
+    driver: provider,
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: models.map(({ slug, isDefault }) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      ...(isDefault === undefined ? {} : { isDefault }),
+      capabilities: {},
+    })),
+    slashCommands: [],
+    skills: [],
+  };
 }
 
 function providerModelOptions(
@@ -1531,6 +1560,89 @@ describe("composerDraftStore sticky composer settings", () => {
       }),
     );
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
+  });
+
+  it("decodes the narrow durable composer preference document", () => {
+    const selection = modelSelection(CODEX_DRIVER, "gpt-5.6-sol", {
+      reasoningEffort: "high",
+    });
+
+    expect(
+      parsePersistedComposerPreferences(
+        JSON.stringify({
+          version: 1,
+          stickyModelSelectionByProvider: {
+            codex: selection,
+          },
+          stickyActiveProvider: "codex",
+        }),
+      ),
+    ).toEqual({
+      version: 1,
+      stickyModelSelectionByProvider: {
+        codex: selection,
+      },
+      stickyActiveProvider: "codex",
+    });
+    expect(parsePersistedComposerPreferences("{not-json")).toBeNull();
+    expect(
+      parsePersistedComposerPreferences(
+        JSON.stringify({
+          version: 1,
+          stickyModelSelectionByProvider: {
+            codex: { instanceId: "codex", model: "" },
+          },
+          stickyActiveProvider: "codex",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to authoritative project and server defaults when renderer preferences are empty", () => {
+    const providers = [
+      providerWithModels(CODEX_DRIVER, [
+        { slug: "gpt-server-default", isDefault: true },
+        { slug: "gpt-thread-default" },
+        { slug: "gpt-project-default" },
+      ]),
+    ];
+    const emptyRendererPreferences = {
+      modelSelectionByProvider: {},
+      activeProvider: null,
+    };
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: emptyRendererPreferences,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-thread-default"),
+        projectModelSelection: modelSelection(CODEX_DRIVER, "gpt-project-default"),
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      }).selectedModel,
+    ).toBe("gpt-thread-default");
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: emptyRendererPreferences,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        threadModelSelection: null,
+        projectModelSelection: modelSelection(CODEX_DRIVER, "gpt-project-default"),
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      }).selectedModel,
+    ).toBe("gpt-project-default");
+
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: emptyRendererPreferences,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        threadModelSelection: null,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      }).selectedModel,
+    ).toBe("gpt-server-default");
   });
 
   it("normalizes empty sticky model options by dropping selection options", () => {

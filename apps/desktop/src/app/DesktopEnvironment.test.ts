@@ -98,6 +98,21 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("derives the historical userData candidate from the packaged release stage", () =>
+    Effect.gen(function* () {
+      const alpha = yield* makeEnvironment({ isPackaged: true, appVersion: "0.0.29-alpha.1" });
+      const nightly = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.29-nightly.20260723.864",
+      });
+
+      assert.equal(alpha.legacyUserDataDirName, "T3 Code (Alpha)");
+      assert.equal(nightly.legacyUserDataDirName, "T3 Code (Nightly)");
+      assert.equal(alpha.userDataDirName, "t3code");
+      assert.equal(nightly.userDataDirName, "t3code");
+    }),
+  );
+
   it.effect("keeps implicit development state separate from production state", () =>
     Effect.gen(function* () {
       const development = yield* makeEnvironment(

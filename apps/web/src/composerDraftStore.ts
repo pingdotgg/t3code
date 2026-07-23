@@ -49,6 +49,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
+import { createAppRendererStateStorage } from "./rendererStateStorage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
@@ -57,6 +58,7 @@ const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_PREFERENCES_STORAGE_KEY = "t3code:composer-preferences:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 8;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
@@ -70,11 +72,20 @@ const composerDebouncedStorage = createDebouncedStorage(
   typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
   COMPOSER_PERSIST_DEBOUNCE_MS,
 );
+const composerPreferencesStorage = createAppRendererStateStorage("composer-preferences");
+const composerPreferencesDebouncedStorage = createDebouncedStorage(
+  composerPreferencesStorage.storage,
+  COMPOSER_PERSIST_DEBOUNCE_MS,
+);
+let composerPreferencesHydrated = false;
+let composerPreferencesHydrationPromise: Promise<void> | null = null;
+let lastPersistedComposerPreferences: string | null = null;
 
 // Flush pending composer draft writes before page unload to prevent data loss.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     composerDebouncedStorage.flush();
+    composerPreferencesDebouncedStorage.flush();
   });
 }
 
@@ -3373,6 +3384,107 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 );
 
 export const useComposerDraftStore = composerDraftStore;
+
+const PersistedComposerPreferencesSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  stickyModelSelectionByProvider: Schema.Record(ProviderInstanceId, ModelSelection),
+  stickyActiveProvider: Schema.NullOr(ProviderInstanceId),
+});
+type PersistedComposerPreferences = typeof PersistedComposerPreferencesSchema.Type;
+const isPersistedComposerPreferences = Schema.is(PersistedComposerPreferencesSchema);
+
+function serializeComposerPreferences(
+  state: Pick<ComposerDraftStoreState, "stickyModelSelectionByProvider" | "stickyActiveProvider">,
+): string {
+  return JSON.stringify({
+    version: 1,
+    stickyModelSelectionByProvider: compactModelSelectionByProvider(
+      state.stickyModelSelectionByProvider,
+    ),
+    stickyActiveProvider: state.stickyActiveProvider,
+  } satisfies PersistedComposerPreferences);
+}
+
+export function parsePersistedComposerPreferences(
+  raw: string,
+): PersistedComposerPreferences | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isPersistedComposerPreferences(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasComposerPreferences(preferences: PersistedComposerPreferences): boolean {
+  return (
+    preferences.stickyActiveProvider !== null ||
+    Object.keys(preferences.stickyModelSelectionByProvider).length > 0
+  );
+}
+
+export async function hydrateComposerPreferences(): Promise<void> {
+  if (composerPreferencesHydrated) {
+    return;
+  }
+  if (composerPreferencesHydrationPromise) {
+    return composerPreferencesHydrationPromise;
+  }
+
+  const hydrationPromise = (async () => {
+    try {
+      const raw = await composerPreferencesStorage.storage.getItem(
+        COMPOSER_PREFERENCES_STORAGE_KEY,
+      );
+      if (raw !== null) {
+        const preferences = parsePersistedComposerPreferences(raw);
+        if (!preferences) {
+          throw new Error("Desktop composer preferences document is not valid JSON state.");
+        }
+        useComposerDraftStore.setState({
+          stickyModelSelectionByProvider: preferences.stickyModelSelectionByProvider,
+          stickyActiveProvider: preferences.stickyActiveProvider,
+        });
+      } else {
+        const legacyPreferences = parsePersistedComposerPreferences(
+          serializeComposerPreferences(useComposerDraftStore.getState()),
+        );
+        if (legacyPreferences && hasComposerPreferences(legacyPreferences)) {
+          await composerPreferencesStorage.seedHydratedValue(
+            COMPOSER_PREFERENCES_STORAGE_KEY,
+            serializeComposerPreferences(legacyPreferences),
+          );
+        }
+      }
+
+      lastPersistedComposerPreferences = serializeComposerPreferences(
+        useComposerDraftStore.getState(),
+      );
+      composerPreferencesStorage.enableWrites();
+      composerPreferencesHydrated = true;
+    } catch (error) {
+      console.error("[RENDERER_STATE] Composer preference hydration failed.", error);
+    }
+  })().finally(() => {
+    if (composerPreferencesHydrationPromise === hydrationPromise) {
+      composerPreferencesHydrationPromise = null;
+    }
+  });
+  composerPreferencesHydrationPromise = hydrationPromise;
+  return hydrationPromise;
+}
+
+useComposerDraftStore.subscribe((state) => {
+  if (!composerPreferencesHydrated) {
+    return;
+  }
+  const serialized = serializeComposerPreferences(state);
+  if (serialized === lastPersistedComposerPreferences) {
+    return;
+  }
+  lastPersistedComposerPreferences = serialized;
+  composerPreferencesDebouncedStorage.setItem(COMPOSER_PREFERENCES_STORAGE_KEY, serialized);
+});
 
 export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): void {
   useComposerDraftStore.setState((state) => {

@@ -20,6 +20,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { hydrateClientPersistence } from "./clientPersistenceBootstrap";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
@@ -33,22 +34,27 @@ if (isElectron) {
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
-const app = <AppRoot router={router} />;
+async function renderApp(): Promise<void> {
+  await hydrateClientPersistence();
+  const app = <AppRoot router={router} />;
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    {clerkPublishableKey && hasCloudPublicConfig() ? (
-      isElectron ? (
-        <ElectronClerkProvider publishableKey={clerkPublishableKey} passkeys={passkeys}>
-          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
-        </ElectronClerkProvider>
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      {clerkPublishableKey && hasCloudPublicConfig() ? (
+        isElectron ? (
+          <ElectronClerkProvider publishableKey={clerkPublishableKey} passkeys={passkeys}>
+            <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+          </ElectronClerkProvider>
+        ) : (
+          <ClerkProvider publishableKey={clerkPublishableKey}>
+            <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+          </ClerkProvider>
+        )
       ) : (
-        <ClerkProvider publishableKey={clerkPublishableKey}>
-          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
-        </ClerkProvider>
-      )
-    ) : (
-      app
-    )}
-  </React.StrictMode>,
-);
+        app
+      )}
+    </React.StrictMode>,
+  );
+}
+
+void renderApp();

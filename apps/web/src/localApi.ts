@@ -1,8 +1,31 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { ContextMenuItem, DesktopRendererStateKey, LocalApi } from "@t3tools/contracts";
 
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import {
+  readBrowserClientSettings,
+  removeBrowserClientSettings,
+  writeBrowserClientSettings,
+} from "./clientPersistenceStorage";
+
+const rendererStateStorageKeys = {
+  "ui-state": "t3code:ui-state:v1",
+  "composer-preferences": "t3code:composer-preferences:v1",
+} as const satisfies Record<DesktopRendererStateKey, string>;
+
+function readValidBrowserRendererState(key: DesktopRendererStateKey): string | null {
+  const raw = window.localStorage.getItem(rendererStateStorageKeys[key]);
+  if (raw === null) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 let cachedApi: LocalApi | undefined;
 
@@ -52,7 +75,18 @@ function createBrowserLocalApi(): LocalApi {
     persistence: {
       getClientSettings: async () => {
         if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
+          const persistedSettings = await window.desktopBridge.getClientSettings();
+          if (persistedSettings) {
+            return persistedSettings;
+          }
+
+          const legacySettings = readBrowserClientSettings();
+          if (!legacySettings) {
+            return null;
+          }
+          await window.desktopBridge.setClientSettings(legacySettings);
+          removeBrowserClientSettings();
+          return legacySettings;
         }
         return readBrowserClientSettings();
       },
@@ -61,6 +95,34 @@ function createBrowserLocalApi(): LocalApi {
           return window.desktopBridge.setClientSettings(settings);
         }
         writeBrowserClientSettings(settings);
+      },
+      getRendererState: async (key) => {
+        if (window.desktopBridge) {
+          const persistedState = await window.desktopBridge.getRendererState(key);
+          if (persistedState !== null) {
+            return persistedState;
+          }
+
+          const legacyState = readValidBrowserRendererState(key);
+          if (legacyState === null) {
+            return null;
+          }
+          await window.desktopBridge.setRendererState(key, legacyState);
+          window.localStorage.removeItem(rendererStateStorageKeys[key]);
+          return legacyState;
+        }
+        return readValidBrowserRendererState(key);
+      },
+      setRendererState: async (key, value) => {
+        if (window.desktopBridge) {
+          return window.desktopBridge.setRendererState(key, value);
+        }
+        const storageKey = rendererStateStorageKeys[key];
+        if (value === null) {
+          window.localStorage.removeItem(storageKey);
+          return;
+        }
+        window.localStorage.setItem(storageKey, value);
       },
     },
     server: {

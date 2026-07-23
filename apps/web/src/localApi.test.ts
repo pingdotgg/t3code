@@ -121,6 +121,73 @@ describe("LocalApi", () => {
     await expect(api.persistence.getClientSettings()).resolves.toEqual(settings);
   });
 
+  it("migrates valid browser client settings when the desktop file is missing", async () => {
+    const settings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      timestampFormat: "12-hour" as const,
+    };
+    const getClientSettings = vi.fn().mockResolvedValue(null);
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    testWindow().localStorage.setItem("t3code:client-settings:v1", JSON.stringify(settings));
+    testWindow().desktopBridge = {
+      getClientSettings,
+      setClientSettings,
+    } as unknown as DesktopBridge;
+
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().persistence.getClientSettings()).resolves.toEqual(settings);
+    expect(setClientSettings).toHaveBeenCalledWith(settings);
+    expect(testWindow().localStorage.getItem("t3code:client-settings:v1")).toBeNull();
+  });
+
+  it("does not migrate malformed browser client settings into the desktop file", async () => {
+    const getClientSettings = vi.fn().mockResolvedValue(null);
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    testWindow().localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({ timestampFormat: "sometimes" }),
+    );
+    testWindow().desktopBridge = {
+      getClientSettings,
+      setClientSettings,
+    } as unknown as DesktopBridge;
+
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().persistence.getClientSettings()).resolves.toBeNull();
+    expect(setClientSettings).not.toHaveBeenCalled();
+  });
+
+  it("migrates valid renderer state from localStorage when its desktop file is missing", async () => {
+    const getRendererState = vi.fn().mockResolvedValue(null);
+    const setRendererState = vi.fn().mockResolvedValue(undefined);
+    const rawState = '{"projectOrder":["project-b","project-a"]}';
+    testWindow().localStorage.setItem("t3code:ui-state:v1", rawState);
+    testWindow().desktopBridge = {
+      getRendererState,
+      setRendererState,
+    } as unknown as DesktopBridge;
+
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().persistence.getRendererState("ui-state")).resolves.toBe(rawState);
+    expect(setRendererState).toHaveBeenCalledWith("ui-state", rawState);
+    expect(testWindow().localStorage.getItem("t3code:ui-state:v1")).toBeNull();
+  });
+
+  it("keeps renderer state in localStorage when no desktop bridge is present", async () => {
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+    const rawState = '{"state":{"stickyActiveProvider":"codex"},"version":8}';
+
+    await api.persistence.setRendererState("composer-preferences", rawState);
+
+    await expect(api.persistence.getRendererState("composer-preferences")).resolves.toBe(rawState);
+    await api.persistence.setRendererState("composer-preferences", null);
+    await expect(api.persistence.getRendererState("composer-preferences")).resolves.toBeNull();
+  });
+
   it("prefers the native LocalApi when one is injected", async () => {
     const nativeApi = { dialogs: {} };
     testWindow().nativeApi = nativeApi as never;

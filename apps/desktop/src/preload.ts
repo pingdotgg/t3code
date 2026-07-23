@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  getRendererState: (key) => ipcRenderer.invoke(IpcChannels.GET_RENDERER_STATE_CHANNEL, key),
+  setRendererState: (key, value) =>
+    ipcRenderer.invoke(IpcChannels.SET_RENDERER_STATE_CHANNEL, { key, value }),
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),

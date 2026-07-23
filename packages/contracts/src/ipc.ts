@@ -178,6 +178,14 @@ export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+export const DesktopRendererStateKeySchema = Schema.Literals(["ui-state", "composer-preferences"]);
+export type DesktopRendererStateKey = typeof DesktopRendererStateKeySchema.Type;
+
+export const DesktopRendererStateWriteSchema = Schema.Struct({
+  key: DesktopRendererStateKeySchema,
+  value: Schema.NullOr(Schema.String),
+});
+export type DesktopRendererStateWrite = typeof DesktopRendererStateWriteSchema.Type;
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -981,6 +989,8 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  getRendererState: (key: DesktopRendererStateKey) => Promise<string | null>;
+  setRendererState: (key: DesktopRendererStateKey, value: string | null) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
@@ -1132,6 +1142,8 @@ export interface LocalApi {
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
     setClientSettings: (settings: ClientSettings) => Promise<void>;
+    getRendererState: (key: DesktopRendererStateKey) => Promise<string | null>;
+    setRendererState: (key: DesktopRendererStateKey, value: string | null) => Promise<void>;
   };
   server: {
     getConfig: () => Promise<ServerConfig>;

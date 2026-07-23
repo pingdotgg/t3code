@@ -28,3 +28,11 @@ export function writeBrowserClientSettings(settings: ClientSettings): void {
 
   setLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, settings, ClientSettingsSchema);
 }
+
+export function removeBrowserClientSettings(): void {
+  if (!hasWindow()) {
+    return;
+  }
+
+  window.localStorage.removeItem(CLIENT_SETTINGS_STORAGE_KEY);
+}

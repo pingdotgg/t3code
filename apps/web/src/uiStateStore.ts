@@ -1,6 +1,7 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+import { createAppRendererStateStorage } from "./rendererStateStorage";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -15,6 +16,9 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v2",
   "codething:renderer-state:v1",
 ] as const;
+const uiStateStorage = createAppRendererStateStorage("ui-state");
+let uiStatePersistenceHydrated = !uiStateStorage.requiresExplicitHydration;
+let uiStateHydrationPromise: Promise<void> | null = null;
 
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
@@ -135,26 +139,46 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   };
 }
 
-function readPersistedState(): UiState {
-  if (typeof window === "undefined") {
-    return initialState;
-  }
+function parsePersistedStateJson(raw: string): UiState | null {
   try {
-    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    if (!raw) {
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-        const legacyRaw = window.localStorage.getItem(legacyKey);
-        if (!legacyRaw) {
-          continue;
-        }
-        return parsePersistedState(JSON.parse(legacyRaw) as PersistedUiState);
-      }
-      return initialState;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
     }
-    return parsePersistedState(JSON.parse(raw) as PersistedUiState);
+    return parsePersistedState(parsed as PersistedUiState);
   } catch {
+    return null;
+  }
+}
+
+function readLegacyPersistedState(): { readonly raw: string; readonly state: UiState } | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+    const raw = window.localStorage.getItem(legacyKey);
+    if (!raw) {
+      continue;
+    }
+    const state = parsePersistedStateJson(raw);
+    if (state) {
+      return { raw, state };
+    }
+  }
+  return null;
+}
+
+function readPersistedState(): UiState {
+  if (uiStateStorage.requiresExplicitHydration) {
     return initialState;
   }
+
+  const raw = uiStateStorage.storage.getItem(PERSISTED_STATE_KEY);
+  if (typeof raw === "string") {
+    return parsePersistedStateJson(raw) ?? initialState;
+  }
+
+  return readLegacyPersistedState()?.state ?? initialState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -185,40 +209,46 @@ function sanitizePersistedThreadChangedFilesExpanded(
   return nextState;
 }
 
-export function persistState(state: UiState): void {
-  if (typeof window === "undefined") {
+function serializePersistedState(state: UiState): string {
+  const projectExpandedById = Object.fromEntries(
+    Object.entries(state.projectExpandedById).filter(
+      ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
+    ),
+  );
+  const threadChangedFilesExpandedById = Object.fromEntries(
+    Object.entries(state.threadChangedFilesExpandedById).flatMap(([threadId, turns]) => {
+      const nextTurns = Object.fromEntries(
+        Object.entries(turns).filter(([, expanded]) => expanded === false),
+      );
+      return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
+    }),
+  );
+  return JSON.stringify({
+    projectExpandedById,
+    projectOrder: state.projectOrder,
+    threadLastVisitedAtById: state.threadLastVisitedAtById,
+    defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+    threadChangedFilesExpandedById,
+  } satisfies PersistedUiState);
+}
+
+function cleanUpLegacyPersistedStateKeys(): void {
+  if (legacyKeysCleanedUp || typeof window === "undefined") {
     return;
   }
+  legacyKeysCleanedUp = true;
+  for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+    window.localStorage.removeItem(legacyKey);
+  }
+}
+
+export function persistState(state: UiState): void {
   try {
-    const projectExpandedById = Object.fromEntries(
-      Object.entries(state.projectExpandedById).filter(
-        ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
-      ),
-    );
-    const threadChangedFilesExpandedById = Object.fromEntries(
-      Object.entries(state.threadChangedFilesExpandedById).flatMap(([threadId, turns]) => {
-        const nextTurns = Object.fromEntries(
-          Object.entries(turns).filter(([, expanded]) => expanded === false),
-        );
-        return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
-      }),
-    );
-    window.localStorage.setItem(
+    const result = uiStateStorage.storage.setItem(
       PERSISTED_STATE_KEY,
-      JSON.stringify({
-        projectExpandedById,
-        projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
-        defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
-        threadChangedFilesExpandedById,
-      } satisfies PersistedUiState),
+      serializePersistedState(state),
     );
-    if (!legacyKeysCleanedUp) {
-      legacyKeysCleanedUp = true;
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-        window.localStorage.removeItem(legacyKey);
-      }
-    }
+    void Promise.resolve(result).then(cleanUpLegacyPersistedStateKeys, () => undefined);
   } catch {
     // Ignore quota/storage errors to avoid breaking chat UX.
   }
@@ -442,7 +472,53 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
-useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+export async function hydrateUiStateStore(): Promise<void> {
+  if (uiStatePersistenceHydrated || !uiStateStorage.requiresExplicitHydration) {
+    return;
+  }
+  if (uiStateHydrationPromise) {
+    return uiStateHydrationPromise;
+  }
+
+  const hydrationPromise = (async () => {
+    try {
+      const raw = await uiStateStorage.storage.getItem(PERSISTED_STATE_KEY);
+      if (raw !== null) {
+        const persistedState = parsePersistedStateJson(raw);
+        if (!persistedState) {
+          throw new Error("Desktop UI state document is not valid JSON state.");
+        }
+        useUiStateStore.setState(persistedState);
+      } else {
+        const legacyState = readLegacyPersistedState();
+        if (legacyState) {
+          useUiStateStore.setState(legacyState.state);
+          await uiStateStorage.seedHydratedValue(
+            PERSISTED_STATE_KEY,
+            serializePersistedState(legacyState.state),
+          );
+          cleanUpLegacyPersistedStateKeys();
+        }
+      }
+      uiStateStorage.enableWrites();
+      uiStatePersistenceHydrated = true;
+    } catch (error) {
+      console.error("[RENDERER_STATE] UI state hydration failed.", error);
+    }
+  })().finally(() => {
+    if (uiStateHydrationPromise === hydrationPromise) {
+      uiStateHydrationPromise = null;
+    }
+  });
+  uiStateHydrationPromise = hydrationPromise;
+  return hydrationPromise;
+}
+
+useUiStateStore.subscribe((state) => {
+  if (uiStatePersistenceHydrated) {
+    debouncedPersistState.maybeExecute(state);
+  }
+});
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
