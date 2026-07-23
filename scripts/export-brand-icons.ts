@@ -52,6 +52,9 @@ interface VariantOutputs {
   readonly favicon32: string;
   readonly faviconIco: string;
   readonly windowsIco: string;
+  readonly pwaIcon192: string;
+  readonly pwaIcon512: string;
+  readonly maskableIcon512: string;
 }
 
 interface IconVariant {
@@ -215,6 +218,9 @@ const ICON_VARIANTS = [
       favicon32: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.developmentWebFaviconIco,
       windowsIco: BRAND_ASSET_PATHS.developmentWindowsIconIco,
+      pwaIcon192: BRAND_ASSET_PATHS.developmentWebPwaIcon192Png,
+      pwaIcon512: BRAND_ASSET_PATHS.developmentWebPwaIcon512Png,
+      maskableIcon512: BRAND_ASSET_PATHS.developmentWebMaskableIcon512Png,
     },
   },
   {
@@ -229,6 +235,9 @@ const ICON_VARIANTS = [
       favicon32: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,
       windowsIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+      pwaIcon192: BRAND_ASSET_PATHS.nightlyWebPwaIcon192Png,
+      pwaIcon512: BRAND_ASSET_PATHS.nightlyWebPwaIcon512Png,
+      maskableIcon512: BRAND_ASSET_PATHS.nightlyWebMaskableIcon512Png,
     },
   },
   {
@@ -243,6 +252,9 @@ const ICON_VARIANTS = [
       favicon32: BRAND_ASSET_PATHS.productionWebFavicon32Png,
       faviconIco: BRAND_ASSET_PATHS.productionWebFaviconIco,
       windowsIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
+      pwaIcon192: BRAND_ASSET_PATHS.productionWebPwaIcon192Png,
+      pwaIcon512: BRAND_ASSET_PATHS.productionWebPwaIcon512Png,
+      maskableIcon512: BRAND_ASSET_PATHS.productionWebMaskableIcon512Png,
     },
   },
 ] as const satisfies ReadonlyArray<IconVariant>;
@@ -595,6 +607,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     try: () => encodePngIco(icoRenditions),
     catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
   });
+  const pwaIcon512 = yield* render("iOS", 512);
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
@@ -604,6 +617,9 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.favicon32, yield* render("iOS", 32)],
     [variant.outputs.faviconIco, ico],
     [variant.outputs.windowsIco, ico],
+    [variant.outputs.pwaIcon192, yield* render("iOS", 192)],
+    [variant.outputs.pwaIcon512, pwaIcon512],
+    [variant.outputs.maskableIcon512, pwaIcon512],
   ]);
 });
 
