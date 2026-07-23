@@ -350,6 +350,7 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
             newWorktreesStartFromOrigin: false, addProjectBaseDirectory: "~/Documents")
     }
     func updateSettings(_ settings: AppSettings) async throws -> AppSettings { settings }
+    func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob] { [] }
     func refreshProviders() async throws {}
     func updateProvider(instanceID: String) async throws {}
 

@@ -22,6 +22,41 @@ struct ServerUpdateSettingsInput: Encodable, Sendable {
     var patch: ServerSettingsPatch
 }
 
+/// Nested patch for `ServerSettings.autoReview`.
+public struct AutoReviewSettingsPatch: Encodable, Sendable {
+    public var enabled: Bool?
+    public var mode: String?
+    public var modelSelection: ModelSelection?
+    public var mentionHandle: String?
+    /// Milliseconds (DurationFromMillis on the wire).
+    public var pollInterval: Double?
+    public var autoFixOriginThread: Bool?
+    /// Whole-map replacement of per-project overrides.
+    public var projects: [String: AutoReviewProjectOverridePatch]?
+
+    public init(
+        enabled: Bool? = nil, mode: String? = nil, modelSelection: ModelSelection? = nil,
+        mentionHandle: String? = nil, pollInterval: Double? = nil,
+        autoFixOriginThread: Bool? = nil, projects: [String: AutoReviewProjectOverridePatch]? = nil
+    ) {
+        self.enabled = enabled
+        self.mode = mode
+        self.modelSelection = modelSelection
+        self.mentionHandle = mentionHandle
+        self.pollInterval = pollInterval
+        self.autoFixOriginThread = autoFixOriginThread
+        self.projects = projects
+    }
+}
+
+public struct AutoReviewProjectOverridePatch: Encodable, Sendable {
+    public var enabled: Bool?
+
+    public init(enabled: Bool? = nil) {
+        self.enabled = enabled
+    }
+}
+
 /// `ServerSettingsPatch` (settings.ts) — every key optionalKey; absent keys
 /// leave the setting untouched. Only the fields the mac client edits are
 /// modeled; the server merges partial patches.
@@ -31,22 +66,24 @@ public struct ServerSettingsPatch: Encodable, Sendable {
     public var defaultThreadEnvMode: ThreadEnvMode?
     public var newWorktreesStartFromOrigin: Bool?
     public var addProjectBaseDirectory: String?
+    public var autoReview: AutoReviewSettingsPatch?
 
     public init(
         enableAssistantStreaming: Bool? = nil, enableProviderUpdateChecks: Bool? = nil,
         defaultThreadEnvMode: ThreadEnvMode? = nil, newWorktreesStartFromOrigin: Bool? = nil,
-        addProjectBaseDirectory: String? = nil
+        addProjectBaseDirectory: String? = nil, autoReview: AutoReviewSettingsPatch? = nil
     ) {
         self.enableAssistantStreaming = enableAssistantStreaming
         self.enableProviderUpdateChecks = enableProviderUpdateChecks
         self.defaultThreadEnvMode = defaultThreadEnvMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.addProjectBaseDirectory = addProjectBaseDirectory
+        self.autoReview = autoReview
     }
 
     private enum CodingKeys: String, CodingKey {
         case enableAssistantStreaming, enableProviderUpdateChecks, defaultThreadEnvMode,
-            newWorktreesStartFromOrigin, addProjectBaseDirectory
+            newWorktreesStartFromOrigin, addProjectBaseDirectory, autoReview
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -56,6 +93,7 @@ public struct ServerSettingsPatch: Encodable, Sendable {
         try c.encodeIfPresent(defaultThreadEnvMode, forKey: .defaultThreadEnvMode)
         try c.encodeIfPresent(newWorktreesStartFromOrigin, forKey: .newWorktreesStartFromOrigin)
         try c.encodeIfPresent(addProjectBaseDirectory, forKey: .addProjectBaseDirectory)
+        try c.encodeIfPresent(autoReview, forKey: .autoReview)
     }
 }
 
@@ -94,6 +132,38 @@ extension T3Client {
         try await call(
             "server.generateScenerySet", GenerateScenerySetInput(location: location))
     }
+
+    /// Recent native auto-review jobs (`autoReview.listJobs`).
+    public func listAutoReviewJobs(projectId: String? = nil, limit: Int? = nil) async throws
+        -> AutoReviewJobsPayload
+    {
+        try await call(
+            "autoReview.listJobs",
+            ListAutoReviewJobsInput(projectId: projectId, limit: limit))
+    }
+}
+
+struct ListAutoReviewJobsInput: Encodable, Sendable {
+    var projectId: String?
+    var limit: Int?
+}
+
+public struct AutoReviewJobsPayload: Decodable, Sendable {
+    public var jobs: [AutoReviewJobWire]
+}
+
+public struct AutoReviewJobWire: Decodable, Sendable, Identifiable {
+    public var id: String
+    public var projectId: String
+    public var prNumber: Int
+    public var headSha: String
+    public var trigger: String
+    public var status: String
+    public var findingsCount: Int?
+    public var reviewUrl: String?
+    public var autoFixEnqueued: Bool
+    public var error: String?
+    public var updatedAt: String
 }
 
 /// `server.generateScenerySet` payload.

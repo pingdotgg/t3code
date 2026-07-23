@@ -51,9 +51,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
 
     const tick: AutoReviewPoller["Service"]["tick"] = Effect.gen(function* () {
       const settings = yield* deps.getSettings.pipe(
-        Effect.catch(() =>
-          Effect.succeed({ autoReview: { enabled: false } as AutoReviewSettings }),
-        ),
+        Effect.orElseSucceed(() => ({ autoReview: { enabled: false } as AutoReviewSettings })),
       );
       if (!settings.autoReview.enabled) {
         return;

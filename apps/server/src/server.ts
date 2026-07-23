@@ -57,6 +57,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
 import * as AutoReviewRunner from "./autoReview/AutoReviewRunner.ts";
+import * as AutoReviewRuntime from "./autoReview/AutoReviewRuntime.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -480,6 +481,10 @@ export const makeServerLayer = Layer.unwrap(
       }),
     );
 
+    // Starts after RuntimeServicesLive is provided below — store/runner/settings/
+    // orchestration are already in that graph (see AutoReviewLayerLive).
+    const autoReviewStartLayer = AutoReviewRuntime.layer;
+
     const serverApplicationLayer = Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
         disableLogger: !config.logWebSocketEvents,
@@ -488,6 +493,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      autoReviewStartLayer,
     );
 
     return serverApplicationLayer.pipe(

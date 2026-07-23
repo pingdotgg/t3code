@@ -154,6 +154,11 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.updateSettings(settings)
     }
 
+    public func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob]
+    {
+        await state.listAutoReviewJobs(projectID: projectID, limit: limit)
+    }
+
     public func refreshProviders() async throws {}
 
     public func updateProvider(instanceID: String) async throws {}
@@ -670,6 +675,35 @@ private actor MockState {
     func updateSettings(_ new: AppSettings) -> AppSettings {
         settings = new
         return new
+    }
+
+    func listAutoReviewJobs(projectID: String?, limit: Int?) -> [AppAutoReviewJob] {
+        let jobs = autoReviewJobs
+        let filtered: [AppAutoReviewJob]
+        if let projectID {
+            filtered = jobs.filter { $0.projectID == projectID }
+        } else {
+            filtered = jobs
+        }
+        let cap = limit ?? 30
+        return Array(filtered.prefix(cap))
+    }
+
+    private var autoReviewJobs: [AppAutoReviewJob] {
+        [
+            AppAutoReviewJob(
+                id: "arj_mock_1",
+                projectID: "proj_demo",
+                prNumber: 42,
+                headSha: "abcdef123456",
+                status: settings.autoReview.enabled ? "succeeded" : "skipped",
+                trigger: "open_or_push",
+                findingsCount: 2,
+                reviewURL: "https://github.com/example/repo/pull/42",
+                error: nil,
+                autoFixEnqueued: settings.autoReview.autoFixOriginThread,
+                updatedAt: "2026-07-23T12:00:00.000Z")
+        ]
     }
 
     func searchWorkspace(query: String) -> [WorkspaceEntry] {

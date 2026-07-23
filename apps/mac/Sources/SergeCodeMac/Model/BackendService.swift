@@ -168,6 +168,8 @@ public protocol BackendService: Sendable {
     func settings() async throws -> AppSettings
     /// Applies the full editable subset as a patch; returns the merged result.
     func updateSettings(_ settings: AppSettings) async throws -> AppSettings
+    /// Recent native auto-review jobs.
+    func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob]
     /// Ask the server to re-probe installed provider CLIs.
     func refreshProviders() async throws
     /// Run a provider CLI's own update command.
