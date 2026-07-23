@@ -704,6 +704,38 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function readNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function epochMillisToIso(value: number): string {
+  return DateTime.formatIso(DateTime.makeUnsafe(value));
+}
+
+function normalizeRuntimeTaskUsage(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const usage = value as Record<string, unknown>;
+  const totalTokens = readNonNegativeInteger(usage.total_tokens);
+  if (totalTokens === undefined) {
+    return undefined;
+  }
+  const toolUses = readNonNegativeInteger(usage.tool_uses);
+  const durationMs = readNonNegativeInteger(usage.duration_ms);
+  const inputTokens = readNonNegativeInteger(usage.input_tokens);
+  const outputTokens = readNonNegativeInteger(usage.output_tokens);
+  const cachedInputTokens = readNonNegativeInteger(usage.cache_read_input_tokens);
+  return {
+    totalTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(toolUses !== undefined ? { toolUses } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+}
+
 function readStringArray(value: unknown): Array<string> {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
@@ -2388,6 +2420,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         },
       });
 
+      if (!toolResult.isError && tool.toolName === "Workflow" && toolUseResult) {
+        const taskId = readString(toolUseResult.taskId);
+        if (taskId) {
+          const stamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "task.updated",
+            eventId: stamp.eventId,
+            provider: PROVIDER,
+            createdAt: stamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: context.turnState.turnId } : {}),
+            payload: {
+              taskId: RuntimeTaskId.make(taskId),
+              ...(readString(toolUseResult.scriptPath)
+                ? { scriptPath: readString(toolUseResult.scriptPath) }
+                : {}),
+              ...(readString(toolUseResult.runId)
+                ? { runId: readString(toolUseResult.runId) }
+                : {}),
+              ...(readString(toolUseResult.workflowName)
+                ? { workflowName: readString(toolUseResult.workflowName) }
+                : {}),
+            },
+          });
+        }
+      }
+
       const streamKind = toolResultStreamKind(tool.itemType);
       if (streamKind && toolResult.text.length > 0 && context.turnState) {
         const deltaStamp = yield* makeEventStamp();
@@ -2676,18 +2735,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "task_started":
+      case "task_started": {
+        const record = message as unknown as Record<string, unknown>;
+        const agentType = readString(record.subagent_type);
+        const toolUseId = readString(record.tool_use_id);
+        const workflowName = readString(record.workflow_name);
+        const prompt = readString(record.prompt);
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
+            name: message.description,
             ...(message.task_type ? { taskType: message.task_type } : {}),
+            ...(agentType ? { agentType } : {}),
+            ...(toolUseId ? { toolUseId } : {}),
+            ...(workflowName ? { workflowName } : {}),
+            ...(prompt ? { prompt } : {}),
           },
         });
         return;
-      case "task_progress":
+      }
+      case "task_progress": {
+        const record = message as unknown as Record<string, unknown>;
+        const agentType = readString(record.subagent_type);
+        const toolUseId = readString(record.tool_use_id);
+        const usage = normalizeRuntimeTaskUsage(record.usage);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -2703,17 +2777,165 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
             ...(message.summary ? { summary: message.summary } : {}),
-            ...(message.usage ? { usage: message.usage } : {}),
+            ...(usage ? { usage } : {}),
             ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
+            ...(agentType ? { agentType } : {}),
+            ...(toolUseId ? { toolUseId } : {}),
+          },
+        });
+        const workflowProgress = record.workflow_progress;
+        if (Array.isArray(workflowProgress)) {
+          const phases = workflowProgress.flatMap((entry) => {
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
+            const item = entry as Record<string, unknown>;
+            if (item.type !== "workflow_phase") return [];
+            const index = readNonNegativeInteger(item.index);
+            const title = readString(item.title);
+            return index !== undefined && title ? [{ index, title }] : [];
+          });
+          if (phases.length > 0) {
+            const stamp = yield* makeEventStamp();
+            yield* offerRuntimeEvent({
+              ...base,
+              eventId: stamp.eventId,
+              createdAt: stamp.createdAt,
+              type: "task.updated",
+              payload: {
+                taskId: RuntimeTaskId.make(message.task_id),
+                phases,
+                timelineBypass: true,
+              },
+            });
+          }
+          for (const entry of workflowProgress) {
+            if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+            const item = entry as Record<string, unknown>;
+            if (item.type !== "workflow_agent") continue;
+            // `index` is the stable identity: queued/blocked/pre-spawn-error
+            // events carry no agentId yet, and retries keep the index while
+            // minting a new agentId per attempt. Keying on agentId would drop
+            // queued agents and duplicate cards across retries.
+            const index = readNonNegativeInteger(item.index);
+            const label = readString(item.label);
+            if (index === undefined || !label) continue;
+            const state = readString(item.state);
+            const childUsage = readNonNegativeInteger(item.tokens);
+            const childToolUses = readNonNegativeInteger(item.toolCalls);
+            const childPayload = {
+              taskId: RuntimeTaskId.make(`${message.task_id}:wf:${index}`),
+              description: label,
+              name: label,
+              taskType: "workflow_agent",
+              parentTaskId: RuntimeTaskId.make(message.task_id),
+              timelineBypass: true as const,
+              ...(readString(item.model) ? { model: readString(item.model) } : {}),
+              ...(readNonNegativeInteger(item.phaseIndex) !== undefined
+                ? { phaseIndex: readNonNegativeInteger(item.phaseIndex) }
+                : {}),
+              ...(readString(item.phaseTitle) ? { phaseTitle: readString(item.phaseTitle) } : {}),
+              ...(readNonNegativeInteger(item.attempt) !== undefined
+                ? { attempt: readNonNegativeInteger(item.attempt) }
+                : {}),
+              ...(readString(item.lastToolName)
+                ? { lastToolName: readString(item.lastToolName) }
+                : {}),
+              ...(childUsage !== undefined
+                ? {
+                    usage: {
+                      totalTokens: childUsage,
+                      ...(childToolUses !== undefined ? { toolUses: childToolUses } : {}),
+                    },
+                  }
+                : {}),
+            };
+            const stamp = yield* makeEventStamp();
+            if (state === "start") {
+              yield* offerRuntimeEvent({
+                ...base,
+                eventId: stamp.eventId,
+                createdAt: stamp.createdAt,
+                type: "task.started",
+                payload: childPayload,
+              });
+              // The CLI emits state:"start" both when queueing (queuedAt only)
+              // and when execution begins (startedAt set). A queued agent must
+              // not show as running in the panel.
+              if (readNonNegativeInteger(item.startedAt) === undefined) {
+                const pendingStamp = yield* makeEventStamp();
+                yield* offerRuntimeEvent({
+                  ...base,
+                  eventId: pendingStamp.eventId,
+                  createdAt: pendingStamp.createdAt,
+                  type: "task.updated",
+                  payload: {
+                    taskId: childPayload.taskId,
+                    status: "pending",
+                    timelineBypass: true,
+                  },
+                });
+              }
+            } else if (state === "done" || state === "error") {
+              yield* offerRuntimeEvent({
+                ...base,
+                eventId: stamp.eventId,
+                createdAt: stamp.createdAt,
+                type: "task.completed",
+                payload: {
+                  ...childPayload,
+                  status: state === "done" ? "completed" : "failed",
+                  ...(readString(item.error) ? { summary: readString(item.error) } : {}),
+                },
+              });
+            } else {
+              yield* offerRuntimeEvent({
+                ...base,
+                eventId: stamp.eventId,
+                createdAt: stamp.createdAt,
+                type: "task.progress",
+                payload: childPayload,
+              });
+            }
+          }
+        }
+        return;
+      }
+      case "task_updated": {
+        const record = message as unknown as Record<string, unknown>;
+        // SDK shape: {task_id, patch: {status?, description?, end_time?, is_backgrounded?, error?}}
+        const patch =
+          record.patch !== null && typeof record.patch === "object" && !Array.isArray(record.patch)
+            ? (record.patch as Record<string, unknown>)
+            : {};
+        const status = readString(patch.status);
+        const patchedDescription = readString(patch.description);
+        const endTime =
+          typeof patch.end_time === "number" ? epochMillisToIso(patch.end_time) : undefined;
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId: RuntimeTaskId.make(String(record.task_id)),
+            ...(status === "pending" ||
+            status === "running" ||
+            status === "completed" ||
+            status === "failed" ||
+            status === "killed" ||
+            status === "paused"
+              ? { status }
+              : {}),
+            ...(endTime ? { endTime } : {}),
+            ...(patchedDescription ? { name: patchedDescription } : {}),
+            ...(typeof patch.is_backgrounded === "boolean"
+              ? { isBackgrounded: patch.is_backgrounded }
+              : {}),
+            ...(readString(patch.error) ? { errorMessage: readString(patch.error) } : {}),
           },
         });
         return;
-      // Task state patch (status/backgrounded/end_time). No runtime mapping
-      // yet — the terminal task_notification reports the outcome — but it
-      // must not surface as an unknown-subtype warning row.
-      case "task_updated":
-        return;
-      case "task_notification":
+      }
+      case "task_notification": {
+        const record = message as unknown as Record<string, unknown>;
+        const usage = normalizeRuntimeTaskUsage(record.usage);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -2729,10 +2951,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.make(message.task_id),
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
-            ...(message.usage ? { usage: message.usage } : {}),
+            ...(usage ? { usage } : {}),
+            ...(readString(record.output_file)
+              ? { outputFile: readString(record.output_file) }
+              : {}),
+            ...(readString(record.tool_use_id)
+              ? { toolUseId: readString(record.tool_use_id) }
+              : {}),
           },
         });
         return;
+      }
       case "files_persisted":
         yield* offerRuntimeEvent({
           ...base,

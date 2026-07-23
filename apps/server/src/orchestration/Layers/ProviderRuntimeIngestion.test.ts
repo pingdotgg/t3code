@@ -9,6 +9,8 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  RuntimeTaskId,
+  type ThreadAgentSnapshot,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -44,7 +46,11 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  foldTaskAgentEvent,
+  ProviderRuntimeIngestionLive,
+  pruneSettledAgents,
+} from "./ProviderRuntimeIngestion.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -318,6 +324,133 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
     };
   }
+
+  it("folds material transitions, reactivations, and settled retention", () => {
+    const agents = new Map<string, ThreadAgentSnapshot>();
+    const started: Extract<ProviderRuntimeEvent, { type: "task.started" }> = {
+      type: "task.started",
+      eventId: asEventId("agent-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {
+        taskId: RuntimeTaskId.make("agent-1"),
+        description: "Reviewer",
+        taskType: "local_agent",
+      },
+    };
+    expect(foldTaskAgentEvent(agents, started)).toBe(true);
+    const usageTick: Extract<ProviderRuntimeEvent, { type: "task.progress" }> = {
+      ...started,
+      type: "task.progress",
+      eventId: asEventId("agent-progress"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        taskId: RuntimeTaskId.make("agent-1"),
+        description: "Reviewer",
+        usage: { totalTokens: 10 },
+      },
+    };
+    expect(foldTaskAgentEvent(agents, usageTick)).toBe(false);
+    const completed: Extract<ProviderRuntimeEvent, { type: "task.completed" }> = {
+      ...started,
+      type: "task.completed",
+      eventId: asEventId("agent-completed"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: { taskId: RuntimeTaskId.make("agent-1"), status: "completed" },
+    };
+    expect(foldTaskAgentEvent(agents, completed)).toBe(true);
+    expect(
+      foldTaskAgentEvent(agents, { ...started, eventId: asEventId("agent-reactivated") }),
+    ).toBe(true);
+    expect(agents.get("agent-1")?.activationCount).toBe(2);
+
+    for (let index = 0; index < 51; index += 1) {
+      agents.set(`settled-${index}`, {
+        agentId: `settled-${index}`,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        kind: "subagent",
+        name: `Agent ${index}`,
+        status: "completed",
+        firstStartedAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
+        lastActivityAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
+        activationCount: 1,
+        recentActivity: [],
+        updatedAt: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`,
+      });
+    }
+    pruneSettledAgents(agents);
+    expect(
+      Array.from(agents.values()).filter((agent) => agent.status === "completed"),
+    ).toHaveLength(50);
+    expect(agents.has("settled-0")).toBe(false);
+  });
+
+  it("appends latest-wins agent rosters only on material changes and sweeps orphans", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-agent-start"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: { taskId: "agent-1", description: "Reviewer", taskType: "local_agent" },
+    });
+    await harness.drain();
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-agent-usage"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: { taskId: "agent-1", description: "Reviewer", usage: { totalTokens: 10 } },
+    });
+    await harness.drain();
+    let thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "agent.snapshot"),
+    ).toHaveLength(1);
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exit-agents"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      payload: { reason: "process_exit" },
+    });
+    await harness.drain();
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    const snapshots =
+      thread?.activities.filter((activity) => activity.kind === "agent.snapshot") ?? [];
+    expect(snapshots).toHaveLength(2);
+    const latest = snapshots.at(-1)?.payload as { agents: Array<ThreadAgentSnapshot> } | undefined;
+    expect(latest?.agents).toHaveLength(1);
+    expect(latest?.agents[0]?.status).toBe("stopped");
+    expect(latest?.agents[0]?.errorMessage).toBe("orphaned on session exit");
+
+    // The session-exit sweep releases the in-memory roster; a later session on
+    // the same thread re-hydrates from the persisted snapshot instead of the
+    // evicted map (agent-1 stays stopped, not resurrected).
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-agent-restart"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:04.000Z",
+      payload: { taskId: "agent-2", description: "Follow-up", taskType: "local_agent" },
+    });
+    await harness.drain();
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    const rehydrated =
+      thread?.activities.filter((activity) => activity.kind === "agent.snapshot") ?? [];
+    expect(rehydrated).toHaveLength(3);
+    const roster = rehydrated.at(-1)?.payload as { agents: Array<ThreadAgentSnapshot> } | undefined;
+    expect(roster?.agents.map((agent) => [agent.agentId, agent.status])).toEqual([
+      ["agent-1", "stopped"],
+      ["agent-2", "running"],
+    ]);
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

@@ -1704,6 +1704,124 @@ describe("ClaudeAdapterLive", () => {
           "Code reviewer checked the migration edge cases.",
         );
         assert.equal(progressEvent.payload.description, "Running background teammate");
+        assert.deepEqual(progressEvent.payload.usage, {
+          totalTokens: 123,
+          toolUses: 4,
+          durationMs: 987,
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("carries Claude task linkage, updates, and workflow progress", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "workflow-1",
+        description: "Run checks",
+        task_type: "local_workflow",
+        subagent_type: "Workflow",
+        tool_use_id: "tool-1",
+        workflow_name: "Verification",
+        prompt: "Check the repository",
+        session_id: "session",
+        uuid: "started",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "workflow-1",
+        description: "Run checks",
+        subagent_type: "Workflow",
+        tool_use_id: "tool-1",
+        usage: { total_tokens: 12, tool_uses: 2, duration_ms: 30 },
+        workflow_progress: [
+          { type: "workflow_phase", index: 0, title: "Inspect" },
+          {
+            type: "workflow_agent",
+            index: 1,
+            label: "Reviewer",
+            phaseIndex: 0,
+            phaseTitle: "Inspect",
+            agentId: "agent-1",
+            model: "claude-sonnet",
+            state: "start",
+            attempt: 1,
+            tokens: 7,
+            toolCalls: 1,
+            lastToolName: "Read",
+          },
+        ],
+        session_id: "session",
+        uuid: "progress",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "workflow-1",
+        patch: {
+          status: "paused",
+          end_time: 1_700_000_000_000,
+          is_backgrounded: true,
+          error: "waiting",
+        },
+        session_id: "session",
+        uuid: "updated",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      const started = runtimeEvents.find((event) => event.type === "task.started");
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.name, "Run checks");
+        assert.equal(started.payload.agentType, "Workflow");
+        assert.equal(started.payload.toolUseId, "tool-1");
+        assert.equal(started.payload.workflowName, "Verification");
+        assert.equal(started.payload.prompt, "Check the repository");
+      }
+      const phasePatch = runtimeEvents.find(
+        (event) => event.type === "task.updated" && event.payload.phases !== undefined,
+      );
+      assert.equal(phasePatch?.type, "task.updated");
+      if (phasePatch?.type === "task.updated") {
+        assert.deepEqual(phasePatch.payload.phases, [{ index: 0, title: "Inspect" }]);
+      }
+      const child = runtimeEvents.find(
+        (event) => event.type === "task.started" && event.payload.taskId === "workflow-1:wf:1",
+      );
+      assert.equal(child?.type, "task.started");
+      if (child?.type === "task.started") {
+        assert.equal(child.payload.parentTaskId, "workflow-1");
+        assert.equal(child.payload.timelineBypass, true);
+        assert.equal(child.payload.taskType, "workflow_agent");
+      }
+      const statusPatch = runtimeEvents.find(
+        (event) => event.type === "task.updated" && event.payload.status === "paused",
+      );
+      assert.equal(statusPatch?.type, "task.updated");
+      if (statusPatch?.type === "task.updated") {
+        assert.equal(statusPatch.payload.endTime, "2023-11-14T22:13:20.000Z");
+        assert.equal(statusPatch.payload.isBackgrounded, true);
+        assert.equal(statusPatch.payload.errorMessage, "waiting");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

@@ -20,6 +20,7 @@ import {
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
@@ -494,10 +495,212 @@ function mapItemLifecycle(
   };
 }
 
+/**
+ * Codex v2 collab child threads have no task lifecycle of their own — the
+ * session runtime intercepts their notifications and forwards them wrapped as
+ * `collab/agentActivity`. Translate into the shared `task.*` family so the
+ * ingestion agent reducer treats Codex children like Claude subagents. All
+ * synthesized events set `timelineBypass` so they never become timeline rows.
+ *
+ * Probe-verified mapping (codex-cli 0.144.1): children emit no
+ * `thread/started`; their first event is `thread/status/changed`. Nicknames
+ * arrive via the parent's `subAgentActivity.agentPath` (`/root/<nickname>`).
+ * `turn/completed` means idle-and-resumable, not terminal.
+ */
+function mapCollabAgentActivity(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const wrapper =
+    event.payload !== null && typeof event.payload === "object"
+      ? (event.payload as {
+          agentThreadId?: unknown;
+          agentPath?: unknown;
+          method?: unknown;
+          params?: unknown;
+        })
+      : undefined;
+  if (!wrapper || typeof wrapper.agentThreadId !== "string" || typeof wrapper.method !== "string") {
+    return [];
+  }
+  const agentThreadId = wrapper.agentThreadId;
+  const agentPath = typeof wrapper.agentPath === "string" ? wrapper.agentPath : undefined;
+  // "/root/marlow" → "marlow"
+  const nickname = agentPath?.split("/").filter(Boolean).at(-1);
+  const inner: ProviderEvent = {
+    ...event,
+    method: wrapper.method,
+    ...(wrapper.params !== undefined ? { payload: wrapper.params } : {}),
+  };
+  const base = {
+    ...runtimeEventBase(event, canonicalThreadId),
+    payload: {
+      taskId: RuntimeTaskId.make(agentThreadId),
+      description: nickname ?? agentThreadId,
+      name: nickname ?? agentThreadId,
+      taskType: "local_agent",
+      timelineBypass: true,
+    },
+  } as const;
+
+  switch (wrapper.method) {
+    case "turn/started":
+      return [{ ...base, type: "task.started", payload: { ...base.payload } }];
+    case "turn/completed": {
+      const payload = readPayload(EffectCodexSchema.V2TurnCompletedNotification, inner.payload);
+      const turnStatus = payload?.turn.status;
+      const errorMessage = payload?.turn.error?.message;
+      if (turnStatus === "failed") {
+        return [
+          {
+            ...base,
+            type: "task.completed",
+            payload: {
+              taskId: base.payload.taskId,
+              status: "failed",
+              ...(errorMessage ? { summary: errorMessage } : {}),
+              timelineBypass: true,
+            },
+          },
+        ];
+      }
+      if (turnStatus === "interrupted") {
+        return [
+          {
+            ...base,
+            type: "task.completed",
+            payload: { taskId: base.payload.taskId, status: "stopped", timelineBypass: true },
+          },
+        ];
+      }
+      // completed (or unparseable payload): the identity is idle-and-resumable.
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId: base.payload.taskId, status: "idle", timelineBypass: true },
+        },
+      ];
+    }
+    case "subAgent/interrupted":
+      return [
+        {
+          ...base,
+          type: "task.completed",
+          payload: { taskId: base.payload.taskId, status: "stopped", timelineBypass: true },
+        },
+      ];
+    case "thread/status/changed": {
+      const payload = readPayload(
+        EffectCodexSchema.V2ThreadStatusChangedNotification,
+        inner.payload,
+      );
+      const status = payload?.status;
+      if (!status) return [];
+      if (status.type === "active") {
+        // Flags (waitingOnApproval/waitingOnUserInput) mean blocked; active
+        // with no flags means the wait resolved and the agent is running again.
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: {
+              taskId: base.payload.taskId,
+              status: status.activeFlags.length > 0 ? "waiting" : "running",
+              timelineBypass: true,
+            },
+          },
+        ];
+      }
+      if (status.type === "systemError") {
+        return [
+          {
+            ...base,
+            type: "task.completed",
+            payload: {
+              taskId: base.payload.taskId,
+              status: "failed",
+              summary: "Codex reported a system error for this agent",
+              timelineBypass: true,
+            },
+          },
+        ];
+      }
+      // notLoaded/idle are covered by turn lifecycle events.
+      return [];
+    }
+    case "thread/closed":
+      return [
+        {
+          ...base,
+          type: "task.completed",
+          payload: { taskId: base.payload.taskId, status: "stopped", timelineBypass: true },
+        },
+      ];
+    case "thread/tokenUsage/updated": {
+      const payload = readPayload(
+        EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
+        inner.payload,
+      );
+      // All fields from the cumulative `total` breakdown — mixing the
+      // cumulative total with `last` (per-turn) breakdowns would make the
+      // numbers internally inconsistent, and `last` can shrink on follow-ups.
+      const total = payload?.tokenUsage.total;
+      if (!total || total.totalTokens <= 0) return [];
+      return [
+        {
+          ...base,
+          type: "task.progress",
+          payload: {
+            ...base.payload,
+            usage: {
+              totalTokens: total.totalTokens,
+              inputTokens: total.inputTokens,
+              cachedInputTokens: total.cachedInputTokens,
+              outputTokens: total.outputTokens,
+              reasoningOutputTokens: total.reasoningOutputTokens,
+            },
+          },
+        },
+      ];
+    }
+    case "item/started":
+    case "item/completed": {
+      const payload =
+        readPayload(EffectCodexSchema.V2ItemStartedNotification, inner.payload) ??
+        readPayload(EffectCodexSchema.V2ItemCompletedNotification, inner.payload);
+      const item = payload?.item;
+      if (!item) return [];
+      const itemType = toCanonicalItemType(item.type);
+      const title = itemTitle(itemType, item);
+      const detail = itemDetail(itemType, item);
+      const summary = detail ?? title;
+      if (!summary) return [];
+      return [
+        {
+          ...base,
+          type: "task.progress",
+          payload: {
+            ...base.payload,
+            description: summary,
+            summary,
+            ...(title ? { lastToolName: title } : {}),
+          },
+        },
+      ];
+    }
+    default:
+      return [];
+  }
+}
+
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  if (event.kind === "notification" && event.method === "collab/agentActivity") {
+    return mapCollabAgentActivity(event, canonicalThreadId);
+  }
   if (event.kind === "error") {
     if (!event.message) {
       return [];

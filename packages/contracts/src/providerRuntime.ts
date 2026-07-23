@@ -176,6 +176,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "user-input.resolved",
   "task.started",
   "task.progress",
+  "task.updated",
   "task.completed",
   "hook.started",
   "hook.progress",
@@ -226,6 +227,7 @@ const UserInputRequestedType = Schema.Literal("user-input.requested");
 const UserInputResolvedType = Schema.Literal("user-input.resolved");
 const TaskStartedType = Schema.Literal("task.started");
 const TaskProgressType = Schema.Literal("task.progress");
+const TaskUpdatedType = Schema.Literal("task.updated");
 const TaskCompletedType = Schema.Literal("task.completed");
 const HookStartedType = Schema.Literal("hook.started");
 const HookProgressType = Schema.Literal("hook.progress");
@@ -459,10 +461,56 @@ const UserInputResolvedPayload = Schema.Struct({
 });
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
+/**
+ * Typed task usage rollup. `usage` on task events was historically
+ * `Schema.Unknown` (raw Claude SDK shape); emitters now normalize to this.
+ */
+export const RuntimeTaskUsage = Schema.Struct({
+  totalTokens: NonNegativeInt,
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  toolUses: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type RuntimeTaskUsage = typeof RuntimeTaskUsage.Type;
+
+/**
+ * Agent-linkage fields shared by the task lifecycle payloads. Optional and
+ * additive: pre-existing emitters that only set taskId/description remain
+ * valid.
+ *
+ * `timelineBypass: true` marks events synthesized purely to feed the agent
+ * reducer (e.g. Codex child-thread activity): ingestion must skip the
+ * activity-timeline projection for them, otherwise child fleets would spray
+ * a row per tool call into the transcript.
+ */
+const TaskAgentLinkage = {
+  name: Schema.optional(TrimmedNonEmptyStringSchema),
+  agentType: Schema.optional(TrimmedNonEmptyStringSchema),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  parentTaskId: Schema.optional(RuntimeTaskId),
+  workflowName: Schema.optional(TrimmedNonEmptyStringSchema),
+  phaseIndex: Schema.optional(NonNegativeInt),
+  phaseTitle: Schema.optional(TrimmedNonEmptyStringSchema),
+  phases: Schema.optional(
+    Schema.Array(Schema.Struct({ index: NonNegativeInt, title: TrimmedNonEmptyStringSchema })),
+  ),
+  attempt: Schema.optional(NonNegativeInt),
+  scriptPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  runId: Schema.optional(TrimmedNonEmptyStringSchema),
+  outputFile: Schema.optional(TrimmedNonEmptyStringSchema),
+  timelineBypass: Schema.optional(Schema.Boolean),
+} as const;
+
 const TaskStartedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
+  prompt: Schema.optional(TrimmedNonEmptyStringSchema),
+  ...TaskAgentLinkage,
 });
 export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 
@@ -470,16 +518,45 @@ const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   description: TrimmedNonEmptyStringSchema,
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
-  usage: Schema.optional(Schema.Unknown),
+  usage: Schema.optional(RuntimeTaskUsage),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),
+  ...TaskAgentLinkage,
 });
 export type TaskProgressPayload = typeof TaskProgressPayload.Type;
+
+/**
+ * Non-terminal state patch (Claude `task_updated`): running/paused flips,
+ * backgrounding, error text, end time.
+ */
+const TaskUpdatedPayload = Schema.Struct({
+  taskId: RuntimeTaskId,
+  // "idle" = finished a run but resumable (Codex agents between activations);
+  // "waiting" = blocked on approval/user input.
+  status: Schema.optional(
+    Schema.Literals([
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "killed",
+      "paused",
+      "idle",
+      "waiting",
+    ]),
+  ),
+  endTime: Schema.optional(IsoDateTime),
+  isBackgrounded: Schema.optional(Schema.Boolean),
+  errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+  ...TaskAgentLinkage,
+});
+export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;
 
 const TaskCompletedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   status: Schema.Literals(["completed", "failed", "stopped"]),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
-  usage: Schema.optional(Schema.Unknown),
+  usage: Schema.optional(RuntimeTaskUsage),
+  ...TaskAgentLinkage,
 });
 export type TaskCompletedPayload = typeof TaskCompletedPayload.Type;
 
@@ -835,6 +912,13 @@ const ProviderRuntimeTaskProgressEvent = Schema.Struct({
 });
 export type ProviderRuntimeTaskProgressEvent = typeof ProviderRuntimeTaskProgressEvent.Type;
 
+const ProviderRuntimeTaskUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: TaskUpdatedType,
+  payload: TaskUpdatedPayload,
+});
+export type ProviderRuntimeTaskUpdatedEvent = typeof ProviderRuntimeTaskUpdatedEvent.Type;
+
 const ProviderRuntimeTaskCompletedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: TaskCompletedType,
@@ -995,6 +1079,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeUserInputResolvedEvent,
   ProviderRuntimeTaskStartedEvent,
   ProviderRuntimeTaskProgressEvent,
+  ProviderRuntimeTaskUpdatedEvent,
   ProviderRuntimeTaskCompletedEvent,
   ProviderRuntimeHookStartedEvent,
   ProviderRuntimeHookProgressEvent,

@@ -85,6 +85,7 @@ import {
   hasActionableProposedPlan,
   isLatestTurnSettled,
 } from "../session-logic";
+import { deriveLatestAgentSnapshot } from "@t3tools/client-runtime/state/thread-agents";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
@@ -136,6 +137,8 @@ import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import AgentsPanel from "./AgentsPanel";
+import AgentsLiveStrip from "./chat/AgentsLiveStrip";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
@@ -1896,6 +1899,20 @@ function ChatViewContent(props: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const threadAgents = useMemo(
+    () => deriveLatestAgentSnapshot(threadActivities),
+    [threadActivities],
+  );
+  // Mirrors AgentsLiveStrip's own visibility rule so the wrapper doesn't
+  // reserve space (mb-1.5) after all agents settle.
+  const hasLiveAgents = useMemo(
+    () =>
+      threadAgents.some(
+        (agent) =>
+          agent.status === "running" || agent.status === "pending" || agent.status === "waiting",
+      ),
+    [threadAgents],
+  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -2976,12 +2993,31 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addAgentsSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "agents");
+  }, [activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
     [activeProject, activeThreadRef],
+  );
+  // Workflow scripts live in the provider's session directory, outside the
+  // workspace root the file surface can read. Open in-workspace paths in the
+  // file surface; copy the absolute path otherwise.
+  const openAgentScript = useCallback(
+    (scriptPath: string) => {
+      if (activeWorkspaceRoot && scriptPath.startsWith(`${activeWorkspaceRoot}/`)) {
+        openFileSurface(scriptPath.slice(activeWorkspaceRoot.length + 1));
+        return;
+      }
+      void navigator.clipboard.writeText(scriptPath).then(() => {
+        toastManager.add({ title: "Script path copied", description: scriptPath });
+      });
+    },
+    [activeWorkspaceRoot, openFileSurface],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -5381,6 +5417,8 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "agents" ? (
+      <AgentsPanel agents={threadAgents} onOpenScript={openAgentScript} mode="embedded" />
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
         activePlan={activePlan}
@@ -5579,6 +5617,11 @@ function ChatViewContent(props: ChatViewProps) {
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
+                  {hasLiveAgents ? (
+                    <div className="mb-1.5">
+                      <AgentsLiveStrip agents={threadAgents} onOpen={addAgentsSurface} />
+                    </div>
+                  ) : null}
                   <div
                     className="relative"
                     style={
@@ -5771,6 +5814,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddAgents={addAgentsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -5798,6 +5842,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddAgents={addAgentsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}

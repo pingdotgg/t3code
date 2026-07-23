@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -9,6 +10,12 @@ import {
   CheckpointRef,
   isToolLifecycleItemType,
   ThreadId,
+  THREAD_AGENTS_ACTIVITY_KIND,
+  THREAD_AGENT_RECENT_ACTIVITY_LIMIT,
+  THREAD_AGENT_TERMINAL_STATUSES,
+  type ThreadAgentSnapshot,
+  type ThreadAgentStatus,
+  type ThreadAgentUsage,
   type ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -41,6 +48,269 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+const AGENT_SETTLED_RETENTION_LIMIT = 50;
+const AGENT_IDLE_RETENTION_LIMIT = 25;
+const AGENT_USAGE_MATERIAL_STEP = 25_000;
+
+// Fields must satisfy the contract's NonNegativeInt or the persisted roster
+// row becomes undecodable on the client.
+function usageCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function taskUsage(value: unknown): ThreadAgentUsage | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const usage = value as Record<string, unknown>;
+  const totalTokens = usageCount(usage.totalTokens);
+  if (totalTokens === undefined) return undefined;
+  const inputTokens = usageCount(usage.inputTokens);
+  const cachedInputTokens = usageCount(usage.cachedInputTokens);
+  const outputTokens = usageCount(usage.outputTokens);
+  const reasoningOutputTokens = usageCount(usage.reasoningOutputTokens);
+  const toolUses = usageCount(usage.toolUses);
+  return {
+    totalTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
+    ...(toolUses !== undefined ? { toolUses } : {}),
+  };
+}
+
+function taskStatus(event: ProviderRuntimeEvent): ThreadAgentStatus | undefined {
+  if (event.type === "task.started") return "running";
+  if (event.type === "task.completed") return event.payload.status;
+  if (event.type !== "task.updated" || !event.payload.status) return undefined;
+  return event.payload.status === "killed"
+    ? "stopped"
+    : event.payload.status === "paused"
+      ? "idle"
+      : event.payload.status;
+}
+
+function taskKind(taskType: string | undefined, parentTaskId: string | undefined) {
+  if (taskType === "local_agent") return "subagent" as const;
+  if (taskType === "local_workflow") return "workflow" as const;
+  if (taskType === "workflow_agent") return "workflow_agent" as const;
+  if (taskType === "local_bash" || taskType === "shell") return "shell" as const;
+  if (taskType === "monitor") return "monitor" as const;
+  // Parent linkage is only a workflow-membership hint when the type itself is
+  // unknown — a nested shell/monitor task keeps its explicit kind above.
+  if (parentTaskId) return "workflow_agent" as const;
+  return "other" as const;
+}
+
+function isTaskAgentEvent(
+  event: ProviderRuntimeEvent,
+): event is Extract<
+  ProviderRuntimeEvent,
+  { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
+> {
+  return (
+    event.type === "task.started" ||
+    event.type === "task.progress" ||
+    event.type === "task.updated" ||
+    event.type === "task.completed"
+  );
+}
+
+function workflowPhasesEqual(
+  left: ThreadAgentSnapshot["phases"],
+  right: ThreadAgentSnapshot["phases"],
+): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.length === right.length &&
+      left.every(
+        (phase, index) =>
+          phase.index === right[index]?.index && phase.title === right[index]?.title,
+      ))
+  );
+}
+
+const AGENT_TEXT_LIMIT = 180;
+
+/** Roster snapshots duplicate these strings on every append — keep them small. */
+function boundAgentText(value: string): string {
+  return value.length > AGENT_TEXT_LIMIT ? `${value.slice(0, AGENT_TEXT_LIMIT - 1)}…` : value;
+}
+
+export function foldTaskAgentEvent(
+  agents: Map<string, ThreadAgentSnapshot>,
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
+  >,
+): boolean {
+  const payload = event.payload;
+  const previous = agents.get(payload.taskId);
+  const status = taskStatus(event) ?? previous?.status ?? "running";
+  const description = "description" in payload ? payload.description : undefined;
+  const summary = "summary" in payload ? payload.summary : undefined;
+  const nextUsage = "usage" in payload ? taskUsage(payload.usage) : undefined;
+  const lastToolName = "lastToolName" in payload ? payload.lastToolName : undefined;
+  const settledNow = status === "idle" || THREAD_AGENT_TERMINAL_STATUSES.has(status);
+  // A settled agent's card shows its result/error, not a stale in-flight
+  // activity line ("Reading files…" on a failed card).
+  const rawCurrentActivity = settledNow
+    ? undefined
+    : (summary ?? lastToolName ?? previous?.currentActivity);
+  const currentActivity =
+    rawCurrentActivity === undefined ? undefined : boundAgentText(rawCurrentActivity);
+  const activityChanged =
+    (summary !== undefined && summary !== previous?.currentActivity) ||
+    (lastToolName !== undefined && lastToolName !== previous?.lastToolName);
+  const recentActivity = activityChanged
+    ? [
+        ...(previous?.recentActivity ?? []),
+        {
+          at: event.createdAt,
+          // Bounded: Codex child item summaries can carry full command/item
+          // text, and each entry is duplicated into every roster snapshot.
+          summary: boundAgentText(summary ?? lastToolName ?? "Activity updated"),
+        },
+      ].slice(-THREAD_AGENT_RECENT_ACTIVITY_LIMIT)
+    : (previous?.recentActivity ?? []);
+  const wasSettled =
+    previous !== undefined &&
+    (previous.status === "idle" || THREAD_AGENT_TERMINAL_STATUSES.has(previous.status));
+  // Any non-settled status counts as a fresh activation — an idle Codex agent
+  // resumed via a waiting approval still increments, not just idle→running.
+  const reactivated =
+    wasSettled && status !== "idle" && !THREAD_AGENT_TERMINAL_STATUSES.has(status);
+  const explicitEndTime = event.type === "task.updated" ? event.payload.endTime : undefined;
+  const terminal = THREAD_AGENT_TERMINAL_STATUSES.has(status);
+  // Re-derive kind whenever this event carries a taskType/parent — a child
+  // registered from an early notification (before its parent linkage arrived)
+  // must not stay pinned to a first-guess "other".
+  const eventKind = taskKind(
+    "taskType" in payload ? payload.taskType : undefined,
+    payload.parentTaskId,
+  );
+  const next: ThreadAgentSnapshot = {
+    agentId: payload.taskId,
+    provider: event.provider,
+    kind: eventKind !== "other" ? eventKind : (previous?.kind ?? eventKind),
+    name: payload.name ?? description ?? payload.workflowName ?? previous?.name ?? payload.taskId,
+    ...((payload.agentType ?? previous?.agentType)
+      ? { agentType: payload.agentType ?? previous?.agentType }
+      : {}),
+    ...((payload.model ?? previous?.model) ? { model: payload.model ?? previous?.model } : {}),
+    status,
+    ...(currentActivity ? { currentActivity } : {}),
+    ...((lastToolName ?? previous?.lastToolName)
+      ? { lastToolName: lastToolName ?? previous?.lastToolName }
+      : {}),
+    // Merge field-wise: a payload carrying only totalTokens (e.g. a terminal
+    // Claude task_notification) must not wipe previously known breakdowns.
+    ...(nextUsage || previous?.usage
+      ? { usage: { ...previous?.usage, ...nextUsage } as ThreadAgentUsage }
+      : {}),
+    firstStartedAt: previous?.firstStartedAt ?? event.createdAt,
+    // Reset per activation so live timers exclude idle gaps between runs.
+    lastStartedAt: reactivated
+      ? event.createdAt
+      : (previous?.lastStartedAt ?? previous?.firstStartedAt ?? event.createdAt),
+    lastActivityAt: event.createdAt,
+    // Prefer the provider's explicit end time, then an already-recorded one;
+    // only stamp ingestion time on the FIRST terminal transition so duplicate
+    // terminal events don't keep sliding the end forward.
+    ...(!reactivated &&
+    (explicitEndTime ?? previous?.endedAt ?? (terminal ? event.createdAt : undefined))
+      ? {
+          endedAt: explicitEndTime ?? previous?.endedAt ?? (terminal ? event.createdAt : undefined),
+        }
+      : {}),
+    activationCount: previous ? previous.activationCount + (reactivated ? 1 : 0) : 1,
+    ...((event.turnId ?? previous?.lastTurnId)
+      ? { lastTurnId: TurnId.make(String(event.turnId ?? previous?.lastTurnId)) }
+      : {}),
+    ...((payload.parentTaskId ?? previous?.parentAgentId)
+      ? { parentAgentId: payload.parentTaskId ?? previous?.parentAgentId }
+      : {}),
+    ...(payload.phaseIndex !== undefined || previous?.phaseIndex !== undefined
+      ? { phaseIndex: payload.phaseIndex ?? previous?.phaseIndex }
+      : {}),
+    ...((payload.phaseTitle ?? previous?.phaseTitle)
+      ? { phaseTitle: payload.phaseTitle ?? previous?.phaseTitle }
+      : {}),
+    ...((payload.phases ?? previous?.phases) ? { phases: payload.phases ?? previous?.phases } : {}),
+    ...((payload.scriptPath ?? previous?.scriptPath)
+      ? { scriptPath: payload.scriptPath ?? previous?.scriptPath }
+      : {}),
+    ...((payload.runId ?? previous?.runId) ? { runId: payload.runId ?? previous?.runId } : {}),
+    ...((payload.outputFile ?? previous?.outputFile)
+      ? { outputFile: payload.outputFile ?? previous?.outputFile }
+      : {}),
+    // A re-activated agent starts a fresh run: prior result/error text would
+    // read as the live run's output, so clear both unless this event sets them.
+    ...(event.type === "task.completed" && event.payload.summary
+      ? { resultSummary: event.payload.summary }
+      : !reactivated && previous?.resultSummary
+        ? { resultSummary: previous.resultSummary }
+        : {}),
+    ...(event.type === "task.updated" && event.payload.errorMessage
+      ? { errorMessage: event.payload.errorMessage }
+      : !reactivated && previous?.errorMessage
+        ? { errorMessage: previous.errorMessage }
+        : {}),
+    recentActivity,
+    updatedAt: event.createdAt,
+  };
+  agents.set(payload.taskId, next);
+  if (!previous) return true;
+  const usageStepChanged =
+    Math.floor((previous.usage?.totalTokens ?? 0) / AGENT_USAGE_MATERIAL_STEP) !==
+    Math.floor((next.usage?.totalTokens ?? 0) / AGENT_USAGE_MATERIAL_STEP);
+  return (
+    previous.status !== next.status ||
+    previous.kind !== next.kind ||
+    previous.parentAgentId !== next.parentAgentId ||
+    previous.name !== next.name ||
+    previous.model !== next.model ||
+    previous.phaseIndex !== next.phaseIndex ||
+    previous.phaseTitle !== next.phaseTitle ||
+    !workflowPhasesEqual(previous.phases, next.phases) ||
+    previous.currentActivity !== next.currentActivity ||
+    activityChanged ||
+    usageStepChanged ||
+    previous.endedAt !== next.endedAt ||
+    previous.resultSummary !== next.resultSummary ||
+    previous.errorMessage !== next.errorMessage ||
+    previous.scriptPath !== next.scriptPath ||
+    previous.runId !== next.runId ||
+    previous.outputFile !== next.outputFile
+  );
+}
+
+export function pruneSettledAgents(agents: Map<string, ThreadAgentSnapshot>): void {
+  // Terminal agents are history and compete for the standard retention pool.
+  const settled = Array.from(agents.values())
+    .filter((agent) => THREAD_AGENT_TERMINAL_STATUSES.has(agent.status))
+    .sort((left, right) => left.lastActivityAt.localeCompare(right.lastActivityAt));
+  for (const agent of settled.slice(
+    0,
+    Math.max(0, settled.length - AGENT_SETTLED_RETENTION_LIMIT),
+  )) {
+    agents.delete(agent.agentId);
+  }
+  // Idle agents are resumable identities, so they get their own (generous)
+  // cap rather than sharing the terminal pool — but Codex children end every
+  // run idle and never terminal until close/interrupt, so without a bound a
+  // long session accumulates them all and every material append persists the
+  // full roster. Evicting oldest-idle is safe: a resumed identity
+  // re-registers from its next event (the activation counter tolerates the
+  // restart).
+  const idle = Array.from(agents.values())
+    .filter((agent) => agent.status === "idle")
+    .sort((left, right) => left.lastActivityAt.localeCompare(right.lastActivityAt));
+  for (const agent of idle.slice(0, Math.max(0, idle.length - AGENT_IDLE_RETENTION_LIMIT))) {
+    agents.delete(agent.agentId);
+  }
+}
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -94,9 +364,9 @@ const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
-type TurnStartRequestedDomainEvent = Extract<
+type IngestionDomainEvent = Extract<
   OrchestrationEvent,
-  { type: "thread.turn-start-requested" }
+  { type: "thread.turn-start-requested" | "thread.reverted" }
 >;
 
 type RuntimeIngestionInput =
@@ -106,7 +376,7 @@ type RuntimeIngestionInput =
     }
   | {
       source: "domain";
-      event: TurnStartRequestedDomainEvent;
+      event: IngestionDomainEvent;
     };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -310,6 +580,12 @@ export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
 ): ReadonlyArray<OrchestrationThreadActivity> {
+  if (
+    (isTaskAgentEvent(event) && event.payload.timelineBypass === true) ||
+    event.type === "task.updated"
+  ) {
+    return [];
+  }
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
     return eventWithSequence.sessionSequence !== undefined
@@ -693,6 +969,23 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const agentsByThread = new Map<ThreadId, Map<string, ThreadAgentSnapshot>>();
+  const hydratedAgentThreads = new Set<ThreadId>();
+  // Threads whose latest roster failed to persist: the in-memory state is
+  // newer than the last agent.snapshot activity, so the next event must
+  // re-dispatch even if it is not material on its own.
+  const pendingRosterRedispatch = new Set<ThreadId>();
+  // Activities appended per thread since its last agent.snapshot. The
+  // activities projection keeps only the newest 500 rows; refreshing the
+  // roster before the last snapshot can age out guarantees hydration (and the
+  // client's latest-wins scan) always finds one while agents exist.
+  const activitiesSinceAgentSnapshot = new Map<ThreadId, number>();
+  const AGENT_SNAPSHOT_REFRESH_ACTIVITY_COUNT = 400;
+  // Monotonic per-thread roster revision. Snapshot activities carry it so the
+  // client picks the newest roster deterministically even when two appends
+  // share a createdAt millisecond. Seeded from the hydrated snapshot.
+  const agentRosterRevision = new Map<ThreadId, number>();
+  let agentSnapshotDispatchCount = 0;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -1305,6 +1598,181 @@ const make = Effect.gen(function* () {
           return loadedThreadDetail;
         });
 
+      // Hydrate lazily: on agent-touching events, or amortized once ordinary
+      // traffic has appended enough activities that a persisted snapshot
+      // could be approaching the 500-row cap. Never on every first event —
+      // message deltas after a restart must not each trigger a full
+      // thread-detail load through the serialized ingestion worker.
+      const eventTouchesAgents = isTaskAgentEvent(event) || event.type === "session.exited";
+      const activityPressure =
+        (activitiesSinceAgentSnapshot.get(thread.id) ?? 0) >= AGENT_SNAPSHOT_REFRESH_ACTIVITY_COUNT;
+      if ((eventTouchesAgents || activityPressure) && !hydratedAgentThreads.has(thread.id)) {
+        const detail = yield* getLoadedThreadDetail();
+        const activityList = detail?.activities ?? [];
+        // Select the snapshot the same way the client does — highest revision
+        // wins, list position breaks ties — so the reducer never resumes from
+        // a stale lower-revision roster that landed later in the list.
+        let latestSnapshotIndex = -1;
+        let bestRevision = -1;
+        for (let index = 0; index < activityList.length; index += 1) {
+          const activity = activityList[index];
+          if (!activity || activity.kind !== THREAD_AGENTS_ACTIVITY_KIND) continue;
+          const revision =
+            activity.payload !== null &&
+            typeof activity.payload === "object" &&
+            typeof (activity.payload as { revision?: unknown }).revision === "number"
+              ? ((activity.payload as { revision: number }).revision ?? -1)
+              : -1;
+          if (revision >= bestRevision) {
+            bestRevision = revision;
+            latestSnapshotIndex = index;
+          }
+        }
+        const latestSnapshot =
+          latestSnapshotIndex >= 0 ? activityList[latestSnapshotIndex] : undefined;
+        // Seed the refresh counter with the snapshot's actual age in the
+        // capped projection — after a restart it may already sit hundreds of
+        // rows deep, and starting from zero would let it age out before the
+        // first refresh.
+        activitiesSinceAgentSnapshot.set(
+          thread.id,
+          latestSnapshotIndex >= 0 ? activityList.length - 1 - latestSnapshotIndex : 0,
+        );
+        if (bestRevision >= 0) {
+          agentRosterRevision.set(thread.id, bestRevision);
+        }
+        const payload =
+          latestSnapshot?.payload !== null && typeof latestSnapshot?.payload === "object"
+            ? (latestSnapshot.payload as { agents?: unknown })
+            : undefined;
+        const agents = new Map<string, ThreadAgentSnapshot>();
+        if (Array.isArray(payload?.agents)) {
+          for (const candidate of payload.agents) {
+            if (
+              candidate !== null &&
+              typeof candidate === "object" &&
+              typeof (candidate as { agentId?: unknown }).agentId === "string"
+            ) {
+              const agent = candidate as ThreadAgentSnapshot;
+              agents.set(agent.agentId, agent);
+            }
+          }
+        }
+        agentsByThread.set(thread.id, agents);
+        hydratedAgentThreads.add(thread.id);
+      }
+
+      const threadAgents = agentsByThread.get(thread.id) ?? new Map<string, ThreadAgentSnapshot>();
+      agentsByThread.set(thread.id, threadAgents);
+      let agentRosterMaterial = false;
+      if (isTaskAgentEvent(event)) {
+        agentRosterMaterial = foldTaskAgentEvent(threadAgents, event);
+      } else if (event.type === "session.exited") {
+        for (const [agentId, agent] of threadAgents) {
+          if (THREAD_AGENT_TERMINAL_STATUSES.has(agent.status)) continue;
+          threadAgents.set(agentId, {
+            ...agent,
+            status: "stopped",
+            endedAt: event.createdAt,
+            lastActivityAt: event.createdAt,
+            errorMessage: "orphaned on session exit",
+            updatedAt: event.createdAt,
+          });
+          agentRosterMaterial = true;
+        }
+      }
+      if (pendingRosterRedispatch.has(thread.id) && threadAgents.size > 0) {
+        agentRosterMaterial = true;
+      }
+      if (
+        !agentRosterMaterial &&
+        threadAgents.size > 0 &&
+        (activitiesSinceAgentSnapshot.get(thread.id) ?? 0) >= AGENT_SNAPSHOT_REFRESH_ACTIVITY_COUNT
+      ) {
+        agentRosterMaterial = true;
+      }
+      if (agentRosterMaterial) {
+        pruneSettledAgents(threadAgents);
+        const roster = Array.from(threadAgents.values());
+        // "active" covers everything non-settled (running/pending/waiting) so a
+        // roster of blocked agents doesn't read as "0 agents settled".
+        const active = roster.filter(
+          (agent) => agent.status !== "idle" && !THREAD_AGENT_TERMINAL_STATUSES.has(agent.status),
+        ).length;
+        const settled = roster.length - active;
+        const count = active > 0 ? active : settled;
+        const summary = `${count} ${count === 1 ? "agent" : "agents"} ${active > 0 ? "active" : "settled"}`;
+        const nextRevision = (agentRosterRevision.get(thread.id) ?? 0) + 1;
+        const snapshotUuid = yield* crypto.randomUUIDv4;
+        const activity: OrchestrationThreadActivity = {
+          id: EventId.make(`${event.eventId}:agent-snapshot:${snapshotUuid}`),
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: THREAD_AGENTS_ACTIVITY_KIND,
+          summary,
+          payload: { agents: roster, revision: nextRevision },
+          turnId: toTurnId(event.turnId) ?? null,
+        };
+        // The in-memory roster is authoritative (already folded); if the
+        // append fails, keep it and flag the thread so the NEXT event
+        // re-dispatches the full roster — discarding memory here would lose
+        // transitions newer than the last persisted snapshot. The failure is
+        // swallowed (logged) rather than raised: agent observability must
+        // never block the rest of this event's ingestion (message deltas,
+        // session status, timeline activities). Interrupts still propagate.
+        pendingRosterRedispatch.add(thread.id);
+        const appendSnapshot = orchestrationEngine
+          .dispatch({
+            type: "thread.activity.append",
+            commandId: yield* providerCommandId(event, "agent-snapshot-append"),
+            threadId: thread.id,
+            activity,
+            createdAt: activity.createdAt,
+          })
+          .pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                pendingRosterRedispatch.delete(thread.id);
+                activitiesSinceAgentSnapshot.set(thread.id, 0);
+                agentRosterRevision.set(thread.id, nextRevision);
+                agentSnapshotDispatchCount += 1;
+                yield* Effect.logDebug("provider agent snapshot appended", {
+                  threadId: thread.id,
+                  agentCount: roster.length,
+                  dispatchCount: agentSnapshotDispatchCount,
+                });
+              }),
+            ),
+          );
+        // session.exited is often the thread's LAST event — the usual
+        // "re-dispatch on the next event" recovery never fires, so retry the
+        // final orphan-sweep roster once before giving up on it.
+        yield* appendSnapshot.pipe(
+          event.type === "session.exited"
+            ? Effect.retry({ times: 1 })
+            : (effect: typeof appendSnapshot) => effect,
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning("provider agent snapshot append failed; will re-dispatch", {
+                  threadId: thread.id,
+                  agentCount: roster.length,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
+      }
+
+      // Sessions are done producing agent events once they exit; release the
+      // per-thread reducer state. A later session re-hydrates from the
+      // persisted snapshot (the exit sweep above just wrote the final roster).
+      if (event.type === "session.exited" && !pendingRosterRedispatch.has(thread.id)) {
+        agentsByThread.delete(thread.id);
+        hydratedAgentThreads.delete(thread.id);
+        activitiesSinceAgentSnapshot.delete(thread.id);
+        agentRosterRevision.delete(thread.id);
+      }
+
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
@@ -1765,6 +2233,19 @@ const make = Effect.gen(function* () {
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);
+      // Count for hydrated threads with a live roster AND for not-yet-hydrated
+      // threads: the counter is what triggers amortized hydration under
+      // ordinary traffic after a restart, so a persisted snapshot gets
+      // refreshed before it can age out of the capped projection.
+      if (
+        activities.length > 0 &&
+        (!hydratedAgentThreads.has(thread.id) || agentsByThread.get(thread.id)?.size)
+      ) {
+        activitiesSinceAgentSnapshot.set(
+          thread.id,
+          (activitiesSinceAgentSnapshot.get(thread.id) ?? 0) + activities.length,
+        );
+      }
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
@@ -1780,7 +2261,22 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
-  const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
+  const processDomainEvent = (event: IngestionDomainEvent) =>
+    Effect.sync(() => {
+      if (event.type !== "thread.reverted") {
+        return;
+      }
+      // A checkpoint revert pruned reverted-turn activities (including agent
+      // snapshots) from the projection. Drop the cached roster so the next
+      // agent event rehydrates from post-revert state instead of folding a
+      // stale map and resurrecting reverted agents.
+      const threadId = event.payload.threadId;
+      agentsByThread.delete(threadId);
+      hydratedAgentThreads.delete(threadId);
+      activitiesSinceAgentSnapshot.delete(threadId);
+      agentRosterRevision.delete(threadId);
+      pendingRosterRedispatch.delete(threadId);
+    });
 
   const processInput = (input: RuntimeIngestionInput) =>
     input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
@@ -1811,7 +2307,7 @@ const make = Effect.gen(function* () {
       );
       yield* Effect.forkScoped(
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-          if (event.type !== "thread.turn-start-requested") {
+          if (event.type !== "thread.turn-start-requested" && event.type !== "thread.reverted") {
             return Effect.void;
           }
           return worker.enqueue({ source: "domain", event });

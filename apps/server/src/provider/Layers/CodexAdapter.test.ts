@@ -555,6 +555,129 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps collab/agentActivity turn lifecycle to timeline-bypassing task events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-turn-start"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collab/agentActivity",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          agentThreadId: "child-thread-1",
+          agentPath: "/root/marlow",
+          method: "turn/started",
+          params: { threadId: "child-thread-1", turn: { id: "child-turn-1" } },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "task.started");
+      if (firstEvent.value.type !== "task.started") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.taskId, "child-thread-1");
+      NodeAssert.equal(firstEvent.value.payload.name, "marlow");
+      NodeAssert.equal(firstEvent.value.payload.timelineBypass, true);
+    }),
+  );
+
+  it.effect("maps collab child turn/completed to an idle task.updated", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-turn-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "collab/agentActivity",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          agentThreadId: "child-thread-1",
+          agentPath: "/root/marlow",
+          method: "turn/completed",
+          params: { threadId: "child-thread-1", turn: { id: "child-turn-1" } },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "task.updated");
+      if (firstEvent.value.type !== "task.updated") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.status, "idle");
+      NodeAssert.equal(firstEvent.value.payload.timelineBypass, true);
+    }),
+  );
+
+  it.effect("maps collab child token usage to task.progress with normalized usage", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-usage"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        method: "collab/agentActivity",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          agentThreadId: "child-thread-1",
+          agentPath: "/root/marlow",
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "child-thread-1",
+            turnId: "child-turn-1",
+            tokenUsage: {
+              total: {
+                totalTokens: 4200,
+                inputTokens: 4000,
+                cachedInputTokens: 1000,
+                outputTokens: 200,
+                reasoningOutputTokens: 50,
+              },
+              last: {
+                totalTokens: 4200,
+                inputTokens: 4000,
+                cachedInputTokens: 1000,
+                outputTokens: 200,
+                reasoningOutputTokens: 50,
+              },
+              modelContextWindow: 272_000,
+            },
+          },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "task.progress");
+      if (firstEvent.value.type !== "task.progress") {
+        return;
+      }
+      const usage = firstEvent.value.payload.usage as { totalTokens?: number } | undefined;
+      NodeAssert.equal(usage?.totalTokens, 4200);
+    }),
+  );
+
   it.effect("labels MCP lifecycle entries with server and tool names", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

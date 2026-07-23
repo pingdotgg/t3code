@@ -585,6 +585,41 @@ function readRouteFields(notification: CodexServerNotification): {
   }
 }
 
+interface CollabChildAgent {
+  readonly agentPath: string | undefined;
+  readonly interrupted: boolean;
+}
+
+/**
+ * v2 collab children announce themselves only via `subAgentActivity` items on
+ * the parent stream (the probe shows no child `thread/started`, and v2
+ * `collabAgentToolCall` items carry empty receiver lists). Track them so their
+ * notifications can be folded into agent telemetry instead of leaking into the
+ * parent timeline as unattributed items. Returns the interruption transition
+ * when this notification carries one, so the caller can emit a terminal event.
+ */
+function rememberSubAgentActivity(
+  childAgents: Map<string, CollabChildAgent>,
+  notification: CodexServerNotification,
+): { readonly agentThreadId: string; readonly agentPath: string } | undefined {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") {
+    return undefined;
+  }
+  const item = notification.params.item;
+  if (item.type !== "subAgentActivity") {
+    return undefined;
+  }
+  const interrupted = item.kind === "interrupted";
+  const previous = childAgents.get(item.agentThreadId);
+  childAgents.set(item.agentThreadId, { agentPath: item.agentPath, interrupted });
+  return interrupted && !previous?.interrupted
+    ? { agentThreadId: item.agentThreadId, agentPath: item.agentPath }
+    : undefined;
+}
+
+/** Synthetic method carrying an intercepted child-thread notification. */
+export const COLLAB_AGENT_ACTIVITY_METHOD = "collab/agentActivity";
+
 function rememberCollabReceiverTurns(
   collabReceiverTurns: Map<string, TurnId>,
   notification: CodexServerNotification,
@@ -708,6 +743,7 @@ export const makeCodexSessionRuntime = (
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
+    const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgent>());
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
@@ -829,14 +865,76 @@ export const makeCodexSessionRuntime = (
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
-        const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
-            : undefined;
-        })();
+        const collabChildAgents = yield* Ref.get(collabChildAgentsRef);
+        const notificationThreadId = readNotificationThreadId(notification);
+        const childParentTurnId = notificationThreadId
+          ? collabReceiverTurns.get(notificationThreadId)
+          : undefined;
 
         rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
+        const interruption = rememberSubAgentActivity(collabChildAgents, notification);
+        yield* Ref.set(collabChildAgentsRef, collabChildAgents);
+        if (interruption) {
+          // Surface the interruption as its own child event so the agent
+          // tracker can terminalize the child (the child thread itself goes
+          // silent when interrupted).
+          yield* emitEvent({
+            kind: "notification",
+            threadId: options.threadId,
+            method: COLLAB_AGENT_ACTIVITY_METHOD,
+            payload: {
+              agentThreadId: interruption.agentThreadId,
+              agentPath: interruption.agentPath,
+              method: "subAgent/interrupted",
+            },
+          });
+        }
+
+        // v2 collab child threads: their notifications arrive on this
+        // connection keyed by the child threadId. Divert the whole stream into
+        // a synthetic collab/agentActivity event for the agent tracker and keep
+        // it out of the parent timeline. A child's first event can arrive
+        // BEFORE the parent's subAgentActivity registers it (probe: child
+        // thread/status/changed lands first), so any thread that is neither
+        // the session's own provider thread nor a v1 collab receiver is
+        // treated as an unregistered child.
+        const providerThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        // Re-check v1 receiver registration on every notification: if a
+        // thread was provisionally classified as a v2 child before the
+        // parent's collabAgentToolCall arrived, hand it back to the v1
+        // suppression path once the receiver registration lands.
+        const knownChild =
+          notificationThreadId && !collabReceiverTurns.has(notificationThreadId)
+            ? collabChildAgents.get(notificationThreadId)
+            : undefined;
+        const isForeignThread =
+          notificationThreadId !== undefined &&
+          providerThreadId !== undefined &&
+          notificationThreadId !== providerThreadId &&
+          !collabReceiverTurns.has(notificationThreadId);
+        if (notificationThreadId && (knownChild || isForeignThread)) {
+          if (!knownChild) {
+            yield* Ref.update(collabChildAgentsRef, (current) => {
+              const next = new Map(current);
+              next.set(notificationThreadId, { agentPath: undefined, interrupted: false });
+              return next;
+            });
+          }
+          yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+          yield* emitEvent({
+            kind: "notification",
+            threadId: options.threadId,
+            method: COLLAB_AGENT_ACTIVITY_METHOD,
+            payload: {
+              agentThreadId: notificationThreadId,
+              ...(knownChild?.agentPath ? { agentPath: knownChild.agentPath } : {}),
+              method: notification.method,
+              params: payload,
+            },
+          });
+          return;
+        }
+
         if (childParentTurnId && shouldSuppressChildConversationNotification(notification.method)) {
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
