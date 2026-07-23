@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildCodexLaunchArgs, buildCodexThreadConfig } from "./CuaDriverEmbedded.ts";
+import * as Effect from "effect/Effect";
+
+import type { EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
+
+import {
+  buildCodexLaunchArgs,
+  buildCodexThreadConfig,
+  monitorEmbeddedCuaDriverExit,
+} from "./CuaDriverEmbedded.ts";
 
 const connection = {
   mcp: {
@@ -57,5 +65,26 @@ describe("embedded cua-driver Codex configuration", () => {
         },
       },
     });
+  });
+
+  it("reports an unexpected driver exit", async () => {
+    const exit = {
+      generation: "generation-1",
+      code: 9,
+      success: false,
+    };
+    let observedExit: EmbeddedDriverExit | undefined;
+
+    await Effect.runPromise(
+      monitorEmbeddedCuaDriverExit(
+        () => Promise.resolve(exit),
+        (observed) =>
+          Effect.sync(() => {
+            observedExit = observed;
+          }),
+      ),
+    );
+
+    expect(observedExit).toEqual(exit);
   });
 });

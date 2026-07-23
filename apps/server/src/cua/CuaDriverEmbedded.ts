@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
+import type { EmbeddedDriverConnection, EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
 
 export const T3CODE_CUA_DRIVER_PATH_ENV = "T3CODE_CUA_DRIVER_PATH";
 export const T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV = "T3CODE_CUA_DRIVER_HOST_BUNDLE_ID";
@@ -76,6 +76,32 @@ const importEmbeddedCuaDriver = (
 ): Promise<typeof import("@trycua/cua-driver/embedded")> =>
   moduleUrl === undefined ? import("@trycua/cua-driver/embedded") : import(moduleUrl);
 
+export const monitorEmbeddedCuaDriverExit = Effect.fn("server.monitorEmbeddedCuaDriverExit")(
+  function* (
+    waitForExit: () => Promise<EmbeddedDriverExit>,
+    onUnexpectedExit: (exit: EmbeddedDriverExit) => Effect.Effect<void>,
+  ) {
+    const exit = yield* Effect.tryPromise(waitForExit);
+    yield* onUnexpectedExit(exit);
+  },
+  Effect.catch((cause) => Effect.logWarning("embedded cua-driver exit monitor failed", { cause })),
+);
+
+const restartServerAfterCuaDriverExit = Effect.fn("server.restartAfterCuaDriverExit")(function* (
+  exit: EmbeddedDriverExit,
+) {
+  yield* Effect.logError("embedded cua-driver exited unexpectedly; restarting server", {
+    component: "embedded-cua-driver",
+    generation: exit.generation,
+    code: exit.code,
+    success: exit.success,
+  });
+  yield* Effect.sync(() => {
+    process.exitCode = 1;
+    process.kill(process.pid, "SIGTERM");
+  });
+});
+
 /**
  * Starts a server-private driver when T3CODE_CUA_DRIVER_PATH is configured.
  * The scoped finalizer owns both the native host and its child process.
@@ -129,6 +155,11 @@ export const startEmbeddedCuaDriver = Effect.fn("server.startEmbeddedCuaDriver")
     connection,
     previousThreadConfig,
   );
+
+  yield* monitorEmbeddedCuaDriverExit(
+    () => driver.waitForExit(connection.generation),
+    restartServerAfterCuaDriverExit,
+  ).pipe(Effect.forkScoped);
 
   yield* Effect.logInfo("embedded cua-driver ready", {
     component: "embedded-cua-driver",
