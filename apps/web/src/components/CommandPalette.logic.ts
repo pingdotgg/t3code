@@ -110,21 +110,27 @@ export function buildProjectActionItems(input: {
   projects: ReadonlyArray<Project>;
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
+  titleTrailingContentByValue?: ReadonlyMap<string, ReactNode>;
   runProject: (project: Project) => Promise<void>;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.title, project.workspaceRoot],
-    title: project.title,
-    description: project.workspaceRoot,
-    icon: input.icon(project),
-    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const value = `${input.valuePrefix}:${project.environmentId}:${project.id}`;
+    const titleTrailingContent = input.titleTrailingContentByValue?.get(value);
+    return {
+      kind: "action",
+      value,
+      searchTerms: [project.title, project.workspaceRoot],
+      title: project.title,
+      description: project.workspaceRoot,
+      icon: input.icon(project),
+      ...(titleTrailingContent !== undefined ? { titleTrailingContent } : {}),
+      ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<

@@ -27,6 +27,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -685,6 +686,28 @@ function OpenCommandPaletteDialog(props: {
     [openProjectFromSearch, projects],
   );
 
+  const remoteProjectThreadIconByValue = useMemo(
+    () =>
+      new Map(
+        projects
+          .filter(
+            (project) =>
+              primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId,
+          )
+          .map((project) => [
+            `new-thread-in:${project.environmentId}:${project.id}`,
+            <span
+              key={`remote-project:${project.environmentId}:${project.id}`}
+              aria-label="Remote environment"
+              className="inline-flex shrink-0 items-center text-muted-foreground/70"
+            >
+              <ServerIcon aria-hidden className="size-4" />
+            </span>,
+          ]),
+      ),
+    [primaryEnvironmentId, projects],
+  );
+
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
@@ -698,6 +721,7 @@ function OpenCommandPaletteDialog(props: {
               className={ITEM_ICON_CLASS}
             />
           ),
+          titleTrailingContentByValue: remoteProjectThreadIconByValue,
           runProject: async (project) => {
             await startNewThreadInProjectFromContext(
               {
@@ -711,7 +735,14 @@ function OpenCommandPaletteDialog(props: {
           },
         }),
       ),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
+    [
+      activeDraftThread,
+      activeThread,
+      defaultProjectRef,
+      handleNewThread,
+      projects,
+      remoteProjectThreadIconByValue,
+    ],
   );
 
   const allThreadItems = useMemo(
