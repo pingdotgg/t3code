@@ -1149,10 +1149,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const serverThread = useThread(routeThreadRef);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLastVisitedAt = useUiStateStore(
-    (store) => store.threadLastVisitedAtById[routeThreadKey],
-  );
+  const markActiveThreadVisited = useUiStateStore((store) => store.markActiveThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1751,19 +1748,19 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
-    if (Number.isNaN(threadUpdatedAt)) return;
-    const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
-
-    markThreadVisited(
+    if (!serverThread?.id) {
+      markActiveThreadVisited(null, null);
+      return;
+    }
+    const visitedAt = Number.isNaN(Date.parse(serverThread.updatedAt))
+      ? null
+      : serverThread.updatedAt;
+    markActiveThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      serverThread.updatedAt,
+      visitedAt,
     );
   }, [
-    activeThreadLastVisitedAt,
-    markThreadVisited,
+    markActiveThreadVisited,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.updatedAt,

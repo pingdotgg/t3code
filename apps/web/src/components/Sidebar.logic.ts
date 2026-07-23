@@ -99,6 +99,7 @@ export interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
+    | "Unread"
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
@@ -114,6 +115,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
+  Unread: 1,
   Completed: 1,
 };
 
@@ -127,6 +129,7 @@ type ThreadStatusInput = Pick<
   | "session"
 > & {
   lastVisitedAt?: string | undefined;
+  isExplicitlyUnread?: boolean | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -599,6 +602,15 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
   const { thread } = input;
+
+  if (thread.isExplicitlyUnread) {
+    return {
+      label: "Unread",
+      colorClass: "text-blue-600 dark:text-blue-300/90",
+      dotClass: "bg-blue-500 dark:bg-blue-300/90",
+      pulse: false,
+    };
+  }
 
   if (thread.hasPendingApprovals) {
     return {

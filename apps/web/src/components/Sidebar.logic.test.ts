@@ -943,6 +943,23 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
+  it("shows explicit unread even without a completed turn", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          isExplicitlyUnread: true,
+          latestTurn: null,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Unread", pulse: false });
+  });
+
   it("shows pending approval before all other statuses", () => {
     expect(
       resolveThreadStatusPill({

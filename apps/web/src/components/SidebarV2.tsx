@@ -326,12 +326,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const isExplicitlyUnread = useUiStateStore(
+    (state) => state.threadExplicitlyUnreadById[threadKey] === true,
+  );
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  const isUnread = isExplicitlyUnread || hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
@@ -345,8 +348,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
-  const topStatus =
-    status === "working"
+  const topStatus = isExplicitlyUnread
+    ? {
+        label: "Unread",
+        icon: null,
+        className: "text-blue-600 dark:text-blue-300",
+      }
+    : status === "working"
       ? {
           label: "Working",
           icon: "working" as const,
