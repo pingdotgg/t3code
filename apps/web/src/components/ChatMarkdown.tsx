@@ -1318,17 +1318,11 @@ function ChatMarkdown({
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   const renderedTextRef = useRef(renderedText);
-  const isStreamingRef = useRef(isStreaming);
   const markdownFileLinkMetaByHrefRef = useRef(markdownFileLinkMetaByHref);
   const fileLinkParentSuffixByPathRef = useRef(fileLinkParentSuffixByPath);
-  const resolvedThemeRef = useRef(resolvedTheme);
-  const diffThemeNameRef = useRef(diffThemeName);
   renderedTextRef.current = renderedText;
-  isStreamingRef.current = isStreaming;
   markdownFileLinkMetaByHrefRef.current = markdownFileLinkMetaByHref;
   fileLinkParentSuffixByPathRef.current = fileLinkParentSuffixByPath;
-  resolvedThemeRef.current = resolvedTheme;
-  diffThemeNameRef.current = diffThemeName;
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -1521,7 +1515,7 @@ function ChatMarkdown({
             line={fileLinkMeta.line}
             label={labelParts.join(" · ")}
             copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
-            theme={resolvedThemeRef.current}
+            theme={resolvedTheme}
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
             onOpenInBrowser={
@@ -1554,15 +1548,15 @@ function ChatMarkdown({
             code={codeBlock.code}
             language={language}
             fenceTitle={fenceTitle}
-            theme={resolvedThemeRef.current}
+            theme={resolvedTheme}
           >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
                   code={codeBlock.code}
-                  themeName={diffThemeNameRef.current}
-                  isStreaming={isStreamingRef.current}
+                  themeName={diffThemeName}
+                  isStreaming={isStreaming}
                 />
               </Suspense>
             </CodeHighlightErrorBoundary>
@@ -1571,10 +1565,13 @@ function ChatMarkdown({
       },
     }),
     [
+      diffThemeName,
+      isStreaming,
       onTaskListChange,
       openInPreferredEditor,
       openExternalLinkInPreview,
       openMarkdownFileInPreview,
+      resolvedTheme,
       skills,
       threadRef,
     ],
