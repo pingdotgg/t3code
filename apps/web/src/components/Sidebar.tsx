@@ -196,6 +196,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  shouldPublishSidebarChangeRequestState,
   shouldQuerySidebarThreadGitStatus,
   shouldClearThreadSelectionOnMouseDown,
   shouldDismissThreadSettleConfirmation,
@@ -358,8 +359,9 @@ function SidebarHiddenThreadChangeRequestStateReporter(props: {
     })?.state ?? null;
 
   useEffect(() => {
+    if (!shouldPublishSidebarChangeRequestState(gitStatus.isPending)) return;
     onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+  }, [gitStatus.isPending, onChangeRequestState, prState, threadKey]);
 
   return null;
 }
@@ -531,8 +533,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const prState = pr?.state ?? null;
   useEffect(() => {
+    if (!shouldPublishSidebarChangeRequestState(gitStatus.isPending)) return;
     onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+  }, [gitStatus.isPending, onChangeRequestState, prState, threadKey]);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive

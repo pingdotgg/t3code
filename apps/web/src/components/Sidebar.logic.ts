@@ -89,6 +89,10 @@ export function shouldQuerySidebarThreadGitStatus(input: {
   return (input.branch !== null || input.worktreePath !== null) && input.gitCwd !== null;
 }
 
+export function shouldPublishSidebarChangeRequestState(isGitStatusPending: boolean): boolean {
+  return !isGitStatusPending;
+}
+
 export function pruneSidebarChangeRequestStates<T>(
   current: ReadonlyMap<string, T>,
   liveThreadKeys: ReadonlySet<string>,

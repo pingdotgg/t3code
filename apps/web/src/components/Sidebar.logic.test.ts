@@ -31,6 +31,7 @@ import {
   sortSettledThreadsForSidebarV2,
   shouldDismissThreadSettleConfirmation,
   shouldQuerySidebarThreadGitStatus,
+  shouldPublishSidebarChangeRequestState,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -80,6 +81,16 @@ describe("shouldQuerySidebarThreadGitStatus", () => {
         gitCwd: "/repo",
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldPublishSidebarChangeRequestState", () => {
+  it("preserves the last known state while git status is pending", () => {
+    expect(shouldPublishSidebarChangeRequestState(true)).toBe(false);
+  });
+
+  it("publishes the resolved state after git status settles", () => {
+    expect(shouldPublishSidebarChangeRequestState(false)).toBe(true);
   });
 });
 
