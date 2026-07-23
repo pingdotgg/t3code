@@ -97,6 +97,61 @@ describe("refreshQueryOnSuccess", () => {
       registry.dispose();
     }),
   );
+
+  it.effect("revalidates a stale cached query after the live query remounts", () =>
+    Effect.gen(function* () {
+      let contents = "initial";
+      let reads = 0;
+      const query = Atom.make(
+        Effect.sync(() => {
+          reads += 1;
+          return contents;
+        }),
+      ).pipe(Atom.swr({ staleTime: 0, revalidateOnMount: true }), Atom.setIdleTTL(0));
+      const signal = Atom.make<AsyncResult.AsyncResult<string, never>>(
+        AsyncResult.initial<string, never>(false),
+      );
+      const liveQuery = refreshQueryOnSuccess(query, signal);
+      const scheduledTasks: Array<() => void> = [];
+      const registry = AtomRegistry.make({
+        defaultIdleTTL: 5 * 60_000,
+        scheduleTask: (task) => {
+          let active = true;
+          scheduledTasks.push(() => {
+            if (active) task();
+          });
+          return () => {
+            active = false;
+          };
+        },
+      });
+      const unmountInitial = registry.mount(liveQuery);
+
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe("initial");
+      const readsAfterInitialMount = reads;
+
+      unmountInitial();
+      contents = "updated";
+      while (scheduledTasks.length > 0) {
+        scheduledTasks.shift()?.();
+      }
+
+      const unmountUpdated = registry.mount(liveQuery);
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe("updated");
+      expect(reads).toBe(readsAfterInitialMount + 1);
+
+      unmountUpdated();
+      registry.dispose();
+    }),
+  );
 });
 
 describe("atom command result helpers", () => {

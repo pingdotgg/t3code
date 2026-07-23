@@ -88,7 +88,7 @@ export function refreshQueryOnSuccess<A, E, B, E2>(
       return current;
     },
     { initialValueTarget: queryAtom },
-  );
+  ).pipe(Atom.setIdleTTL(0));
 }
 
 export interface AtomCommand<W, A, E> {

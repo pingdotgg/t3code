@@ -61,7 +61,7 @@ export function createProjectEnvironmentAtoms<R, E>(
     tag: WS_METHODS.projectsReadFile,
     // Workspace files can change outside T3 Code, so always revalidate cached reads on mount.
     staleTimeMs: 0,
-    idleTtlMs: 5 * 60_000,
+    idleTtlMs: 0,
   });
   const fileChanges = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:projects:file-changes",
