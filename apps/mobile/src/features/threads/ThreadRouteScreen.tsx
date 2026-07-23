@@ -64,6 +64,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { uuidv4 } from "../../lib/uuid";
+import { releaseForkActionLock, tryAcquireForkActionLock } from "./fork-action-lock";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,
@@ -203,6 +204,7 @@ function ThreadRouteContent(
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const [forkingTurnId, setForkingTurnId] = useState<TurnId | null>(null);
+  const forkingTurnIdRef = useRef<TurnId | null>(null);
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -487,7 +489,7 @@ function ThreadRouteContent(
   }, [interruptThreadTurn, selectedThread]);
   const handleForkFromTurn = useCallback(
     async (sourceTurnId: TurnId) => {
-      if (selectedThread === null || forkingTurnId !== null) {
+      if (selectedThread === null || !tryAcquireForkActionLock(forkingTurnIdRef, sourceTurnId)) {
         return;
       }
 
@@ -518,10 +520,11 @@ function ThreadRouteContent(
           threadId: String(nextThreadId),
         });
       } finally {
+        releaseForkActionLock(forkingTurnIdRef, sourceTurnId);
         setForkingTurnId(null);
       }
     },
-    [forkThread, forkingTurnId, navigation, selectedThread],
+    [forkThread, navigation, selectedThread],
   );
 
   const handleOpenTerminal = useCallback(

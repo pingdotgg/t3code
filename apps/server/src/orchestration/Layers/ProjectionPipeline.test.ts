@@ -731,9 +731,8 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-fork
         });
 
         yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
-        yield* fileSystem.writeFileString(sourceAttachmentPath, "fork-owned-image");
 
-        yield* appendAndProject({
+        const savedForkEvent = yield* eventStore.append({
           type: "thread.forked",
           eventId: EventId.make("evt-fork-owner-3"),
           aggregateKind: "thread",
@@ -784,6 +783,27 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-fork
           },
         });
 
+        const firstProjection = yield* Effect.result(
+          projectionPipeline.projectEvent(savedForkEvent),
+        );
+        assert.equal(firstProjection._tag, "Failure");
+        const rolledBackForkRows = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS "count"
+          FROM projection_thread_messages
+          WHERE thread_id = ${forkThreadId}
+        `;
+        assert.equal(rolledBackForkRows[0]?.count ?? 0, 0);
+        const rolledBackProjectionState = yield* sql<{
+          readonly lastAppliedSequence: number;
+        }>`
+          SELECT last_applied_sequence AS "lastAppliedSequence"
+          FROM projection_state
+          WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}
+        `;
+        assert.equal(rolledBackProjectionState[0]?.lastAppliedSequence, 2);
+
+        yield* fileSystem.writeFileString(sourceAttachmentPath, "fork-owned-image");
+        yield* projectionPipeline.projectEvent(savedForkEvent);
         assert.equal(yield* fileSystem.readFileString(forkAttachmentPath), "fork-owned-image");
 
         yield* appendAndProject({

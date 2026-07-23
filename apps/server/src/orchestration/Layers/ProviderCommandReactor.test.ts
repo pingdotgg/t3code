@@ -550,6 +550,73 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("resolves inherited fork history to the provider-owning ancestor", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const sourceThreadId = ThreadId.make("thread-1");
+    const sourceTurnId = asTurnId("source-turn-nested");
+    const parentForkThreadId = ThreadId.make("thread-parent-fork");
+    const nestedForkThreadId = ThreadId.make("thread-nested-fork");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-nested-source-complete"),
+        threadId: sourceThreadId,
+        messageId: asMessageId("nested-source-assistant"),
+        turnId: sourceTurnId,
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-parent-fork"),
+        threadId: parentForkThreadId,
+        sourceThreadId,
+        sourceTurnId,
+        title: "Parent fork",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-nested-fork"),
+        threadId: nestedForkThreadId,
+        sourceThreadId: parentForkThreadId,
+        sourceTurnId,
+        title: "Nested fork",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-nested-fork-turn-start"),
+        threadId: nestedForkThreadId,
+        message: {
+          messageId: asMessageId("nested-fork-user-message"),
+          role: "user",
+          text: "continue from inherited history",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      forkFrom: {
+        threadId: sourceThreadId,
+        sourceTurnId,
+        sourceTurnIndex: 0,
+      },
+    });
+  });
+
   it("does not fall back to the latest provider response when the fork source is unavailable", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

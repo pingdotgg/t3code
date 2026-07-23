@@ -74,6 +74,7 @@ const runtimeMock = {
     transientErrorSessionIds: new Set<string>(),
     sessionDirectoryById: new Map<string, string>(),
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
+    sessionUpdateError: null as Error | null,
     forkCalls: [] as Array<{ sessionID: string; directory?: string; messageID?: string }>,
   },
   reset() {
@@ -94,6 +95,7 @@ const runtimeMock = {
     this.state.transientErrorSessionIds.clear();
     this.state.sessionDirectoryById.clear();
     this.state.sessionUpdateCalls.length = 0;
+    this.state.sessionUpdateError = null;
     this.state.forkCalls.length = 0;
   },
 };
@@ -164,6 +166,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         update: async ({ sessionID, permission }: { sessionID: string; permission: unknown }) => {
           runtimeMock.state.sessionUpdateCalls.push({ sessionID, permission });
+          if (runtimeMock.state.sessionUpdateError) {
+            throw runtimeMock.state.sessionUpdateError;
+          }
           return { data: { id: sessionID } };
         },
         fork: async ({
@@ -419,6 +424,38 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, "ses_source_fork");
 
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("aborts a newly forked OpenCode session when permission update fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-fork-update-failure");
+      runtimeMock.state.messages = [
+        { info: { id: "user-1", role: "user" }, parts: [] },
+        { info: { id: "assistant-1", role: "assistant" }, parts: [] },
+      ];
+      runtimeMock.state.sessionUpdateError = new Error("permission update failed");
+
+      const result = yield* Effect.result(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+          forkFrom: {
+            threadId: asThreadId("thread-opencode-source"),
+            sourceTurnIndex: 0,
+            resumeCursor: { schemaVersion: 1, sessionId: "ses_source" },
+          },
+        }),
+      );
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, ["ses_source_fork"]);
+      NodeAssert.equal(
+        (yield* adapter.listSessions()).some((session) => session.threadId === threadId),
+        false,
+      );
     }),
   );
 

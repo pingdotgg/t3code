@@ -570,9 +570,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                   yield* directory.getBinding(requestedForkFrom.threadId),
                 );
                 if (!sourceBinding) {
-                  if (requestedForkFrom.sourceTurnId === undefined) {
-                    return undefined;
-                  }
                   return yield* toValidationError(
                     "ProviderService.startSession",
                     `Cannot fork thread '${requestedForkFrom.threadId}' because it has no persisted provider binding.`,

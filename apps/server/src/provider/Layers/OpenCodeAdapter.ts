@@ -1257,6 +1257,30 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
+              const updateForkedSessionPermissions = Effect.fn(
+                "updateForkedOpenCodeSessionPermissions",
+              )(function* (forkedSessionId: string) {
+                yield* runOpenCodeSdk("session.update", () =>
+                  client.session.update({
+                    sessionID: forkedSessionId,
+                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                  }),
+                ).pipe(
+                  Effect.catchCause((updateCause) =>
+                    runOpenCodeSdk("session.abort", () =>
+                      client.session.abort({ sessionID: forkedSessionId }),
+                    ).pipe(
+                      Effect.catchCause((abortCause) =>
+                        Effect.logWarning("opencode.fork.cleanup-failed", {
+                          sessionId: forkedSessionId,
+                          abortCause,
+                        }),
+                      ),
+                      Effect.andThen(Effect.failCause(updateCause)),
+                    ),
+                  ),
+                );
+              });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
@@ -1311,12 +1335,7 @@ export function makeOpenCodeAdapter(
                       detail: "OpenCode session.fork returned no session payload.",
                     });
                   }
-                  yield* runOpenCodeSdk("session.update", () =>
-                    client.session.update({
-                      sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
-                  );
+                  yield* updateForkedSessionPermissions(forked.id);
                   return { openCodeSession: forked, created: true };
                 }
 
@@ -1371,12 +1390,7 @@ export function makeOpenCodeAdapter(
                       detail: "OpenCode session.fork returned no session payload.",
                     });
                   }
-                  yield* runOpenCodeSdk("session.update", () =>
-                    client.session.update({
-                      sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
-                  );
+                  yield* updateForkedSessionPermissions(forked.id);
                   return { openCodeSession: forked, created: true };
                 }
 

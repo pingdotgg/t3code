@@ -13,7 +13,11 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
+import {
+  ProjectionAttachmentMaterializationError,
+  toPersistenceSqlError,
+  type ProjectionRepositoryError,
+} from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
@@ -353,6 +357,46 @@ function collectThreadAttachmentRelativePaths(
   return relativePaths;
 }
 
+const materializeForkedAttachments = Effect.fn("materializeForkedAttachments")(function* (
+  sideEffects: AttachmentSideEffects,
+) {
+  const serverConfig = yield* Effect.service(ServerConfig);
+  const fileSystem = yield* Effect.service(FileSystem.FileSystem);
+  const path = yield* Effect.service(Path.Path);
+
+  const attachmentsRootDir = serverConfig.attachmentsDir;
+
+  yield* Effect.forEach(
+    sideEffects.copiedAttachmentRelativePaths.entries(),
+    ([destinationRelativePath, sourceRelativePath]) =>
+      destinationRelativePath === sourceRelativePath
+        ? Effect.void
+        : Effect.gen(function* () {
+            const destinationPath = path.join(attachmentsRootDir, destinationRelativePath);
+            if (yield* fileSystem.exists(destinationPath)) {
+              return;
+            }
+            const temporaryDestinationPath = `${destinationPath}.fork-copy.tmp`;
+            yield* fileSystem.makeDirectory(attachmentsRootDir, { recursive: true });
+            yield* fileSystem.copyFile(
+              path.join(attachmentsRootDir, sourceRelativePath),
+              temporaryDestinationPath,
+            );
+            yield* fileSystem.rename(temporaryDestinationPath, destinationPath);
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectionAttachmentMaterializationError({
+                  operation: "ProjectionPipeline.materializeForkedAttachments",
+                  detail: `Could not copy '${sourceRelativePath}' to '${destinationRelativePath}'.`,
+                  cause,
+                }),
+            ),
+          ),
+    { concurrency: 1 },
+  );
+});
+
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
   sideEffects: AttachmentSideEffects,
 ) {
@@ -364,27 +408,6 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
   const readAttachmentRootEntries = fileSystem
     .readDirectory(attachmentsRootDir, { recursive: false })
     .pipe(Effect.orElseSucceed(() => [] as Array<string>));
-
-  const copyForkedAttachment = Effect.fn("copyForkedAttachment")(function* (
-    destinationRelativePath: string,
-    sourceRelativePath: string,
-  ) {
-    if (destinationRelativePath === sourceRelativePath) {
-      return;
-    }
-    yield* fileSystem.makeDirectory(attachmentsRootDir, { recursive: true });
-    yield* fileSystem.copyFile(
-      path.join(attachmentsRootDir, sourceRelativePath),
-      path.join(attachmentsRootDir, destinationRelativePath),
-    );
-  });
-
-  yield* Effect.forEach(
-    sideEffects.copiedAttachmentRelativePaths.entries(),
-    ([destinationRelativePath, sourceRelativePath]) =>
-      copyForkedAttachment(destinationRelativePath, sourceRelativePath),
-    { concurrency: 1 },
-  );
 
   const removeDeletedThreadAttachmentEntry = Effect.fn("removeDeletedThreadAttachmentEntry")(
     function* (threadSegment: string, entry: string) {
@@ -1678,6 +1701,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
       yield* sql.withTransaction(
         projector.apply(event, attachmentSideEffects).pipe(
+          Effect.flatMap(() => materializeForkedAttachments(attachmentSideEffects)),
           Effect.flatMap(() =>
             projectionStateRepository.upsert({
               projector: projector.name,

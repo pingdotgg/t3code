@@ -168,8 +168,8 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
         "First answer",
       ]);
       expect(event.payload.inheritedMessages.map((message) => message.turnId)).toEqual([
-        TurnId.make("thread-fork:fork-turn:0"),
-        TurnId.make("thread-fork:fork-turn:0"),
+        turnOneId,
+        turnOneId,
       ]);
       expect(event.payload.inheritedMessages[0]?.attachments).toEqual([
         {
@@ -188,6 +188,44 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       });
       expect(projected.threads.find((thread) => thread.id === forkThreadId)?.forkedFrom).toEqual({
         threadId: sourceThreadId,
+        turnId: turnOneId,
+      });
+    }),
+  );
+
+  it.effect("preserves provider turn identity when forking inherited history again", () =>
+    Effect.gen(function* () {
+      const readModel = seedReadModel();
+      const firstFork = requireForkEvent(
+        yield* decideOrchestrationCommand({
+          command: forkCommand(turnOneId),
+          readModel,
+        }),
+      );
+      const projected = yield* projectEvent(readModel, {
+        ...firstFork,
+        sequence: 1,
+        eventId: EventId.make("event-first-fork"),
+      });
+      const nestedThreadId = ThreadId.make("thread-nested-fork");
+      const nestedFork = requireForkEvent(
+        yield* decideOrchestrationCommand({
+          command: {
+            ...forkCommand(turnOneId),
+            commandId: CommandId.make("command-nested-fork"),
+            threadId: nestedThreadId,
+            sourceThreadId: forkThreadId,
+          },
+          readModel: projected,
+        }),
+      );
+
+      expect(nestedFork.payload.inheritedMessages.map((message) => message.turnId)).toEqual([
+        turnOneId,
+        turnOneId,
+      ]);
+      expect(nestedFork.payload.forkedFrom).toEqual({
+        threadId: forkThreadId,
         turnId: turnOneId,
       });
     }),
@@ -215,6 +253,35 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       }).pipe(Effect.flip);
 
       expect(error.message).toContain("still running and cannot be forked");
+    }),
+  );
+
+  it.effect("rejects a failed turn without a completed assistant response", () =>
+    Effect.gen(function* () {
+      const readModel = seedReadModel();
+      const source = readModel.threads[0]!;
+      const failedTurnId = TurnId.make("turn-3");
+      const error = yield* decideOrchestrationCommand({
+        command: forkCommand(failedTurnId),
+        readModel: {
+          ...readModel,
+          threads: [
+            {
+              ...source,
+              latestTurn: {
+                turnId: failedTurnId,
+                state: "error",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                assistantMessageId: null,
+              },
+            },
+          ],
+        },
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("has no completed assistant response to fork");
     }),
   );
 });

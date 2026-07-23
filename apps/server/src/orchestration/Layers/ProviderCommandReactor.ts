@@ -528,28 +528,65 @@ const make = Effect.gen(function* () {
       const forkSource =
         forkedFrom != null
           ? yield* Effect.gen(function* () {
-              const sourceThread = yield* resolveThread(forkedFrom.threadId);
               const sourceTurnId = forkedFrom.turnId;
-              if (sourceTurnId !== null && sourceThread === undefined) {
-                return yield* new ProviderAdapterRequestError({
-                  provider: desiredInfo.driverKind,
-                  method: "thread.turn.start",
-                  detail: `Cannot fork from turn '${sourceTurnId}' because source thread '${forkedFrom.threadId}' is unavailable.`,
-                });
+              let sourceThreadId = forkedFrom.threadId;
+              let sourceThread = yield* resolveThread(sourceThreadId);
+              const visitedThreadIds = new Set<string>();
+
+              if (sourceTurnId !== null) {
+                // An inherited message still belongs to the provider session that
+                // originally produced it. Walk fork-owned message ids back to that
+                // ancestor so nested forks use its durable binding and native turn id.
+                while (true) {
+                  if (sourceThread === undefined) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: desiredInfo.driverKind,
+                      method: "thread.turn.start",
+                      detail: `Cannot fork from turn '${sourceTurnId}' because source thread '${sourceThreadId}' is unavailable.`,
+                    });
+                  }
+                  if (visitedThreadIds.has(sourceThread.id)) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: desiredInfo.driverKind,
+                      method: "thread.turn.start",
+                      detail: `Cannot resolve fork lineage for turn '${sourceTurnId}' because it contains a cycle at thread '${sourceThread.id}'.`,
+                    });
+                  }
+                  visitedThreadIds.add(sourceThread.id);
+
+                  const sourceAssistantMessage = sourceThread.messages.find(
+                    (message) =>
+                      message.role === "assistant" &&
+                      message.turnId === sourceTurnId &&
+                      !message.streaming,
+                  );
+                  if (sourceAssistantMessage === undefined) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: desiredInfo.driverKind,
+                      method: "thread.turn.start",
+                      detail: `Cannot fork from turn '${sourceTurnId}' because its completed response was not found in source thread '${sourceThread.id}'.`,
+                    });
+                  }
+
+                  const parentFork = sourceThread.forkedFrom;
+                  if (
+                    !sourceAssistantMessage.id.startsWith(`${sourceThread.id}:fork:`) ||
+                    parentFork == null
+                  ) {
+                    break;
+                  }
+
+                  sourceThreadId = parentFork.threadId;
+                  sourceThread = yield* resolveThread(sourceThreadId);
+                }
               }
+
               const sourceTurnIndex =
                 sourceThread !== undefined && sourceTurnId !== null
                   ? findCompletedTurnIndex(sourceThread.messages, sourceTurnId)
                   : undefined;
-              if (sourceTurnId !== null && sourceTurnIndex === undefined) {
-                return yield* new ProviderAdapterRequestError({
-                  provider: desiredInfo.driverKind,
-                  method: "thread.turn.start",
-                  detail: `Cannot fork from turn '${sourceTurnId}' because its completed response was not found in source thread '${forkedFrom.threadId}'.`,
-                });
-              }
               return {
-                threadId: forkedFrom.threadId,
+                threadId: sourceThreadId,
                 ...(sourceTurnId !== null ? { sourceTurnId } : {}),
                 ...(sourceTurnIndex !== undefined ? { sourceTurnIndex } : {}),
               };

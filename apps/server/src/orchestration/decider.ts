@@ -4,7 +4,6 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
-  TurnId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -407,6 +406,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Turn '${sourceTurnId}' is still running and cannot be forked.`,
         });
       }
+      if (
+        !sourceThread.messages.some(
+          (message) =>
+            message.turnId === sourceTurnId && message.role === "assistant" && !message.streaming,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Turn '${sourceTurnId}' has no completed assistant response to fork.`,
+        });
+      }
 
       const cutoffIndex = sourceThread.messages.findLastIndex(
         (message) => message.turnId === sourceTurnId,
@@ -414,20 +424,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const sourceMessages = sourceThread.messages
         .slice(0, cutoffIndex + 1)
         .filter((message) => !message.streaming);
-      const forkedTurnIds = new Map<string, TurnId>();
       const inheritedMessages = [];
 
       for (let index = 0; index < sourceMessages.length; index += 1) {
         const message = sourceMessages[index];
         if (!message) {
           continue;
-        }
-        let forkedTurnId: TurnId | null = null;
-        if (message.turnId !== null) {
-          forkedTurnId =
-            forkedTurnIds.get(message.turnId) ??
-            TurnId.make(`${command.threadId}:fork-turn:${forkedTurnIds.size}`);
-          forkedTurnIds.set(message.turnId, forkedTurnId);
         }
 
         const attachments =
@@ -449,7 +451,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         inheritedMessages.push({
           ...message,
           id: MessageId.make(`${command.threadId}:fork:${index}`),
-          turnId: forkedTurnId,
           ...(attachments !== undefined ? { attachments } : {}),
         });
       }
