@@ -286,6 +286,48 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("rejects a configured project icon replaced by a symlink after signing", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-symlink-root-",
+      });
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-symlink-custom-",
+      });
+      const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-symlink-outside-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      const outsidePath = path.join(outsideDirectory, "secret.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg>icon</svg>");
+      yield* fileSystem.writeFileString(outsidePath, "<svg>secret</svg>");
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIcons: { [root]: iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root, revision: iconPath },
+      }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      yield* fileSystem.remove(iconPath);
+      yield* fileSystem.symlink(outsidePath, iconPath);
+
+      expect(yield* resolveAsset(token, suffix.slice(separatorIndex + 1))).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("uses a configured git-remote icon across clone paths", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

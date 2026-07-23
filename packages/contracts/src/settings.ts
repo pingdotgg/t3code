@@ -400,6 +400,7 @@ export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 const ProjectIconPath = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 const ProjectIconWorkspaceRoot = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 const ProjectIconGitRemote = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
+const ProjectIconUpdatePath = TrimmedString.check(Schema.isMaxLength(1024));
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -546,6 +547,22 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+export const ProjectIconUpdate = Schema.Union([
+  Schema.Struct({
+    scope: Schema.Literal("workspace"),
+    workspaceRoot: ProjectIconWorkspaceRoot,
+    repositoryKey: Schema.optionalKey(ProjectIconGitRemote),
+    iconPath: ProjectIconUpdatePath,
+  }),
+  Schema.Struct({
+    scope: Schema.Literal("git-remote"),
+    workspaceRoot: ProjectIconWorkspaceRoot,
+    repositoryKey: ProjectIconGitRemote,
+    iconPath: ProjectIconUpdatePath,
+  }),
+]);
+export type ProjectIconUpdate = typeof ProjectIconUpdate.Type;
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -559,6 +576,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // Whole-map replacement. Keys are normalized repository identities such as
   // github.com/t3tools/t3code, independent of clone URL or local path.
   projectIconsByGitRemote: Schema.optionalKey(Schema.Record(ProjectIconGitRemote, ProjectIconPath)),
+  // Atomic single-project update. The server applies this against the latest
+  // icon maps so concurrent edits cannot replace unrelated entries.
+  projectIconUpdate: Schema.optionalKey(ProjectIconUpdate),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

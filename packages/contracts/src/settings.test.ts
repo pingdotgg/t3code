@@ -178,6 +178,34 @@ describe("ServerSettings project icons", () => {
       }),
     ).toThrow();
   });
+
+  it("decodes atomic project icon updates and permits a blank reset path", () => {
+    expect(
+      decodeServerSettingsPatch({
+        projectIconUpdate: {
+          scope: "workspace",
+          workspaceRoot: "  /workspace/t3code  ",
+          repositoryKey: "  github.com/t3tools/t3code  ",
+          iconPath: "  ",
+        },
+      }).projectIconUpdate,
+    ).toEqual({
+      scope: "workspace",
+      workspaceRoot: "/workspace/t3code",
+      repositoryKey: "github.com/t3tools/t3code",
+      iconPath: "",
+    });
+
+    expect(() =>
+      decodeServerSettingsPatch({
+        projectIconUpdate: {
+          scope: "git-remote",
+          workspaceRoot: "/workspace/t3code",
+          iconPath: "/icons/project.svg",
+        },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("ServerSettingsPatch.providerInstances", () => {

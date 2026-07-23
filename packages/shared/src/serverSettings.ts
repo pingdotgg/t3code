@@ -8,6 +8,8 @@ import { createModelSelection } from "./model.ts";
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 
+type ProjectIconMaps = Pick<ServerSettings, "projectIcons" | "projectIconsByGitRemote">;
+
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
@@ -66,6 +68,47 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+function replaceIconInMap(
+  entries: Readonly<Record<string, string>>,
+  key: string,
+  iconPath: string,
+): Record<string, string> {
+  const next = { ...entries };
+  if (iconPath.length === 0) {
+    delete next[key];
+  } else {
+    next[key] = iconPath;
+  }
+  return next;
+}
+
+export function applyProjectIconUpdate(
+  current: ProjectIconMaps,
+  update: NonNullable<ServerSettingsPatch["projectIconUpdate"]>,
+): ProjectIconMaps {
+  if (update.scope === "git-remote") {
+    const projectIcons = { ...current.projectIcons };
+    delete projectIcons[update.workspaceRoot];
+    return {
+      projectIcons,
+      projectIconsByGitRemote: replaceIconInMap(
+        current.projectIconsByGitRemote,
+        update.repositoryKey,
+        update.iconPath,
+      ),
+    };
+  }
+
+  const projectIconsByGitRemote = { ...current.projectIconsByGitRemote };
+  if (update.repositoryKey) {
+    delete projectIconsByGitRemote[update.repositoryKey];
+  }
+  return {
+    projectIcons: replaceIconInMap(current.projectIcons, update.workspaceRoot, update.iconPath),
+    projectIconsByGitRemote,
+  };
+}
+
 /**
  * Applies a server settings patch while treating textGenerationModelSelection as
  * replace-on-provider/model updates. This prevents stale nested options from
@@ -76,7 +119,7 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const { automaticGitFetchInterval, ...patchForMerge } = patch;
+  const { automaticGitFetchInterval, projectIconUpdate, ...patchForMerge } = patch;
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacements = {
     ...next,
@@ -89,8 +132,14 @@ export function applyServerSettingsPatch(
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
+  const nextWithProjectIconUpdate = projectIconUpdate
+    ? {
+        ...nextWithReplacements,
+        ...applyProjectIconUpdate(nextWithReplacements, projectIconUpdate),
+      }
+    : nextWithReplacements;
   if (!selectionPatch) {
-    return nextWithReplacements;
+    return nextWithProjectIconUpdate;
   }
 
   const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
@@ -103,7 +152,7 @@ export function applyServerSettingsPatch(
       });
 
   return {
-    ...nextWithReplacements,
+    ...nextWithProjectIconUpdate,
     textGenerationModelSelection: createModelSelection(instanceId, model, options),
   };
 }

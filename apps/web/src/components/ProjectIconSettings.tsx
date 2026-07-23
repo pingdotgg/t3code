@@ -4,6 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { applyProjectIconUpdate } from "@t3tools/shared/serverSettings";
 import { useCallback, useState } from "react";
 
 import { useEnvironmentSettings } from "../hooks/useSettings";
@@ -34,21 +35,6 @@ export interface ProjectIconTarget {
 
 export type ProjectIconScope = "workspace" | "git-remote";
 
-function replaceIconInMap(
-  projectIcons: Readonly<Record<string, string>>,
-  key: string,
-  iconPath: string,
-): Record<string, string> {
-  const next = { ...projectIcons };
-  const trimmedPath = iconPath.trim();
-  if (trimmedPath.length === 0) {
-    delete next[key];
-  } else {
-    next[key] = trimmedPath;
-  }
-  return next;
-}
-
 export function replaceProjectIconSetting(
   input: {
     readonly projectIcons: Readonly<Record<string, string>>;
@@ -61,25 +47,23 @@ export function replaceProjectIconSetting(
   readonly projectIcons: Record<string, string>;
   readonly projectIconsByGitRemote: Record<string, string>;
 } {
-  if (scope === "git-remote" && target.repositoryKey) {
-    const projectIcons = { ...input.projectIcons };
-    // A path-specific icon has higher precedence. Remove it when the user
-    // explicitly chooses the portable repository setting so the new value is
-    // immediately visible for this clone as well as other clones.
-    delete projectIcons[target.workspaceRoot];
-    return {
-      projectIcons,
-      projectIconsByGitRemote: replaceIconInMap(
-        input.projectIconsByGitRemote,
-        target.repositoryKey,
-        iconPath,
-      ),
-    };
-  }
-  return {
-    projectIcons: replaceIconInMap(input.projectIcons, target.workspaceRoot, iconPath),
-    projectIconsByGitRemote: { ...input.projectIconsByGitRemote },
-  };
+  const trimmedPath = iconPath.trim();
+  return applyProjectIconUpdate(
+    input,
+    scope === "git-remote" && target.repositoryKey
+      ? {
+          scope,
+          workspaceRoot: target.workspaceRoot,
+          repositoryKey: target.repositoryKey,
+          iconPath: trimmedPath,
+        }
+      : {
+          scope: "workspace",
+          workspaceRoot: target.workspaceRoot,
+          ...(target.repositoryKey ? { repositoryKey: target.repositoryKey } : {}),
+          iconPath: trimmedPath,
+        },
+  );
 }
 
 function useProjectIconSetting(target: ProjectIconTarget) {
@@ -107,24 +91,25 @@ function useProjectIconSetting(target: ProjectIconTarget) {
 
   const saveIconPath = useCallback(
     async (nextPath: string, scope: ProjectIconScope): Promise<boolean> => {
-      const next = replaceProjectIconSetting(
-        { projectIcons, projectIconsByGitRemote },
-        target,
-        scope,
-        nextPath,
-      );
-      if (
-        JSON.stringify(next.projectIcons) === JSON.stringify(projectIcons) &&
-        JSON.stringify(next.projectIconsByGitRemote) === JSON.stringify(projectIconsByGitRemote)
-      ) {
-        return true;
-      }
+      const trimmedPath = nextPath.trim();
       const result = await updateServerSettings({
         environmentId: target.environmentId,
         input: {
           patch: {
-            projectIcons: next.projectIcons,
-            projectIconsByGitRemote: next.projectIconsByGitRemote,
+            projectIconUpdate:
+              scope === "git-remote" && target.repositoryKey
+                ? {
+                    scope,
+                    workspaceRoot: target.workspaceRoot,
+                    repositoryKey: target.repositoryKey,
+                    iconPath: trimmedPath,
+                  }
+                : {
+                    scope: "workspace",
+                    workspaceRoot: target.workspaceRoot,
+                    ...(target.repositoryKey ? { repositoryKey: target.repositoryKey } : {}),
+                    iconPath: trimmedPath,
+                  },
           },
         },
       });
@@ -143,7 +128,7 @@ function useProjectIconSetting(target: ProjectIconTarget) {
       }
       return false;
     },
-    [projectIcons, projectIconsByGitRemote, target, updateServerSettings],
+    [target, updateServerSettings],
   );
 
   return {

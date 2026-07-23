@@ -416,17 +416,27 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (claims.kind === "project-icon") {
     if (claims.absolutePath === null) return null;
     const fileSystem = yield* FileSystem.FileSystem;
-    const info = yield* optionOnNotFound(fileSystem.stat(claims.absolutePath)).pipe(
+    const canonicalPath = yield* optionOnNotFound(fileSystem.realPath(claims.absolutePath)).pipe(
       Effect.tapError((cause) =>
-        Effect.logError("Failed to inspect configured project icon.", {
+        Effect.logError("Failed to canonicalize configured project icon.", {
           path: claims.absolutePath,
           cause,
         }),
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
+    if (Option.isNone(canonicalPath) || canonicalPath.value !== claims.absolutePath) return null;
+    const info = yield* optionOnNotFound(fileSystem.stat(canonicalPath.value)).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to inspect configured project icon.", {
+          path: canonicalPath.value,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
     return Option.isSome(info) && info.value.type === "File"
-      ? ({ kind: "file", path: claims.absolutePath } satisfies ResolvedAsset)
+      ? ({ kind: "file", path: canonicalPath.value } satisfies ResolvedAsset)
       : null;
   }
 

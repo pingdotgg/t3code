@@ -87,4 +87,64 @@ describe("replaceProjectIconSetting", () => {
       projectIconsByGitRemote: {},
     });
   });
+
+  it("removes the portable icon when switching back to workspace scope", () => {
+    expect(
+      replaceProjectIconSetting(
+        {
+          projectIcons: {
+            "/workspace/two": "/icons/two.svg",
+          },
+          projectIconsByGitRemote: {
+            "github.com/example/one": "/icons/one-remote.svg",
+            "github.com/example/two": "/icons/two-remote.svg",
+          },
+        },
+        {
+          workspaceRoot: "/workspace/one",
+          repositoryKey: "github.com/example/one",
+        },
+        "workspace",
+        "/icons/one-local.svg",
+      ),
+    ).toEqual({
+      projectIcons: {
+        "/workspace/one": "/icons/one-local.svg",
+        "/workspace/two": "/icons/two.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/two": "/icons/two-remote.svg",
+      },
+    });
+  });
+
+  it("removes both scoped overrides when resetting from workspace scope", () => {
+    expect(
+      replaceProjectIconSetting(
+        {
+          projectIcons: {
+            "/workspace/one": "/icons/one-local.svg",
+            "/workspace/two": "/icons/two.svg",
+          },
+          projectIconsByGitRemote: {
+            "github.com/example/one": "/icons/one-remote.svg",
+            "github.com/example/two": "/icons/two-remote.svg",
+          },
+        },
+        {
+          workspaceRoot: "/workspace/one",
+          repositoryKey: "github.com/example/one",
+        },
+        "workspace",
+        " ",
+      ),
+    ).toEqual({
+      projectIcons: {
+        "/workspace/two": "/icons/two.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/two": "/icons/two-remote.svg",
+      },
+    });
+  });
 });
