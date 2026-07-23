@@ -101,7 +101,6 @@ describe("threadRoutes", () => {
         serverThreadShellExists: true,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
-        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
@@ -114,7 +113,6 @@ describe("threadRoutes", () => {
         serverThreadShellExists: true,
         serverThreadDetailExists: true,
         serverThreadDetailDeleted: false,
-        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("ready");
@@ -124,7 +122,6 @@ describe("threadRoutes", () => {
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
-        serverThreadDetailFailed: false,
         draftThreadExists: true,
       }),
     ).toBe("ready");
@@ -137,7 +134,6 @@ describe("threadRoutes", () => {
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
-        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
@@ -147,30 +143,18 @@ describe("threadRoutes", () => {
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
-        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("missing");
   });
 
-  it("does not leave failed or deleted shell-only threads loading", () => {
-    expect(
-      resolveThreadRouteRenderState({
-        bootstrapComplete: true,
-        serverThreadShellExists: true,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
-        serverThreadDetailFailed: true,
-        draftThreadExists: false,
-      }),
-    ).toBe("error");
+  it("redirects deleted shell-only threads", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
         serverThreadShellExists: true,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: true,
-        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("missing");

@@ -50,9 +50,6 @@ const EMPTY_THREAD_DETAIL_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
 );
-const EMPTY_THREAD_ERROR_ATOM = Atom.make<string | null>(null).pipe(
-  Atom.withLabel("web-thread-error:empty"),
-);
 const EMPTY_MESSAGES_ATOM = Atom.make(EMPTY_MESSAGES).pipe(
   Atom.withLabel("web-thread-messages:empty"),
 );
@@ -152,12 +149,6 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
-  );
-}
-
-export function useThreadError(ref: ScopedThreadRef | null): string | null {
-  return useAtomValue(
-    ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
   );
 }
 
