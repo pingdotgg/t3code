@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -166,6 +167,29 @@ it.effect("fails with a TextGenerationError when the assistant text is unavailab
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) {
         expect(result.failure).toBeInstanceOf(TextGenerationError);
+      }
+    }),
+  ).pipe(Effect.provide(PiTextGenerationTestLayer)),
+);
+
+it.effect("fails quickly when Pi exits before agent_end", () =>
+  withFakePi({ PI_MOCK_EXIT_ON_PROMPT: "1" }, (textGeneration) =>
+    Effect.gen(function* () {
+      const completed = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "anything",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(Effect.result, Effect.timeoutOption(3_000));
+
+      expect(Option.isSome(completed)).toBe(true);
+      if (Option.isSome(completed)) {
+        expect(Result.isFailure(completed.value)).toBe(true);
+        if (Result.isFailure(completed.value)) {
+          expect(completed.value.failure).toBeInstanceOf(TextGenerationError);
+          expect(completed.value.failure.message).toMatch(/process exited/i);
+        }
       }
     }),
   ).pipe(Effect.provide(PiTextGenerationTestLayer)),

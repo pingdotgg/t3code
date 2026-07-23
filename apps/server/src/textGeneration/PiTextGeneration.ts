@@ -71,6 +71,12 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         ),
         Stream.runDrain,
       );
+      if (yield* transport.isClosed) {
+        return yield* new TextGenerationError({
+          operation: input.operation,
+          detail: "Pi RPC process exited before completing the request.",
+        });
+      }
       const response = yield* transport.request(
         { type: "get_last_assistant_text" },
         "pi-textgen-last-text",
@@ -101,6 +107,15 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
               detail: "Pi RPC request failed.",
               cause,
             }),
+      ),
+      Effect.catchDefect((cause) =>
+        Effect.fail(
+          new TextGenerationError({
+            operation: input.operation,
+            detail: "Pi RPC request failed.",
+            cause,
+          }),
+        ),
       ),
     );
 
@@ -139,15 +154,16 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 
     const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
     return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
-      Effect.catchTag("SchemaError", (cause) =>
-        Effect.fail(
-          new TextGenerationError({
-            operation,
-            detail: "Pi returned invalid structured output.",
-            cause,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        SchemaError: (cause) =>
+          Effect.fail(
+            new TextGenerationError({
+              operation,
+              detail: "Pi returned invalid structured output.",
+              cause,
+            }),
+          ),
+      }),
     );
   });
 

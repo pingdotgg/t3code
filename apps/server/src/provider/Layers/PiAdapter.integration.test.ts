@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -46,15 +47,17 @@ interface FakePiTransport {
   readonly pushEvent: (event: AgentSessionEvent) => Effect.Effect<void>;
   readonly pushExtensionUI: (request: RpcExtensionUIRequest) => Effect.Effect<void>;
   readonly setResponse: (commandType: string, response: RpcResponse) => void;
+  readonly failNextWrite: (defect?: Error) => void;
 }
 
 const asResponse = (value: unknown): RpcResponse => value as RpcResponse;
 
 const makeFakePiRpcTransport = Effect.gen(function* () {
-  const messages = yield* Queue.unbounded<PiStdoutMessage>();
+  const messages = yield* Queue.unbounded<PiStdoutMessage, Cause.Done<void>>();
   const commands: Array<RpcCommand> = [];
   const extensionResponses: Array<RpcExtensionUIResponse> = [];
   const responses = new Map<string, RpcResponse>();
+  let nextWriteDefect: Error | undefined;
   responses.set(
     "get_state",
     asResponse({
@@ -78,8 +81,15 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
 
   const transport: PiRpcTransport = {
     writeCommand: (command) =>
-      Effect.sync(() => {
-        commands.push(command);
+      Effect.suspend(() => {
+        if (nextWriteDefect !== undefined) {
+          const defect = nextWriteDefect;
+          nextWriteDefect = undefined;
+          return Effect.die(defect);
+        }
+        return Effect.sync(() => {
+          commands.push(command);
+        });
       }),
     writeExtensionResponse: (response) =>
       Effect.sync(() => {
@@ -87,6 +97,7 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
       }),
     request: (command) => Effect.succeed(responses.get((command as { type: string }).type)),
     messages,
+    isClosed: Effect.succeed(false),
     kill: Effect.void,
   };
 
@@ -99,6 +110,9 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
       Queue.offer(messages, { _tag: "extension-ui", request }).pipe(Effect.asVoid),
     setResponse: (commandType, response) => {
       responses.set(commandType, response);
+    },
+    failNextWrite: (defect = new Error("Pi transport write failed.")) => {
+      nextWriteDefect = defect;
     },
   } satisfies FakePiTransport;
 });
@@ -185,6 +199,83 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
 
       yield* adapter.stopSession(threadId);
       expect(yield* adapter.hasSession(threadId)).toBe(false);
+    }),
+  );
+
+  it.effect("fails startup when the Pi process has already exited", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePiRpcTransport;
+      const adapter = yield* makePiAdapter(enabledSettings(), {
+        makeTransport: () =>
+          Effect.succeed({
+            ...fake.transport,
+            isClosed: Effect.succeed(true),
+          }),
+      });
+      const threadId = ThreadId.make("pi-int-startup-exit");
+
+      const result = yield* adapter
+        .startSession({
+          threadId,
+          provider: PI,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "ProviderAdapterProcessError",
+          threadId,
+        });
+        expect(result.failure.message).toMatch(/exited during session startup/i);
+      }
+      expect(yield* adapter.hasSession(threadId)).toBe(false);
+    }),
+  );
+
+  it.effect("fails sendTurn when the prompt cannot be delivered", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-write-failure");
+      const collected = yield* collectEvents(
+        adapter,
+        threadId,
+        (event) => event.type === "turn.completed",
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      fake.failNextWrite();
+
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "never delivered", attachments: [] })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "ProviderAdapterRequestError",
+          method: "prompt",
+        });
+      }
+
+      const events = yield* Fiber.join(collected.fiber).pipe(
+        Effect.flatMap(() => Ref.get(collected.store)),
+      );
+      const completed = events.find((event) => event.type === "turn.completed");
+      expect(completed).toBeDefined();
+      if (completed && completed.type === "turn.completed") {
+        expect(completed.payload.state).toBe("failed");
+      }
+
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]?.activeTurnId).toBeUndefined();
+      yield* adapter.stopSession(threadId);
     }),
   );
 
@@ -459,6 +550,62 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       if (Result.isFailure(result)) {
         expect(String(result.failure.message)).toMatch(/approval gate|ungated/i);
       }
+    }),
+  );
+
+  it.effect("clears a stale resume cursor when rollback cannot read the new session file", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-rollback-cursor");
+      const started = yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      expect(started.resumeCursor).toEqual({ sessionFile: "/tmp/pi-session.json" });
+
+      fake.setResponse(
+        "get_fork_messages",
+        asResponse({
+          type: "response",
+          id: "x",
+          command: "get_fork_messages",
+          success: true,
+          data: {
+            messages: [
+              { entryId: "entry-1", text: "first" },
+              { entryId: "entry-2", text: "second" },
+            ],
+          },
+        }),
+      );
+      fake.setResponse(
+        "fork",
+        asResponse({
+          type: "response",
+          id: "x",
+          command: "fork",
+          success: true,
+          data: { cancelled: false },
+        }),
+      );
+      fake.setResponse(
+        "get_state",
+        asResponse({
+          type: "response",
+          id: "x",
+          command: "get_state",
+          success: true,
+          data: {},
+        }),
+      );
+
+      yield* adapter.rollbackThread(threadId, 1);
+
+      const sessions = yield* adapter.listSessions();
+      expect(sessions[0]?.resumeCursor).toBeUndefined();
+      yield* adapter.stopSession(threadId);
     }),
   );
 

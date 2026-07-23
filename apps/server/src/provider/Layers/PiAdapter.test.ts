@@ -28,6 +28,8 @@ describe("classifyPiToolItemType", () => {
     expect(classifyPiToolItemType("subagent")).toBe("collab_agent_tool_call");
     expect(classifyPiToolItemType("task")).toBe("collab_agent_tool_call");
     expect(classifyPiToolItemType("mcp_call")).toBe("mcp_tool_call");
+    expect(classifyPiToolItemType("mcp__filesystem__read_file")).toBe("mcp_tool_call");
+    expect(classifyPiToolItemType("mcp__search__image")).toBe("mcp_tool_call");
     expect(classifyPiToolItemType("web_search")).toBe("web_search");
     expect(classifyPiToolItemType("view_image")).toBe("image_view");
   });
@@ -41,6 +43,8 @@ describe("classifyPiApprovalRequestType", () => {
   it("derives the approval request type from the tool hint", () => {
     expect(classifyPiApprovalRequestType("bash")).toBe("command_execution_approval");
     expect(classifyPiApprovalRequestType("write_file")).toBe("file_change_approval");
+    expect(classifyPiApprovalRequestType("Run bash?")).toBe("command_execution_approval");
+    expect(classifyPiApprovalRequestType("Run write?")).toBe("file_change_approval");
   });
 
   it("maps non-command/non-file tools to dynamic_tool_call (a surfaced approval)", () => {

@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { ModelSelection, ServerProviderModel } from "@t3tools/contracts";
 import type { ModelCapabilities } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -296,7 +297,8 @@ export interface PiRpcTransport {
     id: string,
     timeoutMs: number,
   ) => Effect.Effect<RpcResponse | undefined>;
-  readonly messages: Queue.Dequeue<PiStdoutMessage>;
+  readonly messages: Queue.Dequeue<PiStdoutMessage, Cause.Done<void>>;
+  readonly isClosed: Effect.Effect<boolean>;
   readonly kill: Effect.Effect<void>;
 }
 
@@ -321,14 +323,23 @@ export const makePiRpcTransport = (options: MakePiRpcTransportOptions) =>
       }),
     );
 
-    const outgoing = yield* Queue.unbounded<Uint8Array>();
-    const messages = yield* Queue.unbounded<PiStdoutMessage>();
+    const outgoing = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
+    const messages = yield* Queue.unbounded<PiStdoutMessage, Cause.Done<void>>();
     const pendingRequests = new Map<string, Deferred.Deferred<RpcResponse>>();
     // resolved on process exit to unblock in-flight requests (fail fast, not full timeout)
     const closed = yield* Deferred.make<void>();
 
+    const offerLine = (obj: RpcCommand | RpcExtensionUIResponse): Effect.Effect<boolean> =>
+      Queue.offer(outgoing, Buffer.from(`${JSON.stringify(obj)}\n`));
+
     const writeLine = (obj: RpcCommand | RpcExtensionUIResponse): Effect.Effect<void> =>
-      Queue.offer(outgoing, Buffer.from(`${JSON.stringify(obj)}\n`)).pipe(Effect.asVoid);
+      offerLine(obj).pipe(
+        Effect.flatMap((offered) =>
+          offered
+            ? Effect.void
+            : Effect.die(new Error("Pi RPC process exited before the command could be delivered.")),
+        ),
+      );
 
     const handleLine = (line: string): Effect.Effect<void> =>
       Effect.gen(function* () {
@@ -347,10 +358,13 @@ export const makePiRpcTransport = (options: MakePiRpcTransportOptions) =>
         yield* Queue.offer(messages, message);
       });
 
-    const onProcessExit = Deferred.succeed(closed, undefined).pipe(
-      Effect.andThen(Effect.sync(() => pendingRequests.clear())),
-      Effect.andThen(options.onExit),
-    );
+    const onProcessExit = Effect.gen(function* () {
+      yield* Deferred.succeed(closed, undefined);
+      yield* Queue.end(outgoing);
+      yield* Queue.end(messages);
+      pendingRequests.clear();
+      yield* options.onExit;
+    });
 
     yield* Stream.fromQueue(outgoing).pipe(
       Stream.run(child.stdin),
@@ -378,7 +392,11 @@ export const makePiRpcTransport = (options: MakePiRpcTransportOptions) =>
       Effect.gen(function* () {
         const deferred = yield* Deferred.make<RpcResponse>();
         pendingRequests.set(id, deferred);
-        yield* writeLine({ ...command, id });
+        const offered = yield* offerLine({ ...command, id });
+        if (!offered) {
+          pendingRequests.delete(id);
+          return undefined;
+        }
         // resolve on response, process exit, or timeout — whichever comes first
         const outcome = yield* Deferred.await(deferred).pipe(
           Effect.map((response) => Option.some(response)),
@@ -396,6 +414,7 @@ export const makePiRpcTransport = (options: MakePiRpcTransportOptions) =>
       writeExtensionResponse: (response) => writeLine(response),
       request,
       messages,
+      isClosed: Deferred.isDone(closed),
       kill,
     } satisfies PiRpcTransport;
   });

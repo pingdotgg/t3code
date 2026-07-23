@@ -155,17 +155,17 @@ export function classifyPiToolItemType(toolName: string): CanonicalItemType {
   const tokens = new Set(
     toolName
       .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .replace(/[._/-]/g, " ")
+      .replace(/[^a-zA-Z0-9]+/g, " ")
       .toLowerCase()
       .split(/\s+/)
       .filter((token) => token.length > 0),
   );
   const has = (...words: ReadonlyArray<string>): boolean => words.some((word) => tokens.has(word));
 
+  if (has("mcp")) return "mcp_tool_call";
   if (has("agent", "subagent", "task", "skill")) return "collab_agent_tool_call";
   if (has("bash", "shell", "command", "terminal", "exec")) return "command_execution";
   if (has("edit", "write", "patch", "apply", "file")) return "file_change";
-  if (has("mcp")) return "mcp_tool_call";
   if (has("search", "web")) return "web_search";
   if (has("image")) return "image_view";
   return "dynamic_tool_call";
@@ -950,6 +950,14 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       `pi-get-state-${yield* nextUuid}`,
       PI_STATE_TIMEOUT_MS,
     );
+    if (yield* transport.isClosed) {
+      yield* stopSessionInternal(context, { emitExitEvent: false });
+      return yield* new ProviderAdapterProcessError({
+        provider: PROVIDER,
+        threadId,
+        detail: "Pi RPC process exited during session startup.",
+      });
+    }
     const sessionFile = extractSessionFile(stateResponse);
     if (sessionFile !== undefined) {
       context.session = { ...context.session, resumeCursor: { sessionFile } };
@@ -971,6 +979,15 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
             "Tool approval is enabled but the approval gate failed to load; refusing to run an ungated Pi session.",
         });
       }
+    }
+
+    if (yield* transport.isClosed) {
+      yield* stopSessionInternal(context, { emitExitEvent: false });
+      return yield* new ProviderAdapterProcessError({
+        provider: PROVIDER,
+        threadId,
+        detail: "Pi RPC process exited during session startup.",
+      });
     }
 
     const startedStamp = yield* makeEventStamp();
@@ -1059,7 +1076,20 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     yield* context.transport
       .writeCommand(buildPiTurnCommand({ isMidTurn, message: promptText, images }))
       .pipe(
-        Effect.catchCause(() => completeTurn(context, "failed", "Failed to send message to Pi.")),
+        Effect.catchCause((cause) =>
+          completeTurn(context, "failed", "Failed to send message to Pi.").pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: isMidTurn ? "steer" : "prompt",
+                  detail: "Failed to deliver the message to Pi.",
+                  cause,
+                }),
+              ),
+            ),
+          ),
+        ),
       );
 
     return {
@@ -1211,8 +1241,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       );
       const sessionFile = extractSessionFile(stateResponse);
       const updatedAt = yield* nowIso;
+      const { resumeCursor: _resumeCursor, ...sessionWithoutResumeCursor } = context.session;
       context.session = {
-        ...context.session,
+        ...sessionWithoutResumeCursor,
         status: "ready",
         updatedAt,
         ...(sessionFile !== undefined ? { resumeCursor: { sessionFile } } : {}),
