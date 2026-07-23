@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import {
+  canSettle,
   effectiveSettled,
   type ChangeRequestStateLike,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -122,6 +123,18 @@ export function isSidebarThreadEffectivelySettled(input: {
         ? { changeRequestState: input.changeRequestState }
         : {}),
     })
+  );
+}
+
+export function canSettleLegacySidebarRouteThread(input: {
+  readonly thread: SidebarThreadSummary | null;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+}): boolean {
+  return (
+    input.thread !== null &&
+    input.settlementSupported &&
+    canSettle(input.thread, { now: input.now })
   );
 }
 

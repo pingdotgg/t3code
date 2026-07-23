@@ -62,10 +62,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  canSettle,
-  type ChangeRequestStateLike,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { type ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -185,6 +182,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  canSettleLegacySidebarRouteThread,
   getSidebarThreadKeysNeedingChangeRequestReporter,
   getSidebarThreadIdsToPrewarm,
   isContextMenuPointerDown,
@@ -3669,12 +3667,14 @@ export default function Sidebar() {
         jumpThreadKeys: threadJumpThreadKeys,
         routeThreadKey,
         settleConfirmationThreadKey,
-        canSettleRouteThread:
-          routeThread != null &&
-          serverConfigs.get(routeThread.environmentId)?.environment.capabilities
-            .threadSettlement === true &&
-          !isThreadEffectivelySettled(routeThread) &&
-          canSettle(routeThread, { now: new Date().toISOString() }),
+        canSettleRouteThread: canSettleLegacySidebarRouteThread({
+          thread: routeThread ?? null,
+          settlementSupported:
+            routeThread != null &&
+            serverConfigs.get(routeThread.environmentId)?.environment.capabilities
+              .threadSettlement === true,
+          now: new Date().toISOString(),
+        }),
         isRouteThreadSettling:
           routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
       });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  canSettleLegacySidebarRouteThread,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -727,6 +728,76 @@ describe("isSidebarThreadEffectivelySettled", () => {
         },
       }),
     ).toBe("active");
+  });
+});
+
+describe("canSettleLegacySidebarRouteThread", () => {
+  const now = "2026-03-15T12:00:00.000Z";
+
+  it("keeps inactive and pull-request-idle threads eligible for explicit settlement", () => {
+    const inactiveThread = makeThreadShell({
+      latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const pullRequestIdleThread = makeThreadShell({
+      latestUserMessageAt: "2026-03-15T10:00:00.000Z",
+      updatedAt: "2026-03-15T10:00:00.000Z",
+    });
+
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: inactiveThread,
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: pullRequestIdleThread,
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: null,
+        changeRequestState: "closed",
+      }),
+    ).toBe(true);
+
+    for (const thread of [inactiveThread, pullRequestIdleThread]) {
+      expect(
+        canSettleLegacySidebarRouteThread({
+          thread,
+          settlementSupported: true,
+          now,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("uses the settle operation's capability and live-work guards", () => {
+    expect(
+      canSettleLegacySidebarRouteThread({
+        thread: makeThreadShell(),
+        settlementSupported: false,
+        now,
+      }),
+    ).toBe(false);
+    expect(
+      canSettleLegacySidebarRouteThread({
+        thread: makeThreadShell({
+          session: {
+            threadId: ThreadId.make("thread-running"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            activeTurnId: "turn-running" as never,
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+        settlementSupported: true,
+        now,
+      }),
+    ).toBe(false);
   });
 });
 
