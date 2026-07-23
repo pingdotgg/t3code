@@ -338,11 +338,12 @@ function SidebarHiddenThreadChangeRequestStateReporter(props: {
     sidebarProjectCwd: projectCwd,
   });
   const gitStatus = useEnvironmentQuery(
-    shouldQuerySidebarThreadGitStatus({
-      branch: thread.branch,
-      worktreePath: thread.worktreePath,
-      gitCwd,
-    })
+    gitCwd !== null &&
+      shouldQuerySidebarThreadGitStatus({
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        gitCwd,
+      })
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
@@ -476,11 +477,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     sidebarProjectCwd: props.projectCwd,
   });
   const gitStatus = useEnvironmentQuery(
-    shouldQuerySidebarThreadGitStatus({
-      branch: thread.branch,
-      worktreePath: thread.worktreePath,
-      gitCwd,
-    })
+    gitCwd !== null &&
+      shouldQuerySidebarThreadGitStatus({
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        gitCwd,
+      })
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
