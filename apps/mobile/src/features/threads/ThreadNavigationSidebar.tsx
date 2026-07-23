@@ -962,15 +962,22 @@ function ThreadNavigationSidebarPane(
       }),
     [filterIcon, filterMenu, props.onOpenSettings],
   );
+  // "No threads yet" over an inbox that is merely all-snoozed reads as
+  // data loss; name the snoozed threads instead.
+  const snoozedCount = threadListV2Layout.snoozedCount;
   const listEmpty = (
     <Text className="px-2 py-4 text-sm text-foreground-muted">
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
           ? "No matching threads"
-          : selectedProjectScope !== null
-            ? `No threads in ${selectedProjectScope.title}`
-            : "No threads yet"}
+          : snoozedCount > 0
+            ? snoozedCount === 1
+              ? "1 thread snoozed"
+              : `${snoozedCount} threads snoozed`
+            : selectedProjectScope !== null
+              ? `No threads in ${selectedProjectScope.title}`
+              : "No threads yet"}
     </Text>
   );
 

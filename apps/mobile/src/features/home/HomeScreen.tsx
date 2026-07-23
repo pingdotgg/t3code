@@ -845,11 +845,19 @@ export function HomeScreen(props: HomeScreenProps) {
   // Self-contained: v1's listEmpty keys off projectGroups, which ignores the
   // v2 project scope, so it can be null (results elsewhere) while this list
   // is empty. Search outranks the scope — "No results" names the actionable
-  // fact when a query is active. Pending tasks render in the header, so the
-  // list showing them isn't empty in the user's eyes.
+  // fact when a query is active. Snoozed threads outrank the rest: "No
+  // threads yet" over an inbox that is merely all-snoozed reads as data
+  // loss. Pending tasks render in the header, so the list showing them
+  // isn't empty in the user's eyes.
+  const v2SnoozedCount = threadListV2Layout.snoozedCount;
   const v2ListEmpty =
     v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+    ) : v2SnoozedCount > 0 ? (
+      <EmptyState
+        title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
+        detail="Snoozed threads return when their wake time passes."
+      />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}
