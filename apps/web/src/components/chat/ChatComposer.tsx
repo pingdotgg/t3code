@@ -1759,6 +1759,137 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, []);
 
   // ------------------------------------------------------------------
+  // Prompt history
+  // ------------------------------------------------------------------
+  const promptHistoryEntries = useMemo(() => {
+    const entries: string[] = [];
+    for (const message of activeThread?.messages ?? []) {
+      if (message.role !== "user") continue;
+      if (message.text.trim().length === 0) continue;
+      if (entries[entries.length - 1] === message.text) continue;
+      entries.push(message.text);
+    }
+    return entries;
+  }, [activeThread?.messages]);
+  const [promptHistoryIndex, setPromptHistoryIndex] = useState<number | null>(null);
+  const promptHistoryRecallRef = useRef<string | null>(null);
+  const promptHistoryDraftRef = useRef("");
+
+  useEffect(() => {
+    return () => {
+      // Leaving this thread (or unmounting) while browsing history: put the
+      // saved draft back so the recalled entry doesn't overwrite it.
+      if (promptHistoryRecallRef.current !== null) {
+        setComposerDraftPrompt(composerDraftTarget, promptHistoryDraftRef.current);
+      }
+      setPromptHistoryIndex(null);
+      promptHistoryRecallRef.current = null;
+      promptHistoryDraftRef.current = "";
+    };
+  }, [composerDraftTarget, setComposerDraftPrompt]);
+
+  // A thread-snapshot reload can shrink the entry list while browsing it.
+  useEffect(() => {
+    if (promptHistoryIndex !== null && promptHistoryIndex >= promptHistoryEntries.length) {
+      promptHistoryRecallRef.current = null;
+      setPromptHistoryIndex(null);
+    }
+  }, [promptHistoryEntries, promptHistoryIndex]);
+
+  // Editing a recalled entry (or any external prompt change, e.g. clearing on
+  // send) leaves history mode; the recalled text stays behind as a plain draft.
+  useEffect(() => {
+    if (promptHistoryRecallRef.current === null) return;
+    if (prompt === promptHistoryRecallRef.current) return;
+    promptHistoryRecallRef.current = null;
+    setPromptHistoryIndex(null);
+  }, [prompt]);
+
+  const recallPromptHistoryEntry = (index: number | null) => {
+    const nextPrompt =
+      index === null ? promptHistoryDraftRef.current : (promptHistoryEntries[index] ?? "");
+    promptHistoryRecallRef.current = index === null ? null : nextPrompt;
+    setPromptHistoryIndex(index);
+    promptRef.current = nextPrompt;
+    setPrompt(nextPrompt);
+    setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+    setComposerTrigger(null);
+  };
+
+  // History only activates when the caret cannot move further in the pressed
+  // direction, so arrow keys keep their normal movement inside multiline text.
+  const caretOnComposerEdgeLine = (event: KeyboardEvent, edge: "top" | "bottom"): boolean => {
+    if (promptRef.current.length === 0) return true;
+    // Logical gate first: the caret must be on the first/last hard line. The
+    // visual check below can't be trusted alone — empty lines yield zero-size
+    // caret rects whose fallback measures the whole block.
+    const snapshot = composerEditorRef.current?.readSnapshot();
+    if (!snapshot) return false;
+    // snapshot.value is source text, so index it with the expanded cursor —
+    // the collapsed cursor counts inline tokens (mentions, skills) as 1 char.
+    const beforeCaret = snapshot.value.slice(0, snapshot.expandedCursor);
+    const afterCaret = snapshot.value.slice(snapshot.expandedCursor);
+    if (edge === "top" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
+      return false;
+    }
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return false;
+    const root = target.closest<HTMLElement>('[contenteditable="true"]') ?? target;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false;
+    const range = selection.getRangeAt(0);
+    let caretRect = range.getBoundingClientRect();
+    if (caretRect.height === 0) {
+      // Collapsed selections on empty lines report a zero rect.
+      const container = range.startContainer;
+      const element = container instanceof HTMLElement ? container : container.parentElement;
+      if (!element) return false;
+      caretRect = element.getBoundingClientRect();
+    }
+    // Compare against the first/last block of text rather than the editor box:
+    // the box can be taller than its content (min-height, padding).
+    const edgeElement = edge === "top" ? root.firstElementChild : root.lastElementChild;
+    const edgeRect = (edgeElement ?? root).getBoundingClientRect();
+    const threshold = (caretRect.height || 20) / 2;
+    if (edge === "top") {
+      return caretRect.top - edgeRect.top < threshold;
+    }
+    return edgeRect.bottom - caretRect.bottom < threshold;
+  };
+
+  const navigateComposerPromptHistory = (
+    key: "ArrowUp" | "ArrowDown",
+    event: KeyboardEvent,
+  ): boolean => {
+    if (isComposerApprovalState || activePendingProgress || pendingUserInputs.length > 0) {
+      return false;
+    }
+    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+      return false;
+    }
+    // Terminal-context chips only render as inline placeholders in the draft
+    // text; a recalled entry has none, so the chips would vanish from view yet
+    // still be appended on send. Keep history off while any are attached.
+    if (composerTerminalContexts.length > 0) return false;
+    if (promptHistoryEntries.length === 0) return false;
+    if (key === "ArrowUp") {
+      if (!caretOnComposerEdgeLine(event, "top")) return false;
+      const currentIndex = promptHistoryIndex ?? promptHistoryEntries.length;
+      if (currentIndex === 0) return false;
+      if (promptHistoryIndex === null) {
+        promptHistoryDraftRef.current = promptRef.current;
+      }
+      recallPromptHistoryEntry(currentIndex - 1);
+      return true;
+    }
+    if (promptHistoryIndex === null) return false;
+    if (!caretOnComposerEdgeLine(event, "bottom")) return false;
+    const nextIndex = promptHistoryIndex + 1;
+    recallPromptHistoryEntry(nextIndex >= promptHistoryEntries.length ? null : nextIndex);
+    return true;
+  };
+
+  // ------------------------------------------------------------------
   // Callbacks: command key
   // ------------------------------------------------------------------
   const onComposerCommandKey = (
@@ -1784,6 +1915,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if ((key === "Enter" || key === "Tab") && selectedItem) {
         onSelectComposerItem(selectedItem);
+        return true;
+      }
+    }
+    // Gate history on the visible popup, not the live-resolved trigger: a
+    // recalled entry ending in "@name"/"$20" resolves a trigger at the caret
+    // even though no menu is open, which would strand history navigation.
+    if ((key === "ArrowUp" || key === "ArrowDown") && !composerMenuOpenRef.current) {
+      if (navigateComposerPromptHistory(key, event)) {
         return true;
       }
     }
@@ -2479,6 +2618,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
             <div className="relative">
+              {promptHistoryIndex !== null &&
+              !isComposerApprovalState &&
+              activePendingProgress === null ? (
+                <div
+                  data-testid="composer-history-indicator"
+                  className="pb-1.5 text-xs text-muted-foreground/70"
+                >
+                  History {promptHistoryIndex + 1}/{promptHistoryEntries.length}
+                </div>
+              ) : null}
               <ComposerPromptEditor
                 editorRef={composerEditorRef}
                 value={
