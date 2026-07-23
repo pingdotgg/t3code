@@ -33,7 +33,6 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import {
   hasCustomHomeListOptions,
-  PROJECT_GROUPING_OPTIONS,
   PROJECT_SORT_OPTIONS,
   THREAD_SORT_OPTIONS,
   useHomeListOptions,
@@ -48,7 +47,7 @@ import {
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "../home/homeListItems";
-import { buildHomeThreadGroups } from "../home/homeThreadList";
+import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -217,36 +216,32 @@ function ThreadNavigationSidebarPane(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const {
-    options,
-    setSelectedEnvironmentId,
-    setProjectGroupingMode,
-    setProjectSortOrder,
-    setThreadSortOrder,
-  } = useHomeListOptions(availableEnvironmentIds);
+  const { options, setSelectedEnvironmentId, setProjectSortOrder, setThreadSortOrder } =
+    useHomeListOptions(availableEnvironmentIds);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const projectScopes = useMemo(
+    () =>
+      buildHomeProjectScopes({
+        projects,
+        environmentId: options.selectedEnvironmentId,
+        projectGroupingMode: options.projectGroupingMode,
+      }),
+    [options.projectGroupingMode, options.selectedEnvironmentId, projects],
+  );
   const projectFilterOptions = useMemo(
     () =>
-      projects
-        .filter(
-          (project) =>
-            options.selectedEnvironmentId === null ||
-            project.environmentId === options.selectedEnvironmentId,
-        )
-        .map((project) => ({
-          key: scopedProjectKey(project.environmentId, project.id),
-          label: project.title,
-        })),
-    [options.selectedEnvironmentId, projects],
+      projectScopes.map((scope) => ({
+        key: scope.key,
+        label: scope.title,
+      })),
+    [projectScopes],
   );
-  const selectedProject = useMemo(
+  const selectedProjectScope = useMemo(
     () =>
       selectedProjectKey === null
         ? null
-        : (projects.find(
-            (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
-          ) ?? null),
-    [projects, selectedProjectKey],
+        : (projectScopes.find((scope) => scope.key === selectedProjectKey) ?? null),
+    [projectScopes, selectedProjectKey],
   );
   useEffect(() => {
     if (
@@ -256,31 +251,45 @@ function ThreadNavigationSidebarPane(
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
+  const selectedProjectRefs = useMemo(
+    () =>
+      selectedProjectScope === null
+        ? null
+        : new Set(
+            selectedProjectScope.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
+          ),
+    [selectedProjectScope],
+  );
   const scopedProjects = useMemo(
-    () => (selectedProject === null ? projects : [selectedProject]),
-    [projects, selectedProject],
+    () =>
+      selectedProjectRefs === null
+        ? projects
+        : projects.filter((project) =>
+            selectedProjectRefs.has(scopedProjectKey(project.environmentId, project.id)),
+          ),
+    [projects, selectedProjectRefs],
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProject === null
+      selectedProjectRefs === null
         ? threads
-        : threads.filter(
-            (thread) =>
-              thread.environmentId === selectedProject.environmentId &&
-              thread.projectId === selectedProject.id,
+        : threads.filter((thread) =>
+            selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [selectedProject, threads],
+    [selectedProjectRefs, threads],
   );
   const scopedPendingTasks = useMemo(
     () =>
-      selectedProject === null
+      selectedProjectRefs === null
         ? pendingTasks
-        : pendingTasks.filter(
-            (pendingTask) =>
-              pendingTask.message.environmentId === selectedProject.environmentId &&
-              pendingTask.creation.projectId === selectedProject.id,
+        : pendingTasks.filter((pendingTask) =>
+            selectedProjectRefs.has(
+              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+            ),
           ),
-    [pendingTasks, selectedProject],
+    [pendingTasks, selectedProjectRefs],
   );
   const groups = useMemo(
     () =>
@@ -401,13 +410,7 @@ function ThreadNavigationSidebarPane(
     return buildThreadListV2Items({
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
-      projectRef:
-        selectedProject === null
-          ? null
-          : {
-              environmentId: selectedProject.environmentId,
-              projectId: selectedProject.id,
-            },
+      projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
@@ -423,7 +426,7 @@ function ThreadNavigationSidebarPane(
     settlementEnvironmentIds,
     threadListV2Enabled,
     threads,
-    selectedProject,
+    selectedProjectScope,
   ]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
@@ -437,9 +440,10 @@ function ThreadNavigationSidebarPane(
       (pendingTask) =>
         (options.selectedEnvironmentId === null ||
           pendingTask.message.environmentId === options.selectedEnvironmentId) &&
-        (selectedProject === null ||
-          (pendingTask.message.environmentId === selectedProject.environmentId &&
-            pendingTask.creation.projectId === selectedProject.id)) &&
+        (selectedProjectRefs === null ||
+          selectedProjectRefs.has(
+            scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+          )) &&
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
@@ -469,7 +473,7 @@ function ThreadNavigationSidebarPane(
     options.selectedEnvironmentId,
     pendingTasks,
     props.searchQuery,
-    selectedProject,
+    selectedProjectRefs,
     threadListV2Enabled,
     threadListV2Layout,
   ]);
@@ -541,16 +545,6 @@ function ThreadNavigationSidebarPane(
                 state: options.threadSortOrder === option.value ? "on" : "off",
               })),
             },
-            {
-              id: "project-grouping",
-              title: "Group projects",
-              subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
-                id: `project-grouping:${option.value}`,
-                title: option.label,
-                subtitle: option.subtitle,
-                state: options.projectGroupingMode === option.value ? "on" : "off",
-              })),
-            },
           ] satisfies MenuAction[])),
     ],
     [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
@@ -594,15 +588,10 @@ function ThreadNavigationSidebarPane(
         setThreadSortOrder(threadSort.value);
         return;
       }
-      const grouping = PROJECT_GROUPING_OPTIONS.find(
-        (option) => `project-grouping:${option.value}` === event,
-      );
-      if (grouping) setProjectGroupingMode(grouping.value);
     },
     [
       environments,
       projectFilterOptions,
-      setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
@@ -898,12 +887,10 @@ function ThreadNavigationSidebarPane(
         selectedProjectKey,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
-        projectGroupingMode: options.projectGroupingMode,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
         onProjectSortOrderChange: setProjectSortOrder,
         onThreadSortOrderChange: setThreadSortOrder,
-        onProjectGroupingModeChange: setProjectGroupingMode,
         listOrganization: !threadListV2Enabled,
       }),
     [
@@ -911,7 +898,6 @@ function ThreadNavigationSidebarPane(
       options,
       projectFilterOptions,
       selectedProjectKey,
-      setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
@@ -933,8 +919,8 @@ function ThreadNavigationSidebarPane(
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
           ? "No matching threads"
-          : selectedProject !== null
-            ? `No threads in ${selectedProject.title}`
+          : selectedProjectScope !== null
+            ? `No threads in ${selectedProjectScope.title}`
             : "No threads yet"}
     </Text>
   );

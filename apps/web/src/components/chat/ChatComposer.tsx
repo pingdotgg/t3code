@@ -18,14 +18,12 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import {
-  connectionStatusText,
-  type EnvironmentConnectionPresentation,
-} from "@t3tools/client-runtime/connection";
+import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -34,6 +32,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -93,6 +92,64 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+
+function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
+  const [position, setPosition] = useState<{
+    bottom: number;
+    left: number;
+    maxHeight: number;
+    width: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const anchor = props.anchor;
+    if (!anchor) {
+      setPosition(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      setPosition({
+        bottom: window.innerHeight - rect.top + 8,
+        left: rect.left,
+        maxHeight: Math.max(96, rect.top - 24),
+        width: rect.width,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updatePosition);
+    observer?.observe(anchor);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [props.anchor]);
+
+  if (!position) return null;
+
+  return createPortal(
+    <div
+      className="pointer-events-auto fixed z-[70]"
+      style={{
+        bottom: position.bottom,
+        left: position.left,
+        maxHeight: position.maxHeight,
+        width: position.width,
+      }}
+    >
+      {props.children}
+    </div>,
+    document.body,
+  );
+}
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -106,6 +163,7 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -148,6 +206,11 @@ const runtimeModeConfig: Record<
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
     icon: PenLineIcon,
+  },
+  auto: {
+    label: "Auto",
+    description: "An AI reviewer approves routine actions; risky ones still ask.",
+    icon: SparklesIcon,
   },
   "full-access": {
     label: "Full access",
@@ -897,6 +960,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
@@ -2331,6 +2395,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) : null}
 
           <div
+            ref={setComposerMenuAnchor}
             className={cn(
               "relative px-3 pb-2 sm:px-4",
               hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
@@ -2338,7 +2403,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             )}
           >
             {composerMenuOpen && !isComposerApprovalState && (
-              <div className="absolute inset-x-0 bottom-full z-20 mb-2">
+              <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerCommandMenu
                   items={composerMenuItems}
                   resolvedTheme={resolvedTheme}
@@ -2353,7 +2418,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onHighlightedItemChange={onComposerMenuItemHighlighted}
                   onSelect={onSelectComposerItem}
                 />
-              </div>
+              </ComposerCommandMenuLayer>
             )}
 
             {!isComposerCollapsedMobile &&
@@ -2509,15 +2574,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : projectSelectionRequired
                           ? "Choose a project above to start a thread"
-                          : environmentUnavailable
-                            ? `${environmentUnavailable.label}: ${connectionStatusText(
-                                environmentUnavailable.connection,
-                              )}`
-                            : noProviderAvailable
-                              ? "Enable a provider in Settings to send a message"
-                              : phase === "disconnected"
-                                ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                          : noProviderAvailable
+                            ? "Enable a provider in Settings to send a message"
+                            : phase === "disconnected"
+                              ? "Ask for follow-up changes or attach images"
+                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
               />

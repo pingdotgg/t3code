@@ -43,7 +43,6 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
-  DEFAULT_SERVER_SETTINGS,
   ProjectId,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
@@ -81,7 +80,6 @@ import {
   readThreadShell,
   useProject,
   useProjects,
-  useServerConfigs,
   useThreadShells,
   useThreadShellsForProjectRefs,
 } from "../state/entities";
@@ -147,15 +145,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
-import {
-  Menu,
-  MenuGroup,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator,
-  MenuTrigger,
-} from "./ui/menu";
+import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -203,7 +193,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerSettingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -1113,7 +1103,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.confirmThreadArchive,
   );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const serverConfigs = useServerConfigs();
+  const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
@@ -1901,10 +1891,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             : null;
       const seedContext = resolveSidebarNewThreadSeedContext({
         projectId: member.id,
+        // The default env mode is a user preference stored on the primary
+        // environment's settings.json; remote environments never carry it.
         defaultEnvMode: resolveSidebarNewThreadEnvMode({
-          defaultEnvMode:
-            serverConfigs.get(member.environmentId)?.settings.defaultThreadEnvMode ??
-            DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode,
+          defaultEnvMode: primaryServerSettings.defaultThreadEnvMode,
         }),
         activeThread:
           currentActiveThread && currentActiveThread.projectId === member.id
@@ -1953,7 +1943,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }
       })();
     },
-    [handleNewThread, isMobile, router, serverConfigs, setOpenMobile],
+    [handleNewThread, isMobile, primaryServerSettings.defaultThreadEnvMode, router, setOpenMobile],
   );
 
   const handleCreateThreadClick = useCallback(
@@ -2603,20 +2593,16 @@ type SortableProjectHandleProps = Pick<
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
-  projectGroupingMode,
   threadPreviewCount,
   onProjectSortOrderChange,
   onThreadSortOrderChange,
-  onProjectGroupingModeChange,
   onThreadPreviewCountChange,
 }: {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
-  projectGroupingMode: SidebarProjectGroupingMode;
   threadPreviewCount: SidebarThreadPreviewCount;
   onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
   onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   onThreadPreviewCountChange: (count: SidebarThreadPreviewCount) => void;
 }) {
   const handleThreadPreviewCountChange = useCallback(
@@ -2720,30 +2706,6 @@ function ProjectSortMenu({
             </NumberField>
           </div>
         </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
-            Group projects
-          </div>
-          <MenuRadioGroup
-            value={projectGroupingMode}
-            onValueChange={(value) => {
-              if (value === "repository" || value === "repository_path" || value === "separate") {
-                onProjectGroupingModeChange(value);
-              }
-            }}
-          >
-            {(
-              Object.entries(PROJECT_GROUPING_MODE_LABELS) as Array<
-                [SidebarProjectGroupingMode, string]
-              >
-            ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
@@ -2794,7 +2756,6 @@ interface SidebarProjectsContentProps {
   handleDesktopUpdateButtonClick: () => void;
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
-  projectGroupingMode: SidebarProjectGroupingMode;
   threadPreviewCount: SidebarThreadPreviewCount;
   updateSettings: ReturnType<typeof useUpdateClientSettings>;
   openAddProject: () => void;
@@ -2835,7 +2796,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleDesktopUpdateButtonClick,
     projectSortOrder,
     threadSortOrder,
-    projectGroupingMode,
     threadPreviewCount,
     updateSettings,
     openAddProject,
@@ -2874,12 +2834,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   const handleThreadSortOrderChange = useCallback(
     (sortOrder: SidebarThreadSortOrder) => {
       updateSettings({ sidebarThreadSortOrder: sortOrder });
-    },
-    [updateSettings],
-  );
-  const handleProjectGroupingModeChange = useCallback(
-    (groupingMode: SidebarProjectGroupingMode) => {
-      updateSettings({ sidebarProjectGroupingMode: groupingMode });
     },
     [updateSettings],
   );
@@ -2946,11 +2900,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
-              projectGroupingMode={projectGroupingMode}
               threadPreviewCount={threadPreviewCount}
               onProjectSortOrderChange={handleProjectSortOrderChange}
               onThreadSortOrderChange={handleThreadSortOrderChange}
-              onProjectGroupingModeChange={handleProjectGroupingModeChange}
               onThreadPreviewCountChange={handleThreadPreviewCountChange}
             />
             <Tooltip>
@@ -3066,7 +3018,6 @@ export default function Sidebar() {
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
-  const sidebarProjectGroupingMode = useClientSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const updateSettings = useUpdateClientSettings();
@@ -3610,7 +3561,7 @@ export default function Sidebar() {
 
     if (desktopUpdateButtonAction === "install") {
       const confirmed = window.confirm(
-        getDesktopUpdateInstallConfirmationMessage(desktopUpdateState),
+        getDesktopUpdateInstallConfirmationMessage(desktopUpdateState, navigator.platform),
       );
       if (!confirmed) return;
       void bridge
@@ -3676,7 +3627,6 @@ export default function Sidebar() {
             handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
-            projectGroupingMode={sidebarProjectGroupingMode}
             threadPreviewCount={sidebarThreadPreviewCount}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}
