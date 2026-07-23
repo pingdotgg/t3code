@@ -2951,7 +2951,7 @@ function SidebarFilterMenu({
           {filtersActive ? "Sidebar filters are active" : "Filter sidebar threads"}
         </TooltipPopup>
       </Tooltip>
-      <MenuPopup align="end" side="bottom" className="min-w-52">
+      <MenuPopup align="end" side="bottom" className="min-w-64">
         <div className="flex items-center justify-between px-2 py-1 text-xs font-medium text-muted-foreground">
           <span>Filters</span>
           <button
@@ -2965,6 +2965,33 @@ function SidebarFilterMenu({
             Reset
           </button>
         </div>
+        <MenuCheckboxItem
+          checked={filters.recentOnly}
+          closeOnClick={false}
+          className="sm:text-xs"
+          onCheckedChange={(checked) => {
+            onFiltersChange({ ...filters, recentOnly: checked });
+          }}
+        >
+          <span className="flex min-w-0 items-center justify-between gap-3">
+            <span>Recent</span>
+            <span className="text-[10px] text-muted-foreground">Last 7 days</span>
+          </span>
+        </MenuCheckboxItem>
+        <MenuCheckboxItem
+          checked={filters.attentionOnly}
+          closeOnClick={false}
+          className="sm:text-xs"
+          onCheckedChange={(checked) => {
+            onFiltersChange({ ...filters, attentionOnly: checked });
+          }}
+        >
+          <span className="flex min-w-0 items-center justify-between gap-3">
+            <span>Attention</span>
+            <span className="text-[10px] text-muted-foreground">Unread + needs attention</span>
+          </span>
+        </MenuCheckboxItem>
+        <MenuSeparator />
         <MenuSub>
           <MenuSubTrigger className="sm:text-xs">
             <span>Status</span>

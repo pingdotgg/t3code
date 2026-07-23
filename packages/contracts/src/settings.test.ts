@@ -76,6 +76,8 @@ describe("ClientSettings sidebar thread filters", () => {
       statuses: ["needs_attention", "unread", "working", "done"],
       environmentIds: [],
       sources: [],
+      recentOnly: false,
+      attentionOnly: false,
       includeArchived: false,
     });
   });
@@ -95,6 +97,8 @@ describe("ClientSettings sidebar thread filters", () => {
           statuses: ["unread"],
           environmentIds: ["environment-local"],
           sources: ["codex"],
+          recentOnly: true,
+          attentionOnly: true,
           includeArchived: true,
         },
       }).sidebarThreadFilters,
@@ -102,6 +106,8 @@ describe("ClientSettings sidebar thread filters", () => {
       statuses: ["unread"],
       environmentIds: ["environment-local"],
       sources: ["codex"],
+      recentOnly: true,
+      attentionOnly: true,
       includeArchived: true,
     });
   });

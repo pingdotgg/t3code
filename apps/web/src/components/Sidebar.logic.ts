@@ -245,14 +245,20 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
 type SidebarThreadFilterInput = Pick<
   SidebarThreadSummary,
   | "archivedAt"
+  | "createdAt"
   | "environmentId"
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "interactionMode"
+  | "latestUserMessageAt"
   | "latestTurn"
   | "session"
+  | "updatedAt"
 >;
+
+export const SIDEBAR_RECENT_WINDOW_DAYS = 7;
+const SIDEBAR_RECENT_WINDOW_MS = SIDEBAR_RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
 
 export function classifySidebarThreadFilterStatus(
   thread: SidebarThreadFilterInput & { readonly lastVisitedAt?: string | undefined },
@@ -284,6 +290,7 @@ export function matchesSidebarThreadFilters(input: {
   readonly lastVisitedAt?: string | null | undefined;
   readonly providerDriverKind: ProviderDriverKind | null;
   readonly filters: SidebarThreadFilters;
+  readonly nowMs?: number | undefined;
 }): boolean {
   const { filters, thread } = input;
   if (thread.archivedAt !== null && !filters.includeArchived) {
@@ -303,6 +310,19 @@ export function matchesSidebarThreadFilters(input: {
     ...thread,
     ...(input.lastVisitedAt ? { lastVisitedAt: input.lastVisitedAt } : {}),
   });
+  if (filters.attentionOnly && status !== "needs_attention" && status !== "unread") {
+    return false;
+  }
+  if (filters.recentOnly) {
+    const recentTimestamp = thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt;
+    const recentTimestampMs = Date.parse(recentTimestamp);
+    if (
+      Number.isNaN(recentTimestampMs) ||
+      recentTimestampMs < (input.nowMs ?? Date.now()) - SIDEBAR_RECENT_WINDOW_MS
+    ) {
+      return false;
+    }
+  }
   return filters.statuses.includes(status);
 }
 
@@ -312,6 +332,8 @@ export function hasActiveSidebarThreadFilters(filters: SidebarThreadFilters): bo
     selectedStatuses.has(status),
   );
   return (
+    filters.attentionOnly ||
+    filters.recentOnly ||
     filters.includeArchived ||
     filters.environmentIds.length > 0 ||
     filters.sources.length > 0 ||

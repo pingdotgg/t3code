@@ -44,6 +44,8 @@ export const SidebarThreadFilters = Schema.Struct({
   ),
   environmentIds: Schema.Array(EnvironmentId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sources: Schema.Array(ProviderDriverKind).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  recentOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  attentionOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   includeArchived: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type SidebarThreadFilters = typeof SidebarThreadFilters.Type;
