@@ -4,11 +4,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type { CursorSettings } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
@@ -18,6 +20,7 @@ import {
   discoverCursorModelsViaAcp,
   getCursorFallbackModels,
   getCursorParameterizedModelPickerUnsupportedMessage,
+  isCursorDesktopAgentForwarderScript,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
   parseCursorVersionDate,
@@ -156,6 +159,27 @@ const makeExitLogFixture = Effect.fn("makeExitLogFixture")(function* (prefix: st
       T3_ACP_EXIT_LOG_PATH: exitLogPath,
     }),
   };
+});
+
+const makeCursorDesktopForwarder = Effect.fn("makeCursorDesktopForwarder")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcessPlatform;
+  const path = yield* Path.Path;
+  const tempDir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix: "cursor-desktop-forwarder-",
+  });
+  const wrapperPath = path.join(
+    tempDir,
+    platform === "win32" ? "cursor-agent.cmd" : "cursor-agent",
+  );
+  const script =
+    platform === "win32"
+      ? "@echo off\r\ncursor agent %*\r\n"
+      : '#!/bin/sh\nexec cursor agent "$@"\n';
+  yield* fileSystem.writeFileString(wrapperPath, script);
+  yield* fileSystem.chmod(wrapperPath, 0o755);
+  return wrapperPath;
 });
 
 const parameterizedGpt54ConfigOptions = [
@@ -428,6 +452,28 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
 });
 
 describe("checkCursorProviderStatus", () => {
+  it("rejects desktop forwarder shims without spawning them", async () => {
+    const wrapperPath = await runNode(makeCursorDesktopForwarder());
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.die("Cursor desktop forwarder must not be spawned"),
+    );
+    const provider = await runNode(
+      checkCursorProviderStatus({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner))),
+    );
+
+    expect(provider).toMatchObject({
+      installed: false,
+      status: "error",
+      auth: { status: "unknown" },
+    });
+    expect(provider.message).toContain("forwards to the Cursor desktop launcher");
+  });
+
   it("reports the install docs when the Cursor CLI command is missing", async () => {
     const provider = await runNode(
       checkCursorProviderStatus({
@@ -471,6 +517,15 @@ describe("checkCursorProviderStatus", () => {
       "claude-opus-4-6",
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
+  });
+});
+
+describe("isCursorDesktopAgentForwarderScript", () => {
+  it("recognizes shell wrappers that invoke the desktop CLI's agent argument", () => {
+    expect(isCursorDesktopAgentForwarderScript("@echo off\r\ncursor agent %*\r\n")).toBe(true);
+    expect(isCursorDesktopAgentForwarderScript('exec "/opt/Cursor/cursor" agent "$@"')).toBe(true);
+    expect(isCursorDesktopAgentForwarderScript("cursor-agent about")).toBe(false);
+    expect(isCursorDesktopAgentForwarderScript('# cursor agent "$@"')).toBe(false);
   });
 });
 
