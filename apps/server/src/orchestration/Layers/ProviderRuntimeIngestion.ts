@@ -1415,8 +1415,14 @@ const make = Effect.gen(function* () {
             yield* markDeferredAssistantDelta(input.messageId);
           }
           yield* scheduleAssistantFinalizationRetry({
-            ...input,
             source: "assistant-finalize",
+            event: input.event,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+            createdAt: input.createdAt,
+            commandTag: input.commandTag,
+            finalDeltaCommandTag: input.finalDeltaCommandTag,
             hasProjectedMessage: shouldComplete,
             isDeferred: true,
           });

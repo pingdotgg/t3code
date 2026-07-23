@@ -2996,6 +2996,59 @@ describe("ProviderRuntimeIngestion", () => {
     expect(assistantEvents.map((event) => event.payload.streaming)).toEqual([true, false]);
   });
 
+  it("does not resend fallback completion text when only completion retries", async () => {
+    const harness = await createHarness();
+    const itemId = asItemId("item-fallback-completion-retry");
+    const now = "2026-01-01T00:00:00.000Z";
+    const getCompleteFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.complete",
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-fallback-completion-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "fallback exactly once",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-fallback-completion-retry" &&
+            !message.streaming &&
+            message.text === "fallback exactly once",
+        ),
+      5000,
+    );
+    expect(getCompleteFailureCount()).toBe(3);
+
+    const events = await runtime!.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const assistantEvents = events.filter(
+      (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
+        event.type === "thread.message-sent" &&
+        event.payload.messageId === "assistant:item-fallback-completion-retry",
+    );
+    expect(assistantEvents.map((event) => event.payload.text)).toEqual([
+      "fallback exactly once",
+      "",
+    ]);
+    expect(assistantEvents.map((event) => event.payload.streaming)).toEqual([true, false]);
+  });
+
   it("keeps retained streaming chunks bounded while dispatch retries", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const turnId = asTurnId("turn-streaming-bounded-retry");
