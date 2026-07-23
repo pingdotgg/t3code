@@ -1,6 +1,7 @@
-import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildCheckoutWorkspaceChoices,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
@@ -18,6 +19,33 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("buildCheckoutWorkspaceChoices", () => {
+  it("keeps every same-repository clone selectable as a checkout or worktree base", () => {
+    const firstProjectId = ProjectId.make("project-first-clone");
+    const secondProjectId = ProjectId.make("project-second-clone");
+
+    expect(
+      buildCheckoutWorkspaceChoices([
+        {
+          projectId: firstProjectId,
+          title: "t3code",
+          workspaceRoot: "/src/t3code",
+        },
+        {
+          projectId: secondProjectId,
+          title: "t3code-3",
+          workspaceRoot: "/src/t3code-3",
+        },
+      ]).map(({ projectId, mode }) => ({ projectId, mode })),
+    ).toEqual([
+      { projectId: firstProjectId, mode: "local" },
+      { projectId: firstProjectId, mode: "worktree" },
+      { projectId: secondProjectId, mode: "local" },
+      { projectId: secondProjectId, mode: "worktree" },
+    ]);
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {

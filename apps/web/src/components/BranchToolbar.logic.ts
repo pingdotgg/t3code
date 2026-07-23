@@ -12,8 +12,32 @@ export interface EnvironmentOption {
   isPrimary: boolean;
 }
 
+export interface CheckoutOption {
+  projectId: ProjectId;
+  title: string;
+  workspaceRoot: string;
+}
+
+export interface CheckoutWorkspaceChoice {
+  projectId: ProjectId;
+  mode: EnvMode;
+  value: string;
+}
+
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
+
+export function buildCheckoutWorkspaceChoices(
+  checkouts: readonly CheckoutOption[],
+): CheckoutWorkspaceChoice[] {
+  return checkouts.flatMap((checkout) =>
+    (["local", "worktree"] as const).map((mode) => ({
+      projectId: checkout.projectId,
+      mode,
+      value: JSON.stringify([checkout.projectId, mode]),
+    })),
+  );
+}
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
