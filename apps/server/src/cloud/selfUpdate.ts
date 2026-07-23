@@ -273,8 +273,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
             failWith(`Could not verify the installed t3@${targetVersion}.`, cause),
           ),
         );
-      const preflightVersion = preflight.stdout.trim();
-      if (preflight.code !== 0 || preflightVersion !== targetVersion) {
+      // Effect CLI's unstable formatVersion currently emits `${name} v${version}`.
+      // Extract the version token so surrounding presentation changes do not break updates.
+      const reportedVersion = /\bv(\S+)\s*$/.exec(preflight.stdout)?.[1];
+      if (preflight.code !== 0 || reportedVersion !== targetVersion) {
         // A completed npm install can still be unusable under this Node or on
         // this machine. Remove its sentinel and tree so a retry of the same
         // version performs a clean install instead of reusing a known-bad one.
