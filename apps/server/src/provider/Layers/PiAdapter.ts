@@ -474,7 +474,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
             type: "content.delta",
             payload: {
               streamKind:
-                itemType === "command_execution" ? "command_output" : "file_change_output",
+                itemType === "command_execution"
+                  ? "command_output"
+                  : itemType === "file_change"
+                    ? "file_change_output"
+                    : "unknown",
               delta,
             },
           });
@@ -1203,6 +1207,13 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         PI_MESSAGES_TIMEOUT_MS,
       );
       const userMessages = extractForkMessages(forkResponse);
+      if (userMessages === undefined) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "get_fork_messages",
+          detail: "Pi failed to return rollback history.",
+        });
+      }
       const target = resolveForkTargetEntryId(userMessages, numTurns);
 
       if (target === null) {

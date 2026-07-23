@@ -19,6 +19,7 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import serverPackageJson from "../package.json" with { type: "json" };
+import { copyRequiredBuildAsset } from "./cliBuildAssets.ts";
 import {
   ServerCliBuildAssetMissingError,
   ServerCliCommandExitError,
@@ -182,14 +183,9 @@ const buildCmd = Command.make(
 
       // Pi loads the approval-gate extension at runtime; vp pack won't emit it, so copy it next to the bundle.
       const piExtensionSource = path.join(serverDir, "src/provider/assets/pi/t3-approvals.ts");
-      const piAssetTargetDir = path.join(serverDir, "dist/assets/pi");
-      if (yield* fs.exists(piExtensionSource)) {
-        yield* fs.makeDirectory(piAssetTargetDir, { recursive: true });
-        yield* fs.copyFile(piExtensionSource, path.join(piAssetTargetDir, "t3-approvals.ts"));
-        yield* Effect.log("[cli] Bundled Pi approval extension into dist/assets/pi");
-      } else {
-        yield* Effect.logWarning("[cli] Pi approval extension not found — skipping asset copy.");
-      }
+      const piExtensionTarget = path.join(serverDir, "dist/assets/pi/t3-approvals.ts");
+      yield* copyRequiredBuildAsset(piExtensionSource, piExtensionTarget);
+      yield* Effect.log("[cli] Bundled Pi approval extension into dist/assets/pi");
 
       if (yield* fs.exists(webDist)) {
         yield* fs.copy(webDist, clientTarget);

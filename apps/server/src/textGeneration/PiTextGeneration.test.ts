@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -41,9 +42,9 @@ async function makePiWrapper(): Promise<string> {
   return wrapperPath;
 }
 
-const withFakePi = <A, E>(
+const withFakePi = <A, E, R>(
   mockEnv: Record<string, string>,
-  use: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, never>,
+  use: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     const wrapperPath = yield* Effect.promise(() => makePiWrapper());
@@ -67,6 +68,66 @@ it.effect("generateThreadTitle parses the JSON returned via get_last_assistant_t
       }),
   ).pipe(Effect.provide(PiTextGenerationTestLayer)),
 );
+
+it.effect("waits for the terminal agent_end when Pi retries", () =>
+  withFakePi(
+    {
+      PI_MOCK_ASSISTANT_TEXT: '{"title":"Recovered after retry"}',
+      PI_MOCK_RETRY_ONCE: "1",
+    },
+    (textGeneration) =>
+      Effect.gen(function* () {
+        const result = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "retry this request",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+        expect(result.title).toBe("Recovered after retry");
+      }),
+  ).pipe(Effect.provide(PiTextGenerationTestLayer)),
+);
+
+it.effect("sends persisted image bytes with Pi text-generation prompts", () => {
+  const imageBytes = Buffer.from("pi-image-bytes");
+  return withFakePi(
+    {
+      PI_MOCK_ASSISTANT_TEXT: '{"title":"Screenshot regression"}',
+      PI_MOCK_REQUIRE_IMAGE: "1",
+      PI_MOCK_EXPECT_IMAGE_DATA: imageBytes.toString("base64"),
+    },
+    (textGeneration) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+        const attachmentId = "pi-thread-image-attachment";
+        const attachmentPath = NodePath.join(attachmentsDir, `${attachmentId}.png`);
+        yield* fileSystem.writeFile(attachmentPath, imageBytes);
+
+        const result = yield* textGeneration
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this screenshot regression",
+            attachments: [
+              {
+                type: "image",
+                id: attachmentId,
+                name: "regression.png",
+                mimeType: "image/png",
+                sizeBytes: imageBytes.byteLength,
+              },
+            ],
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          })
+          .pipe(
+            Effect.ensuring(
+              fileSystem.remove(attachmentPath).pipe(Effect.catch(() => Effect.void)),
+            ),
+          );
+
+        expect(result.title).toBe("Screenshot regression");
+      }),
+  ).pipe(Effect.provide(PiTextGenerationTestLayer));
+});
 
 it.effect("generateCommitMessage sanitizes subject and trims body", () =>
   withFakePi(

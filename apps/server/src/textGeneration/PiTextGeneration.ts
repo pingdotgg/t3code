@@ -1,14 +1,27 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { type ModelSelection, type PiSettings, TextGenerationError } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type ModelSelection,
+  type PiSettings,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import { extractLastAssistantText, makePiRpcTransport } from "../provider/Layers/PiRpcClient.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
+import {
+  extractLastAssistantText,
+  makePiRpcTransport,
+  piImageContentFromBytes,
+  type PiImageContent,
+} from "../provider/Layers/PiRpcClient.ts";
 import { type TextGenerationShape } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -40,12 +53,48 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+
+  const materializePiImages = Effect.fn("materializePiImages")(function* (
+    operation: TextGenOperation,
+    attachments: ReadonlyArray<ChatAttachment> | undefined,
+  ): Effect.fn.Return<ReadonlyArray<PiImageContent>, TextGenerationError> {
+    const images: Array<PiImageContent> = [];
+    for (const attachment of attachments ?? []) {
+      if (attachment.type !== "image") continue;
+
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      if (!attachmentPath) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: `Invalid attachment id '${attachment.id}'.`,
+        });
+      }
+      const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: `Failed to read attachment '${attachment.id}'.`,
+              cause,
+            }),
+        ),
+      );
+      images.push(piImageContentFromBytes({ mimeType: attachment.mimeType, bytes }));
+    }
+    return images;
+  });
 
   const runPiPrompt = (input: {
     readonly message: string;
     readonly cwd: string;
     readonly modelSelection: ModelSelection;
     readonly operation: TextGenOperation;
+    readonly images?: ReadonlyArray<PiImageContent>;
   }): Effect.Effect<string, TextGenerationError> =>
     Effect.gen(function* () {
       const transport = yield* makePiRpcTransport({
@@ -64,10 +113,19 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         env: environment,
         onExit: Effect.void,
       });
-      yield* transport.writeCommand({ type: "prompt", message: input.message });
+      yield* transport.writeCommand({
+        type: "prompt",
+        message: input.message,
+        ...(input.images !== undefined && input.images.length > 0
+          ? { images: [...input.images] }
+          : {}),
+      });
       yield* Stream.fromQueue(transport.messages).pipe(
         Stream.takeUntil(
-          (message) => message._tag === "event" && message.event.type === "agent_end",
+          (message) =>
+            message._tag === "event" &&
+            message.event.type === "agent_end" &&
+            message.event.willRetry !== true,
         ),
         Stream.runDrain,
       );
@@ -125,12 +183,14 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     prompt,
     outputSchemaJson,
     modelSelection,
+    images,
   }: {
     operation: TextGenOperation;
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
+    images?: ReadonlyArray<PiImageContent>;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const schemaJson = yield* encodeJsonString(toJsonSchemaObject(outputSchemaJson)).pipe(
       Effect.mapError(
@@ -150,6 +210,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       cwd,
       modelSelection,
       operation,
+      ...(images !== undefined ? { images } : {}),
     });
 
     const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
@@ -218,6 +279,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   const generateBranchName: TextGenerationShape["generateBranchName"] = Effect.fn(
     "PiTextGeneration.generateBranchName",
   )(function* (input) {
+    const images = yield* materializePiImages("generateBranchName", input.attachments);
     const { prompt, outputSchema } = buildBranchNamePrompt({
       message: input.message,
       attachments: input.attachments,
@@ -228,6 +290,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       prompt,
       outputSchemaJson: outputSchema,
       modelSelection: input.modelSelection,
+      images,
     });
     return { branch: sanitizeBranchFragment(generated.branch) };
   });
@@ -235,6 +298,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = Effect.fn(
     "PiTextGeneration.generateThreadTitle",
   )(function* (input) {
+    const images = yield* materializePiImages("generateThreadTitle", input.attachments);
     const { prompt, outputSchema } = buildThreadTitlePrompt({
       message: input.message,
       attachments: input.attachments,
@@ -245,6 +309,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       prompt,
       outputSchemaJson: outputSchema,
       modelSelection: input.modelSelection,
+      images,
     });
     return { title: sanitizeThreadTitle(generated.title) };
   });

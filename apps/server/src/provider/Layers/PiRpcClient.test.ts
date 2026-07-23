@@ -479,14 +479,15 @@ describe("extractForkMessages", () => {
     expect(result).toEqual([{ entryId: "e1", text: "" }]);
   });
 
-  it("returns [] for undefined, failed, or non-array responses", () => {
-    expect(extractForkMessages(undefined)).toEqual([]);
+  it("distinguishes valid empty history from failed or malformed responses", () => {
+    expect(extractForkMessages(forkResponse([]))).toEqual([]);
+    expect(extractForkMessages(undefined)).toBeUndefined();
     expect(
       extractForkMessages(
         asResponse({ type: "response", command: "get_fork_messages", success: false, error: "x" }),
       ),
-    ).toEqual([]);
-    expect(extractForkMessages(forkResponse("nope"))).toEqual([]);
+    ).toBeUndefined();
+    expect(extractForkMessages(forkResponse("nope"))).toBeUndefined();
   });
 });
 

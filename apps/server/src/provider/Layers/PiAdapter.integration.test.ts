@@ -401,6 +401,59 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
     }),
   );
 
+  it.effect("uses unknown stream deltas for non-command, non-file tools", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-mcp-tool-update");
+      const collected = yield* collectEvents(
+        adapter,
+        threadId,
+        (event) => event.type === "turn.completed",
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "use the MCP tool", attachments: [] });
+      yield* fake.pushEvent({ type: "turn_start" } as AgentSessionEvent);
+      yield* fake.pushEvent({
+        type: "tool_execution_start",
+        toolCallId: "mcp-1",
+        toolName: "mcp__server__tool",
+        args: { query: "status" },
+      } as AgentSessionEvent);
+      yield* fake.pushEvent({
+        type: "tool_execution_update",
+        toolCallId: "mcp-1",
+        toolName: "mcp__server__tool",
+        partialResult: "working",
+      } as AgentSessionEvent);
+      yield* fake.pushEvent({
+        type: "tool_execution_end",
+        toolCallId: "mcp-1",
+        toolName: "mcp__server__tool",
+        result: "done",
+        isError: false,
+      } as AgentSessionEvent);
+      yield* fake.pushEvent({ type: "agent_end" } as AgentSessionEvent);
+
+      const events = yield* Fiber.join(collected.fiber).pipe(
+        Effect.flatMap(() => Ref.get(collected.store)),
+      );
+      const delta = events.find(
+        (event) => event.type === "content.delta" && event.payload.delta === "working",
+      );
+      expect(delta).toBeDefined();
+      if (delta && delta.type === "content.delta") {
+        expect(delta.payload.streamKind).toBe("unknown");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("bridges a confirm request to an approval round-trip", () =>
     Effect.gen(function* () {
       const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
@@ -605,6 +658,54 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
 
       const sessions = yield* adapter.listSessions();
       expect(sessions[0]?.resumeCursor).toBeUndefined();
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("preserves local turns when Pi rollback history cannot be read", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-rollback-history-failure");
+      const collected = yield* collectEvents(
+        adapter,
+        threadId,
+        (event) => event.type === "turn.completed",
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "keep this turn", attachments: [] });
+      yield* fake.pushEvent({ type: "agent_end" } as AgentSessionEvent);
+      yield* Fiber.join(collected.fiber);
+
+      const beforeRollback = yield* adapter.readThread(threadId);
+      expect(beforeRollback.turns).toHaveLength(1);
+
+      fake.setResponse(
+        "get_fork_messages",
+        asResponse({
+          type: "response",
+          id: "x",
+          command: "get_fork_messages",
+          success: false,
+          error: "history unavailable",
+        }),
+      );
+      const result = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "ProviderAdapterRequestError",
+          method: "get_fork_messages",
+        });
+      }
+      const afterRollback = yield* adapter.readThread(threadId);
+      expect(afterRollback.turns).toHaveLength(1);
+
       yield* adapter.stopSession(threadId);
     }),
   );

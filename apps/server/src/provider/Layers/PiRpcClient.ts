@@ -254,9 +254,10 @@ export function piResponseSucceeded(response: RpcResponse | undefined, command: 
 // branch-scoped user messages (each with entryId) — the only valid fork targets
 export function extractForkMessages(
   response: RpcResponse | undefined,
-): ReadonlyArray<{ readonly entryId: string; readonly text: string }> {
+): ReadonlyArray<{ readonly entryId: string; readonly text: string }> | undefined {
+  if (!piResponseSucceeded(response, "get_fork_messages")) return undefined;
   const messages = piResponseData(response)?.["messages"];
-  if (!Array.isArray(messages)) return [];
+  if (!Array.isArray(messages)) return undefined;
   return messages.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const record = entry as Record<string, unknown>;
