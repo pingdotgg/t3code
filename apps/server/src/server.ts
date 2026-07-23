@@ -30,6 +30,7 @@ import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubWaitpointRuntime from "./github/GitHubWaitpointRuntime.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
@@ -185,6 +186,11 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
+const OrchestrationAndGitHubWaitpointLayerLive = GitHubWaitpointRuntime.layer.pipe(
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(PersistenceLayerLive),
+);
+
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
 );
@@ -284,7 +290,7 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(OrchestrationAndGitHubWaitpointLayerLive),
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(

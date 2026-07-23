@@ -14,6 +14,7 @@ import {
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { T3_CODEX_DYNAMIC_TOOLS } from "./CodexDynamicTools.ts";
 import {
   buildTurnStartParams,
   hasConfiguredMcpServer,
@@ -48,18 +49,22 @@ function makeThreadOpenResponse(
     modelProvider: "openai",
     approvalPolicy: "never",
     approvalsReviewer: "user",
-    sandbox: { type: "danger-full-access" },
+    sandbox: { type: "dangerFullAccess" },
     thread: {
       id: threadId,
-      createdAt: "2026-04-18T00:00:00.000Z",
-      source: { session: "cli" },
+      cliVersion: "0.0.0-test",
+      createdAt: 1_776_470_400,
+      cwd: "/tmp/project",
+      ephemeral: false,
+      modelProvider: "openai",
+      preview: "",
+      sessionId: "session-1",
+      source: "appServer",
       turns: [],
-      status: {
-        state: "idle",
-        activeFlags: [],
-      },
+      status: { type: "idle" },
+      updatedAt: 1_776_470_400,
     },
-  } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
+  };
 }
 
 describe("buildTurnStartParams", () => {
@@ -393,11 +398,55 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("starts a fresh thread with the T3 dynamic tools", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      const client = {
+        raw: {
+          request: (method: string, payload?: unknown) => {
+            calls.push({ method, payload });
+            return Effect.succeed(makeThreadOpenResponse("fresh-thread"));
+          },
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => Effect.die("typed request path should not be used for a fresh thread"),
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.equal(calls.length, 1);
+      const freshStart = calls[0];
+      NodeAssert.ok(freshStart);
+      NodeAssert.equal(freshStart.method, "thread/start");
+      NodeAssert.deepStrictEqual(
+        (freshStart.payload as { readonly dynamicTools?: unknown }).dynamicTools,
+        T3_CODEX_DYNAMIC_TOOLS,
+      );
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
+        raw: {
+          request: (method: string, payload?: unknown) => {
+            calls.push({ method: method as "thread/start", payload });
+            return Effect.succeed(started);
+          },
+        },
         request: <M extends "thread/start" | "thread/resume">(
           method: M,
           payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -430,12 +479,22 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      const fallbackStart = calls[1];
+      NodeAssert.ok(fallbackStart);
+      NodeAssert.deepStrictEqual(
+        (fallbackStart.payload as { readonly dynamicTools?: unknown }).dynamicTools,
+        T3_CODEX_DYNAMIC_TOOLS,
+      );
     }),
   );
 
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
+        raw: {
+          request: (_method: string, _payload?: unknown) =>
+            Effect.succeed(makeThreadOpenResponse("fresh-thread")),
+        },
         request: <M extends "thread/start" | "thread/resume">(
           method: M,
           _payload: CodexRpc.ClientRequestParamsByMethod[M],

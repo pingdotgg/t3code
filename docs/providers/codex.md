@@ -27,6 +27,27 @@ Log in with Codex normally:
 codex login
 ```
 
+## Waiting Without Polling
+
+New Codex threads receive a T3-hosted `t3.wait` tool. An agent can use it to wait from one second to
+one hour while an external command, CI job, deployment, or other task is running. The timer runs in
+T3 Code and does not repeatedly wake the model, so the agent can perform one status check after the
+wait instead of spending inference on frequent polling.
+
+This is a live-session wait. It is cancelled if the current turn is interrupted, the provider
+session closes, or T3 Code stops.
+
+For pull-request work, Codex also receives `t3.await_github`. It can wait for all reported checks to
+settle, a new review or comment, or the pull request to merge or close. T3 stores this wait in its
+local database, checks GitHub through your authenticated `gh` CLI, and starts one continuation turn
+when the condition is met. This survives a T3 restart and does not require T3 Connect or a public
+webhook endpoint. The local T3 server must eventually run again to observe the change and resume the
+thread.
+
+GitHub waits expire after 24 hours by default and may be bounded from one minute through seven days.
+See the [deferred thread resume design](../project/deferred-thread-resume.md) for delivery and recovery
+semantics.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.
