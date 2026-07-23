@@ -27,6 +27,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { applyFontFamilyPreference } from "../fontPreferences";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -128,6 +129,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <GlassAppearanceSync />
+        <FontAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
@@ -148,6 +150,18 @@ function GlassAppearanceSync() {
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
   }, [glassOpacity]);
+
+  return null;
+}
+
+function FontAppearanceSync() {
+  const uiFontFamily = useClientSettings((settings) => settings.uiFontFamily);
+  const codeFontFamily = useClientSettings((settings) => settings.codeFontFamily);
+
+  useEffect(() => {
+    applyFontFamilyPreference(uiFontFamily, "ui");
+    applyFontFamilyPreference(codeFontFamily, "code");
+  }, [uiFontFamily, codeFontFamily]);
 
   return null;
 }

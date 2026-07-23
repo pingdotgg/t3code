@@ -49,6 +49,28 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings font families", () => {
+  it("defaults UI and code fonts to the bundled stacks", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.uiFontFamily).toBe("");
+    expect(settings.codeFontFamily).toBe("");
+  });
+
+  it("accepts local font family names", () => {
+    expect(decodeClientSettings({ uiFontFamily: "Geist" }).uiFontFamily).toBe("Geist");
+    expect(decodeClientSettings({ codeFontFamily: "Geist Mono" }).codeFontFamily).toBe(
+      "Geist Mono",
+    );
+    expect(decodeClientSettingsPatch({ uiFontFamily: " Inter " }).uiFontFamily).toBe("Inter");
+  });
+
+  it("rejects font family names that are too long", () => {
+    const tooLong = "A".repeat(81);
+    expect(() => decodeClientSettings({ uiFontFamily: tooLong })).toThrow();
+    expect(() => decodeClientSettingsPatch({ codeFontFamily: tooLong })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar v2", () => {
   it("defaults the beta off with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});

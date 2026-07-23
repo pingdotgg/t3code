@@ -59,8 +59,27 @@ export const GlassOpacity = Schema.Int.check(
 export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
+/**
+ * Preferred CSS font-family name for UI chrome / chat text.
+ * Empty string keeps the bundled default stack (`--font-sans` in CSS).
+ * Non-empty values are resolved against locally installed fonts by the browser
+ * (e.g. `"Geist"`, `"Inter"`, `system-ui`).
+ */
+export const DEFAULT_UI_FONT_FAMILY = "";
+/**
+ * Preferred CSS font-family name for code, diffs, and file previews.
+ * Empty string keeps the bundled default stack (`--font-mono` in CSS).
+ */
+export const DEFAULT_CODE_FONT_FAMILY = "";
+export const MAX_FONT_FAMILY_LENGTH = 80;
+export const FontFamilyPreference = TrimmedString.check(Schema.isMaxLength(MAX_FONT_FAMILY_LENGTH));
+export type FontFamilyPreference = typeof FontFamilyPreference.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  codeFontFamily: FontFamilyPreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_FAMILY)),
+  ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -117,6 +136,9 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  uiFontFamily: FontFamilyPreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_FONT_FAMILY)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
@@ -570,6 +592,7 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
+  codeFontFamily: Schema.optionalKey(FontFamilyPreference),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
@@ -605,6 +628,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  uiFontFamily: Schema.optionalKey(FontFamilyPreference),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

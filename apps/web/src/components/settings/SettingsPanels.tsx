@@ -25,6 +25,14 @@ import {
   MAX_GLASS_OPACITY,
   MIN_GLASS_OPACITY,
 } from "@t3tools/contracts/settings";
+import {
+  CODE_FONT_PRESETS,
+  matchFontPresetId,
+  resolveFontFamilyCss,
+  sanitizeFontFamilyPreference,
+  UI_FONT_PRESETS,
+  type FontPreferenceKind,
+} from "../../fontPreferences";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
@@ -67,6 +75,7 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -400,6 +409,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? ["UI font"] : []),
+      ...(settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? ["Code font"] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
@@ -453,6 +464,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.codeFontFamily,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
@@ -463,6 +475,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
+      settings.uiFontFamily,
       settings.wordWrap,
       theme,
     ],
@@ -484,6 +497,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      uiFontFamily: DEFAULT_UNIFIED_SETTINGS.uiFontFamily,
+      codeFontFamily: DEFAULT_UNIFIED_SETTINGS.codeFontFamily,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
@@ -504,6 +519,140 @@ export function useSettingsRestore(onRestored?: () => void) {
     changedSettingLabels,
     restoreDefaults,
   };
+}
+
+function FontFamilyPreviewTile({
+  kind,
+  preference,
+  label,
+}: {
+  kind: FontPreferenceKind;
+  preference: string;
+  label: string;
+}) {
+  const resolved = resolveFontFamilyCss(preference, kind);
+  return (
+    <div
+      aria-hidden="true"
+      className={
+        kind === "code"
+          ? "flex size-9 shrink-0 items-center justify-center rounded-lg border border-input bg-muted/40 text-[15px] leading-none text-foreground font-mono sm:size-8"
+          : "flex size-9 shrink-0 items-center justify-center rounded-lg border border-input bg-muted/40 text-[15px] leading-none text-foreground sm:size-8"
+      }
+      style={resolved ? { fontFamily: resolved } : undefined}
+      title={label}
+    >
+      Aa
+    </div>
+  );
+}
+
+function FontFamilySettingControl({
+  kind,
+  value,
+  onChange,
+}: {
+  kind: FontPreferenceKind;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const presets = kind === "ui" ? UI_FONT_PRESETS : CODE_FONT_PRESETS;
+  const presetId = matchFontPresetId(value, kind);
+  const [forceCustom, setForceCustom] = useState(false);
+  const [customDraft, setCustomDraft] = useState(value);
+  const showingCustom = forceCustom || presetId === "custom";
+  const customPlaceholder = kind === "ui" ? "Geist" : "Geist Mono";
+  const previewPreference = showingCustom ? customDraft : value;
+  const previewLabel = showingCustom
+    ? customDraft || "Custom"
+    : (presets.find((option) => option.id === presetId)?.label ?? "Default");
+
+  return (
+    <div className="flex w-full items-start gap-2 sm:w-auto">
+      <FontFamilyPreviewTile kind={kind} preference={previewPreference} label={previewLabel} />
+      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:w-56 sm:flex-none">
+        <Select
+          value={showingCustom ? "custom" : presetId}
+          onValueChange={(next) => {
+            if (next === "custom") {
+              setForceCustom(true);
+              setCustomDraft(presetId === "custom" ? value : "");
+              return;
+            }
+            const preset = presets.find((option) => option.id === next);
+            if (!preset) {
+              return;
+            }
+            setForceCustom(false);
+            onChange(preset.value);
+          }}
+        >
+          <SelectTrigger
+            className="w-full"
+            aria-label={kind === "ui" ? "UI font preference" : "Code font preference"}
+          >
+            <SelectValue>
+              {showingCustom
+                ? "Custom"
+                : (presets.find((option) => option.id === presetId)?.label ?? "Default")}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {presets.map((option) => {
+              const optionFontFamily = resolveFontFamilyCss(option.value, kind);
+              return (
+                <SelectItem hideIndicator key={option.id} value={option.id}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={
+                        kind === "code"
+                          ? "inline-flex size-6 items-center justify-center rounded border border-border/80 bg-muted/30 text-[11px] leading-none font-mono"
+                          : "inline-flex size-6 items-center justify-center rounded border border-border/80 bg-muted/30 text-[11px] leading-none"
+                      }
+                      style={optionFontFamily ? { fontFamily: optionFontFamily } : undefined}
+                    >
+                      Aa
+                    </span>
+                    <span>{option.label}</span>
+                  </span>
+                </SelectItem>
+              );
+            })}
+            <SelectItem hideIndicator value="custom">
+              Custom
+            </SelectItem>
+          </SelectPopup>
+        </Select>
+        {showingCustom ? (
+          <Input
+            className="w-full font-mono text-xs"
+            value={customDraft}
+            onChange={(event) => setCustomDraft(event.target.value)}
+            onBlur={() => {
+              const sanitized = sanitizeFontFamilyPreference(customDraft);
+              setForceCustom(false);
+              setCustomDraft(sanitized);
+              if (sanitized !== value) {
+                onChange(sanitized);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                (event.target as HTMLInputElement).blur();
+              }
+            }}
+            placeholder={customPlaceholder}
+            spellCheck={false}
+            aria-label={
+              kind === "ui" ? "Custom UI font family name" : "Custom code font family name"
+            }
+          />
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export function GeneralSettingsPanel() {
@@ -585,6 +734,52 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="UI font"
+          description="Font for the app chrome and agent replies. Custom uses a font installed on this machine."
+          resetAction={
+            settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? (
+              <SettingResetButton
+                label="UI font"
+                onClick={() =>
+                  updateSettings({ uiFontFamily: DEFAULT_UNIFIED_SETTINGS.uiFontFamily })
+                }
+              />
+            ) : null
+          }
+          control={
+            <FontFamilySettingControl
+              key={`ui-font:${settings.uiFontFamily}`}
+              kind="ui"
+              value={settings.uiFontFamily}
+              onChange={(uiFontFamily) => updateSettings({ uiFontFamily })}
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Code font"
+          description="Font for code blocks, diffs, and file previews. Custom uses a font installed on this machine."
+          resetAction={
+            settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? (
+              <SettingResetButton
+                label="code font"
+                onClick={() =>
+                  updateSettings({ codeFontFamily: DEFAULT_UNIFIED_SETTINGS.codeFontFamily })
+                }
+              />
+            ) : null
+          }
+          control={
+            <FontFamilySettingControl
+              key={`code-font:${settings.codeFontFamily}`}
+              kind="code"
+              value={settings.codeFontFamily}
+              onChange={(codeFontFamily) => updateSettings({ codeFontFamily })}
+            />
           }
         />
 
