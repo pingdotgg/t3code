@@ -815,6 +815,9 @@ export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -919,8 +922,14 @@ export default function SidebarV2() {
     ],
   );
   const projectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    () =>
+      sortLogicalProjectsForSidebar(
+        unsortedProjectGroups,
+        threads,
+        sidebarProjectSortOrder,
+        optimisticallyArchivedThreadKeys,
+      ),
+    [optimisticallyArchivedThreadKeys, sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
@@ -1181,9 +1190,6 @@ export default function SidebarV2() {
   // archive command is still in flight — because archive keeps its original
   // "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
-    (state) => state.threadKeys,
-  );
   const { activeThreads, settledThreads } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
     const visible = filterVisibleSidebarThreads(threads, optimisticallyArchivedThreadKeys).filter(

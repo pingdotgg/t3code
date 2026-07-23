@@ -40,7 +40,7 @@ Failed shell-driven detail-cache removals remain pending while the authoritative
 
 `apps/server/src/server.test.ts` verifies that HTTP-seeded shell subscriptions preserve archive removals published while WebSocket catch-up reads persisted events, then emit the synchronization completion marker. Initial-snapshot event replay in `apps/server/src/ws.ts` and deferred active-thread cache writes in `packages/client-runtime/src/state/threads.ts` remain complementary to authoritative shell refresh. Cache lifecycle behavior is covered through `packages/client-runtime/src/state/shell-sync.test.ts`, `packages/client-runtime/src/state/threadCommands.test.ts`, `packages/client-runtime/src/state/threads-sync.test.ts`, `apps/web/src/connection/storage.test.ts`, and the mobile storage/database tests.
 
-Mobile Archive rows omit invalid lifecycle timestamps instead of presenting corrupt or legacy values as newly archived. General mobile time rendering is unchanged.
+Mobile Archive rows omit invalid lifecycle timestamps instead of presenting corrupt or legacy values as newly archived, and sort missing or invalid archive dates after valid dates in both sort directions. General mobile time rendering is unchanged.
 
 ## Development Ports
 

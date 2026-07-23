@@ -115,6 +115,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
+import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import {
   Command,
@@ -501,6 +502,9 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
@@ -561,8 +565,14 @@ function OpenCommandPaletteDialog(props: {
         unsortedProjectGroups,
         threads,
         clientSettings.sidebarProjectSortOrder,
+        optimisticallyArchivedThreadKeys,
       ),
-    [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    [
+      clientSettings.sidebarProjectSortOrder,
+      optimisticallyArchivedThreadKeys,
+      threads,
+      unsortedProjectGroups,
+    ],
   );
   const contextualProjectRef = useMemo(
     () =>

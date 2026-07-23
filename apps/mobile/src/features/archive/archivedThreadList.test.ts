@@ -143,6 +143,62 @@ describe("buildArchivedThreadGroups", () => {
 
     expect(result).toEqual([]);
   });
+
+  it("sorts invalid archive timestamps after valid timestamps in either direction", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const invalid = makeThread({
+      archivedAt: "not-a-timestamp",
+      id: ThreadId.make("thread-invalid"),
+      projectId: project.id,
+      title: "Invalid",
+    });
+    const anotherInvalid = makeThread({
+      archivedAt: "also-not-a-timestamp",
+      id: ThreadId.make("thread-another-invalid"),
+      projectId: project.id,
+      title: "Another invalid",
+    });
+    const older = makeThread({
+      id: ThreadId.make("thread-older"),
+      projectId: project.id,
+      title: "Older",
+    });
+    const newer = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      id: ThreadId.make("thread-newer"),
+      projectId: project.id,
+      title: "Newer",
+    });
+    const snapshots = [makeSnapshot([project], [invalid, anotherInvalid, older, newer])];
+
+    const newest = buildArchivedThreadGroups({
+      snapshots,
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery: "",
+      sortOrder: "newest",
+    });
+    const oldest = buildArchivedThreadGroups({
+      snapshots,
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery: "",
+      sortOrder: "oldest",
+    });
+
+    expect(newest[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-newer",
+      "thread-older",
+      "thread-another-invalid",
+      "thread-invalid",
+    ]);
+    expect(oldest[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-older",
+      "thread-newer",
+      "thread-another-invalid",
+      "thread-invalid",
+    ]);
+  });
 });
 
 describe("formatArchivedThreadRelativeTime", () => {
