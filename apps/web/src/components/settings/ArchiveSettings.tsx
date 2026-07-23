@@ -9,7 +9,7 @@ import {
   LoaderIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -33,6 +33,7 @@ import {
   archivedProjectBulkScopeLabel,
   archivedProjectBulkFailureDescription,
   archivedThreadTimestampValue,
+  archivedThreadActionKey,
   type ArchivedProjectBulkFailure,
   type ArchivedProjectBulkScope,
   type ArchivedProjectBulkThread,
@@ -42,8 +43,10 @@ import {
   hasArchivedThreads as archiveHasThreads,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
+  releaseArchivedThreadActionLock,
   resolveArchivedProjectEnvironmentLabel,
   runArchivedProjectThreadActions,
+  tryAcquireArchivedThreadActionLock,
 } from "./SettingsPanels.logic";
 import {
   SettingsPageContainer,
@@ -84,11 +87,13 @@ function ArchivedSortButton({
 function ArchivedIconButton({
   label,
   destructive = false,
+  disabled = false,
   onClick,
   children,
 }: {
   readonly label: string;
   readonly destructive?: boolean;
+  readonly disabled?: boolean;
   readonly onClick: () => void;
   readonly children: ReactNode;
 }) {
@@ -102,6 +107,7 @@ function ArchivedIconButton({
             size="icon-xs"
             aria-label={label}
             className="size-6 rounded-md"
+            disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
               onClick();
@@ -121,6 +127,10 @@ export function ArchivedThreadsPanel() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { unarchiveThread, deleteThread } = useThreadActions();
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
+  const inFlightArchivedThreadKeysRef = useRef(new Set<string>());
+  const [inFlightArchivedThreadKeys, setInFlightArchivedThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [expandedProjectKeys, setExpandedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -179,6 +189,22 @@ export function ArchivedThreadsPanel() {
       archivedSnapshots,
       sort,
     ],
+  );
+
+  const tryBeginArchivedThreadActions = useCallback(
+    (threadRefs: ReadonlyArray<ScopedThreadRef>): (() => void) | null => {
+      const lock = tryAcquireArchivedThreadActionLock(
+        inFlightArchivedThreadKeysRef.current,
+        threadRefs,
+      );
+      if (!lock) return null;
+      setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
+      return () => {
+        releaseArchivedThreadActionLock(inFlightArchivedThreadKeysRef.current, lock);
+        setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
+      };
+    },
+    [],
   );
 
   const toggleProjectExpanded = useCallback((projectKey: string) => {
@@ -274,40 +300,44 @@ export function ArchivedThreadsPanel() {
 
   const handleUnarchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
-      const result = await unarchiveThread(threadRef);
-      if (result._tag === "Success") {
-        refreshArchivedThreads();
-        return;
+      const finishAction = tryBeginArchivedThreadActions([threadRef]);
+      if (!finishAction) return;
+      try {
+        const result = await unarchiveThread(threadRef);
+        showArchivedActionFailure("Failed to unarchive thread", result);
+      } finally {
+        finishAction();
       }
-      showArchivedActionFailure("Failed to unarchive thread", result);
     },
-    [refreshArchivedThreads, showArchivedActionFailure, unarchiveThread],
+    [showArchivedActionFailure, tryBeginArchivedThreadActions, unarchiveThread],
   );
 
   const handleDeleteArchivedThread = useCallback(
     async (threadRef: ScopedThreadRef, title: string) => {
-      if (confirmThreadDelete) {
-        const confirmed = await confirmArchivedAction(
-          [
-            `Delete archived conversation "${title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-        );
-        if (!confirmed) return;
+      const finishAction = tryBeginArchivedThreadActions([threadRef]);
+      if (!finishAction) return;
+      try {
+        if (confirmThreadDelete) {
+          const confirmed = await confirmArchivedAction(
+            [
+              `Delete archived conversation "${title}"?`,
+              "This permanently clears conversation history for this thread.",
+            ].join("\n"),
+          );
+          if (!confirmed) return;
+        }
+        const result = await deleteThread(threadRef);
+        showArchivedActionFailure("Failed to delete thread", result);
+      } finally {
+        finishAction();
       }
-      const result = await deleteThread(threadRef);
-      if (result._tag === "Success") {
-        refreshArchivedThreads();
-        return;
-      }
-      showArchivedActionFailure("Failed to delete thread", result);
     },
     [
       confirmArchivedAction,
       confirmThreadDelete,
       deleteThread,
-      refreshArchivedThreads,
       showArchivedActionFailure,
+      tryBeginArchivedThreadActions,
     ],
   );
 
@@ -317,30 +347,39 @@ export function ArchivedThreadsPanel() {
       threads: ReadonlyArray<ArchivedProjectBulkThread>,
       scope: ArchivedProjectBulkScope,
     ) => {
-      const scopeLabel = archivedProjectBulkScopeLabel(scope);
-      // Bulk unarchive always asks because there is no unarchive confirmation preference.
-      const confirmed = await confirmArchivedAction(
-        [
-          `Unarchive ${scopeLabel} in "${projectName}"?`,
-          `This will restore ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
-        ].join("\n"),
-      );
-      if (!confirmed) return;
+      const threadRefs = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
+      const finishAction = tryBeginArchivedThreadActions(threadRefs);
+      if (!finishAction) return;
       try {
-        const failures = await runArchivedProjectThreadActions(threads, (thread) =>
-          unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)),
+        const scopeLabel = archivedProjectBulkScopeLabel(scope);
+        // Bulk unarchive always asks because there is no unarchive confirmation preference.
+        const confirmed = await confirmArchivedAction(
+          [
+            `Unarchive ${scopeLabel} in "${projectName}"?`,
+            `This will restore ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
+          ].join("\n"),
         );
-        if (failures.length > 0) {
-          showArchivedBulkActionFailure(
-            "Archived threads not fully unarchived",
-            failures,
-            threads.length,
+        if (!confirmed) return;
+        try {
+          const failures = await runArchivedProjectThreadActions(threads, (thread) =>
+            unarchiveThread(scopeThreadRef(thread.environmentId, thread.id), {
+              refreshArchivedThreads: false,
+            }),
           );
+          if (failures.length > 0) {
+            showArchivedBulkActionFailure(
+              "Archived threads not fully unarchived",
+              failures,
+              threads.length,
+            );
+          }
+        } catch (error) {
+          showArchivedBulkActionException("Archived threads not fully unarchived", error);
+        } finally {
+          refreshArchivedThreads();
         }
-      } catch (error) {
-        showArchivedBulkActionException("Archived threads not fully unarchived", error);
       } finally {
-        refreshArchivedThreads();
+        finishAction();
       }
     },
     [
@@ -348,6 +387,7 @@ export function ArchivedThreadsPanel() {
       refreshArchivedThreads,
       showArchivedBulkActionException,
       showArchivedBulkActionFailure,
+      tryBeginArchivedThreadActions,
       unarchiveThread,
     ],
   );
@@ -358,31 +398,40 @@ export function ArchivedThreadsPanel() {
       threads: ReadonlyArray<ArchivedProjectBulkThread>,
       scope: ArchivedProjectBulkScope,
     ) => {
-      const scopeLabel = archivedProjectBulkScopeLabel(scope);
-      if (confirmThreadDelete) {
-        const confirmed = await confirmArchivedAction(
-          [
-            `Delete ${scopeLabel} in "${projectName}"?`,
-            `This permanently clears conversation history for ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
-          ].join("\n"),
-        );
-        if (!confirmed) return;
-      }
+      const threadRefs = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
+      const finishAction = tryBeginArchivedThreadActions(threadRefs);
+      if (!finishAction) return;
       try {
-        const failures = await runArchivedProjectThreadActions(threads, (thread) =>
-          deleteThread(scopeThreadRef(thread.environmentId, thread.id)),
-        );
-        if (failures.length > 0) {
-          showArchivedBulkActionFailure(
-            "Archived threads not fully deleted",
-            failures,
-            threads.length,
+        const scopeLabel = archivedProjectBulkScopeLabel(scope);
+        if (confirmThreadDelete) {
+          const confirmed = await confirmArchivedAction(
+            [
+              `Delete ${scopeLabel} in "${projectName}"?`,
+              `This permanently clears conversation history for ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
+            ].join("\n"),
           );
+          if (!confirmed) return;
         }
-      } catch (error) {
-        showArchivedBulkActionException("Archived threads not fully deleted", error);
+        try {
+          const failures = await runArchivedProjectThreadActions(threads, (thread) =>
+            deleteThread(scopeThreadRef(thread.environmentId, thread.id), {
+              refreshArchivedThreads: false,
+            }),
+          );
+          if (failures.length > 0) {
+            showArchivedBulkActionFailure(
+              "Archived threads not fully deleted",
+              failures,
+              threads.length,
+            );
+          }
+        } catch (error) {
+          showArchivedBulkActionException("Archived threads not fully deleted", error);
+        } finally {
+          refreshArchivedThreads();
+        }
       } finally {
-        refreshArchivedThreads();
+        finishAction();
       }
     },
     [
@@ -392,6 +441,7 @@ export function ArchivedThreadsPanel() {
       refreshArchivedThreads,
       showArchivedBulkActionException,
       showArchivedBulkActionFailure,
+      tryBeginArchivedThreadActions,
     ],
   );
 
@@ -519,6 +569,11 @@ export function ArchivedThreadsPanel() {
           {archivedGroups.map(({ key: projectKey, project, threads: projectThreads }) => {
             const isExpanded = archiveSearch.isSearching || expandedProjectKeys.has(projectKey);
             const bulkScope = archiveSearch.isSearching ? "matching" : "all";
+            const projectHasInFlightAction = projectThreads.some((thread) =>
+              inFlightArchivedThreadKeys.has(
+                archivedThreadActionKey(scopeThreadRef(thread.environmentId, thread.id)),
+              ),
+            );
             const environmentLabel = resolveArchivedProjectEnvironmentLabel({
               environment: archiveEnvironmentsById.get(project.environmentId) ?? null,
               hasMultipleEnvironments: environments.length > 1,
@@ -527,6 +582,7 @@ export function ArchivedThreadsPanel() {
               <section
                 key={projectKey}
                 className="border-t border-border/70 pt-3 first:border-t-0 first:pt-0"
+                aria-busy={projectHasInFlightAction}
               >
                 <div
                   className={
@@ -536,6 +592,7 @@ export function ArchivedThreadsPanel() {
                   }
                   onContextMenu={(event) => {
                     event.preventDefault();
+                    if (projectHasInFlightAction) return;
                     void (async () => {
                       const result = await settlePromise(() =>
                         handleArchivedProjectContextMenu(project.name, projectThreads, bulkScope, {
@@ -600,6 +657,7 @@ export function ArchivedThreadsPanel() {
                           size="icon-xs"
                           aria-label={`Project actions for ${project.name}`}
                           className="size-6 rounded-md justify-self-end"
+                          disabled={projectHasInFlightAction}
                           onClick={(event) => {
                             event.stopPropagation();
                             void handleArchivedProjectMenuButton(
@@ -619,69 +677,70 @@ export function ArchivedThreadsPanel() {
                 </div>
                 {isExpanded ? (
                   <div className="mt-1 space-y-0.5">
-                    {projectThreads.map((thread) => (
-                      <div
-                        key={thread.id}
-                        className="group relative grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-within:bg-accent focus-within:text-foreground"
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          void (async () => {
-                            const result = await settlePromise(() =>
-                              handleArchivedThreadContextMenu(
-                                scopeThreadRef(thread.environmentId, thread.id),
-                                thread.title,
-                                {
+                    {projectThreads.map((thread) => {
+                      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+                      const threadHasInFlightAction = inFlightArchivedThreadKeys.has(
+                        archivedThreadActionKey(threadRef),
+                      );
+                      return (
+                        <div
+                          key={thread.id}
+                          className="group relative grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-within:bg-accent focus-within:text-foreground"
+                          aria-busy={threadHasInFlightAction}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            if (threadHasInFlightAction) return;
+                            void (async () => {
+                              const result = await settlePromise(() =>
+                                handleArchivedThreadContextMenu(threadRef, thread.title, {
                                   x: event.clientX,
                                   y: event.clientY,
-                                },
-                              ),
-                            );
-                            showArchivedActionFailure("Archived thread action failed", result);
-                          })();
-                        }}
-                      >
-                        <div className="min-w-0 truncate text-[13px] font-medium text-current">
-                          {thread.title}
-                        </div>
-                        <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
-                          {formatRelativeTimeLabel(
-                            archivedThreadTimestampValue(thread, "archivedAt"),
-                          )}
-                        </div>
-                        <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
-                          {formatRelativeTimeLabel(thread.createdAt)}
-                        </div>
-                        {/* Keeps row text columns aligned with the header action column. */}
-                        <div aria-hidden="true" />
-                        <div
-                          className="pointer-events-none absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md bg-accent/95 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
-                          onClick={(event) => event.stopPropagation()}
+                                }),
+                              );
+                              showArchivedActionFailure("Archived thread action failed", result);
+                            })();
+                          }}
                         >
-                          <ArchivedIconButton
-                            label="Unarchive"
-                            onClick={() => {
-                              void handleUnarchiveThread(
-                                scopeThreadRef(thread.environmentId, thread.id),
-                              );
-                            }}
+                          <div className="min-w-0 truncate text-[13px] font-medium text-current">
+                            {thread.title}
+                          </div>
+                          <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
+                            {formatRelativeTimeLabel(
+                              archivedThreadTimestampValue(thread, "archivedAt"),
+                            )}
+                          </div>
+                          <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
+                            {formatRelativeTimeLabel(thread.createdAt)}
+                          </div>
+                          {/* Keeps row text columns aligned with the header action column. */}
+                          <div aria-hidden="true" />
+                          <div
+                            className="pointer-events-none absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md bg-accent/95 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                            onClick={(event) => event.stopPropagation()}
                           >
-                            <ArchiveX className="size-3.5" />
-                          </ArchivedIconButton>
-                          <ArchivedIconButton
-                            label="Delete"
-                            destructive
-                            onClick={() => {
-                              void handleDeleteArchivedThread(
-                                scopeThreadRef(thread.environmentId, thread.id),
-                                thread.title,
-                              );
-                            }}
-                          >
-                            <Trash2Icon className="size-3.5" />
-                          </ArchivedIconButton>
+                            <ArchivedIconButton
+                              label="Unarchive"
+                              disabled={threadHasInFlightAction}
+                              onClick={() => {
+                                void handleUnarchiveThread(threadRef);
+                              }}
+                            >
+                              <ArchiveX className="size-3.5" />
+                            </ArchivedIconButton>
+                            <ArchivedIconButton
+                              label="Delete"
+                              destructive
+                              disabled={threadHasInFlightAction}
+                              onClick={() => {
+                                void handleDeleteArchivedThread(threadRef, thread.title);
+                              }}
+                            >
+                              <Trash2Icon className="size-3.5" />
+                            </ArchivedIconButton>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
               </section>

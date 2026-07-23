@@ -5,6 +5,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
+  ScopedThreadRef,
   ThreadId,
   ServerSettings,
   SidebarProjectGroupingMode,
@@ -79,11 +80,42 @@ export interface ArchivedProjectBulkActionOptions {
   readonly concurrency?: number;
 }
 
+export interface ArchivedThreadActionLock {
+  readonly keys: ReadonlyArray<string>;
+}
+
 function archivedProjectGroupKey(
   environmentId: EnvironmentId,
   projectId: OrchestrationProjectShell["id"],
 ): string {
   return JSON.stringify([environmentId, projectId]);
+}
+
+export function archivedThreadActionKey(threadRef: ScopedThreadRef): string {
+  return JSON.stringify([threadRef.environmentId, threadRef.threadId]);
+}
+
+export function tryAcquireArchivedThreadActionLock(
+  inFlightThreadKeys: Set<string>,
+  threadRefs: ReadonlyArray<ScopedThreadRef>,
+): ArchivedThreadActionLock | null {
+  const keys = [...new Set(threadRefs.map(archivedThreadActionKey))];
+  if (keys.some((key) => inFlightThreadKeys.has(key))) {
+    return null;
+  }
+  for (const key of keys) {
+    inFlightThreadKeys.add(key);
+  }
+  return { keys };
+}
+
+export function releaseArchivedThreadActionLock(
+  inFlightThreadKeys: Set<string>,
+  lock: ArchivedThreadActionLock,
+): void {
+  for (const key of lock.keys) {
+    inFlightThreadKeys.delete(key);
+  }
 }
 
 export function resolveArchivedProjectEnvironmentLabel(input: {

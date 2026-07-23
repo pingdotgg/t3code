@@ -9,6 +9,7 @@ import {
   type OrchestrationThreadShell,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
@@ -17,6 +18,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 import {
   archivedProjectBulkFailureDescription,
+  archivedThreadActionKey,
   archivedThreadSearchScore,
   archivedThreadTimestampValue,
   buildArchivedThreadGroups,
@@ -28,7 +30,9 @@ import {
   parseArchivedThreadSearchInput,
   projectGroupingModeFromToggle,
   resolveArchivedProjectEnvironmentLabel,
+  releaseArchivedThreadActionLock,
   runArchivedProjectThreadActions,
+  tryAcquireArchivedThreadActionLock,
 } from "./SettingsPanels.logic";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -530,6 +534,37 @@ describe("runArchivedProjectThreadActions", () => {
     expect(new Set(attemptedThreadIds)).toEqual(
       new Set(["thread-0", "thread-1", "thread-2", "thread-3"]),
     );
+  });
+});
+
+describe("archived thread action locks", () => {
+  const firstThreadRef = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
+  const secondThreadRef = scopeThreadRef(environmentId, ThreadId.make("thread-2"));
+
+  it("blocks overlapping row and bulk actions until the original lock is released", () => {
+    const inFlightThreadKeys = new Set<string>();
+    const bulkLock = tryAcquireArchivedThreadActionLock(inFlightThreadKeys, [
+      firstThreadRef,
+      secondThreadRef,
+    ]);
+
+    expect(bulkLock).not.toBeNull();
+    expect(tryAcquireArchivedThreadActionLock(inFlightThreadKeys, [firstThreadRef])).toBeNull();
+
+    releaseArchivedThreadActionLock(inFlightThreadKeys, bulkLock!);
+
+    expect(tryAcquireArchivedThreadActionLock(inFlightThreadKeys, [firstThreadRef])).not.toBeNull();
+  });
+
+  it("uses collision-safe environment and thread identity", () => {
+    const firstKey = archivedThreadActionKey(
+      scopeThreadRef(EnvironmentId.make("environment:a"), ThreadId.make("thread")),
+    );
+    const secondKey = archivedThreadActionKey(
+      scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("a:thread")),
+    );
+
+    expect(firstKey).not.toBe(secondKey);
   });
 });
 
