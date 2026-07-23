@@ -83,6 +83,7 @@ import {
   resolveSidebarV2Status,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
+import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -127,6 +128,7 @@ function SidebarV2ThreadTooltip({
   modelInstanceId,
   modelLabel,
   status,
+  branchMismatch,
 }: {
   thread: SidebarThreadSummary;
   projectTitle: string | null;
@@ -139,6 +141,10 @@ function SidebarV2ThreadTooltip({
     label: string;
     className: string;
     icon: "working" | "done" | null;
+  } | null;
+  branchMismatch: {
+    threadBranch: string;
+    currentBranch: string;
   } | null;
 }) {
   return (
@@ -197,6 +203,14 @@ function SidebarV2ThreadTooltip({
               <GitBranchIcon className="size-4 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">
                 {thread.branch}
+              </div>
+            </div>
+          ) : null}
+          {branchMismatch ? (
+            <div className="flex min-w-0 items-start gap-2 text-warning">
+              <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 stroke-current" />
+              <div className="min-w-0 flex-1 wrap-break-word leading-5">
+                You're currently checked out on another branch.
               </div>
             </div>
           ) : null}
@@ -321,14 +335,24 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
-    thread.branch != null && gitCwd !== null
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
         })
       : null,
   );
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
+    activeWorktreePath: thread.worktreePath,
+    activeThreadBranch: thread.branch,
+    currentGitBranch: gitStatus.data?.refName ?? null,
+  });
+  const pr = resolveThreadPr({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    hasDedicatedWorktree: thread.worktreePath !== null,
+  });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   // Report the PR state up: the parent partitions rows with effectiveSettled,
   // and a merged/closed PR auto-settles a thread — data only rows have.
@@ -360,6 +384,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
       status={topStatus}
+      branchMismatch={branchMismatch}
     />
   );
 
