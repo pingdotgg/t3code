@@ -942,7 +942,7 @@ export default function SidebarV2() {
         );
         const projectRef = scopeProjectRef(project.environmentId, project.id);
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-        shouldNavigate ||= shouldNavigateAfterProjectRemoval({
+        const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
           routeTarget: routeTargetRef.current,
           projectThreads: memberThreads,
           projectDraftId: projectDraftThread?.draftId ?? null,
@@ -966,9 +966,13 @@ export default function SidebarV2() {
               }),
             );
           }
+          if (shouldNavigate) {
+            void router.navigate({ to: "/" });
+          }
           return;
         }
 
+        shouldNavigate ||= memberRemovalNeedsNavigation;
         if (projectDraftThread) {
           draftStore.clearDraftThread(projectDraftThread.draftId);
         }
