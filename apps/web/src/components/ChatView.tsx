@@ -5592,7 +5592,7 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div className="chat-composer-glass-host mx-auto w-full max-w-3xl overflow-hidden rounded-[22px]">
+                    <div className="chat-composer-glass-host mx-auto w-full max-w-3xl rounded-[22px]">
                       <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10 isolate">
                         <ChatComposer
                           composerRef={composerRef}

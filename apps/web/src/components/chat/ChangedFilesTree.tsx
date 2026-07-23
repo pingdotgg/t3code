@@ -41,8 +41,8 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
 
   return (
-    <div className="mt-4 rounded-2xl bg-background p-2 pt-4 shadow-xs/5 not-dark:bg-clip-padding dark:bg-input/32">
-      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between gap-2 bg-background px-2 before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-background before:content-[''] dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))] dark:before:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]">
+    <div className="mt-4 rounded-2xl border border-border/70 bg-secondary p-2 pt-4 dark:border-transparent dark:bg-input/32">
+      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between gap-2 bg-secondary px-2 before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-secondary before:content-[''] dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))] dark:before:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]">
         <p className="flex items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
           <span>
             {files.length} changed file{files.length === 1 ? "" : "s"}

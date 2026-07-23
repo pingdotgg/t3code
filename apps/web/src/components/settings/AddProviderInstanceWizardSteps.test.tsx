@@ -9,6 +9,10 @@ interface StepButtonProps {
   readonly onClick: () => void;
 }
 
+interface StepListItemProps {
+  readonly children: ReactElement<StepButtonProps>;
+}
+
 function renderStepButtons(
   currentStep: number,
   instanceIdError: string | null,
@@ -21,9 +25,9 @@ function renderStepButtons(
     onNavigation,
   });
 
-  return Children.toArray(header.props.children).filter(
-    (child): child is ReactElement<StepButtonProps> => isValidElement(child),
-  );
+  return Children.toArray(header.props.children)
+    .filter((child): child is ReactElement<StepListItemProps> => isValidElement(child))
+    .map((item) => item.props.children);
 }
 
 describe("AddProviderInstanceWizardSteps", () => {
