@@ -576,7 +576,9 @@ function FontFamilySettingControl({
           onValueChange={(next) => {
             if (next === "custom") {
               setForceCustom(true);
-              setCustomDraft(presetId === "custom" ? value : "");
+              // Seed with the current preference so opening Custom doesn't wipe
+              // an existing preset/custom choice if the user blurs without edits.
+              setCustomDraft(value);
               return;
             }
             const preset = presets.find((option) => option.id === next);
@@ -633,6 +635,8 @@ function FontFamilySettingControl({
               const sanitized = sanitizeFontFamilyPreference(customDraft);
               setForceCustom(false);
               setCustomDraft(sanitized);
+              // Empty blur after opening Custom with no edits should keep the
+              // prior preference (including Default). Only commit when changed.
               if (sanitized !== value) {
                 onChange(sanitized);
               }

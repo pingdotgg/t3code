@@ -102,6 +102,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <FontAppearanceSync />
         <Outlet />
       </>
     );
@@ -111,6 +112,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <FontAppearanceSync />
         <Outlet />
       </>
     );
