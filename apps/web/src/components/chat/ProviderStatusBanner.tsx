@@ -1,31 +1,32 @@
 import { type ServerProvider } from "@t3tools/contracts";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
+  return !status || status.status === "ready" || status.status === "disabled"
+    ? null
+    : [status.instanceId, status.status, status.auth.status, status.message ?? ""].join("\u0000");
+}
+
+export function shouldShowProviderStatusBanner(
+  status: ServerProvider | null,
+  dismissedBannerKey: string | null,
+): boolean {
+  const bannerKey = getProviderStatusBannerKey(status);
+  return bannerKey !== null && bannerKey !== dismissedBannerKey;
+}
+
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
+  onDismiss,
   status,
 }: {
+  onDismiss: () => void;
   status: ServerProvider | null;
 }) {
-  const bannerKey =
-    !status || status.status === "ready" || status.status === "disabled"
-      ? null
-      : [status.instanceId, status.status, status.auth.status, status.message ?? ""].join("\u0000");
-  const [dismissedBannerKey, setDismissedBannerKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (bannerKey === null && dismissedBannerKey !== null) {
-      setDismissedBannerKey(null);
-    }
-  }, [bannerKey, dismissedBannerKey]);
-
   if (!status || status.status === "ready" || status.status === "disabled") {
-    return null;
-  }
-  if (bannerKey === dismissedBannerKey) {
     return null;
   }
 
@@ -66,9 +67,9 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         </div>
         <button
           type="button"
-          aria-label={`Dismiss ${providerName} provider warning`}
+          aria-label={`Dismiss ${providerName} provider ${status.status}`}
           className="absolute top-2 right-2 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => setDismissedBannerKey(bannerKey)}
+          onClick={onDismiss}
         >
           <XIcon aria-hidden className="size-3.5" />
         </button>

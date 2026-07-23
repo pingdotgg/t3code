@@ -2,7 +2,11 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderStatusBanner } from "./ProviderStatusBanner";
+import {
+  getProviderStatusBannerKey,
+  ProviderStatusBanner,
+  shouldShowProviderStatusBanner,
+} from "./ProviderStatusBanner";
 
 function warningProvider(): ServerProvider {
   return {
@@ -23,11 +27,31 @@ function warningProvider(): ServerProvider {
 }
 
 describe("ProviderStatusBanner", () => {
+  it("stays hidden after its current warning is dismissed", () => {
+    const status = warningProvider();
+
+    expect(shouldShowProviderStatusBanner(status, null)).toBe(true);
+    expect(shouldShowProviderStatusBanner(status, getProviderStatusBannerKey(status))).toBe(false);
+  });
+
   it("renders an accessible dismiss control for provider warnings", () => {
-    const markup = renderToStaticMarkup(<ProviderStatusBanner status={warningProvider()} />);
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner status={warningProvider()} onDismiss={() => {}} />,
+    );
 
     expect(markup).toContain('role="alert"');
     expect(markup).toContain('aria-label="Dismiss Codex provider warning"');
     expect(markup).toContain("absolute top-2 right-2");
+  });
+
+  it("labels error dismiss controls with the correct severity", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner
+        status={{ ...warningProvider(), status: "error" }}
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Dismiss Codex provider error"');
   });
 });
