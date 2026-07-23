@@ -56,6 +56,7 @@ import {
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
+  resolveCodexAdapterAppServerArgs,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
@@ -345,6 +346,15 @@ describe("CodexAdapterV2 process spawning", () => {
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
+  });
+
+  it("includes configured and integration arguments in app-server sessions", () => {
+    assert.deepEqual(
+      resolveCodexAdapterAppServerArgs("--strict-config", {
+        T3CODE_CODEX_APPEND_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/bin/cua-driver"',
+      }),
+      ["app-server", "--strict-config", "-c", "mcp_servers.cua-driver.command=/bin/cua-driver"],
+    );
   });
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>

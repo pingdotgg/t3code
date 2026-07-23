@@ -59,6 +59,11 @@ import {
   type EventNdjsonLogger,
   makeEventNdjsonLogger,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
+import {
+  codexAppServerArgs,
+  resolveCodexLaunchArgs,
+  T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV,
+} from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -1140,6 +1145,25 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
+const withLiveCodexIntegrationEnvironment = (
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => ({
+  ...environment,
+  ...(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] === undefined
+    ? {}
+    : {
+        [T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]: process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV],
+      }),
+});
+
+export const resolveCodexAdapterAppServerArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<string> =>
+  codexAppServerArgs(
+    resolveCodexLaunchArgs(launchArgs, withLiveCodexIntegrationEnvironment(environment)),
+  );
+
 export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
   CodexAppServerClientFactory,
   never,
@@ -1163,7 +1187,7 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: ["app-server"],
+            args: resolveCodexAdapterAppServerArgs(input.settings.launchArgs, environment),
             env: environment,
           });
           const handle = yield* spawner.spawn(command).pipe(

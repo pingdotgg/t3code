@@ -23,6 +23,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
+import { startEmbeddedCuaDriver } from "./cua/CuaDriverEmbedded.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
@@ -367,6 +368,18 @@ export const make = Effect.gen(function* () {
   );
 
   const startup = Effect.gen(function* () {
+    yield* runStartupPhase(
+      "cua-driver.start",
+      startEmbeddedCuaDriver().pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("embedded cua-driver failed to start; computer use is unavailable", {
+            binaryPath: error.binaryPath,
+            cause: String(error.cause),
+          }),
+        ),
+      ),
+    );
+
     yield* Effect.logDebug("startup phase: starting keybindings runtime");
     yield* runStartupPhase(
       "keybindings.start",

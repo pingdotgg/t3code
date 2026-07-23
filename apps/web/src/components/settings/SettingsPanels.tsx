@@ -59,6 +59,7 @@ import {
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { isMacPlatform } from "../../lib/utils";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
@@ -411,6 +412,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? ["Computer use"] : []),
       ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
@@ -444,6 +446,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.enableCua,
       settings.enableProviderUpdateChecks,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -470,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
@@ -490,6 +494,10 @@ export function useSettingsRestore(onRestored?: () => void) {
 
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
+  const supportsCua =
+    typeof window !== "undefined" &&
+    Boolean(window.desktopBridge) &&
+    isMacPlatform(window.navigator.platform);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const observability = useAtomValue(primaryServerObservabilityAtom);
@@ -679,6 +687,28 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {supportsCua ? (
+          <SettingsRow
+            title="Computer use"
+            description="Let agents use Cua to see and control your Mac. Restart T3 Code after changing this setting."
+            resetAction={
+              settings.enableCua !== DEFAULT_UNIFIED_SETTINGS.enableCua ? (
+                <SettingResetButton
+                  label="computer use"
+                  onClick={() => updateSettings({ enableCua: DEFAULT_UNIFIED_SETTINGS.enableCua })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.enableCua}
+                onCheckedChange={(checked) => updateSettings({ enableCua: Boolean(checked) })}
+                aria-label="Enable Cua computer use"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           title="Provider update checks"

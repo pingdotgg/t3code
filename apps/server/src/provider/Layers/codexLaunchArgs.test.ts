@@ -26,6 +26,15 @@ describe("resolveCodexLaunchArgs", () => {
   it("ignores whitespace-only environment values", () => {
     NodeAssert.equal(resolveCodexLaunchArgs("", { T3CODE_CODEX_LAUNCH_ARGS: "   " }), "");
   });
+
+  it("appends integration arguments without replacing configured settings", () => {
+    NodeAssert.equal(
+      resolveCodexLaunchArgs("--strict-config", {
+        T3CODE_CODEX_APPEND_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/bin/cua-driver"',
+      }),
+      '--strict-config -c mcp_servers.cua-driver.command="/bin/cua-driver"',
+    );
+  });
 });
 
 describe("codexAppServerArgs", () => {
