@@ -5,8 +5,8 @@ Frequently mounted Git-ref and preview-discovery surfaces stay fresh without con
 Expected behavior:
 
 - Git ref lists revalidate their first page every 20 seconds instead of every five seconds. Loaded cursor pages are one-shot snapshots, and inactive ref atoms expire after 30 seconds.
-- The composer branch selector's open-triggered ref refresh is provided by upstream. The branch-owned Diff panel comparison-ref menu explicitly refreshes both local and remote refs on open, so user interaction does not wait for the background interval.
-- Both menus use the branch's shared open-only refresh helper. Closing either menu resets its query state without triggering another ref refresh.
+- The composer branch selector's open-triggered ref refresh originated upstream. This branch preserves that behavior while routing it through the same branch-owned open-only refresh helper used by the Diff panel comparison-ref menu, which explicitly refreshes both local and remote refs on open.
+- Closing either menu resets its query state without triggering another ref refresh, so user interaction stays fresh without adding close-triggered work.
 - Preview port discovery performs one immediate scan when the first subscriber retains it. Subscriptions replay the latest snapshot instead of initiating a duplicate scan.
 - Subscription replay and concurrent snapshot broadcasts are serialized so a stale replay cannot arrive after a newer scan result.
 - Managed terminal process-set changes trigger an immediate port scan; unchanged registrations and redundant removals do not.
@@ -24,7 +24,7 @@ Primary files:
 Focused regression coverage:
 
 - `packages/client-runtime/src/state/vcs.test.ts` covers the 20-second first-page revalidation interval.
-- `apps/web/src/components/vcsRefMenuRefresh.test.ts` covers one composer-selector refresh, local and remote Diff comparison-ref refreshes, and no refresh on menu close.
+- `apps/web/src/components/vcsRefMenuRefresh.test.ts` covers the shared helper's one-callback and multiple-callback open paths plus its no-refresh-on-close path; component wiring remains visible in the two primary component files above.
 - `apps/server/src/preview/PortScanner.test.ts` covers snapshot replay without rescanning, ordered replay during concurrent broadcasts, and unchanged terminal registrations avoiding redundant probes.
 
 ## Development Ports
