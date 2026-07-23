@@ -1146,6 +1146,30 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
+  it("extracts Claude snake-case file paths from tool activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "claude-file-tool",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolName: "Write",
+            input: {
+              file_path: "/home/deploy/ALS/.scratch/handoffs/wave-18/coordination-assessment.md",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual([
+      "/home/deploy/ALS/.scratch/handoffs/wave-18/coordination-assessment.md",
+    ]);
+  });
+
   it("drops duplicated tool detail when it only repeats the title", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

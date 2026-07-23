@@ -1262,6 +1262,7 @@ function collectChangedFiles(value: unknown, target: string[], seen: Set<string>
 
   pushChangedFile(target, seen, record.path);
   pushChangedFile(target, seen, record.filePath);
+  pushChangedFile(target, seen, record.file_path);
   pushChangedFile(target, seen, record.relativePath);
   pushChangedFile(target, seen, record.filename);
   pushChangedFile(target, seen, record.newPath);

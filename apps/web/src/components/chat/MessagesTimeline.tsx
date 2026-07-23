@@ -137,6 +137,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenFile: (relativePath: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
 }
@@ -169,6 +170,7 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenFile: (relativePath: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -204,6 +206,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onOpenFile,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -431,6 +434,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenFile,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
@@ -445,6 +449,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenFile,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -1155,7 +1160,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
 }) {
-  const { workspaceRoot } = use(TimelineRowCtx);
+  const { onOpenFile, workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
     [groupedEntries],
@@ -1182,6 +1187,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
             key={workEntry.id}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
+            onOpenFile={onOpenFile}
           />
         ))}
       </div>
@@ -1974,11 +1980,31 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+function toWorkspaceRelativeFilePath(
+  filePath: string,
+  workspaceRoot: string | undefined,
+): string | null {
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  if (!workspaceRoot) {
+    return normalizedPath.startsWith("/") ? null : normalizedPath.replace(/^\.\/+/, "");
+  }
+
+  const normalizedRoot = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  const rootWithSeparator = `${normalizedRoot}/`;
+  if (normalizedPath.toLowerCase().startsWith(rootWithSeparator.toLowerCase())) {
+    return normalizedPath.slice(rootWithSeparator.length);
+  }
+  return normalizedPath.startsWith("/") || /^[A-Za-z]:\//.test(normalizedPath)
+    ? null
+    : normalizedPath.replace(/^\.\/+/, "");
+}
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
+  onOpenFile: (relativePath: string) => void;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { workEntry, workspaceRoot, onOpenFile } = props;
   const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
@@ -1993,6 +2019,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
+  const singleChangedFile =
+    workEntry.changedFiles?.length === 1 ? workEntry.changedFiles[0] : undefined;
+  const openableFilePath = singleChangedFile
+    ? toWorkspaceRelativeFilePath(singleChangedFile, workspaceRoot)
+    : null;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
@@ -2054,9 +2085,24 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <div className="min-w-0 flex-1 overflow-hidden">
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
               <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {preview && (
-                <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
-              )}
+              {preview &&
+                (openableFilePath ? (
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-muted-foreground/55 hover:text-foreground hover:underline"
+                    aria-label={`Open file ${openableFilePath}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenFile(openableFilePath);
+                    }}
+                  >
+                    {preview}
+                  </button>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground/55">
+                    {preview}
+                  </span>
+                ))}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
