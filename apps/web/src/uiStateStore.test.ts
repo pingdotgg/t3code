@@ -116,7 +116,7 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
-  it("stores only collapsed changed-file turns", () => {
+  it("stores explicit changed-file expansion choices", () => {
     const threadId = ThreadId.make("thread-1");
     const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
 
@@ -128,7 +128,11 @@ describe("uiStateStore pure functions", () => {
     expect(
       setThreadChangedFilesExpanded(collapsed, threadId, "turn-1", true)
         .threadChangedFilesExpandedById,
-    ).toEqual({});
+    ).toEqual({
+      [threadId]: {
+        "turn-1": true,
+      },
+    });
   });
 
   it("stores the endpoint preference by stable key", () => {
@@ -175,6 +179,7 @@ describe("parsePersistedState", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+          "turn-2": true,
         },
       },
     });
@@ -281,16 +286,12 @@ describe("uiStateStore persistence", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+          "turn-2": true,
         },
       },
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-        },
-      },
     });
   });
 

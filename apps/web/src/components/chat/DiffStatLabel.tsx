@@ -31,6 +31,7 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
     <>
       {showParentheses && <span className="text-muted-foreground/70">(</span>}
       <span
+        aria-label={`${additions} additions, ${deletions} deletions`}
         className={cn(
           layout === "inline"
             ? "inline-flex items-center gap-1 tabular-nums align-middle"
@@ -38,8 +39,12 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
           className,
         )}
       >
-        <span className="font-mono text-success">+{formatCompactDiffCount(additions)}</span>
-        <span className="font-mono text-destructive">-{formatCompactDiffCount(deletions)}</span>
+        <span aria-hidden="true" className="font-mono text-success">
+          +{formatCompactDiffCount(additions)}
+        </span>
+        <span aria-hidden="true" className="font-mono text-destructive">
+          -{formatCompactDiffCount(deletions)}
+        </span>
       </span>
       {showParentheses && <span className="text-muted-foreground/70">)</span>}
     </>
