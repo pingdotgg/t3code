@@ -577,7 +577,7 @@ describe("MessagesTimeline", () => {
     expect(renderChangedFile("/home/alice/repo/outside.ts")).not.toContain('aria-label="Open file');
   });
 
-  it("does not make command text open an associated changed file", () => {
+  it("keeps command text separate from its associated file link", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -601,10 +601,12 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("git status");
-    expect(markup).not.toContain('aria-label="Open file');
+    expect(markup).not.toContain(">git status</button>");
+    expect(markup).toContain('aria-label="Open file inside.ts"');
+    expect(markup).toContain(">inside.ts</button>");
   });
 
-  it("does not make detail text open an associated changed file", () => {
+  it("keeps detail text separate from its associated file link", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -628,7 +630,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Wrote requested content");
-    expect(markup).not.toContain('aria-label="Open file');
+    expect(markup).not.toContain(">Wrote requested content</button>");
+    expect(markup).toContain('aria-label="Open file inside.ts"');
+    expect(markup).toContain(">inside.ts</button>");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {

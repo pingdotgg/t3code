@@ -1882,17 +1882,27 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
 function workEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
   workspaceRoot: string | undefined,
-): { text: string; changedFilePath: string | null } | null {
-  if (workEntry.command) return { text: workEntry.command, changedFilePath: null };
-  if (workEntry.detail) return { text: workEntry.detail, changedFilePath: null };
+): {
+  text: string;
+  source: "command" | "detail" | "changed-files";
+  changedFilePath: string | null;
+} | null {
   const changedFiles = workEntry.changedFiles ?? [];
   const [firstPath] = changedFiles;
+  const changedFilePath = changedFiles.length === 1 ? (firstPath ?? null) : null;
+  if (workEntry.command) {
+    return { text: workEntry.command, source: "command", changedFilePath };
+  }
+  if (workEntry.detail) {
+    return { text: workEntry.detail, source: "detail", changedFilePath };
+  }
   if (!firstPath) return null;
   const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
   const singleChangedFile = changedFiles.length === 1;
   return {
     text: singleChangedFile ? displayPath : `${displayPath} +${changedFiles.length - 1} more`,
-    changedFilePath: singleChangedFile ? firstPath : null,
+    source: "changed-files",
+    changedFilePath,
   };
 }
 
@@ -2030,6 +2040,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const openableFilePath = resolvedPreview?.changedFilePath
     ? toWorkspaceRelativeFilePath(resolvedPreview.changedFilePath, workspaceRoot)
     : null;
+  const previewIsOpenableFile =
+    openableFilePath !== null && resolvedPreview?.source === "changed-files";
+  const fileButtonText = previewIsOpenableFile ? rawPreview : openableFilePath;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
@@ -2091,26 +2104,27 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <div className="min-w-0 flex-1 overflow-hidden">
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
               <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {preview &&
-                (openableFilePath ? (
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-muted-foreground/55 hover:text-foreground hover:underline"
-                    aria-label={`Open file ${openableFilePath}`}
-                    onKeyDown={stopRowToggle}
-                    onPointerDown={stopRowToggle}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenFile(openableFilePath);
-                    }}
-                  >
-                    {preview}
-                  </button>
-                ) : (
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground/55">
-                    {preview}
-                  </span>
-                ))}
+              {preview && !previewIsOpenableFile ? (
+                <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
+              ) : null}
+              {openableFilePath && fileButtonText ? (
+                <button
+                  type="button"
+                  className={cn(
+                    "min-w-0 cursor-pointer truncate text-left text-muted-foreground/55 hover:text-foreground hover:underline",
+                    previewIsOpenableFile ? "flex-1" : "max-w-[45%] shrink-0",
+                  )}
+                  aria-label={`Open file ${openableFilePath}`}
+                  onKeyDown={stopRowToggle}
+                  onPointerDown={stopRowToggle}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenFile(openableFilePath);
+                  }}
+                >
+                  {fileButtonText}
+                </button>
+              ) : null}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
