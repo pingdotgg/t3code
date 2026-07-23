@@ -71,7 +71,9 @@ function parseClaudeReset(input: {
   if (month === 0) return undefined;
   const checked = DateTime.make(input.checkedAt);
   if (Option.isNone(checked)) return undefined;
-  const checkedParts = DateTime.toPartsUtc(checked.value);
+  const checkedInResetZone = DateTime.setZoneNamed(checked.value, input.timeZone);
+  if (Option.isNone(checkedInResetZone)) return undefined;
+  const checkedParts = DateTime.toParts(checkedInResetZone.value);
   const day = Number.parseInt(input.day, 10);
   let hour = Number.parseInt(input.hour, 10);
   if (
