@@ -322,6 +322,51 @@ it.layer(
     }),
   );
 
+  it.effect("answers a primary device attributes query until a terminal client attaches", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+
+      if (!process) return;
+
+      process.emitData("\u001b[");
+      process.emitData("0c");
+
+      yield* waitFor(
+        Effect.sync(() => process.writes.includes("\u001b[?1;2c")),
+        "1200 millis",
+      );
+    }),
+  );
+
+  it.effect("leaves terminal compatibility queries to an attached terminal client", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const unsubscribe = yield* manager.attachStream(openInput(), () => Effect.void);
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+
+      if (!process) return;
+
+      process.emitData("\u001b[0c");
+      yield* Effect.yieldNow;
+
+      expect(process.writes).toEqual([]);
+
+      unsubscribe();
+      process.emitData("\u001b[0c");
+
+      yield* waitFor(
+        Effect.sync(() => process.writes.includes("\u001b[?1;2c")),
+        "1200 millis",
+      );
+    }),
+  );
+
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
