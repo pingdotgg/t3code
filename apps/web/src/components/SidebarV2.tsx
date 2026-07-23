@@ -203,7 +203,7 @@ function SidebarV2ThreadTooltip({
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
-                className="size-4 shrink-0"
+                className="size-4 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 wrap-break-word text-foreground/90">{projectTitle}</div>
             </div>
