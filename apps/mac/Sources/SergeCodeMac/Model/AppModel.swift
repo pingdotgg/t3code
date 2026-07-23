@@ -1910,6 +1910,22 @@ public final class AppModel {
         }
     }
 
+    public func settleThread(_ thread: ChatThread) async {
+        do {
+            try await backend.settleThread(id: thread.id)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func unsettleThread(_ thread: ChatThread) async {
+        do {
+            try await backend.unsettleThread(id: thread.id)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     public func deleteThread(_ thread: ChatThread) async {
         do {
             try await backend.deleteThread(id: thread.id)

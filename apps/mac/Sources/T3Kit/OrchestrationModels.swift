@@ -628,6 +628,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var createdAt: String
     public var updatedAt: String
     public var archivedAt: String?
+    public var settledOverride: String?
+    public var settledAt: String?
     public var session: OrchestrationSession?
     public var latestUserMessageAt: String?
     public var hasPendingApprovals: Bool
@@ -637,8 +639,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
             executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
-            updatedAt, archivedAt, session, latestUserMessageAt, hasPendingApprovals,
-            hasPendingUserInput, hasActionableProposedPlan
+            updatedAt, archivedAt, settledOverride, settledAt, session, latestUserMessageAt,
+            hasPendingApprovals, hasPendingUserInput, hasActionableProposedPlan
     }
 
     public init(from decoder: Decoder) throws {
@@ -659,6 +661,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
         archivedAt = try c.decode(String?.self, forKey: .archivedAt, default: nil)
+        settledOverride = try c.decode(String?.self, forKey: .settledOverride, default: nil)
+        settledAt = try c.decode(String?.self, forKey: .settledAt, default: nil)
         session = try c.decode(OrchestrationSession?.self, forKey: .session, default: nil)
         latestUserMessageAt = try c.decode(String?.self, forKey: .latestUserMessageAt, default: nil)
         hasPendingApprovals = try c.decode(Bool.self, forKey: .hasPendingApprovals)
@@ -954,6 +958,30 @@ public struct ThreadUnarchiveCommand: Encodable, Sendable {
     public init(commandId: String, threadId: String) {
         self.commandId = commandId
         self.threadId = threadId
+    }
+}
+
+public struct ThreadSettleCommand: Encodable, Sendable {
+    public let type: String = "thread.settle"
+    public var commandId: String
+    public var threadId: String
+
+    public init(commandId: String, threadId: String) {
+        self.commandId = commandId
+        self.threadId = threadId
+    }
+}
+
+public struct ThreadUnsettleCommand: Encodable, Sendable {
+    public let type: String = "thread.unsettle"
+    public var commandId: String
+    public var threadId: String
+    public var reason: String
+
+    public init(commandId: String, threadId: String, reason: String) {
+        self.commandId = commandId
+        self.threadId = threadId
+        self.reason = reason
     }
 }
 
@@ -1315,6 +1343,8 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
     case threadDelete(ThreadDeleteCommand)
     case threadArchive(ThreadArchiveCommand)
     case threadUnarchive(ThreadUnarchiveCommand)
+    case threadSettle(ThreadSettleCommand)
+    case threadUnsettle(ThreadUnsettleCommand)
     case threadMetaUpdate(ThreadMetaUpdateCommand)
     case threadRuntimeModeSet(ThreadRuntimeModeSetCommand)
     case threadInteractionModeSet(ThreadInteractionModeSetCommand)
@@ -1337,6 +1367,8 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
         case .threadDelete(let c): try container.encode(c)
         case .threadArchive(let c): try container.encode(c)
         case .threadUnarchive(let c): try container.encode(c)
+        case .threadSettle(let c): try container.encode(c)
+        case .threadUnsettle(let c): try container.encode(c)
         case .threadMetaUpdate(let c): try container.encode(c)
         case .threadRuntimeModeSet(let c): try container.encode(c)
         case .threadInteractionModeSet(let c): try container.encode(c)

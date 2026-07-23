@@ -299,6 +299,17 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func settleThread(threadId: String) async throws -> DispatchResult {
+        try await dispatch(.threadSettle(ThreadSettleCommand(commandId: T3Ids.newCommandId(), threadId: threadId)))
+    }
+
+    @discardableResult
+    public func unsettleThread(threadId: String) async throws -> DispatchResult {
+        try await dispatch(
+            .threadUnsettle(ThreadUnsettleCommand(commandId: T3Ids.newCommandId(), threadId: threadId, reason: "user")))
+    }
+
+    @discardableResult
     public func setRuntimeMode(threadId: String, runtimeMode: RuntimeMode) async throws -> DispatchResult {
         try await dispatch(
             .threadRuntimeModeSet(

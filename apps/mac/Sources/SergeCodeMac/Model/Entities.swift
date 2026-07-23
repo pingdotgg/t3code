@@ -48,11 +48,11 @@ public struct Project: Identifiable, Hashable, Sendable {
 }
 
 public enum ThreadStatus: String, Sendable {
-    case idle, running, waiting, waitingApproval, backgroundWork, error, archived
+    case idle, running, waiting, waitingApproval, backgroundWork, error, archived, settled
 
     public var isSettled: Bool {
         switch self {
-        case .idle, .archived, .error: true
+        case .idle, .archived, .error, .settled: true
         case .running, .waiting, .waitingApproval, .backgroundWork: false
         }
     }
