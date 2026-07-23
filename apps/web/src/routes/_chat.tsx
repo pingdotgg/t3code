@@ -9,13 +9,15 @@ import {
 } from "../commandPaletteBus";
 import { useClientSettings } from "../hooks/useSettings";
 import { useProjects } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
-import { selectProjectGroupingSettings } from "../logicalProject";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   buildSidebarProjectSnapshots,
   resolveScopedNewThreadProjectRef,
 } from "../sidebarProjectGrouping";
 import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
@@ -43,18 +45,48 @@ function ChatRouteGlobalShortcuts() {
     useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
+  const sidebarProjectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
+  const projectOrder = useUiStateStore((state) => state.projectOrder);
+  const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
+      ),
+    [environments],
+  );
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
   const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects,
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
-        resolveEnvironmentLabel: () => null,
+        resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
-    [primaryEnvironmentId, projectGroupingSettings, projects],
+    [
+      environmentLabelById,
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+      sidebarProjectSortOrder,
+    ],
   );
   const projectScopeKey = useSidebarProjectScopeStore((state) => state.projectScopeKey);
   const scopedProjectGroup = useMemo(
