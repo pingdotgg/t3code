@@ -79,7 +79,10 @@ import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../Compos
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
-import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import {
+  compactComposerShortcutHintLabel,
+  CompactComposerControlsMenu,
+} from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -2853,6 +2856,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                    shortcutHintLabel={compactComposerShortcutHintLabel({
+                      modelOptions: composerControlHintLabels?.modelOptionsPicker ?? null,
+                      modelOptionsAvailable: providerTraitsMenuContent !== null,
+                      runtimeMode: composerControlHintLabels?.runtimeModePicker ?? null,
+                      runtimeModeAvailable: !isComposerCollapsedMobile && !isComposerApprovalState,
+                      planMode: composerControlHintLabels?.planMode ?? null,
+                      planModeAvailable:
+                        !isComposerCollapsedMobile &&
+                        !isComposerApprovalState &&
+                        composerProviderControls.showInteractionModeToggle,
+                    })}
                     traitsMenuContent={providerTraitsMenuContent}
                     open={isCompactControlsMenuOpen}
                     onOpenChange={(open) => {

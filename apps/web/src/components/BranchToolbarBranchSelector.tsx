@@ -37,6 +37,7 @@ import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchPickerQueryForOpenState,
+  resolveBranchPickerShortcutOpenState,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -536,8 +537,12 @@ export function BranchToolbarBranchSelector({
     selectorRef,
     () => ({
       togglePicker: () => {
-        if (isInitialBranchesLoadPending || isBranchActionPending) return false;
-        handleOpenChange(!isBranchMenuOpen);
+        const nextOpen = resolveBranchPickerShortcutOpenState({
+          open: isBranchMenuOpen,
+          unavailable: isInitialBranchesLoadPending || isBranchActionPending,
+        });
+        if (nextOpen === null) return false;
+        handleOpenChange(nextOpen);
         return true;
       },
     }),

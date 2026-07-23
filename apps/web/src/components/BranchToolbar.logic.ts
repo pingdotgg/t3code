@@ -75,6 +75,14 @@ export function shouldShowBranchPickerShortcutHint(input: {
   );
 }
 
+export function resolveBranchPickerShortcutOpenState(input: {
+  readonly open: boolean;
+  readonly unavailable: boolean;
+}): boolean | null {
+  if (input.open) return false;
+  return input.unavailable ? null : true;
+}
+
 export function resolveBranchToolbarPickerOpenChange(
   current: BranchToolbarPicker | null,
   picker: BranchToolbarPicker,

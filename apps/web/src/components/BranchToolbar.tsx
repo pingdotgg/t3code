@@ -47,6 +47,7 @@ import {
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { Button } from "./ui/button";
+import { Kbd } from "./ui/kbd";
 import {
   Menu,
   MenuGroup,
@@ -93,6 +94,8 @@ interface MobileRunContextSelectorProps {
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
   pickerAvailable: boolean;
+  environmentShortcutHintLabel: string | null;
+  envModeShortcutHintLabel: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
@@ -111,6 +114,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   showEnvironmentPicker,
   showEnvironmentIndicator,
   pickerAvailable,
+  environmentShortcutHintLabel,
+  envModeShortcutHintLabel,
   open,
   onOpenChange,
   onEnvironmentChange,
@@ -170,6 +175,14 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         className="min-w-0 max-w-[48%] flex-1 justify-start text-muted-foreground/70 hover:text-foreground/80 md:hidden"
       >
         {triggerContent}
+        {environmentShortcutHintLabel ? (
+          <Kbd className="h-4 min-w-0 rounded-sm px-1 text-[10px]">
+            {environmentShortcutHintLabel}
+          </Kbd>
+        ) : null}
+        {envModeShortcutHintLabel ? (
+          <Kbd className="h-4 min-w-0 rounded-sm px-1 text-[10px]">{envModeShortcutHintLabel}</Kbd>
+        ) : null}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="start" side="top" className="w-64">
@@ -453,6 +466,9 @@ export const BranchToolbar = memo(function BranchToolbar({
         context: shortcutContext,
       })
     : null;
+  const availableEnvironmentHintLabel =
+    environmentShortcutTarget !== null ? environmentHintLabel : null;
+  const availableEnvModeHintLabel = envModeShortcutTarget !== null ? envModeHintLabel : null;
 
   if (!hasActiveThread || !activeProject) return null;
 
@@ -467,6 +483,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           showEnvironmentPicker={showEnvironmentPicker}
           showEnvironmentIndicator={showEnvironmentIndicator}
           pickerAvailable={pickerAvailability.mobileRunContext}
+          environmentShortcutHintLabel={availableEnvironmentHintLabel}
+          envModeShortcutHintLabel={availableEnvModeHintLabel}
           open={mobileRunContextOpen}
           onOpenChange={(open) => handlePickerOpenChange("mobile-run-context", open)}
           onEnvironmentChange={onEnvironmentChange}
@@ -486,7 +504,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 availableEnvironments={availableEnvironments}
                 open={environmentPickerOpen}
                 onOpenChange={(open) => handlePickerOpenChange("environment", open)}
-                shortcutHintLabel={environmentHintLabel}
+                shortcutHintLabel={availableEnvironmentHintLabel}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
               />
               <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
@@ -498,7 +516,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             activeWorktreePath={activeWorktreePath}
             open={envModePickerOpen}
             onOpenChange={(open) => handlePickerOpenChange("env-mode", open)}
-            shortcutHintLabel={envModeHintLabel}
+            shortcutHintLabel={availableEnvModeHintLabel}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             onUsePreviousWorktree={onUsePreviousWorktree}
