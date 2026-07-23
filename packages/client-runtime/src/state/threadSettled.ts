@@ -193,7 +193,6 @@ export function threadWokeAt(
   options: { readonly now: string },
 ): string | null {
   if (shell.snoozedUntil == null) return null;
-  if (effectiveSnoozed(shell, options)) return null;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return null;
   // An early hand-raise wake stays authoritative even after the scheduled
@@ -211,10 +210,8 @@ export function threadWokeAt(
     }
     return shell.session?.updatedAt ?? shell.snoozedAt ?? null;
   }
-  if (wakeAtMs <= Date.parse(options.now)) {
-    return shell.snoozedUntil;
-  }
-  return null;
+  // No raised hand: woke iff the timer elapsed (still-snoozed → null).
+  return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
 }
 
 /**

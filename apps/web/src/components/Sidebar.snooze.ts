@@ -8,7 +8,7 @@
  */
 import { parseTimestampDate } from "../timestampFormat";
 
-export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;

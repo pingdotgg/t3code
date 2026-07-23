@@ -223,27 +223,20 @@ function SidebarV2ThreadTooltip({
 
 /**
  * Hover entry point for snooze: a clock button opening the preset menu.
- * Kept as its own component so each row owns its popover state without
- * widening the memoized row's prop surface.
+ * Controlled by the row (which also uses the open state to pin its hover
+ * actions while the menu is up).
  */
 function SnoozePopoverButton(props: {
-  onSnooze: (preset: SnoozePreset) => void;
+  open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSnooze: (preset: SnoozePreset) => void;
 }) {
-  const { onSnooze, onOpenChange } = props;
-  const [open, setOpen] = useState(false);
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      setOpen(nextOpen);
-      onOpenChange(nextOpen);
-    },
-    [onOpenChange],
-  );
+  const { open, onOpenChange, onSnooze } = props;
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(() => (open ? resolveSnoozePresets(new Date()) : []), [open]);
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         render={
           <button
@@ -267,7 +260,7 @@ function SnoozePopoverButton(props: {
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              handleOpenChange(false);
+              onOpenChange(false);
               onSnooze(preset);
             }}
             className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 hover:bg-accent hover:text-foreground"
@@ -827,8 +820,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   >
                     {showSnoozeButton ? (
                       <SnoozePopoverButton
-                        onSnooze={handleSnoozePreset}
+                        open={snoozeMenuOpen}
                         onOpenChange={setSnoozeMenuOpen}
+                        onSnooze={handleSnoozePreset}
                       />
                     ) : null}
                     {props.settlementSupported ? (
@@ -1542,13 +1536,11 @@ export default function SidebarV2() {
         const thread = threadByKeyRef.current.get(threadKey);
         return thread ? [thread] : [];
       });
-      const canSnoozeSelection =
-        snoozableThreads.length === count &&
-        snoozableThreads.every(
-          (thread) =>
-            serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze ===
-              true && canSnooze(thread, { now: selectionNow }),
-        );
+      const canSnoozeSelection = snoozableThreads.every(
+        (thread) =>
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
+          canSnooze(thread, { now: selectionNow }),
+      );
       const snoozePresets = resolveSnoozePresets(new Date());
       const clicked = await settlePromise(() =>
         api.contextMenu.show(

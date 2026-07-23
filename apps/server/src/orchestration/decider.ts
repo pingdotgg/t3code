@@ -579,8 +579,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // duplicate (double-click, raced clients): re-emit with the original
       // timestamps so the projection is a no-op. A different wake time is a
       // real change and stamps fresh.
-      const alreadySnoozed =
-        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt != null;
+      const existingSnoozedAt =
+        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt != null
+          ? thread.snoozedAt
+          : null;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -592,8 +594,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           snoozedUntil: command.snoozedUntil,
-          snoozedAt: alreadySnoozed && thread.snoozedAt != null ? thread.snoozedAt : occurredAt,
-          updatedAt: alreadySnoozed ? thread.updatedAt : occurredAt,
+          snoozedAt: existingSnoozedAt ?? occurredAt,
+          updatedAt: existingSnoozedAt !== null ? thread.updatedAt : occurredAt,
         },
       };
     }
