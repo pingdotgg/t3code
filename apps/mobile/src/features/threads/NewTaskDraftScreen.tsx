@@ -582,10 +582,13 @@ export function NewTaskDraftScreen(props: {
             ? "Approve actions"
             : flow.runtimeMode === "auto-accept-edits"
               ? "Auto-accept edits"
-              : "Full access",
+              : flow.runtimeMode === "auto"
+                ? "Auto"
+                : "Full access",
         subactions: [
           { id: "options:runtime:approval-required", title: "Approve actions" },
           { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },
+          { id: "options:runtime:auto", title: "Auto" },
           { id: "options:runtime:full-access", title: "Full access" },
         ].map((option) => {
           const value = option.id.replace("options:runtime:", "");

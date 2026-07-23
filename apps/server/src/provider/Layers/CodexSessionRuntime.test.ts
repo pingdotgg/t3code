@@ -104,6 +104,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "dangerFullAccess",
       },
@@ -149,6 +150,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "workspaceWrite",
       },
@@ -193,6 +195,31 @@ describe("buildTurnStartParams", () => {
     NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
   });
 
+  it.effect("routes approvals to the auto reviewer in auto mode", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto",
+        prompt: "Ship it",
+      });
+
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+        },
+        input: [
+          {
+            type: "text",
+            text: "Ship it",
+          },
+        ],
+      });
+    }),
+  );
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -205,6 +232,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "readOnly",
       },

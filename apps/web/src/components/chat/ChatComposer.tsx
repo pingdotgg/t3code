@@ -106,6 +106,7 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -148,6 +149,11 @@ const runtimeModeConfig: Record<
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
     icon: PenLineIcon,
+  },
+  auto: {
+    label: "Auto",
+    description: "An AI reviewer approves routine actions; risky ones still ask.",
+    icon: SparklesIcon,
   },
   "full-access": {
     label: "Full access",
