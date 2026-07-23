@@ -231,6 +231,29 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
     }),
   );
 
+  it.effect("rejects a deleted source thread before creating fork lineage", () =>
+    Effect.gen(function* () {
+      const readModel = seedReadModel();
+      const source = readModel.threads[0]!;
+      const error = yield* decideOrchestrationCommand({
+        command: forkCommand(turnOneId),
+        readModel: {
+          ...readModel,
+          threads: [
+            {
+              ...source,
+              deletedAt: now,
+            },
+          ],
+        },
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain(
+        "Source thread 'thread-source' is deleted and cannot be forked",
+      );
+    }),
+  );
+
   it.effect("rejects a fork at a running turn", () =>
     Effect.gen(function* () {
       const readModel = seedReadModel();

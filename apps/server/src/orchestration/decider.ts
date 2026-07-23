@@ -386,6 +386,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.sourceThreadId,
       });
+      if (sourceThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Source thread '${sourceThread.id}' is deleted and cannot be forked.`,
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
