@@ -1396,6 +1396,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return matchesSidebarThreadFilters({
           thread,
           lastVisitedAt: lastVisitedAtByThreadKey.get(threadKey),
+          isExplicitlyUnread: explicitlyUnreadByThreadKey.get(threadKey),
           providerDriverKind: providerDriverKindByInstanceId.get(providerInstanceId) ?? null,
           filters: sidebarThreadFilters,
         });
@@ -2951,8 +2952,8 @@ function SidebarFilterMenu({
           {filtersActive ? "Sidebar filters are active" : "Filter sidebar threads"}
         </TooltipPopup>
       </Tooltip>
-      <MenuPopup align="end" side="bottom" className="min-w-64">
-        <div className="flex items-center justify-between px-2 py-1 text-xs font-medium text-muted-foreground">
+      <MenuPopup align="end" side="bottom" className="w-60">
+        <div className="flex items-center justify-between px-2 py-0.5 text-xs font-medium text-muted-foreground">
           <span>Filters</span>
           <button
             type="button"
@@ -2968,7 +2969,7 @@ function SidebarFilterMenu({
         <MenuCheckboxItem
           checked={filters.recentOnly}
           closeOnClick={false}
-          className="sm:text-xs"
+          className="min-h-6 py-0.5 sm:min-h-6 sm:text-xs"
           onCheckedChange={(checked) => {
             onFiltersChange({ ...filters, recentOnly: checked });
           }}
@@ -2981,19 +2982,19 @@ function SidebarFilterMenu({
         <MenuCheckboxItem
           checked={filters.attentionOnly}
           closeOnClick={false}
-          className="sm:text-xs"
+          className="min-h-6 py-0.5 sm:min-h-6 sm:text-xs"
           onCheckedChange={(checked) => {
             onFiltersChange({ ...filters, attentionOnly: checked });
           }}
         >
           <span className="flex min-w-0 items-center justify-between gap-3">
-            <span>Attention</span>
+            <span>Inbox</span>
             <span className="text-[10px] text-muted-foreground">Unread + needs attention</span>
           </span>
         </MenuCheckboxItem>
-        <MenuSeparator />
+        <MenuSeparator className="my-0.5" />
         <MenuSub>
-          <MenuSubTrigger className="sm:text-xs">
+          <MenuSubTrigger className="min-h-6 py-0.5 sm:min-h-6 sm:text-xs">
             <span>Status</span>
             {statusFilterActive ? (
               <span className="ml-auto size-1.5 rounded-full bg-primary" />
@@ -3019,7 +3020,7 @@ function SidebarFilterMenu({
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
-          <MenuSubTrigger className="sm:text-xs">
+          <MenuSubTrigger className="min-h-6 py-0.5 sm:min-h-6 sm:text-xs">
             <span>Environment</span>
             {filters.environmentIds.length > 0 ? (
               <span className="ml-auto size-1.5 rounded-full bg-primary" />
@@ -3054,7 +3055,7 @@ function SidebarFilterMenu({
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
-          <MenuSubTrigger className="sm:text-xs">
+          <MenuSubTrigger className="min-h-6 py-0.5 sm:min-h-6 sm:text-xs">
             <span>Source</span>
             {filters.sources.length > 0 ? (
               <span className="ml-auto size-1.5 rounded-full bg-primary" />
@@ -3084,11 +3085,11 @@ function SidebarFilterMenu({
             ) : null}
           </MenuSubPopup>
         </MenuSub>
-        <MenuSeparator />
+        <MenuSeparator className="my-0.5" />
         <MenuCheckboxItem
           checked={filters.includeArchived}
           closeOnClick={false}
-          className="sm:text-xs"
+          className="min-h-6 py-0.5 sm:min-h-6 sm:text-xs"
           onCheckedChange={(checked) => {
             onFiltersChange({ ...filters, includeArchived: checked });
           }}
@@ -3638,6 +3639,7 @@ export default function Sidebar() {
     return [...threadsByKey.values()];
   }, [archivedThreads, sidebarThreads]);
   const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const threadExplicitlyUnreadById = useUiStateStore((state) => state.threadExplicitlyUnreadById);
   const filtersActive = hasActiveSidebarThreadFilters(sidebarThreadFilters);
   const filteredSidebarThreads = useMemo(
     () =>
@@ -3648,6 +3650,7 @@ export default function Sidebar() {
         return matchesSidebarThreadFilters({
           thread,
           lastVisitedAt: threadLastVisitedAtById[threadKey],
+          isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
           providerDriverKind: providerDriverKindByInstanceId.get(providerInstanceId) ?? null,
           filters: sidebarThreadFilters,
         });
@@ -3656,6 +3659,7 @@ export default function Sidebar() {
       providerDriverKindByInstanceId,
       sidebarThreadFilters,
       sidebarThreadsWithArchived,
+      threadExplicitlyUnreadById,
       threadLastVisitedAtById,
     ],
   );

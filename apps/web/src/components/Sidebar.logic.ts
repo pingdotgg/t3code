@@ -255,7 +255,9 @@ type SidebarThreadFilterInput = Pick<
   | "latestTurn"
   | "session"
   | "updatedAt"
->;
+> & {
+  readonly isExplicitlyUnread?: boolean | undefined;
+};
 
 export const SIDEBAR_RECENT_WINDOW_DAYS = 7;
 const SIDEBAR_RECENT_WINDOW_MS = SIDEBAR_RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
@@ -263,6 +265,10 @@ const SIDEBAR_RECENT_WINDOW_MS = SIDEBAR_RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1_0
 export function classifySidebarThreadFilterStatus(
   thread: SidebarThreadFilterInput & { readonly lastVisitedAt?: string | undefined },
 ): SidebarThreadFilterStatus {
+  if (thread.isExplicitlyUnread) {
+    return "unread";
+  }
+
   const needsAttention =
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
@@ -288,6 +294,7 @@ export function classifySidebarThreadFilterStatus(
 export function matchesSidebarThreadFilters(input: {
   readonly thread: SidebarThreadFilterInput;
   readonly lastVisitedAt?: string | null | undefined;
+  readonly isExplicitlyUnread?: boolean | undefined;
   readonly providerDriverKind: ProviderDriverKind | null;
   readonly filters: SidebarThreadFilters;
   readonly nowMs?: number | undefined;
@@ -309,6 +316,7 @@ export function matchesSidebarThreadFilters(input: {
   const status = classifySidebarThreadFilterStatus({
     ...thread,
     ...(input.lastVisitedAt ? { lastVisitedAt: input.lastVisitedAt } : {}),
+    ...(input.isExplicitlyUnread ? { isExplicitlyUnread: true } : {}),
   });
   if (filters.attentionOnly && status !== "needs_attention" && status !== "unread") {
     return false;

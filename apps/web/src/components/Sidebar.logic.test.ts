@@ -143,6 +143,12 @@ describe("sidebar thread filters", () => {
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
       }),
     ).toBe("unread");
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        isExplicitlyUnread: true,
+      }),
+    ).toBe("unread");
     expect(classifySidebarThreadFilterStatus(filterableThread)).toBe("done");
   });
 
@@ -203,6 +209,14 @@ describe("sidebar thread filters", () => {
           latestTurn: makeLatestTurn(),
         },
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: filterableThread,
+        isExplicitlyUnread: true,
         providerDriverKind: ProviderDriverKind.make("codex"),
         filters,
       }),
