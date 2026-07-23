@@ -936,6 +936,39 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not publish picture-in-picture readiness after window teardown", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("closing-preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow } = makeTestPictureInPictureWindow();
+        pictureInPictureWindow.showInactive.mockImplementationOnce(() => {
+          pictureInPictureWindow.close();
+        });
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+
+        yield* manager.createTab("tab_pip_teardown");
+        yield* manager.registerWebview("tab_pip_teardown", 42);
+        const openExit = yield* Effect.exit(manager.openPictureInPicture("tab_pip_teardown"));
+
+        expect(Exit.hasInterrupts(openExit)).toBe(true);
+        expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
+        expect(states.at(-1)?.pictureInPicture).toBe(false);
+      }),
+    ),
+  );
+
   effectIt.effect("closes an initializing picture-in-picture without blocking later opens", () =>
     withManager((manager) =>
       Effect.gen(function* () {

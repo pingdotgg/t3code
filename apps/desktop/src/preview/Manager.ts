@@ -2258,8 +2258,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ),
       ),
     );
+    if (Exit.isSuccess(initializationExit)) {
+      const published = yield* pictureInPictureMutationSemaphore.withPermit(
+        Effect.gen(function* () {
+          const current = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
+          if (current !== pictureInPictureSession || pictureInPictureSession.window.isDestroyed()) {
+            if (current === pictureInPictureSession) {
+              yield* releasePictureInPicture(tabId, pictureInPictureSession, false);
+            }
+            return false;
+          }
+          yield* Deferred.done(pictureInPictureSession.ready, initializationExit);
+          return true;
+        }),
+      );
+      if (published) return;
+      return yield* Deferred.await(pictureInPictureSession.ready);
+    }
     yield* Deferred.done(pictureInPictureSession.ready, initializationExit);
-    if (Exit.isSuccess(initializationExit)) return;
     const current = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
     if (current === pictureInPictureSession) {
       yield* pictureInPictureMutationSemaphore.withPermit(
