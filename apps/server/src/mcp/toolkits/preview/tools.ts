@@ -10,6 +10,8 @@ import {
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
   PreviewAutomationScrollInput,
+  PreviewAutomationSetColorSchemeInput,
+  PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
@@ -83,6 +85,19 @@ export const PreviewResizeTool = safeBrowserTool(
     dependencies,
   })
     .annotate(Tool.Title, "Resize browser viewport")
+    .annotate(Tool.Idempotent, true),
+);
+
+export const PreviewSetAppearanceTool = safeBrowserTool(
+  Tool.make("preview_set_appearance", {
+    description:
+      "Emulate prefers-color-scheme in a collaborative browser tab, optionally selected by tabId. Use {colorScheme:'dark'} or {colorScheme:'light'} to preview the page in that appearance, and {colorScheme:'system'} to clear the override and follow the OS appearance.",
+    parameters: PreviewAutomationSetColorSchemeInput,
+    success: PreviewAutomationSetColorSchemeResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Set preview appearance")
     .annotate(Tool.Idempotent, true),
 );
 
@@ -189,6 +204,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
+  PreviewSetAppearanceTool,
   PreviewSnapshotTool,
   PreviewClickTool,
   PreviewTypeTool,
@@ -205,6 +221,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
+  PreviewSetAppearanceTool,
   PreviewClickTool,
   PreviewTypeTool,
   PreviewPressTool,
