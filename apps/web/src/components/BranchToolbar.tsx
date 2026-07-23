@@ -248,7 +248,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div className="chat-composer-context-strip -mt-2 mx-auto flex w-[calc(100%-1.5rem)] max-w-[calc(48rem-1.5rem)] items-center gap-2 pt-3 pe-2 pb-1 ps-2">
+    <div className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2">
       {isMobile ? (
         <MobileRunContextSelector
           envLocked={envLocked}

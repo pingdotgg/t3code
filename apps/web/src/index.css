@@ -77,6 +77,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 :root {
   --app-scrollbar-width: 6px;
+  --glass-opacity: 80%;
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
@@ -362,32 +363,29 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-glass {
-    background: var(--secondary);
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
   }
 
-  .chat-composer-context-strip {
-    position: relative;
-    isolation: isolate;
+  .chat-composer-glass-host {
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
   }
 
-  .chat-composer-context-strip::before {
-    position: absolute;
-    z-index: -1;
-    inset: 0;
-    border-radius: 0 0 16px 16px;
-    background: color-mix(in srgb, var(--card) 20%, transparent);
-    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
-    content: "";
+  .dropdown-glass,
+  .dialog-glass,
+  .workflow-dialog-surface,
+  .command-palette-dialog-surface {
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
   }
 
   .dropdown-glass {
-    background: var(--secondary);
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
+    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
   }
 
@@ -396,30 +394,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .command-menu-surface {
-    background: var(--popover);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
     box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
   }
 
   .workflow-dialog-surface {
-    border-color: transparent;
-    background: var(--secondary);
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
+    border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
   }
 
   .command-palette-dialog-surface {
-    border-color: transparent !important;
-    background: var(--secondary) !important;
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
+    border-color: color-mix(in srgb, var(--foreground) 10%, transparent) !important;
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
     box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%) !important;
   }
 
-  .dark .dropdown-glass {
-    background: color-mix(in srgb, var(--secondary) 80%, var(--background));
+  .dark .dropdown-glass,
+  .dark .dialog-glass {
     box-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
   }
 
@@ -431,12 +424,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .dark .command-palette-glass,
   .dark .workflow-dialog-surface {
     box-shadow: none;
-  }
-
-  .dark .workflow-dialog-surface {
-    background: var(--secondary);
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
   }
 
   .dark .command-palette-dialog-surface {
@@ -462,15 +449,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     box-shadow: none !important;
   }
 
-  .dark .chat-composer-context-strip::before {
-    background: color-mix(in srgb, var(--card) 45%, transparent);
-    box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  .glass-opacity-slider {
+    accent-color: var(--primary);
+    cursor: pointer;
   }
 
-  .chat-composer-lower-chrome {
-    margin-top: -1px;
-    margin-inline-end: var(--app-scrollbar-width);
-    padding-top: 1px;
+  .glass-opacity-slider:focus-visible {
+    border-radius: 9999px;
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
   }
 
   @media (min-width: 40rem) {
@@ -485,18 +472,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .chat-composer-glass {
-      background: var(--secondary);
+    .chat-composer-glass,
+    .chat-composer-glass-host {
+      background: var(--background);
     }
 
-    .chat-composer-context-strip::before {
-      background: var(--card);
-    }
-
-    .dropdown-glass {
-      background: color-mix(in srgb, var(--popover) 88%, black);
-    }
-
+    .dialog-glass,
+    .dropdown-glass,
+    .command-menu-surface,
+    .command-palette-dialog-surface,
     .workflow-dialog-surface {
       background: var(--popover);
     }
