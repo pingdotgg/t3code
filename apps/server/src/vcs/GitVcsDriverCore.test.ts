@@ -12,7 +12,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  findNewGitTemporaryPackFiles,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -94,6 +97,20 @@ const initRepoWithCommit = (
     const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
     return { initialBranch };
   });
+
+describe("findNewGitTemporaryPackFiles", () => {
+  it("returns only temporary packs created after the status fetch started", () => {
+    const preexistingEntries = new Set(["pack-existing.pack", "tmp_pack_existing"]);
+
+    assert.deepStrictEqual(
+      findNewGitTemporaryPackFiles(
+        ["pack-existing.pack", "pack-new.pack", "tmp_pack_existing", "tmp_pack_new", "tmp_other"],
+        preexistingEntries,
+      ),
+      ["tmp_pack_new"],
+    );
+  });
+});
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];

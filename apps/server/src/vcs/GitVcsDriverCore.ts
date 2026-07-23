@@ -52,6 +52,7 @@ const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+const GIT_TEMPORARY_PACK_PREFIX = "tmp_pack_";
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -225,6 +226,15 @@ export function splitNullSeparatedGitStdoutPaths(
   result: Pick<GitVcsDriver.ExecuteGitResult, "stdout" | "stdoutTruncated">,
 ): string[] {
   return splitNullSeparatedPaths(result.stdout, result.stdoutTruncated);
+}
+
+export function findNewGitTemporaryPackFiles(
+  entries: ReadonlyArray<string>,
+  preexistingEntries: ReadonlySet<string>,
+): string[] {
+  return entries.filter(
+    (entry) => entry.startsWith(GIT_TEMPORARY_PACK_PREFIX) && !preexistingEntries.has(entry),
+  );
 }
 
 function sanitizeRemoteName(value: string): string {
@@ -929,20 +939,53 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteForStatus = (
     gitCommonDir: string,
     remoteName: string,
-  ): Effect.Effect<void, GitCommandError> => {
-    const fetchCwd =
-      path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
-      "GitVcsDriver.fetchRemoteForStatus",
-      fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
-      {
-        allowNonZeroExit: true,
-        env: STATUS_UPSTREAM_REFRESH_ENV,
-        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      },
-    ).pipe(Effect.asVoid);
-  };
+  ): Effect.Effect<void, GitCommandError> =>
+    Effect.gen(function* () {
+      const fetchCwd =
+        path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+      const packDirectory = path.join(gitCommonDir, "objects", "pack");
+      const preexistingEntries = yield* fileSystem.exists(packDirectory).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? fileSystem
+                .readDirectory(packDirectory, { recursive: false })
+                .pipe(Effect.map((entries) => new Set(entries) as ReadonlySet<string>))
+            : Effect.succeed(new Set<string>() as ReadonlySet<string>),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      const cleanupNewTemporaryPacks =
+        preexistingEntries === null
+          ? Effect.void
+          : fileSystem.readDirectory(packDirectory, { recursive: false }).pipe(
+              Effect.flatMap((entries) =>
+                Effect.forEach(
+                  findNewGitTemporaryPackFiles(entries, preexistingEntries),
+                  (entry) => fileSystem.remove(path.join(packDirectory, entry), { force: true }),
+                  { concurrency: "unbounded", discard: true },
+                ),
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to clean temporary Git pack files after status fetch.", {
+                  cause,
+                }),
+              ),
+            );
+
+      const result = yield* executeGit(
+        "GitVcsDriver.fetchRemoteForStatus",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
+        {
+          allowNonZeroExit: true,
+          env: STATUS_UPSTREAM_REFRESH_ENV,
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+        },
+      ).pipe(Effect.tapError(() => cleanupNewTemporaryPacks));
+      if (result.exitCode !== 0) {
+        yield* cleanupNewTemporaryPacks;
+      }
+    });
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const gitCommonDir = yield* runGitStdout("GitVcsDriver.resolveGitCommonDir", cwd, [
