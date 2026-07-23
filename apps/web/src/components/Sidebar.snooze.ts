@@ -6,6 +6,7 @@
  * Presets deliberately skew short: agent-thread rhythms are hours (a CI
  * run, a teammate review, the next work session), not days.
  */
+import { parseTimestampDate } from "../timestampFormat";
 
 export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
 
@@ -73,8 +74,10 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
  * round up so a snooze never reads "0m" while still hidden.
  */
 export function snoozeWakeLabel(snoozedUntil: string, now: Date): string {
-  const remainingMs = Date.parse(snoozedUntil) - now.getTime();
-  if (Number.isNaN(remainingMs) || remainingMs <= 0) return "now";
+  const wake = parseTimestampDate(snoozedUntil);
+  if (wake === null) return "now";
+  const remainingMs = wake.getTime() - now.getTime();
+  if (remainingMs <= 0) return "now";
   if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
   if (remainingMs < DAY_MS) return `${Math.ceil(remainingMs / HOUR_MS)}h`;
   return `${Math.ceil(remainingMs / DAY_MS)}d`;
@@ -85,8 +88,8 @@ export function snoozeWakeLabel(snoozedUntil: string, now: Date): string {
  * "17:30" (today).
  */
 export function snoozeWakeDescription(snoozedUntil: string, now: Date): string {
-  const wake = new Date(snoozedUntil);
-  if (Number.isNaN(wake.getTime())) return "";
+  const wake = parseTimestampDate(snoozedUntil);
+  if (wake === null) return "";
   const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);

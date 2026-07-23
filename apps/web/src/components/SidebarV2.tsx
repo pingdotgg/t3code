@@ -6,7 +6,10 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
@@ -19,9 +22,9 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
-  CircleAlertIcon,
   ClockIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -31,6 +34,7 @@ import {
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
+  Trash2Icon,
   Undo2Icon,
 } from "lucide-react";
 import {
@@ -79,10 +83,11 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
+import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
-import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
-import { formatRelativeTimeLabel } from "../timestampFormat";
+import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
@@ -91,8 +96,10 @@ import {
   isTrailingDoubleClick,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
+  shouldNavigateAfterProjectRemoval,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
+import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
@@ -109,16 +116,11 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { CommandDialogTrigger } from "./ui/command";
 import { Kbd } from "./ui/kbd";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
-import {
-  SidebarContent,
-  SidebarGroup,
-  SidebarMenuButton,
-  SidebarSeparator,
-  useSidebar,
-} from "./ui/sidebar";
+import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { useComposerDraftStore } from "../composerDraftStore";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -143,7 +145,7 @@ function SidebarV2ThreadTooltip({
   driverKind,
   modelInstanceId,
   modelLabel,
-  status,
+  branchMismatch,
 }: {
   thread: SidebarThreadSummary;
   projectTitle: string | null;
@@ -152,10 +154,9 @@ function SidebarV2ThreadTooltip({
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
   modelLabel: string;
-  status: {
-    label: string;
-    className: string;
-    icon: "working" | "done" | "woke" | null;
+  branchMismatch: {
+    threadBranch: string;
+    currentBranch: string;
   } | null;
 }) {
   return (
@@ -163,76 +164,55 @@ function SidebarV2ThreadTooltip({
       side="right"
       align="start"
       sideOffset={8}
-      className="w-80 text-left whitespace-normal shadow-lg/10 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5"
+      className="dropdown-glass max-w-80 border-0! bg-[color-mix(in_srgb,var(--background)_var(--glass-opacity),transparent)] text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none"
     >
-      <div className="flex w-full flex-col gap-3 p-2">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="min-w-0 flex-1 text-sm font-medium text-foreground">{thread.title}</div>
-          {status ? (
-            <div
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
-                status.className,
-              )}
-            >
-              {status.icon === "working" ? (
-                <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-              ) : status.icon === "done" ? (
-                <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
-              ) : status.icon === "woke" ? (
-                <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-              ) : null}
-              {status.label}
-            </div>
-          ) : (
-            <div className="shrink-0 tabular-nums text-xs text-muted-foreground">
-              {threadTimeLabel(thread)}
-            </div>
-          )}
-        </div>
-        <div className="grid gap-2 text-xs text-muted-foreground">
+      <div className="flex max-w-80 flex-col gap-2 p-2">
+        <div className="whitespace-nowrap text-sm font-medium text-foreground">{thread.title}</div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
           {projectTitle ? (
-            <div className="flex min-w-0 items-start gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
                 className="size-4 shrink-0"
               />
-              <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">
-                {projectTitle}
-              </div>
+              <div className="min-w-0 wrap-break-word text-foreground/90">{projectTitle}</div>
             </div>
           ) : null}
           {environmentLabel ? (
-            <div className="flex min-w-0 items-start gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <ServerIcon className="size-4 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">
-                {environmentLabel}
-              </div>
+              <div className="min-w-0 wrap-break-word text-foreground/90">{environmentLabel}</div>
             </div>
           ) : null}
           {thread.branch ? (
-            <div className="flex min-w-0 items-start gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-4 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">
-                {thread.branch}
+              <div className="min-w-0 wrap-break-word text-foreground/90">{thread.branch}</div>
+            </div>
+          ) : null}
+          {branchMismatch ? (
+            <div className="flex min-w-0 items-start gap-2 text-warning">
+              <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 stroke-current" />
+              <div className="min-w-0 flex-1 wrap-break-word leading-5">
+                You're currently checked out on another branch.
               </div>
             </div>
           ) : null}
           {driverKind ? (
-            <div className="flex min-w-0 items-start gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={thread.session?.providerName ?? modelInstanceId}
                 iconClassName="size-4 shrink-0"
               />
-              <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">{modelLabel}</div>
+              <div className="min-w-0 wrap-break-word text-foreground/90">{modelLabel}</div>
             </div>
           ) : null}
           {thread.session?.lastError ? (
-            <div className="flex min-w-0 items-start gap-2 text-red-600 dark:text-red-400">
+            <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="size-4 shrink-0 stroke-current" />
-              <div className="min-w-0 flex-1 wrap-break-word">{thread.session.lastError}</div>
+              <div className="min-w-0 wrap-break-word">{thread.session.lastError}</div>
             </div>
           ) : null}
         </div>
@@ -391,10 +371,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so unlike Done, a never-visited woke thread still
-  // shows the pill; visiting clears it.
-  const isWoke =
-    props.wokeAt !== null &&
-    (lastVisitedAt === undefined || Date.parse(lastVisitedAt) < Date.parse(props.wokeAt));
+  // shows the pill; visiting clears it. An unparseable visit timestamp
+  // counts as never-visited — corrupt local data must not eat the wake
+  // signal.
+  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
+  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
+  const isWoke = wokeAtDate !== null && (lastVisitedDate === null || lastVisitedDate < wokeAtDate);
   const shouldRecede = status === "ready" && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
@@ -441,14 +423,24 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
-    thread.branch != null && gitCwd !== null
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
         })
       : null,
   );
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+    effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
+    activeWorktreePath: thread.worktreePath,
+    activeThreadBranch: thread.branch,
+    currentGitBranch: gitStatus.data?.refName ?? null,
+  });
+  const pr = resolveThreadPr({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    hasDedicatedWorktree: thread.worktreePath !== null,
+  });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   // Report the PR state up: the parent partitions rows with effectiveSettled,
   // and a merged/closed PR auto-settles a thread — data only rows have.
@@ -479,7 +471,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
-      status={topStatus}
+      branchMismatch={branchMismatch}
     />
   );
 
@@ -590,10 +582,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
     "group/v2-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none",
+    variant === "card" && "backdrop-blur-[16px]",
     props.isActive
-      ? "bg-sidebar-row-active text-sidebar-foreground dark:inset-ring-1 dark:inset-ring-white/5"
+      ? "bg-sidebar-row-active text-sidebar-foreground"
       : isSelected
-        ? "bg-sidebar-row-selected text-sidebar-foreground dark:inset-ring-1 dark:inset-ring-white/5"
+        ? "bg-sidebar-row-selected text-sidebar-foreground"
         : shouldRecede
           ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
@@ -917,6 +910,9 @@ export default function SidebarV2() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const deleteProject = useAtomCommand(projectEnvironment.delete, {
+    reportFailure: false,
+  });
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -929,11 +925,14 @@ export default function SidebarV2() {
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const routeThreadRef = useParams({
+  const routeTarget = useParams({
     strict: false,
-    select: (params) => resolveThreadRouteRef(params),
+    select: (params) => resolveThreadRouteTarget(params),
   });
+  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const routeTargetRef = useRef(routeTarget);
+  routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
   // captured when the settle started: if the user navigated elsewhere while
   // the command was in flight, completing it must not yank them away.
@@ -1036,6 +1035,75 @@ export default function SidebarV2() {
   useEffect(() => {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
+
+  const handleRemoveProject = useCallback(
+    async (project: EnvironmentProject) => {
+      const api = readLocalApi();
+      if (!api) return;
+
+      const projectThreads = threads.filter(
+        (thread) =>
+          thread.environmentId === project.environmentId && thread.projectId === project.id,
+      );
+      const confirmed = await settlePromise(() =>
+        api.dialogs.confirm(
+          projectThreads.length > 0
+            ? [
+                `Remove project "${project.title}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
+                `Path: ${project.workspaceRoot}`,
+                "This permanently clears conversation history for those threads.",
+                "This removes only the project entry, not the files on disk.",
+                "This action cannot be undone.",
+              ].join("\n")
+            : [
+                `Remove project "${project.title}"?`,
+                `Path: ${project.workspaceRoot}`,
+                "This removes only the project entry, not the files on disk.",
+              ].join("\n"),
+        ),
+      );
+      if (confirmed._tag === "Failure" || !confirmed.value) return;
+
+      const projectRef = scopeProjectRef(project.environmentId, project.id);
+      const result = await deleteProject({
+        environmentId: project.environmentId,
+        input: {
+          projectId: project.id,
+          ...(projectThreads.length > 0 ? { force: true } : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Failed to remove "${project.title}"`,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+
+      const draftStore = useComposerDraftStore.getState();
+      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+      const shouldNavigate = shouldNavigateAfterProjectRemoval({
+        routeTarget: routeTargetRef.current,
+        projectThreads,
+        projectDraftId: projectDraftThread?.draftId ?? null,
+      });
+      if (projectDraftThread) {
+        draftStore.clearDraftThread(projectDraftThread.draftId);
+      }
+      draftStore.clearProjectDraftThreadId(projectRef);
+
+      if (shouldNavigate) {
+        void router.navigate({ to: "/" });
+      }
+    },
+    [deleteProject, router, threads],
+  );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells: no archived-snapshot
@@ -1901,10 +1969,10 @@ export default function SidebarV2() {
                     <MenuRadioItem
                       value="all"
                       closeOnClick
-                      className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                      className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                     >
-                      <FolderIcon className="size-3.5" />
-                      <span className="min-w-0 truncate">All projects</span>
+                      <FolderIcon className="size-4 shrink-0" />
+                      <span className="min-w-0 truncate text-sm">All projects</span>
                     </MenuRadioItem>
                     {projects.map((project) => {
                       const scopeKey = `${project.environmentId}:${project.id}`;
@@ -1913,14 +1981,28 @@ export default function SidebarV2() {
                           key={scopeKey}
                           value={scopeKey}
                           closeOnClick
-                          className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                          className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                         >
                           <ProjectFavicon
                             environmentId={project.environmentId}
                             cwd={project.workspaceRoot}
-                            className="size-3.5"
+                            className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate">{project.title}</span>
+                          <span className="min-w-0 truncate text-sm">{project.title}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove project ${project.title}`}
+                            title={`Remove ${project.title}`}
+                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void handleRemoveProject(project);
+                            }}
+                          >
+                            <Trash2Icon className="size-3.5" />
+                          </button>
                         </MenuRadioItem>
                       );
                     })}
@@ -2141,9 +2223,6 @@ export default function SidebarV2() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <div className="shrink-0 px-2">
-        <SidebarSeparator className="mx-0 w-full bg-sidebar-border/80" />
-      </div>
       <SidebarChromeFooter />
     </>
   );

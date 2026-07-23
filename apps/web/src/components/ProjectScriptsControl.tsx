@@ -364,7 +364,7 @@ export default function ProjectScriptsControl({
         }}
         open={dialogOpen}
       >
-        <DialogPopup>
+        <DialogPopup className="before:hidden">
           <DialogHeader>
             <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
             <DialogDescription>
@@ -382,7 +382,7 @@ export default function ProjectScriptsControl({
                         <Button
                           type="button"
                           variant="outline"
-                          className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+                          className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:border-transparent dark:bg-white/[0.035] dark:data-pressed:before:shadow-none"
                           aria-label="Choose icon"
                         />
                       }
@@ -397,10 +397,10 @@ export default function ProjectScriptsControl({
                             <button
                               key={entry.id}
                               type="button"
-                              className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs ${
+                              className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs dark:border-transparent ${
                                 isSelected
-                                  ? "border-primary/70 bg-primary/10"
-                                  : "border-border/70 hover:bg-accent/60"
+                                  ? "border-primary/70 bg-primary/10 dark:ring-1 dark:ring-primary/30"
+                                  : "border-border/70 hover:bg-accent/60 dark:bg-white/[0.035]"
                               }`}
                               onClick={() => {
                                 setIcon(entry.id);
@@ -458,7 +458,7 @@ export default function ProjectScriptsControl({
                   Open this URL in the in-app preview when this action runs.
                 </p>
               </div>
-              <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
+              <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
                 <span>Run automatically on worktree creation</span>
                 <Switch
                   checked={runOnWorktreeCreate}
@@ -466,7 +466,7 @@ export default function ProjectScriptsControl({
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm ${
+                className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
                   previewUrl.trim().length === 0 ? "opacity-60" : ""
                 }`}
               >
@@ -480,7 +480,7 @@ export default function ProjectScriptsControl({
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
             </form>
           </DialogPanel>
-          <DialogFooter>
+          <DialogFooter className="dark:border-transparent dark:bg-transparent">
             {isEditing && (
               <Button
                 type="button"
