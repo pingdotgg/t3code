@@ -1390,7 +1390,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.getZoomFactor(),
           );
     yield* attachListeners(tabId, wc);
-    runFork(restoreControlSession(tabId, wc, tab.colorScheme));
+    runFork(restoreControlSession(tabId, wc));
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -1530,14 +1530,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* detachControlSession(wc.id);
     yield* attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
       wc.once("devtools-closed", () => {
-        if (wc.isDestroyed()) return;
-        runFork(
-          SynchronizedRef.get(tabsRef).pipe(
-            Effect.flatMap((tabs) =>
-              restoreControlSession(tabId, wc, tabs.get(tabId)?.colorScheme ?? "system"),
-            ),
-          ),
-        );
+        if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
       });
       wc.openDevTools({ mode: "detach" });
     });
@@ -1719,16 +1712,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   // Re-establish the control session after a detach, restoring any
-  // color-scheme override the tab carries.
-  const restoreControlSession = (
-    tabId: string,
-    wc: Electron.WebContents,
-    colorScheme: DesktopPreviewColorScheme,
-  ) =>
-    (colorScheme === "system"
-      ? ensureControlSession(wc)
-      : applyColorScheme(tabId, wc, colorScheme)
-    ).pipe(Effect.ignore);
+  // color-scheme override the tab carries. The scheme is read after the
+  // session attaches so a concurrent setColorScheme is not overwritten with
+  // a stale snapshot.
+  const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
+    ensureControlSession(wc).pipe(
+      Effect.andThen(SynchronizedRef.get(tabsRef)),
+      Effect.flatMap((tabs) => {
+        const colorScheme = tabs.get(tabId)?.colorScheme ?? "system";
+        return colorScheme === "system" ? Effect.void : applyColorScheme(tabId, wc, colorScheme);
+      }),
+      Effect.ignore,
+    );
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
     tabId: string,
@@ -1744,8 +1739,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       // next control-session (re)attach.
       yield* update(tabId, { colorScheme });
     }
-    if (tab.webContentsId == null) return;
-    const wc = webContents.fromId(tab.webContentsId);
+    // Re-read after the update: registerWebview may have swapped the guest
+    // in the meantime and the override must land on the current one.
+    const webContentsId = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.webContentsId;
+    if (webContentsId == null) return;
+    const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) return;
     yield* applyColorScheme(tabId, wc, colorScheme);
   });
