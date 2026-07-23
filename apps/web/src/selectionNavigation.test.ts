@@ -132,6 +132,76 @@ describe("selection navigation", () => {
     expect(dispatchedKeys).toEqual(["ArrowDown"]);
   });
 
+  it("routes navigation in the model picker search input", () => {
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+
+    const searchInput = new TestElement();
+    searchInput.attributes.set("data-slot", "combobox-input");
+    searchInput.attributes.set("aria-controls", "model-picker-options");
+    const modelPickerPopup = new TestElement();
+    modelPickerPopup.id = "model-picker-options";
+    modelPickerPopup.attributes.set("data-slot", "combobox-popup");
+    testDocument(searchInput, [modelPickerPopup]);
+
+    const dispatchedKeys: string[] = [];
+    searchInput.addEventListener("keydown", (event) => {
+      dispatchedKeys.push((event as TestKeyboardEvent).key);
+    });
+
+    handleSelectionNavigationKeyDown(keyboardEvent(searchInput, { key: "n", ctrlKey: true }));
+    handleSelectionNavigationKeyDown(keyboardEvent(searchInput, { key: "p", ctrlKey: true }));
+
+    expect(dispatchedKeys).toEqual(["ArrowDown", "ArrowUp"]);
+  });
+
+  it.each([
+    ["project picker", "menu-trigger", "menu-popup"],
+    ["submenu", "menu-sub-trigger", "menu-sub-content"],
+  ] as const)(
+    "routes the first chord after opening a %s without an aria-controls link",
+    (_label, triggerSlot, popupSlot) => {
+      vi.stubGlobal("Element", TestElement);
+      vi.stubGlobal("HTMLElement", TestElement);
+
+      const trigger = new TestElement();
+      trigger.attributes.set("aria-expanded", "true");
+      trigger.attributes.set("data-slot", triggerSlot);
+      const popup = new TestElement();
+      popup.attributes.set("data-slot", popupSlot);
+      testDocument(trigger, [popup]);
+
+      const dispatchedKeys: string[] = [];
+      trigger.addEventListener("keydown", (event) => {
+        dispatchedKeys.push((event as TestKeyboardEvent).key);
+      });
+
+      handleSelectionNavigationKeyDown(keyboardEvent(trigger, { key: "n", ctrlKey: true }));
+
+      expect(dispatchedKeys).toEqual(["ArrowDown"]);
+    },
+  );
+
+  it("routes navigation while focus is inside the project picker popup", () => {
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+
+    const projectPickerPopup = new TestElement();
+    projectPickerPopup.attributes.set("data-slot", "menu-popup");
+    const focusedItem = new TestElement();
+    focusedItem.parentElement = projectPickerPopup;
+    testDocument(focusedItem, [projectPickerPopup]);
+
+    const dispatchedKeys: string[] = [];
+    focusedItem.addEventListener("keydown", (event) => {
+      dispatchedKeys.push((event as TestKeyboardEvent).key);
+    });
+
+    handleSelectionNavigationKeyDown(keyboardEvent(focusedItem, { key: "p", ctrlKey: true }));
+
+    expect(dispatchedKeys).toEqual(["ArrowUp"]);
+  });
+
   it("routes navigation to the portaled composer suggestion menu", () => {
     vi.stubGlobal("Element", TestElement);
     vi.stubGlobal("HTMLElement", TestElement);

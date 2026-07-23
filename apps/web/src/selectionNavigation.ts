@@ -6,6 +6,7 @@ const CANDIDATE_SURFACE_SELECTOR = [
   '[data-slot="autocomplete-popup"]',
   '[data-slot="select-popup"]',
   '[data-slot="menu-popup"]',
+  '[data-slot="menu-sub-content"]',
   '[role="listbox"]',
 ].join(",");
 
@@ -15,6 +16,7 @@ const SURFACE_SLOT_BY_TRIGGER_SLOT: Readonly<Record<string, string>> = {
   "autocomplete-trigger": "autocomplete-popup",
   "combobox-trigger": "combobox-popup",
   "menu-trigger": "menu-popup",
+  "menu-sub-trigger": "menu-sub-content",
   "select-trigger": "select-popup",
 };
 
