@@ -166,7 +166,9 @@ it.effect("decodes project.delete without an archived-thread opt-in", () =>
       projectId: "project-delete",
     });
 
-    assert.strictEqual(parsed.type, "project.delete");
+    if (parsed.type !== "project.delete") {
+      assert.fail(`Expected project.delete, received ${parsed.type}`);
+    }
     assert.strictEqual(parsed.deleteArchivedThreads, undefined);
   }),
 );
