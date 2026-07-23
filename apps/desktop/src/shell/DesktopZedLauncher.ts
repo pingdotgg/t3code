@@ -38,15 +38,10 @@ export class DesktopZedLaunchError extends Schema.TaggedErrorClass<DesktopZedLau
 }
 
 function remoteAuthority(target: DesktopSshEnvironmentTarget): string {
-  const alias = target.alias.trim();
-  if (alias.length > 0) {
-    return alias;
-  }
-
+  const host = target.alias.trim() || target.hostname.trim();
   const username = target.username?.trim();
-  const hostname = target.hostname.trim();
   const port = target.port === null ? "" : `:${target.port}`;
-  return `${username ? `${username}@` : ""}${hostname}${port}`;
+  return `${username ? `${username}@` : ""}${host}${port}`;
 }
 
 function remoteUriPath(path: string): string {
