@@ -51,6 +51,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
@@ -311,12 +312,42 @@ describe("ProviderRuntimeIngestion", () => {
       updatedAt: createdAt,
     });
 
+    const failDispatches = (
+      count: number,
+      predicate: (command: Parameters<typeof engine.dispatch>[0]) => boolean,
+    ) => {
+      const originalDispatch = engine.dispatch;
+      let failureCount = 0;
+      (engine as { dispatch: typeof engine.dispatch }).dispatch = (command) => {
+        if (failureCount < count && predicate(command)) {
+          failureCount += 1;
+          return Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Injected orchestration dispatch failure",
+            }),
+          );
+        }
+        return originalDispatch(command);
+      };
+      return () => failureCount;
+    };
+
+    const failNextDispatch = (
+      predicate: (command: Parameters<typeof engine.dispatch>[0]) => boolean,
+    ) => {
+      const getFailureCount = failDispatches(1, predicate);
+      return () => getFailureCount() === 1;
+    };
+
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      failDispatches,
+      failNextDispatch,
     };
   }
 
@@ -2477,6 +2508,529 @@ describe("ProviderRuntimeIngestion", () => {
     expect(streamingEvents.map((event) => event.payload.text).join("")).toBe(expectedText);
     expect(assistantEvents).toHaveLength(5);
     expect(assistantEvents.at(-1)?.payload.streaming).toBe(false);
+  });
+
+  it("retains a coalesced streaming chunk when dispatch fails", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+    const turnId = asTurnId("turn-streaming-dispatch-retry");
+    const itemId = asItemId("item-streaming-dispatch-retry");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-dispatch-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-dispatch-retry-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "first " },
+    });
+    await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-dispatch-retry" && message.text === "first ",
+      ),
+    );
+
+    const didInjectFailure = harness.failNextDispatch(
+      (command) => command.type === "thread.message.assistant.delta",
+    );
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-dispatch-retry-buffered"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(1),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "still " },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-dispatch-retry-failed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(101),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "present" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-streaming-dispatch-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(102),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-dispatch-retry" &&
+            !message.streaming &&
+            message.text === "first still present",
+        ),
+      5000,
+    );
+    expect(didInjectFailure()).toBe(true);
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-dispatch-retry",
+      )?.text,
+    ).toBe("first still present");
+  });
+
+  it("flushes pending coalesced assistant text when the session exits", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+    const turnId = asTurnId("turn-streaming-session-exit");
+    const itemId = asItemId("item-streaming-session-exit");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-session-exit"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-session-exit-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "before " },
+    });
+    await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-session-exit" && message.text === "before ",
+      ),
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-session-exit-buffered"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(1),
+      threadId: asThreadId("thread-1"),
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "exit" },
+    });
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-streaming-session-exit"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(2),
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "provider terminated" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "stopped" &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-session-exit" &&
+            !message.streaming &&
+            message.text === "before exit",
+        ),
+      5000,
+    );
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-session-exit",
+      )?.text,
+    ).toBe("before exit");
+  });
+
+  it("flushes a trailing streaming burst after the coalescing interval", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const turnId = asTurnId("turn-streaming-timer-flush");
+    const itemId = asItemId("item-streaming-timer-flush");
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-timer-flush"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    for (const [offsetMillis, delta] of [
+      [0, "visible "],
+      [1, "tail"],
+    ] as const) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-message-delta-streaming-timer-flush-${offsetMillis}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: timestampAt(offsetMillis),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-timer-flush" &&
+            message.streaming &&
+            message.text === "visible tail",
+        ),
+      5000,
+    );
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-timer-flush",
+      )?.text,
+    ).toBe("visible tail");
+  });
+
+  it("keeps retained streaming chunks bounded while dispatch retries", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const turnId = asTurnId("turn-streaming-bounded-retry");
+    const itemId = asItemId("item-streaming-bounded-retry");
+    const now = "2026-01-01T00:00:00.000Z";
+    const expectedText = "x".repeat(2_500);
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-bounded-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    const getFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.delta",
+    );
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-bounded-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: expectedText },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-streaming-bounded-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-bounded-retry" &&
+            !message.streaming &&
+            message.text === expectedText,
+        ),
+      5000,
+    );
+    const events = await runtime!.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const persistedChunks = events
+      .filter(
+        (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
+          event.type === "thread.message-sent" &&
+          event.payload.messageId === "assistant:item-streaming-bounded-retry" &&
+          event.payload.streaming,
+      )
+      .map((event) => event.payload.text);
+    expect(getFailureCount()).toBe(3);
+    expect(Math.max(...persistedChunks.map((text) => text.length))).toBeLessThanOrEqual(512);
+    expect(persistedChunks.join("")).toBe(expectedText);
+  });
+
+  it("yields the ingestion worker after bounded assistant dispatch retries", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const turnId = asTurnId("turn-streaming-worker-liveness");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-worker-liveness"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    const getFailureCount = harness.failDispatches(
+      100,
+      (command) => command.type === "thread.message.assistant.delta",
+    );
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-worker-liveness"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-streaming-worker-liveness"),
+      payload: { streamKind: "assistant_text", delta: "retained during outage" },
+    });
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-thread-metadata-streaming-worker-liveness"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: { name: "Worker remained live" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Worker remained live",
+      2000,
+    );
+    expect(thread.title).toBe("Worker remained live");
+    expect(getFailureCount()).toBeGreaterThanOrEqual(3);
+  });
+
+  it("finalizes only the completed turn's assistant messages", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const firstTurnId = asTurnId("turn-streaming-completed-scope-first");
+    const secondTurnId = asTurnId("turn-streaming-completed-scope-second");
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-completed-scope"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId: firstTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === firstTurnId,
+    );
+
+    for (const [turnId, itemId, delta] of [
+      [firstTurnId, asItemId("item-streaming-completed-scope-first"), "first"],
+      [secondTurnId, asItemId("item-streaming-completed-scope-second"), "second"],
+    ] as const) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-message-delta-${turnId}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: timestampAt(0),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+    await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-completed-scope-second" && message.streaming,
+      ),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-streaming-completed-scope-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(1),
+      threadId: asThreadId("thread-1"),
+      turnId: firstTurnId,
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-completed-scope-first" && !message.streaming,
+      ),
+    );
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-completed-scope-second",
+      )?.streaming,
+    ).toBe(true);
+  });
+
+  it("finalizes pending coalesced assistant text on runtime error", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const turnId = asTurnId("turn-streaming-runtime-error");
+    const itemId = asItemId("item-streaming-runtime-error");
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-runtime-error"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+    for (const [offsetMillis, delta] of [
+      [0, "before "],
+      [1, "error"],
+    ] as const) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-message-delta-streaming-runtime-error-${offsetMillis}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: timestampAt(offsetMillis),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-streaming-runtime-error"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(2),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { message: "provider failed" },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-runtime-error" &&
+            !message.streaming &&
+            message.text === "before error",
+        ),
+      5000,
+    );
+  });
+
+  it("preserves a whitespace-only buffered tail when finalizing", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const turnId = asTurnId("turn-streaming-whitespace-tail");
+    const itemId = asItemId("item-streaming-whitespace-tail");
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-whitespace-tail"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+    for (const [offsetMillis, delta] of [
+      [0, "answer"],
+      [1, "\n\n"],
+    ] as const) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-message-delta-streaming-whitespace-tail-${offsetMillis}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: timestampAt(offsetMillis),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-streaming-whitespace-tail"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(2),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-whitespace-tail" &&
+            !message.streaming &&
+            message.text === "answer\n\n",
+        ),
+      5000,
+    );
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-whitespace-tail",
+      )?.text,
+    ).toBe("answer\n\n");
   });
 
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {
