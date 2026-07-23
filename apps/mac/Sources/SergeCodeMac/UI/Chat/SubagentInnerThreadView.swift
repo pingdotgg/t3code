@@ -104,6 +104,7 @@ struct SubagentInnerThreadView: View {
     /// Follow the tail while the agent streams; a manual toggle so a user
     /// reading older progress is never yanked back down.
     @UIState private var isFollowingTail = true
+    @UIState private var scrollPhase: ScrollPhase = .idle
 
     private static let tailAnchor = "subagent-inner-thread-tail"
 
@@ -234,18 +235,50 @@ struct SubagentInnerThreadView: View {
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // Same pin rule as ChatTimelineScrollView: only user-driven
+            // phases may change follow state. Content growth alone must not
+            // re-pin someone reading older progress.
+            .onScrollPhaseChange { _, newPhase in
+                scrollPhase = newPhase
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                ChatTimelineScrollPolicy.isNearBottom(
+                    contentOffsetY: geometry.contentOffset.y,
+                    containerHeight: geometry.containerSize.height,
+                    contentHeight: geometry.contentSize.height)
+            } action: { _, nearBottom in
+                isFollowingTail = ChatTimelineScrollPolicy.pinAfterScrollPhase(
+                    isUserScrolling: isUserScrolling,
+                    isNearBottom: nearBottom,
+                    currentlyPinned: isFollowingTail)
+            }
             .onChange(of: task.progressLog.count) { _, _ in
                 guard isFollowingTail, SubagentInnerThread.followsTail(task) else { return }
-                withAnimation(Motion.ambient) { proxy.scrollTo(Self.tailAnchor, anchor: .bottom) }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo(Self.tailAnchor, anchor: .bottom)
+                }
             }
             .onChange(of: task.state) { _, _ in
                 // Settling lands the result card: keep the tail in view for it.
                 guard isFollowingTail else { return }
-                withAnimation(Motion.ambient) { proxy.scrollTo(Self.tailAnchor, anchor: .bottom) }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo(Self.tailAnchor, anchor: .bottom)
+                }
             }
             .onAppear {
                 proxy.scrollTo(Self.tailAnchor, anchor: .bottom)
             }
+        }
+    }
+
+    private var isUserScrolling: Bool {
+        switch scrollPhase {
+        case .tracking, .interacting, .decelerating: true
+        default: false
         }
     }
 

@@ -277,6 +277,8 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     }
     func archiveThread(id: String) async throws {}
     func unarchiveThread(id: String) async throws {}
+    func settleThread(id: String) async throws {}
+    func unsettleThread(id: String) async throws {}
     func deleteThread(id: String) async throws {}
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {}

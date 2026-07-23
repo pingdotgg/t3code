@@ -638,20 +638,27 @@ public final class AppModel {
                 // reasoning text) and must replace it, not stack.
                 var items = currentItems(threadID)
                 ensureTimelineIndex(threadID, items: items)
-                // Task progress keeps a stable row id and never changes the
-                // grouping shape. Treating every update as structural forced
-                // a full transcript regroup/diff for each Claude progress
-                // event, which could starve LazyVStack layout until the chat
-                // appeared blank. New task rows are still structural.
-                let isExistingTaskUpdate: Bool
-                if case .subagentTask = item {
-                    isExistingTaskUpdate = indexByThread[threadID]?[item.id] != nil
+                // In-place content updates (task progress, reasoning text, tool
+                // detail while still running) must not bump structureVersion.
+                // Treating every upsert as structural forced a full transcript
+                // regroup/diff per event, which starved LazyVStack layout until
+                // the chat appeared blank. New rows and tool running↔finished
+                // flips still bump structure — those can change grouping shape.
+                let existingIndex = indexByThread[threadID]?[item.id]
+                let previousRunning: Bool?
+                if let existingIndex, items.indices.contains(existingIndex),
+                    items[existingIndex].id == item.id,
+                    case .toolEvent(_, _, _, _, let status, _, _, _) = items[existingIndex]
+                {
+                    previousRunning = status == .running
                 } else {
-                    isExistingTaskUpdate = false
+                    previousRunning = nil
                 }
                 items.upsertTimelineItem(item, indexByID: &indexByThread[threadID]!)
                 touched[threadID] = items
-                if !isExistingTaskUpdate {
+                if Self.timelineAppendIsStructural(
+                    item: item, existed: existingIndex != nil, previousRunning: previousRunning)
+                {
                     structuralThreads.insert(threadID)
                 }
                 if case .subagentTask(let task) = item {
@@ -824,6 +831,27 @@ public final class AppModel {
     private func isDismissedUsageLimit(_ item: TimelineItem) -> Bool {
         guard case .usageLimit(let notice) = item else { return false }
         return dismissedUsageLimitIDs.contains(notice.id)
+    }
+
+    /// Whether a timeline upsert can change grouped-display shape.
+    /// New rows always can. Existing subagent/reasoning content updates never
+    /// do. Existing tools only do when running-ness flips (condensability).
+    static func timelineAppendIsStructural(
+        item: TimelineItem, existed: Bool, previousRunning: Bool?
+    ) -> Bool {
+        if !existed { return true }
+        switch item {
+        case .subagentTask, .reasoning, .assistantMessage:
+            return false
+        case .toolEvent(_, _, _, _, let status, _, _, _):
+            let nowRunning = status == .running
+            if let previousRunning, previousRunning == nowRunning {
+                return false
+            }
+            return true
+        default:
+            return true
+        }
     }
 
     @discardableResult

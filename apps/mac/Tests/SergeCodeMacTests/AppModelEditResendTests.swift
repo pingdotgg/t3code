@@ -276,6 +276,8 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
     }
     func archiveThread(id: String) async throws {}
     func unarchiveThread(id: String) async throws {}
+    func settleThread(id: String) async throws {}
+    func unsettleThread(id: String) async throws {}
     func deleteThread(id: String) async throws {}
     func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
         fatalError("unused")
