@@ -332,6 +332,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                 size="sm"
                 className="font-medium"
                 aria-label="Runtime mode"
+                data-chat-runtime-mode-picker="true"
               />
             }
           >

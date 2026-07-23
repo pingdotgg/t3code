@@ -111,7 +111,7 @@ describe("selection navigation", () => {
     expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
   });
 
-  it("routes the first chord after opening a select whose popup has no aria-controls link", () => {
+  it("routes the first chord after opening the prompt runtime/access picker", () => {
     vi.stubGlobal("Element", TestElement);
     vi.stubGlobal("HTMLElement", TestElement);
 
@@ -157,6 +157,9 @@ describe("selection navigation", () => {
 
   it.each([
     ["project picker", "menu-trigger", "menu-popup"],
+    ["effort and provider options picker", "menu-trigger", "menu-popup"],
+    ["compact composer controls picker", "menu-trigger", "menu-popup"],
+    ["implementation actions menu", "menu-trigger", "menu-popup"],
     ["submenu", "menu-sub-trigger", "menu-sub-content"],
   ] as const)(
     "routes the first chord after opening a %s without an aria-controls link",
