@@ -105,7 +105,7 @@ struct AppModelQuickChatTests {
         let model = AppModel(backend: backend)
         // No providers/models injected → not runnable.
         let scenery = SceneryStore()
-        let thread = await model.startQuickChat(scenery: scenery, passport: nil)
+        let thread = await model.startQuickChat(scenery: scenery)
         #expect(thread == nil)
         #expect(model.lastError?.contains("providers") == true)
     }

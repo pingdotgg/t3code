@@ -11,7 +11,7 @@ struct ParentThinkingPresentationTests {
     @Test("shows thinking while running with no tools or stream")
     func showsWhenQuietlyRunning() {
         let items: [TimelineItem] = [
-            .userMessage(id: "u1", text: "hello", at: now)
+            .userMessage(id: "u1", text: "hello", attachments: [], at: now)
         ]
         #expect(
             ParentThinkingPresentation.shouldShow(
@@ -43,7 +43,7 @@ struct ParentThinkingPresentationTests {
     @Test("hides during waiting, approval, stall, and background-only work")
     func hidesForOtherProjectedStatuses() {
         let items: [TimelineItem] = [
-            .userMessage(id: "u1", text: "hello", at: now)
+            .userMessage(id: "u1", text: "hello", attachments: [], at: now)
         ]
         #expect(
             !ParentThinkingPresentation.shouldShow(
