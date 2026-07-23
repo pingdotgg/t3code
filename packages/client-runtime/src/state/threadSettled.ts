@@ -75,6 +75,18 @@ export function hasQueuedTurnStart(
  * The server enforces its own invariants; this client-side twin exists so
  * the UI can disable/reject before a round trip.
  */
+/**
+ * A session waiting on provider background tasks (e.g. a Claude background
+ * shell that outlived its turn) is "ready" on the wire but not done: the
+ * provider wakes it with a follow-up turn when the task finishes. Treated
+ * like a running session for settling purposes.
+ */
+export function hasPendingBackgroundTasks(
+  shell: Pick<OrchestrationThreadShell, "session">,
+): boolean {
+  return (shell.session?.pendingBackgroundTasks?.length ?? 0) > 0;
+}
+
 export function canSettle(
   shell: Pick<
     OrchestrationThreadShell,
@@ -84,6 +96,7 @@ export function canSettle(
 ): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
+  if (hasPendingBackgroundTasks(shell)) return false;
   // Queued work is as blocked-on-progress as a live session: settling it
   // (or auto-settling it on a closed PR) would hide a just-requested turn.
   if (hasQueuedTurnStart(shell, options)) return false;
@@ -109,6 +122,7 @@ export function effectiveSettled(
   // Blocked work must remain visible even when a user explicitly settled it.
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
+  if (hasPendingBackgroundTasks(shell)) return false;
   if (hasQueuedTurnStart(shell, { now: options.now })) {
     // The queued-turn blocker alone is forgivable: it is clock-derived, and
     // list callers pass a coarser `now` than the settle action used. When

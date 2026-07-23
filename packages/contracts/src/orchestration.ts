@@ -269,6 +269,19 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * A provider background task (e.g. a Claude background shell or subagent)
+ * still running after the turn that spawned it completed. The provider will
+ * start a follow-up turn when the task finishes, so a session with pending
+ * background tasks is "ready" on the wire but visibly waiting in the UI.
+ */
+export const OrchestrationPendingBackgroundTask = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  description: Schema.optional(TrimmedNonEmptyString),
+  taskType: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationPendingBackgroundTask = typeof OrchestrationPendingBackgroundTask.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -277,6 +290,9 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  // Optional and additive: old clients ignore it and degrade to today's
+  // idle-looking behavior; old servers never send it.
+  pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationPendingBackgroundTask)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;

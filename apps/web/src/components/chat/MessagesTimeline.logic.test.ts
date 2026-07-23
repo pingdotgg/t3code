@@ -744,6 +744,60 @@ describe("deriveMessagesTimelineRows", () => {
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
   });
 
+  it("shows a waiting row when the turn settled with pending background tasks", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant" as const,
+            text: "Codex is reviewing the plan; I'll report back when it completes.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:20Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:20Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review of the plan" }],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.at(-1)).toEqual({
+      kind: "waiting-background",
+      id: "waiting-background-row",
+      createdAt: null,
+      description: "Run Codex review of the plan",
+      taskCount: 1,
+    });
+  });
+
+  it("suppresses the waiting row while a turn is actively working", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      latestTurn: null,
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      pendingBackgroundTasks: [{ taskId: "bg-1" }],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["working"]);
+  });
+
   it("does not fold the active in-progress turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

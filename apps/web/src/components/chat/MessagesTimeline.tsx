@@ -162,6 +162,10 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
+  pendingBackgroundTasks?: ReadonlyArray<{
+    readonly taskId: string;
+    readonly description?: string | undefined;
+  }> | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   latestTurn: TimelineLatestTurn | null;
@@ -197,6 +201,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
+  pendingBackgroundTasks,
   listRef,
   timelineEntries,
   latestTurn,
@@ -311,6 +316,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
+        pendingBackgroundTasks: pendingBackgroundTasks ?? null,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
@@ -322,6 +328,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedWorkGroupIds,
       isWorking,
       activeTurnStartedAt,
+      pendingBackgroundTasks,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
@@ -864,6 +871,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      {row.kind === "waiting-background" ? <WaitingBackgroundTimelineRow row={row} /> : null}
     </div>
   );
 });
@@ -1089,6 +1097,37 @@ function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
       />
+    </div>
+  );
+}
+
+/**
+ * Shown when the turn is settled but provider background tasks (background
+ * shells, subagents) are still running — the provider wakes the session when
+ * they finish, so the thread is waiting, not done.
+ */
+function WaitingBackgroundTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "waiting-background" }>;
+}) {
+  const label = row.description
+    ? row.taskCount > 1
+      ? `Waiting on ${row.taskCount} background tasks: ${row.description}, …`
+      : `Waiting on background task: ${row.description}`
+    : row.taskCount > 1
+      ? `Waiting on ${row.taskCount} background tasks`
+      : "Waiting on a background task";
+  return (
+    <div className="py-0.5 pl-1.5">
+      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
+        <span className="inline-flex items-center gap-[3px]">
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
+        </span>
+        <span>{label}</span>
+      </div>
     </div>
   );
 }

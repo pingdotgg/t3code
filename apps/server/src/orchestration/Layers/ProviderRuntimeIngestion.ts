@@ -1340,6 +1340,13 @@ const make = Effect.gen(function* () {
           case "session.started":
           case "thread.started":
             return true;
+          case "session.state.changed":
+            // Background-task roster events are only meaningful between
+            // turns: they map to a "ready" status, so applying a stale or
+            // replayed one mid-turn would null the active turn and settle a
+            // genuinely running turn. The turn lifecycle already clears
+            // pendingBackgroundTasks when a turn starts.
+            return event.payload.backgroundTasks === undefined || activeTurnId === null;
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
           case "turn.completed":
@@ -1369,10 +1376,20 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
+        // A session.state.changed carrying a backgroundTasks roster is the
+        // between-turns "waiting on background work" signal (e.g. a Claude
+        // background shell that outlived its turn). It keeps the wire status
+        // "ready" — old clients degrade to today's idle look — and surfaces
+        // the roster via session.pendingBackgroundTasks for new clients.
+        const backgroundTaskRoster =
+          event.type === "session.state.changed" ? event.payload.backgroundTasks : undefined;
         const status = (() => {
           switch (event.type) {
             case "session.state.changed": {
-              const runtimeStatus = orchestrationSessionStatusFromRuntimeState(event.payload.state);
+              const runtimeStatus =
+                backgroundTaskRoster !== undefined
+                  ? "ready"
+                  : orchestrationSessionStatusFromRuntimeState(event.payload.state);
               return hasPendingTurnStart && runtimeStatus === "ready" ? "starting" : runtimeStatus;
             }
             case "turn.started":
@@ -1432,6 +1449,13 @@ const make = Effect.gen(function* () {
             );
           }
 
+          // Roster events replace pendingBackgroundTasks wholesale (empty
+          // roster clears it); every other lifecycle event clears it — a
+          // turn starting or the session exiting supersedes the wait.
+          const pendingBackgroundTasks =
+            backgroundTaskRoster !== undefined && backgroundTaskRoster.length > 0
+              ? backgroundTaskRoster
+              : undefined;
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "thread-session-set"),
@@ -1446,6 +1470,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              ...(pendingBackgroundTasks !== undefined ? { pendingBackgroundTasks } : {}),
               updatedAt: now,
             },
             createdAt: now,

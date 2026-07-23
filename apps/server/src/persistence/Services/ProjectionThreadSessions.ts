@@ -9,6 +9,7 @@
 import {
   RuntimeMode,
   IsoDateTime,
+  OrchestrationPendingBackgroundTask,
   OrchestrationSessionStatus,
   ProviderInstanceId,
   ThreadId,
@@ -29,6 +30,7 @@ export const ProjectionThreadSession = Schema.Struct({
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),
+  pendingBackgroundTasks: Schema.NullOr(Schema.Array(OrchestrationPendingBackgroundTask)),
   updatedAt: IsoDateTime,
 });
 export type ProjectionThreadSession = typeof ProjectionThreadSession.Type;

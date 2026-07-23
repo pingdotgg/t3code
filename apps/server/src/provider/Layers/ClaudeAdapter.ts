@@ -178,6 +178,12 @@ interface ClaudeTaskState {
   readonly blockedBy: Set<string>;
 }
 
+interface ClaudeBackgroundTask {
+  readonly taskId: string;
+  readonly description?: string;
+  readonly taskType?: string;
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -195,6 +201,14 @@ interface ClaudeSessionContext {
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
+  /**
+   * Live background tasks (background shells, subagents) keyed by task_id.
+   * Fed by `background_tasks_changed` roster snapshots with `task_started` /
+   * `task_notification` as incremental fallbacks. A non-empty roster at turn
+   * completion means the SDK will wake the session when a task finishes, so
+   * the session is waiting rather than done.
+   */
+  readonly backgroundTasks: Map<string, ClaudeBackgroundTask>;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
@@ -1729,6 +1743,57 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  /**
+   * Surface the background-task roster as a session waiting/ready signal.
+   * Only meaningful between turns: while a turn is running the session is
+   * already "running", and emitting would fight the turn lifecycle. Called
+   * at turn completion (roster non-empty → waiting) and on roster changes
+   * that arrive between turns (roster emptied → ready; the follow-up
+   * synthetic turn usually flips it to running immediately after).
+   */
+  const emitBackgroundWaitState = Effect.fn("emitBackgroundWaitState")(function* (
+    context: ClaudeSessionContext,
+    options: {
+      readonly rawMethod: string;
+      readonly rawPayload: unknown;
+    },
+  ) {
+    if (context.turnState) {
+      return;
+    }
+    const tasks = Array.from(context.backgroundTasks.values());
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "session.state.changed",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      payload:
+        tasks.length > 0
+          ? {
+              state: "waiting",
+              reason: "background-tasks",
+              backgroundTasks: tasks.map((task) => ({
+                taskId: task.taskId,
+                ...(task.description ? { description: task.description } : {}),
+                ...(task.taskType ? { taskType: task.taskType } : {}),
+              })),
+            }
+          : {
+              state: "ready",
+              reason: "background-tasks-drained",
+              backgroundTasks: [],
+            },
+      providerRefs: nativeProviderRefs(context),
+      raw: {
+        source: "claude.sdk.message",
+        method: options.rawMethod,
+        payload: options.rawPayload,
+      },
+    });
+  });
+
   const emitThreadTokenUsage = Effect.fn("emitThreadTokenUsage")(function* (
     context: ClaudeSessionContext,
     usage: ThreadTokenUsageSnapshot | undefined,
@@ -2064,6 +2129,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(status === "failed" && errorMessage ? { lastError: errorMessage } : {}),
     };
     yield* updateResumeCursor(context);
+
+    // The turn ended but background tasks (background shells, subagents) may
+    // still be running — the SDK will wake the session with a follow-up turn
+    // when they finish. Surface that gap as a waiting state so the thread
+    // doesn't look done while e.g. a codex review is still in flight.
+    if (status === "completed" && context.backgroundTasks.size > 0) {
+      yield* emitBackgroundWaitState(context, {
+        rawMethod: "claude/result",
+        rawPayload: result ?? { status },
+      });
+    } else if (status !== "completed") {
+      // A failed or interrupted turn leaves the roster untrustworthy (terminal
+      // task notifications or the authoritative empty snapshot may never
+      // arrive), and stale entries would resurface as a bogus waiting state
+      // after a later turn. Drop it; the next background_tasks_changed
+      // snapshot rebuilds it from scratch.
+      context.backgroundTasks.clear();
+    }
   });
 
   const handleStreamEvent = Effect.fn("handleStreamEvent")(function* (
@@ -2585,14 +2668,40 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       },
     };
 
-    // Undeclared-but-real subtypes (absent from the SDK's union, so they can't
-    // be switch cases): consumed intentionally without emitting, otherwise
-    // they fall through to the unknown-subtype warning and surface as spurious
-    // error rows in client work logs. `background_tasks_changed` is a roster
-    // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
-    // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source.
+    // Undeclared-but-real subtype (absent from the SDK's union, so it can't
+    // be a switch case): `background_tasks_changed` is the authoritative
+    // roster snapshot ({tasks: [...]}) of live background tasks. It replaces
+    // the roster wholesale; between turns the roster drives the session
+    // waiting/ready signal so "turn ended but codex/subagent still running"
+    // is visible instead of looking idle. The task_* lifecycle events remain
+    // the per-agent data source for work-log rows.
     if ((message.subtype as string) === "background_tasks_changed") {
+      const roster = (message as unknown as { tasks?: unknown }).tasks;
+      if (Array.isArray(roster)) {
+        context.backgroundTasks.clear();
+        for (const entry of roster) {
+          if (!entry || typeof entry !== "object") {
+            continue;
+          }
+          const task = entry as { task_id?: unknown; description?: unknown; task_type?: unknown };
+          if (typeof task.task_id !== "string" || task.task_id.length === 0) {
+            continue;
+          }
+          context.backgroundTasks.set(task.task_id, {
+            taskId: task.task_id,
+            ...(typeof task.description === "string" && task.description.trim().length > 0
+              ? { description: task.description }
+              : {}),
+            ...(typeof task.task_type === "string" && task.task_type.trim().length > 0
+              ? { taskType: task.task_type }
+              : {}),
+          });
+        }
+        yield* emitBackgroundWaitState(context, {
+          rawMethod: "claude/system/background_tasks_changed",
+          rawPayload: message,
+        });
+      }
       return;
     }
 
@@ -2677,6 +2786,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "task_started":
+        // Incremental fallback for the roster (authoritative snapshots come
+        // from background_tasks_changed, which is not in the SDK's typed
+        // union and could disappear in an SDK update).
+        context.backgroundTasks.set(message.task_id, {
+          taskId: message.task_id,
+          ...(message.description ? { description: message.description } : {}),
+          ...(message.task_type ? { taskType: message.task_type } : {}),
+        });
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
@@ -2714,6 +2831,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       case "task_updated":
         return;
       case "task_notification":
+        context.backgroundTasks.delete(message.task_id);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -2731,6 +2849,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
           },
+        });
+        yield* emitBackgroundWaitState(context, {
+          rawMethod: "claude/system/task_notification",
+          rawPayload: message,
         });
         return;
       case "files_persisted":
@@ -3190,6 +3312,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
+      const backgroundTasks = new Map<string, ClaudeBackgroundTask>();
 
       const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
 
@@ -3632,6 +3755,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turns: [],
         inFlightTools,
         claudeTasks,
+        backgroundTasks,
         turnState: undefined,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,

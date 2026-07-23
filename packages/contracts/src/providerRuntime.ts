@@ -273,10 +273,23 @@ const SessionConfiguredPayload = Schema.Struct({
 });
 export type SessionConfiguredPayload = typeof SessionConfiguredPayload.Type;
 
+/**
+ * Provider background task still running while no turn is active (e.g. a
+ * Claude background shell or subagent that outlives its turn). Carried on
+ * `session.state.changed` so ingestion can surface a waiting state.
+ */
+const RuntimeBackgroundTask = Schema.Struct({
+  taskId: TrimmedNonEmptyStringSchema,
+  description: Schema.optional(TrimmedNonEmptyStringSchema),
+  taskType: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type RuntimeBackgroundTask = typeof RuntimeBackgroundTask.Type;
+
 const SessionStateChangedPayload = Schema.Struct({
   state: RuntimeSessionState,
   reason: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(Schema.Unknown),
+  backgroundTasks: Schema.optional(Schema.Array(RuntimeBackgroundTask)),
 });
 export type SessionStateChangedPayload = typeof SessionStateChangedPayload.Type;
 

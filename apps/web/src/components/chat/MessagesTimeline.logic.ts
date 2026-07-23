@@ -175,7 +175,14 @@ export type MessagesTimelineRow =
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
-  | { kind: "working"; id: string; createdAt: string | null };
+  | { kind: "working"; id: string; createdAt: string | null }
+  | {
+      kind: "waiting-background";
+      id: string;
+      createdAt: string | null;
+      description: string | null;
+      taskCount: number;
+    };
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -410,6 +417,10 @@ export function deriveMessagesTimelineRows(input: {
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
+  pendingBackgroundTasks?: ReadonlyArray<{
+    readonly taskId: string;
+    readonly description?: string | undefined;
+  }> | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -569,6 +580,18 @@ export function deriveMessagesTimelineRows(input: {
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
     });
+  } else if (input.pendingBackgroundTasks && input.pendingBackgroundTasks.length > 0) {
+    // The turn ended but provider background tasks (background shells,
+    // subagents) are still running — the provider wakes the session when
+    // they finish, so show a waiting row instead of looking done.
+    const firstTask = input.pendingBackgroundTasks[0];
+    nextRows.push({
+      kind: "waiting-background",
+      id: "waiting-background-row",
+      createdAt: input.activeTurnStartedAt,
+      description: firstTask?.description ?? null,
+      taskCount: input.pendingBackgroundTasks.length,
+    });
   }
 
   return nextRows;
@@ -601,6 +624,15 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   switch (a.kind) {
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
+
+    case "waiting-background": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.description === bw.description &&
+        a.taskCount === bw.taskCount
+      );
+    }
 
     case "turn-fold": {
       const bf = b as typeof a;

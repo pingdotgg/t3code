@@ -22,7 +22,8 @@ const STALE = "2026-04-06T23:59:59.999Z";
 function makeShell(input: {
   readonly settledOverride?: "settled" | "active" | null;
   readonly activityAt: string | null;
-  readonly sessionStatus?: "starting" | "running";
+  readonly sessionStatus?: "starting" | "running" | "ready";
+  readonly pendingBackgroundTasks?: ReadonlyArray<{ readonly taskId: string }>;
   readonly pending?: "approval" | "user-input";
 }): OrchestrationThreadShell {
   const threadId = ThreadId.make("thread-1");
@@ -52,15 +53,18 @@ function makeShell(input: {
     settledOverride: input.settledOverride ?? null,
     settledAt: input.settledOverride === "settled" ? NOW : null,
     session:
-      input.sessionStatus === undefined
+      input.sessionStatus === undefined && input.pendingBackgroundTasks === undefined
         ? null
         : {
             threadId,
-            status: input.sessionStatus,
+            status: input.sessionStatus ?? "ready",
             providerName: "Codex",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
+            ...(input.pendingBackgroundTasks !== undefined
+              ? { pendingBackgroundTasks: input.pendingBackgroundTasks }
+              : {}),
             updatedAt: NOW,
           },
     latestUserMessageAt: null,
@@ -320,6 +324,29 @@ describe("canSettle", () => {
     expect(canSettle(makeShell({ activityAt: FRESH, pending: "user-input" }), { now: NOW })).toBe(
       false,
     );
+  });
+
+  it("blocks settling while the session waits on provider background tasks", () => {
+    const waiting = makeShell({
+      activityAt: FRESH,
+      sessionStatus: "ready",
+      pendingBackgroundTasks: [{ taskId: "bg-1" }],
+    });
+    expect(canSettle(waiting, { now: NOW })).toBe(false);
+    // The background wait also overrides an explicit settled pin, exactly
+    // like a running session: blocked-in-motion work must remain visible.
+    expect(
+      effectiveSettled(
+        { ...waiting, settledOverride: "settled", settledAt: NOW },
+        { now: NOW, autoSettleAfterDays: 3 },
+      ),
+    ).toBe(false);
+    const drained = makeShell({
+      activityAt: FRESH,
+      sessionStatus: "ready",
+      pendingBackgroundTasks: [],
+    });
+    expect(canSettle(drained, { now: NOW })).toBe(true);
   });
 
   it("blocks settling a queued turn start, only within the grace window", () => {

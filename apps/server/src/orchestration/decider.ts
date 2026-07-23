@@ -399,6 +399,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           }),
         );
       }
+      // Waiting on provider background tasks (a background shell/subagent
+      // that outlived its turn) is live work: the provider wakes the session
+      // when the task finishes, so settling now would hide it.
+      if ((thread.session?.pendingBackgroundTasks?.length ?? 0) > 0) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is waiting on background tasks and cannot be settled`,
+          }),
+        );
+      }
       // Pending approval / user-input requests are blocked-on-you work: a
       // raced or stale client must not park them behind a settled override
       // that would surface only after the request resolves.

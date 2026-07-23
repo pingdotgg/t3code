@@ -449,6 +449,146 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("surfaces background-task rosters as pendingBackgroundTasks on a ready session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Waiting-on-background-tasks stays "ready" on the wire (additive field,
+    // no new status literal) with the roster attached.
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-bg-waiting"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        state: "waiting",
+        reason: "background-tasks",
+        backgroundTasks: [
+          { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
+        ],
+      },
+    });
+
+    let thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        (entry.session?.pendingBackgroundTasks?.length ?? 0) === 1,
+    );
+    expect(thread.session?.pendingBackgroundTasks).toEqual([
+      { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
+    ]);
+    expect(thread.session?.activeTurnId).toBeNull();
+
+    // An empty roster (tasks drained) clears the pending list.
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-bg-drained"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        state: "ready",
+        reason: "background-tasks-drained",
+        backgroundTasks: [],
+      },
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        (entry.session?.pendingBackgroundTasks?.length ?? 0) === 0,
+    );
+    expect(thread.session?.pendingBackgroundTasks).toBeUndefined();
+
+    // A new turn starting also clears any stale pending roster.
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-bg-waiting-2"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        state: "waiting",
+        reason: "background-tasks",
+        backgroundTasks: [{ taskId: "bg-2" }],
+      },
+    });
+    await waitForThread(
+      harness.readModel,
+      (entry) => (entry.session?.pendingBackgroundTasks?.length ?? 0) === 1,
+    );
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-bg-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-bg"),
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === "turn-bg",
+    );
+    expect(thread.session?.pendingBackgroundTasks).toBeUndefined();
+  });
+
+  it("ignores stale background-task roster events while a turn is active", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-bg-race-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-race"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === "turn-race",
+    );
+
+    // A delayed/replayed roster event must not settle the running turn.
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-bg-race-roster"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        state: "waiting",
+        reason: "background-tasks",
+        backgroundTasks: [{ taskId: "bg-stale" }],
+      },
+    });
+    // A non-roster state change is still applied; use it as the sync point to
+    // know the roster event has been processed (events are handled in order).
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-bg-race-running"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        state: "running",
+        reason: "still-working",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastError === null && entry.session?.status === "running",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.activeTurnId).toBe("turn-race");
+    expect(thread.session?.pendingBackgroundTasks).toBeUndefined();
+  });
+
   it("clears active turn when provider session becomes ready", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
