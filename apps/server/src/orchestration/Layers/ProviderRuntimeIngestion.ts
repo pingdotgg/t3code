@@ -92,6 +92,10 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+// Keep streaming responsive while preventing character-sized provider deltas
+// from forcing persistence and renderer reconciliation on every token.
+const STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS = 100;
+const MAX_COALESCED_STREAMING_ASSISTANT_CHARS = 512;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -710,6 +714,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(""),
   });
 
+  const streamingAssistantLastFlushAtByMessageId = yield* Cache.make<MessageId, number>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(0),
+  });
+
   const assistantSegmentStateByTurnKey = yield* Cache.make<string, AssistantSegmentState>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
@@ -899,6 +909,40 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const appendCoalescedStreamingAssistantText = (
+    messageId: MessageId,
+    delta: string,
+    occurredAt: string,
+  ) =>
+    Effect.gen(function* () {
+      const pendingText = yield* Cache.getOption(bufferedAssistantTextByMessageId, messageId);
+      const nextText = `${Option.getOrElse(pendingText, () => "")}${delta}`;
+      const lastFlushedAt = yield* Cache.getOption(
+        streamingAssistantLastFlushAtByMessageId,
+        messageId,
+      );
+      const occurredAtMillis = Date.parse(occurredAt);
+      const elapsedSinceFlush = Option.match(lastFlushedAt, {
+        onNone: () => Number.POSITIVE_INFINITY,
+        onSome: (value) =>
+          Number.isFinite(occurredAtMillis) ? Math.max(0, occurredAtMillis - value) : 0,
+      });
+      const shouldFlush =
+        elapsedSinceFlush >= STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS ||
+        nextText.length >= MAX_COALESCED_STREAMING_ASSISTANT_CHARS;
+
+      if (!shouldFlush) {
+        yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
+        return "";
+      }
+
+      yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+      if (Number.isFinite(occurredAtMillis)) {
+        yield* Cache.set(streamingAssistantLastFlushAtByMessageId, messageId, occurredAtMillis);
+      }
+      return nextText;
+    });
+
   const takeBufferedAssistantText = (messageId: MessageId) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
       Effect.flatMap((existingText) =>
@@ -936,7 +980,10 @@ const make = Effect.gen(function* () {
     Cache.invalidate(bufferedProposedPlanById, planId);
 
   const clearAssistantMessageState = (messageId: MessageId) =>
-    clearBufferedAssistantText(messageId);
+    Effect.all([
+      clearBufferedAssistantText(messageId),
+      Cache.invalidate(streamingAssistantLastFlushAtByMessageId, messageId),
+    ]).pipe(Effect.asVoid);
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1489,15 +1536,22 @@ const make = Effect.gen(function* () {
             });
           }
         } else {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.message.assistant.delta",
-            commandId: yield* providerCommandId(event, "assistant-delta"),
-            threadId: thread.id,
-            messageId: assistantMessageId,
-            delta: assistantDelta,
-            ...(turnId ? { turnId } : {}),
-            createdAt: now,
-          });
+          const flushChunk = yield* appendCoalescedStreamingAssistantText(
+            assistantMessageId,
+            assistantDelta,
+            now,
+          );
+          if (flushChunk.length > 0) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.delta",
+              commandId: yield* providerCommandId(event, "assistant-delta"),
+              threadId: thread.id,
+              messageId: assistantMessageId,
+              delta: flushChunk,
+              ...(turnId ? { turnId } : {}),
+              createdAt: now,
+            });
+          }
         }
       }
 
