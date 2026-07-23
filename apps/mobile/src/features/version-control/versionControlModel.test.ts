@@ -13,6 +13,7 @@ import {
   reconcileSelectedPaths,
   selectedFileStats,
   stashIdentityKey,
+  visibleRemoteBranches,
   workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
 } from "./versionControlModel";
@@ -161,6 +162,25 @@ describe("native Version Control model", () => {
         remoteBranch,
       ),
     ).toBeNull();
+  });
+
+  it("shows a remote's branches only while that remote is expanded", () => {
+    const remote = {
+      name: "origin",
+      fetchUrl: null,
+      pushUrl: null,
+      provider: null,
+      branches: [
+        {
+          name: "main",
+          fullRefName: "origin/main",
+          isDefaultRemoteHead: true,
+        },
+      ],
+    };
+
+    expect(visibleRemoteBranches(remote, false)).toEqual([]);
+    expect(visibleRemoteBranches(remote, true)).toBe(remote.branches);
   });
 
   it("includes both rename sides once in operation paths", () => {

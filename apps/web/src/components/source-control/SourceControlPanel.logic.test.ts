@@ -9,6 +9,7 @@ import {
   branchOperationCwd,
   branchSyncState,
   completePanelFileDiffLoad,
+  drainPanelRefreshQueue,
   failPanelFileDiffLoad,
   formatRelativeDate,
   mergeChangeGroups,
@@ -266,6 +267,32 @@ describe("SourceControlPanel stash identity", () => {
 });
 
 describe("SourceControlPanel refresh stability logic", () => {
+  it("drains a queued refresh after the active refresh fails", async () => {
+    let queuedMode: "full" | "working-tree" | null = null;
+    const calls: string[] = [];
+    const errors: unknown[] = [];
+
+    await drainPanelRefreshQueue({
+      initialMode: "full",
+      clearQueuedMode: () => {
+        queuedMode = null;
+      },
+      readQueuedMode: () => queuedMode,
+      run: async (mode) => {
+        calls.push(mode);
+        if (calls.length !== 1) return;
+        queuedMode = "working-tree";
+        throw new Error("interrupted");
+      },
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
+
+    expect(calls).toEqual(["full", "working-tree"]);
+    expect(errors).toEqual([expect.objectContaining({ message: "interrupted" })]);
+  });
+
   it("fingerprints snapshots with their cwd so equal snapshots from different repos are distinct", () => {
     expect(vcsPanelSnapshotFingerprint("/repo/one", baseSnapshot)).toBe(
       vcsPanelSnapshotFingerprint("/repo/one", { ...baseSnapshot }),

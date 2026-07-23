@@ -27,6 +27,29 @@ export type { BranchSyncState, PanelChangedFile };
 
 export type AttentionKind = BranchAttentionKind;
 
+export type PanelRefreshMode = "full" | "working-tree";
+
+export async function drainPanelRefreshQueue(options: {
+  readonly initialMode: PanelRefreshMode;
+  readonly clearQueuedMode: () => void;
+  readonly readQueuedMode: () => PanelRefreshMode | null;
+  readonly run: (mode: PanelRefreshMode) => Promise<void>;
+  readonly onError: (error: unknown) => void;
+}): Promise<void> {
+  let mode = options.initialMode;
+  while (true) {
+    options.clearQueuedMode();
+    try {
+      await options.run(mode);
+    } catch (error) {
+      options.onError(error);
+    }
+    const queuedMode = options.readQueuedMode();
+    if (queuedMode === null) return;
+    mode = queuedMode;
+  }
+}
+
 export function branchIsCheckedOut(branch: VcsRef | undefined): boolean {
   return branch?.current === true || branch?.worktreePath != null;
 }

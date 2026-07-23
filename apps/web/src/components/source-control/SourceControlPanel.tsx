@@ -117,6 +117,7 @@ import {
   branchSyncCounts,
   branchSyncState,
   completePanelFileDiffLoad,
+  drainPanelRefreshQueue,
   failPanelFileDiffLoad,
   formatRelativeDate,
   mergeChangeGroups,
@@ -1861,32 +1862,37 @@ export function SourceControlPanel({
       refreshInFlightRef.current = true;
       setLoading(true);
       try {
-        do {
-          refreshQueuedModeRef.current = null;
-          setError(null);
-          const nextSnapshot = await api.vcs.panelSnapshot({ cwd, refresh: refreshMode });
-          const nextSnapshotFingerprint = vcsPanelSnapshotFingerprint(cwd, nextSnapshot);
-          if (snapshotFingerprintRef.current === nextSnapshotFingerprint) {
-            reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
-            await hydrateExpandedBranchDetails(nextSnapshot);
-            await hydrateExpandedStashDetails(nextSnapshot);
-          } else {
-            snapshotFingerprintRef.current = nextSnapshotFingerprint;
-            snapshotRef.current = nextSnapshot;
-            resetWorkingTreeFileEnrichment();
-            syncChangedPathSelection(nextSnapshot.changeGroups);
-            syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
-            setSnapshot(nextSnapshot);
-            reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
-            await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: true });
-            await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: true });
-          }
-          const queuedMode = refreshQueuedModeRef.current;
-          if (queuedMode !== null) refreshMode = queuedMode;
-        } while (refreshQueuedModeRef.current !== null);
-      } catch (nextError) {
-        if (isSourceControlPanelCommandInterrupted(nextError)) return;
-        setError(errorMessage(nextError));
+        await drainPanelRefreshQueue({
+          initialMode: refreshMode,
+          clearQueuedMode: () => {
+            refreshQueuedModeRef.current = null;
+          },
+          readQueuedMode: () => refreshQueuedModeRef.current,
+          run: async (mode) => {
+            setError(null);
+            const nextSnapshot = await api.vcs.panelSnapshot({ cwd, refresh: mode });
+            const nextSnapshotFingerprint = vcsPanelSnapshotFingerprint(cwd, nextSnapshot);
+            if (snapshotFingerprintRef.current === nextSnapshotFingerprint) {
+              reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
+              await hydrateExpandedBranchDetails(nextSnapshot);
+              await hydrateExpandedStashDetails(nextSnapshot);
+            } else {
+              snapshotFingerprintRef.current = nextSnapshotFingerprint;
+              snapshotRef.current = nextSnapshot;
+              resetWorkingTreeFileEnrichment();
+              syncChangedPathSelection(nextSnapshot.changeGroups);
+              syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
+              setSnapshot(nextSnapshot);
+              reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
+              await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: true });
+              await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: true });
+            }
+          },
+          onError: (nextError) => {
+            if (isSourceControlPanelCommandInterrupted(nextError)) return;
+            setError(errorMessage(nextError));
+          },
+        });
       } finally {
         refreshInFlightRef.current = false;
         setLoadingBranchDetails((current) => (current.size === 0 ? current : new Set()));

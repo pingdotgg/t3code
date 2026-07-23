@@ -46,6 +46,7 @@ import {
   reconcileSelectedPaths,
   selectedFileStats,
   stashIdentityKey,
+  visibleRemoteBranches,
   workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
   type VersionControlChangeSet,
@@ -1667,7 +1668,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                         />
                       </View>
                     ) : null}
-                    {remote.branches.map((remoteBranch) => {
+                    {visibleRemoteBranches(remote, remoteExpanded).map((remoteBranch) => {
                       const localBranch = localBranchForRemoteBranch(
                         snapshot,
                         remote,

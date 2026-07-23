@@ -103,6 +103,13 @@ export function localBranchForRemoteBranch(
   );
 }
 
+export function visibleRemoteBranches(
+  remote: Pick<VcsPanelRemote, "branches">,
+  expanded: boolean,
+): VcsPanelRemote["branches"] {
+  return expanded ? remote.branches : [];
+}
+
 export function operationPaths(
   files: readonly Pick<VcsPanelFileChange, "path" | "originalPath">[],
 ) {
