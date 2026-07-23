@@ -158,12 +158,16 @@ export function buildKeybindingRows(
   query: string,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
-  const rows = keybindings.map((binding, index) => {
+  const rowIdOccurrences = new Map<string, number>();
+  const rows = keybindings.map((binding) => {
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
+    const baseRowId = keybindingRowId(binding.command, key, when);
+    const rowIdOccurrence = rowIdOccurrences.get(baseRowId) ?? 0;
+    rowIdOccurrences.set(baseRowId, rowIdOccurrence + 1);
     return {
-      id: `${keybindingRowId(binding.command, key, when)}\u0000${index}`,
+      id: `${baseRowId}\u0000${rowIdOccurrence}`,
       command: binding.command,
       key,
       when,

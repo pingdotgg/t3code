@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type {
+  KeybindingCommand,
+  ResolvedKeybindingRule,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 
 import {
   buildKeybindingRows,
@@ -13,6 +17,20 @@ import {
   unknownWhenVariables,
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
+
+function resolvedKeybinding(command: KeybindingCommand, key: string): ResolvedKeybindingRule {
+  return {
+    command,
+    shortcut: {
+      key,
+      modKey: true,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+    },
+  };
+}
 
 describe("KeybindingsSettings.logic", () => {
   it("builds searchable rows with readable key and when values", () => {
@@ -197,6 +215,39 @@ describe("KeybindingsSettings.logic", () => {
     );
 
     expect(rows.map((row) => row.source)).toEqual(["Default", "Default"]);
+  });
+
+  it("keeps unaffected row ids stable when another binding is replaced and appended", () => {
+    const originalRows = buildKeybindingRows(
+      [
+        resolvedKeybinding("chat.new", "n"),
+        resolvedKeybinding("chat.newLocal", "l"),
+        resolvedKeybinding("terminal.toggle", "j"),
+      ],
+      "",
+    );
+    const refreshedRows = buildKeybindingRows(
+      [
+        resolvedKeybinding("chat.newLocal", "l"),
+        resolvedKeybinding("terminal.toggle", "j"),
+        resolvedKeybinding("chat.new", "k"),
+      ],
+      "",
+    );
+    const originalIds = new Map(originalRows.map((row) => [row.command, row.id]));
+    const refreshedIds = new Map(refreshedRows.map((row) => [row.command, row.id]));
+
+    expect(refreshedIds.get("chat.newLocal")).toBe(originalIds.get("chat.newLocal"));
+    expect(refreshedIds.get("terminal.toggle")).toBe(originalIds.get("terminal.toggle"));
+    expect(refreshedIds.get("chat.new")).not.toBe(originalIds.get("chat.new"));
+  });
+
+  it("assigns distinct row ids to exact duplicate bindings", () => {
+    const duplicate = resolvedKeybinding("terminal.toggle", "j");
+    const rows = buildKeybindingRows([duplicate, duplicate], "");
+
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2);
   });
 
   it("reports conflicting shortcuts that share an active when context", () => {
