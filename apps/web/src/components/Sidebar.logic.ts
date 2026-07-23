@@ -477,6 +477,36 @@ export function getSidebarRangeSelectionThreadKeys(
   return threads.filter((thread) => thread.archivedAt === null).map((thread) => thread.threadKey);
 }
 
+export function getFlatSidebarRenderedThreads<
+  TThread extends {
+    readonly id: string;
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly archivedAt: string | null;
+  } & ThreadSortInput,
+>(input: {
+  readonly threads: readonly TThread[];
+  readonly memberProjectRefs: readonly {
+    readonly environmentId: string;
+    readonly projectId: string;
+  }[];
+  readonly sortOrder: SidebarThreadSortOrder;
+}): TThread[] {
+  const memberProjectKeys = new Set(
+    input.memberProjectRefs.map(
+      (projectRef) => `${projectRef.environmentId}\u0000${projectRef.projectId}`,
+    ),
+  );
+  return sortThreads(
+    input.threads.filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        memberProjectKeys.has(`${thread.environmentId}\u0000${thread.projectId}`),
+    ),
+    input.sortOrder,
+  );
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);

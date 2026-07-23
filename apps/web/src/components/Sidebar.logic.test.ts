@@ -5,6 +5,7 @@ import {
   classifySidebarThreadFilterStatus,
   createThreadJumpHintVisibilityController,
   filterSidebarThreadsForActiveRoute,
+  getFlatSidebarRenderedThreads,
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -1941,6 +1942,55 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("getFlatSidebarRenderedThreads", () => {
+  it("uses only project refs represented by the flat row", () => {
+    const projectId = ProjectId.make("project-visible");
+    const threads = getFlatSidebarRenderedThreads({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-orphan"),
+          projectId: ProjectId.make("project-missing"),
+          updatedAt: "2026-03-09T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-visible"),
+          projectId,
+          updatedAt: "2026-03-09T11:00:00.000Z",
+        }),
+      ],
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId }],
+      sortOrder: "updated_at",
+    });
+
+    expect(threads.map((thread) => thread.id)).toEqual([ThreadId.make("thread-visible")]);
+  });
+
+  it("keeps normal flat rows in the configured thread order", () => {
+    const projectId = ProjectId.make("project-visible");
+    const threads = getFlatSidebarRenderedThreads({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-old"),
+          projectId,
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-new"),
+          projectId,
+          updatedAt: "2026-03-09T11:00:00.000Z",
+        }),
+      ],
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId }],
+      sortOrder: "updated_at",
+    });
+
+    expect(threads.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-new"),
+      ThreadId.make("thread-old"),
+    ]);
+  });
+});
 
 describe("getFallbackThreadIdAfterDelete", () => {
   it("returns the top remaining thread in the deleted thread's project sidebar order", () => {

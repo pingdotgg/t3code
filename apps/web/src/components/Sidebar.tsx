@@ -197,6 +197,7 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   filterSidebarThreadsForActiveRoute,
+  getFlatSidebarRenderedThreads,
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleThreadsForProject,
@@ -4051,10 +4052,15 @@ export default function Sidebar() {
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(() => {
     if (!sidebarThreadFilters.groupByProject) {
-      const sortedThreads = sortThreads(filteredSidebarThreads, sidebarThreadSortOrder);
-      return sortedThreads
-        .filter((thread) => thread.archivedAt === null)
-        .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
+      const flatProject = buildFlatSidebarProjectSnapshot(sortedProjects);
+      if (!flatProject) {
+        return [];
+      }
+      return getFlatSidebarRenderedThreads({
+        threads: filteredSidebarThreads,
+        memberProjectRefs: flatProject.memberProjectRefs,
+        sortOrder: sidebarThreadSortOrder,
+      }).map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
     }
 
     return sortedProjects.flatMap((project) => {
