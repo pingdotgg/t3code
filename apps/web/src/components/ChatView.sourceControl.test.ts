@@ -1,16 +1,24 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { DraftId } from "../composerDraftStore";
 import {
+  selectActiveRightPanelSurface,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
+import { retainThreadKeyRecord } from "./ChatView.logic";
+import {
   filterVisibleSourceControlSurfaces,
   isSourceControlAvailable,
+  resolveSourceControlPanelTarget,
   resolveVisibleSourceControlSurface,
   resolveSourceControlDraftMetadataTarget,
   runSourceControlServerMetadataUpdate,
+  selectSourceControlMetadataError,
   sourceControlMetadataErrorFromFailure,
 } from "./ChatView.sourceControl";
 
@@ -22,6 +30,10 @@ const metadata = {
   worktreePath: "/tmp/source-control",
 };
 const expectedBranch = "feature/previous-ref";
+
+beforeEach(() => {
+  useRightPanelStore.setState({ byThreadKey: {} });
+});
 
 describe("sourceControlMetadataErrorFromFailure", () => {
   it("formats structured object errors without collapsing to object text", () => {
@@ -109,6 +121,69 @@ describe("source control right panel surface visibility", () => {
         visibleSurfaces: [],
       }),
     ).toBe(null);
+  });
+
+  it("retargets an open singleton surface across grouped project drafts without leaking errors", () => {
+    const sharedDraftThreadId = ThreadId.make("grouped-draft");
+    const groupedProjectARef = scopeThreadRef(
+      EnvironmentId.make("environment-project-a"),
+      sharedDraftThreadId,
+    );
+    const groupedProjectBRef = scopeThreadRef(
+      EnvironmentId.make("environment-project-b"),
+      sharedDraftThreadId,
+    );
+    const groupedProjectACwd = "/repos/grouped-project-a";
+    const groupedProjectBCwd = "/repos/grouped-project-b";
+
+    useRightPanelStore.getState().open(groupedProjectARef, "source-control");
+    useRightPanelStore.getState().open(groupedProjectARef, "source-control");
+    useRightPanelStore.getState().open(groupedProjectBRef, "source-control");
+
+    const byThreadKey = useRightPanelStore.getState().byThreadKey;
+    const projectASurface = selectActiveRightPanelSurface(byThreadKey, groupedProjectARef);
+    const projectBSurface = selectActiveRightPanelSurface(byThreadKey, groupedProjectBRef);
+
+    expect(selectThreadRightPanelState(byThreadKey, groupedProjectARef).surfaces).toEqual([
+      sourceControlSurface,
+    ]);
+    expect(selectThreadRightPanelState(byThreadKey, groupedProjectBRef).surfaces).toEqual([
+      sourceControlSurface,
+    ]);
+    expect(
+      resolveSourceControlPanelTarget({
+        activeThreadRef: groupedProjectARef,
+        gitCwd: groupedProjectACwd,
+        surface: projectASurface,
+      }),
+    ).toEqual({
+      environmentId: groupedProjectARef.environmentId,
+      threadId: groupedProjectARef.threadId,
+      cwd: groupedProjectACwd,
+    });
+    expect(
+      resolveSourceControlPanelTarget({
+        activeThreadRef: groupedProjectBRef,
+        gitCwd: groupedProjectBCwd,
+        surface: projectBSurface,
+      }),
+    ).toEqual({
+      environmentId: groupedProjectBRef.environmentId,
+      threadId: groupedProjectBRef.threadId,
+      cwd: groupedProjectBCwd,
+    });
+
+    const projectAThreadKey = scopedThreadKey(groupedProjectARef);
+    const projectBThreadKey = scopedThreadKey(groupedProjectBRef);
+    const metadataErrors = {
+      [projectAThreadKey]: "stale project A metadata failure",
+    };
+
+    expect(selectSourceControlMetadataError(metadataErrors, projectAThreadKey)).toBe(
+      "stale project A metadata failure",
+    );
+    expect(selectSourceControlMetadataError(metadataErrors, projectBThreadKey)).toBeNull();
+    expect(retainThreadKeyRecord(metadataErrors, new Set([projectBThreadKey]))).toEqual({});
   });
 });
 

@@ -254,6 +254,7 @@ import {
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import {
+  resolveSourceControlPanelTarget,
   useSourceControlRightPanelSurfaceState,
   useSourceControlThreadMetadataRouting,
 } from "./ChatView.sourceControl";
@@ -2349,6 +2350,11 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     gitCwd,
     rightPanelSurfaces: rightPanelState.surfaces,
+  });
+  const sourceControlPanelTarget = resolveSourceControlPanelTarget({
+    activeThreadRef,
+    gitCwd,
+    surface: visibleActiveRightPanelSurface,
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
@@ -5450,13 +5456,13 @@ function ChatViewContent(props: ChatViewProps) {
         timestampFormat={timestampFormat}
         mode="embedded"
       />
-    ) : visibleActiveRightPanelSurface?.kind === "source-control" && gitCwd ? (
+    ) : sourceControlPanelTarget ? (
       <Suspense fallback={null}>
         <SourceControlPanel
-          key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${gitCwd}`}
-          environmentId={activeThreadRef.environmentId}
-          threadId={activeThreadRef.threadId}
-          cwd={gitCwd}
+          key={`${sourceControlPanelTarget.environmentId}:${sourceControlPanelTarget.threadId}:${sourceControlPanelTarget.cwd}`}
+          environmentId={sourceControlPanelTarget.environmentId}
+          threadId={sourceControlPanelTarget.threadId}
+          cwd={sourceControlPanelTarget.cwd}
           worktreePath={activeThreadWorktreePath}
           onThreadRefChange={handleSourceControlThreadRefChange}
         />

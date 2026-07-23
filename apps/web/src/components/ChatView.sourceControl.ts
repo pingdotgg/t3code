@@ -67,6 +67,12 @@ interface SourceControlRightPanelSurfaceState {
   readonly visibleRightPanelSurfaces: readonly RightPanelSurface[];
 }
 
+interface SourceControlPanelTarget {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ScopedThreadRef["threadId"];
+  readonly cwd: string;
+}
+
 interface SourceControlServerMetadataUpdateInput {
   readonly activeThreadRef: ScopedThreadRef;
   readonly expectedBranch: string | null;
@@ -147,6 +153,28 @@ export function resolveVisibleSourceControlSurface(input: {
   return input.surface?.kind === "source-control" && !input.sourceControlAvailable
     ? (input.visibleSurfaces[0] ?? null)
     : input.surface;
+}
+
+export function resolveSourceControlPanelTarget(input: {
+  readonly activeThreadRef: ScopedThreadRef | null;
+  readonly gitCwd: string | null;
+  readonly surface: RightPanelSurface | null;
+}): SourceControlPanelTarget | null {
+  if (input.surface?.kind !== "source-control" || !input.activeThreadRef || !input.gitCwd) {
+    return null;
+  }
+  return {
+    environmentId: input.activeThreadRef.environmentId,
+    threadId: input.activeThreadRef.threadId,
+    cwd: input.gitCwd,
+  };
+}
+
+export function selectSourceControlMetadataError(
+  metadataErrorsByThreadKey: Readonly<Record<string, string | null>>,
+  activeThreadKey: string | null,
+): string | null {
+  return activeThreadKey === null ? null : (metadataErrorsByThreadKey[activeThreadKey] ?? null);
 }
 
 export async function runSourceControlServerMetadataUpdate(
@@ -256,8 +284,10 @@ export function useSourceControlThreadMetadataRouting(
   const [metadataErrorsByThreadKey, setMetadataErrorsByThreadKey] = useState<
     Record<string, string | null>
   >({});
-  const sourceControlMetadataError =
-    activeThreadKey === null ? null : (metadataErrorsByThreadKey[activeThreadKey] ?? null);
+  const sourceControlMetadataError = selectSourceControlMetadataError(
+    metadataErrorsByThreadKey,
+    activeThreadKey,
+  );
   const activeThreadEnvironmentId = activeThreadRef?.environmentId ?? null;
   const activeThreadId = activeThreadRef?.threadId ?? null;
   const activeThreadMetadataRef = useMemo<ScopedThreadRef | null>(() => {
