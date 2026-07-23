@@ -880,6 +880,7 @@ describe("OrchestrationEngine", () => {
     const finishedThreadIds: ThreadId[] = [];
     let nextSequence = 1;
     let restoreOnUnarchive = false;
+    let failNextFinish = false;
 
     const flakyStore: OrchestrationEventStoreShape = {
       append(event) {
@@ -911,8 +912,14 @@ describe("OrchestrationEngine", () => {
           rolledBackThreadIds.push(threadId);
         }),
       finishRestoreTree: (threadId) =>
-        Effect.sync(() => {
-          finishedThreadIds.push(threadId);
+        Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            finishedThreadIds.push(threadId);
+          });
+          if (failNextFinish) {
+            failNextFinish = false;
+            return yield* Effect.die("finish restore failed");
+          }
         }),
       deleteThread: () => Effect.void,
       removeProviderLogs: () => Effect.void,
@@ -996,6 +1003,22 @@ describe("OrchestrationEngine", () => {
       expect(unarchiveFailure.message).toContain("unarchive append failed");
       expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
       expect(finishedThreadIds).toEqual([]);
+
+      failNextFinish = true;
+      const acceptedCommand = {
+        type: "thread.unarchive",
+        commandId: CommandId.make("cmd-cold-unarchive-accepted"),
+        threadId: ThreadId.make("thread-cold-rollback"),
+      } as const;
+      const acceptedResult = yield* engine.dispatch(acceptedCommand);
+      const retriedResult = yield* engine.dispatch(acceptedCommand);
+
+      expect(retriedResult).toEqual(acceptedResult);
+      expect(finishedThreadIds).toEqual([
+        ThreadId.make("thread-cold-rollback"),
+        ThreadId.make("thread-cold-rollback"),
+      ]);
+      expect(events.filter((event) => event.type === "thread.unarchived")).toHaveLength(1);
     }).pipe(Effect.provide(testLayer));
   });
 

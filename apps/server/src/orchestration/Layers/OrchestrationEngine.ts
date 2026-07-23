@@ -92,6 +92,18 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
+  const finishRestoredUnarchiveTree = (threadId: ThreadId) =>
+    Option.isSome(threadColdStorage)
+      ? threadColdStorage.value.finishRestoreTree(threadId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to finalize restored archive bundle", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        )
+      : Effect.void;
+
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
     events: ReadonlyArray<OrchestrationEvent>,
@@ -139,11 +151,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           "orchestration.aggregate_id": aggregateRef.aggregateId,
         });
 
+        const unarchiveThreadId =
+          envelope.command.type === "thread.unarchive" ? envelope.command.threadId : null;
         const existingReceipt = yield* commandReceiptRepository.getByCommandId({
           commandId: envelope.command.commandId,
         });
         if (Option.isSome(existingReceipt)) {
           if (existingReceipt.value.status === "accepted") {
+            if (
+              unarchiveThreadId !== null &&
+              existingReceipt.value.aggregateKind === "thread" &&
+              existingReceipt.value.aggregateId === unarchiveThreadId
+            ) {
+              yield* finishRestoredUnarchiveTree(unarchiveThreadId);
+            }
             return {
               sequence: existingReceipt.value.resultSequence,
             };
@@ -154,8 +175,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
-        const unarchiveThreadId =
-          envelope.command.type === "thread.unarchive" ? envelope.command.threadId : null;
         if (unarchiveThreadId !== null && Option.isSome(threadColdStorage)) {
           const restored = yield* threadColdStorage.value.restoreTree(unarchiveThreadId).pipe(
             Effect.mapError(
@@ -242,15 +261,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
         restoredUnarchiveCommitted = restoredUnarchiveThreadId !== null;
         commandReadModel = committedCommand.nextCommandReadModel;
-        if (restoredUnarchiveThreadId !== null && Option.isSome(threadColdStorage)) {
-          yield* threadColdStorage.value.finishRestoreTree(restoredUnarchiveThreadId).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("failed to finalize restored archive bundle", {
-                threadId: restoredUnarchiveThreadId,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-          );
+        if (restoredUnarchiveThreadId !== null) {
+          yield* finishRestoredUnarchiveTree(restoredUnarchiveThreadId);
         }
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
