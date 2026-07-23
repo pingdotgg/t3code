@@ -87,6 +87,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./t3ProjectFile": {
+      "types": "./src/t3ProjectFile.ts",
+      "import": "./src/t3ProjectFile.ts"
+    },
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
