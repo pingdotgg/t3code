@@ -1,5 +1,5 @@
 import * as NetService from "@t3tools/shared/Net";
-import { isLoopbackHost } from "@t3tools/shared/networkHost";
+import { isLoopbackAddress } from "@t3tools/shared/networkHost";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
@@ -29,10 +29,19 @@ export class MissingDevAuthKeyError extends Schema.TaggedErrorClass<MissingDevAu
 
 export class NonLoopbackDevAuthHostError extends Schema.TaggedErrorClass<NonLoopbackDevAuthHostError>()(
   "NonLoopbackDevAuthHostError",
-  { host: Schema.String },
+  { host: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
-    return `T3CODE_DEV_AUTH is only available on loopback hosts; received ${this.host}.`;
+    return `T3CODE_DEV_AUTH requires an explicit loopback address; received ${this.host ?? "an omitted host"}.`;
+  }
+}
+
+export class TailscaleServeDevAuthError extends Schema.TaggedErrorClass<TailscaleServeDevAuthError>()(
+  "TailscaleServeDevAuthError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_DEV_AUTH cannot be enabled with Tailscale Serve.";
   }
 }
 
@@ -363,8 +372,11 @@ export const resolveServerConfig = (
     if (env.devAuthEnabled && !devAuthKey) {
       return yield* new MissingDevAuthKeyError();
     }
-    if (devAuthKey && !isLoopbackHost(host)) {
-      return yield* new NonLoopbackDevAuthHostError({ host: host ?? "unknown" });
+    if (devAuthKey && !isLoopbackAddress(host)) {
+      return yield* new NonLoopbackDevAuthHostError(host === undefined ? {} : { host });
+    }
+    if (devAuthKey && tailscaleServeEnabled) {
+      return yield* new TailscaleServeDevAuthError();
     }
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 

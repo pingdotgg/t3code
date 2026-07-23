@@ -1,5 +1,5 @@
 import type { DiscoveredLocalServer } from "@t3tools/contracts";
-import { isLoopbackHost } from "@t3tools/shared/preview";
+import { isPreviewLocalHost } from "@t3tools/shared/preview";
 import { useMemo } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -124,7 +124,7 @@ function parseLocalUrl(raw: string): { host: string; port: number; url: string }
   try {
     const parsed = new URL(raw);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    if (!isLoopbackHost(parsed.hostname)) return null;
+    if (!isPreviewLocalHost(parsed.hostname)) return null;
     const port = parsed.port
       ? Number.parseInt(parsed.port, 10)
       : parsed.protocol === "http:"

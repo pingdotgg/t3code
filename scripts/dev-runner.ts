@@ -8,7 +8,6 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { isLoopbackHost } from "@t3tools/shared/networkHost";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -29,7 +28,7 @@ const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
-const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
+const DEV_LOOPBACK_HOST = "127.0.0.1";
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
@@ -295,13 +294,14 @@ export function createDevRunnerEnv({
     const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
     const worktreeRoot = path.resolve(NodeURL.fileURLToPath(new URL("..", import.meta.url)));
     const isDesktopMode = mode === "dev:desktop";
+    const serverHost = mode === "dev" || mode === "dev:server" ? (host ?? DEV_LOOPBACK_HOST) : host;
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
       PORT: String(webPort),
       VITE_DEV_SERVER_URL:
         devUrl?.toString() ??
-        `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
+        `http://${isDesktopMode ? DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
     };
 
     if (configuredBaseDir !== undefined) {
@@ -316,14 +316,15 @@ export function createDevRunnerEnv({
       output.VITE_WS_URL = `ws://localhost:${serverPort}`;
     } else {
       output.T3CODE_PORT = String(serverPort);
-      output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
-      output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
+      output.VITE_HTTP_URL = `http://${DEV_LOOPBACK_HOST}:${serverPort}`;
+      output.VITE_WS_URL = `ws://${DEV_LOOPBACK_HOST}:${serverPort}`;
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
       delete output.T3CODE_HOST;
     }
 
-    const devAuthEnabled = (mode === "dev" || mode === "dev:server") && isLoopbackHost(host);
+    const devAuthEnabled =
+      (mode === "dev" || mode === "dev:server") && serverHost === DEV_LOOPBACK_HOST;
     if (devAuthEnabled) {
       output.T3CODE_DEV_AUTH = "1";
       output.T3CODE_DEV_AUTH_KEY = deriveDevAuthKey(worktreeRoot);
@@ -332,8 +333,8 @@ export function createDevRunnerEnv({
       delete output.T3CODE_DEV_AUTH_KEY;
     }
 
-    if (!isDesktopMode && host !== undefined) {
-      output.T3CODE_HOST = host;
+    if (!isDesktopMode && serverHost !== undefined) {
+      output.T3CODE_HOST = serverHost;
     }
 
     if (!isDesktopMode) {
@@ -363,7 +364,7 @@ export function createDevRunnerEnv({
     }
 
     if (isDesktopMode) {
-      output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
+      output.HOST = DEV_LOOPBACK_HOST;
       delete output.T3CODE_DESKTOP_WS_URL;
     }
 
@@ -597,12 +598,9 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       }
       yield* Effect.logInfo(`[dev-runner] reusable iOS pairing URL: ${urls.ios}`);
       yield* Effect.logInfo(`[dev-runner] reusable Android pairing URL: ${urls.android}`);
-    } else if (
-      (input.mode === "dev" || input.mode === "dev:server") &&
-      !isLoopbackHost(input.host)
-    ) {
+    } else if (input.mode === "dev" || input.mode === "dev:server") {
       yield* Effect.logInfo(
-        `[dev-runner] reusable dev authentication disabled for non-loopback host ${input.host}; use a regular pairing credential`,
+        `[dev-runner] reusable dev authentication disabled for host ${input.host ?? "unknown"}; use --host ${DEV_LOOPBACK_HOST} or a regular pairing credential`,
       );
     }
 

@@ -217,7 +217,9 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
         "access:write",
         "relay:write",
       ]);
+      expect(second.method).toBe("desktop-bootstrap");
       expect(second.subject).toBe("development-bootstrap");
+      expect(second.scopes).toEqual(first.scopes);
     }).pipe(
       Effect.provide(
         Layer.merge(

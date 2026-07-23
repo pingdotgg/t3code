@@ -3,7 +3,7 @@ import type {
   EnvironmentId,
   PreviewUrlResolution,
 } from "@t3tools/contracts";
-import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
+import { isPreviewLocalHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 
 import { readPreparedConnection } from "~/state/session";
 
@@ -101,7 +101,7 @@ export function resolveBrowserNavigationTarget(
       // Preserve the existing direct-navigation behavior so the preview host
       // reports malformed URL errors through its normal navigation path.
     }
-    if (parsed && isLoopbackHost(parsed.hostname)) {
+    if (parsed && isPreviewLocalHost(parsed.hostname)) {
       const environmentUrl = readEnvironmentUrl(environmentId);
       if (parsed.hostname === "0.0.0.0" || !isLocalLoopbackHost(environmentUrl.hostname)) {
         return resolveEnvironmentPortTarget(

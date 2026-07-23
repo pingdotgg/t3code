@@ -695,11 +695,60 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-dev-auth-lan-" });
+      for (const host of [undefined, "0.0.0.0", "127.attacker.example"]) {
+        const error = yield* resolveServerConfig(
+          {
+            mode: Option.some("web"),
+            port: Option.some(13_773),
+            host: Option.fromUndefinedOr(host),
+            baseDir: Option.some(baseDir),
+            cwd: Option.none(),
+            devUrl: Option.none(),
+            noBrowser: Option.some(true),
+            bootstrapFd: Option.none(),
+            autoBootstrapProjectFromCwd: Option.none(),
+            logWebSocketEvents: Option.none(),
+            tailscaleServeEnabled: Option.none(),
+            tailscaleServePort: Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    T3CODE_DEV_AUTH: "true",
+                    T3CODE_DEV_AUTH_KEY: "development-auth-key",
+                  },
+                }),
+              ),
+              NetService.layer,
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(error._tag).toBe("NonLoopbackDevAuthHostError");
+        if (error._tag === "NonLoopbackDevAuthHostError") {
+          expect(error.host).toBe(host);
+          expect(error.message).toContain("requires an explicit loopback address");
+        }
+      }
+    }),
+  );
+
+  it.effect("rejects reusable development credentials with Tailscale Serve", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-dev-auth-tailscale-",
+      });
       const error = yield* resolveServerConfig(
         {
           mode: Option.some("web"),
           port: Option.some(13_773),
-          host: Option.some("0.0.0.0"),
+          host: Option.some("127.0.0.1"),
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.none(),
@@ -707,7 +756,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
-          tailscaleServeEnabled: Option.none(),
+          tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.none(),
         },
         Option.none(),
@@ -728,11 +777,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         Effect.flip,
       );
 
-      expect(error._tag).toBe("NonLoopbackDevAuthHostError");
-      if (error._tag === "NonLoopbackDevAuthHostError") {
-        expect(error.host).toBe("0.0.0.0");
-        expect(error.message).toContain("only available on loopback hosts");
-      }
+      expect(error._tag).toBe("TailscaleServeDevAuthError");
+      expect(error.message).toContain("cannot be enabled with Tailscale Serve");
     }),
   );
 });

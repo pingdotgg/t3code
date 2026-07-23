@@ -182,8 +182,36 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(env.T3CODE_HOME, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, "1");
+        assert.equal(env.T3CODE_HOST, "127.0.0.1");
         assert.equal(env.T3CODE_DEV_AUTH, "1");
         assert.match(env.T3CODE_DEV_AUTH_KEY ?? "", /^[a-f0-9]{64}$/);
+      }),
+    );
+
+    it.effect("only provisions reusable auth on the Android-compatible loopback bind", () =>
+      Effect.gen(function* () {
+        for (const host of ["127.0.0.2", "::1", "127.attacker.example"]) {
+          const env = yield* createDevRunnerEnv({
+            mode: "dev:server",
+            baseEnv: {
+              T3CODE_DEV_AUTH: "1",
+              T3CODE_DEV_AUTH_KEY: "inherited-key",
+            },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: undefined,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.T3CODE_HOST, host);
+          assert.equal(env.T3CODE_DEV_AUTH, undefined);
+          assert.equal(env.T3CODE_DEV_AUTH_KEY, undefined);
+        }
       }),
     );
 

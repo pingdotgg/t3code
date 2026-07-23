@@ -16,7 +16,8 @@ export class EnvironmentAuthPolicy extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const isRemoteReachable = isWildcardHost(config.host) || !isLoopbackHost(config.host);
+  const effectiveHost = config.host ?? "127.0.0.1";
+  const isRemoteReachable = isWildcardHost(effectiveHost) || !isLoopbackHost(effectiveHost);
 
   const policy =
     config.mode === "desktop"
