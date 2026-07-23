@@ -343,10 +343,7 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const title =
-      group.projects.length > 1
-        ? deriveProjectGroupLabel({ representative, members: group.projects })
-        : representative.title;
+    const title = deriveProjectGroupLabel({ representative, members: group.projects });
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||

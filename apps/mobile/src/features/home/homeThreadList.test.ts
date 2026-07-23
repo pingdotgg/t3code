@@ -390,13 +390,25 @@ describe("buildHomeThreadGroups", () => {
       },
     });
 
-    expect(
-      buildHomeProjectScopes({
-        projects: [project],
-        environmentId: null,
-        projectGroupingMode: "repository",
-      })[0]?.title,
-    ).toBe("codething-mvp");
+    const scopes = buildHomeProjectScopes({
+      projects: [project],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    const groups = buildGroups(
+      [project],
+      [
+        makeThread({
+          environmentId: project.environmentId,
+          id: ThreadId.make("thread-1"),
+          projectId: project.id,
+          title: "Thread",
+        }),
+      ],
+    );
+
+    expect(scopes[0]?.title).toBe("codething-mvp");
+    expect(groups[0]?.title).toBe("codething-mvp");
   });
 
   it("sorts the newest thread first regardless of snapshot order", () => {
