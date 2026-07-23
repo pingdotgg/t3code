@@ -7,7 +7,6 @@ export const T3CODE_CUA_DRIVER_PATH_ENV = "T3CODE_CUA_DRIVER_PATH";
 export const T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV = "T3CODE_CUA_DRIVER_HOST_BUNDLE_ID";
 export const T3CODE_CUA_DRIVER_MODULE_URL_ENV = "T3CODE_CUA_DRIVER_MODULE_URL";
 export const T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV = "T3CODE_CODEX_APPEND_LAUNCH_ARGS";
-export const T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV = "T3CODE_CODEX_APPEND_THREAD_CONFIG";
 
 export class CuaDriverStartError extends Schema.TaggedErrorClass<CuaDriverStartError>()(
   "CuaDriverStartError",
@@ -22,39 +21,6 @@ export class CuaDriverStartError extends Schema.TaggedErrorClass<CuaDriverStartE
 }
 
 const tomlString = (value: string): string => JSON.stringify(value);
-
-const recordOrEmpty = (value: unknown): Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : {};
-
-export const buildCodexThreadConfig = (
-  connection: Pick<EmbeddedDriverConnection, "mcp">,
-  previousConfig?: string,
-): string => {
-  let existing: Readonly<Record<string, unknown>> = {};
-  if (previousConfig?.trim()) {
-    try {
-      existing = recordOrEmpty(JSON.parse(previousConfig));
-    } catch {
-      existing = {};
-    }
-  }
-  const existingMcpServers = recordOrEmpty(existing.mcp_servers);
-  return JSON.stringify({
-    ...existing,
-    mcp_servers: {
-      ...existingMcpServers,
-      "cua-driver": {
-        command: connection.mcp.command,
-        args: connection.mcp.args,
-        env: Object.fromEntries(
-          connection.mcp.environment.map(({ name, value }) => [name, value] as const),
-        ),
-      },
-    },
-  });
-};
 
 export const buildCodexLaunchArgs = (connection: Pick<EmbeddedDriverConnection, "mcp">): string => {
   const proxyArgs = connection.mcp.args.map(tomlString).join(",");
@@ -135,14 +101,10 @@ export const startEmbeddedCuaDriver = Effect.fn("server.startEmbeddedCuaDriver")
   });
 
   const previousAppendArgs = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-  const previousThreadConfig = process.env[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV];
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       if (previousAppendArgs === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
       else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = previousAppendArgs;
-      if (previousThreadConfig === undefined)
-        delete process.env[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV];
-      else process.env[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV] = previousThreadConfig;
     }),
   );
   process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = [
@@ -151,11 +113,6 @@ export const startEmbeddedCuaDriver = Effect.fn("server.startEmbeddedCuaDriver")
   ]
     .filter((value) => value.length > 0)
     .join(" ");
-  process.env[T3CODE_CODEX_APPEND_THREAD_CONFIG_ENV] = buildCodexThreadConfig(
-    connection,
-    previousThreadConfig,
-  );
-
   yield* monitorEmbeddedCuaDriverExit(
     () => driver.waitForExit(connection.generation),
     restartServerAfterCuaDriverExit,
