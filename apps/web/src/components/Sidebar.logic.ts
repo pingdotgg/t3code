@@ -347,6 +347,9 @@ export function matchesSidebarThreadFilters(input: {
   if (filters.recentOnly) {
     const recentTimestampMs = latestValidTimestampMs(
       thread.latestUserMessageAt,
+      thread.latestTurn?.requestedAt ?? null,
+      thread.latestTurn?.startedAt ?? null,
+      thread.latestTurn?.completedAt ?? null,
       thread.updatedAt,
       thread.createdAt,
     );

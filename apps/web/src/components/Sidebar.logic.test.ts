@@ -347,6 +347,69 @@ describe("sidebar thread filters", () => {
     ).toBe(true);
   });
 
+  it("counts activity recorded only on the latest turn as recent", () => {
+    const filters = {
+      ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+      recentOnly: true,
+    };
+    const nowMs = Date.parse("2026-03-10T10:00:00.000Z");
+    const recentTimestamp = "2026-03-10T09:00:00.000Z";
+    const olderTurn = {
+      ...makeLatestTurn({
+        completedAt: "2026-03-01T10:05:00.000Z",
+        startedAt: "2026-03-01T10:00:00.000Z",
+      }),
+      requestedAt: "2026-03-01T09:59:00.000Z",
+    };
+    const olderThread = {
+      ...filterableThread,
+      latestUserMessageAt: null,
+      updatedAt: "2026-03-01T10:00:00.000Z",
+      createdAt: "2026-03-01T09:00:00.000Z",
+    };
+
+    for (const latestTurn of [
+      { ...olderTurn, requestedAt: recentTimestamp },
+      { ...olderTurn, startedAt: recentTimestamp },
+      { ...olderTurn, completedAt: recentTimestamp },
+    ]) {
+      expect(
+        matchesSidebarThreadFilters({
+          thread: { ...olderThread, latestTurn },
+          providerDriverKind: ProviderDriverKind.make("codex"),
+          filters,
+          nowMs,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("ignores malformed and older latest-turn timestamps for recent filtering", () => {
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: null,
+          latestTurn: {
+            ...makeLatestTurn({
+              completedAt: "not-a-date",
+              startedAt: "2026-03-01T10:00:00.000Z",
+            }),
+            requestedAt: "not-a-date",
+          },
+          updatedAt: "2026-03-01T10:00:00.000Z",
+          createdAt: "2026-03-01T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          recentOnly: true,
+        },
+        nowMs: Date.parse("2026-03-10T10:00:00.000Z"),
+      }),
+    ).toBe(false);
+  });
+
   it("recognizes the default filter state and meaningful deviations", () => {
     expect(hasActiveSidebarThreadFilters(DEFAULT_SIDEBAR_THREAD_FILTERS)).toBe(false);
     expect(hasNarrowingSidebarThreadFilters(DEFAULT_SIDEBAR_THREAD_FILTERS)).toBe(false);
