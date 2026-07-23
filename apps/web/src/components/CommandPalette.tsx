@@ -108,7 +108,6 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   NEW_THREAD_PROJECT_VIEW_GROUP,
-  prioritizeCommandPaletteItem,
   RECENT_THREAD_LIMIT,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
@@ -867,71 +866,51 @@ function OpenCommandPaletteDialog(props: {
     [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
   );
 
-  const preferredNewThreadItemValue = useMemo(() => {
-    if (newThreadPreferredProjectRef === null) return null;
-
-    const preferredEntry = newThreadProjectPickerEntries.find(({ group }) =>
-      group.memberProjectRefs.some(
-        (projectRef) =>
-          projectRef.environmentId === newThreadPreferredProjectRef.environmentId &&
-          projectRef.projectId === newThreadPreferredProjectRef.projectId,
-      ),
-    );
-    return preferredEntry
-      ? `new-thread-in:${preferredEntry.targetProject.environmentId}:${preferredEntry.targetProject.id}`
-      : null;
-  }, [newThreadPreferredProjectRef, newThreadProjectPickerEntries]);
-
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
-        prioritizeCommandPaletteItem(
-          buildProjectActionItems({
-            projects: newThreadPickerProjects,
-            valuePrefix: "new-thread-in",
-            searchTerms: (project) => {
-              const group = newThreadProjectGroupByTargetKey.get(
-                `${project.environmentId}:${project.id}`,
+        buildProjectActionItems({
+          projects: newThreadPickerProjects,
+          valuePrefix: "new-thread-in",
+          searchTerms: (project) => {
+            const group = newThreadProjectGroupByTargetKey.get(
+              `${project.environmentId}:${project.id}`,
+            );
+            return (
+              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+            );
+          },
+          icon: (project) => (
+            <ProjectFavicon
+              environmentId={project.environmentId}
+              cwd={project.workspaceRoot}
+              className={ITEM_ICON_CLASS}
+            />
+          ),
+          runProject: async (project) => {
+            const group = newThreadProjectGroupByTargetKey.get(
+              `${project.environmentId}:${project.id}`,
+            );
+            const preferredRefBelongsToGroup =
+              effectiveNewThreadProjectRef !== null &&
+              group?.memberProjectRefs.some(
+                (projectRef) =>
+                  projectRef.environmentId === effectiveNewThreadProjectRef.environmentId &&
+                  projectRef.projectId === effectiveNewThreadProjectRef.projectId,
               );
-              return (
-                group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-                []
-              );
-            },
-            icon: (project) => (
-              <ProjectFavicon
-                environmentId={project.environmentId}
-                cwd={project.workspaceRoot}
-                className={ITEM_ICON_CLASS}
-              />
-            ),
-            runProject: async (project) => {
-              const group = newThreadProjectGroupByTargetKey.get(
-                `${project.environmentId}:${project.id}`,
-              );
-              const preferredRefBelongsToGroup =
-                effectiveNewThreadProjectRef !== null &&
-                group?.memberProjectRefs.some(
-                  (projectRef) =>
-                    projectRef.environmentId === effectiveNewThreadProjectRef.environmentId &&
-                    projectRef.projectId === effectiveNewThreadProjectRef.projectId,
-                );
-              await handleNewThread(
-                preferredRefBelongsToGroup
-                  ? effectiveNewThreadProjectRef
-                  : scopeProjectRef(project.environmentId, project.id),
-              );
-            },
-          }),
-          preferredNewThreadItemValue,
-        ),
+            await handleNewThread(
+              preferredRefBelongsToGroup
+                ? effectiveNewThreadProjectRef
+                : scopeProjectRef(project.environmentId, project.id),
+            );
+          },
+        }),
       ),
     [
       effectiveNewThreadProjectRef,
       handleNewThread,
       newThreadPickerProjects,
       newThreadProjectGroupByTargetKey,
-      preferredNewThreadItemValue,
     ],
   );
 

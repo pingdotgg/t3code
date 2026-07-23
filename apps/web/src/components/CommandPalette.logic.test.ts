@@ -6,7 +6,6 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
-  prioritizeCommandPaletteItem,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -44,19 +43,6 @@ const makeActionItem = (value: string) => ({
   title: value,
   icon: null,
   run: async () => undefined,
-});
-
-describe("prioritizeCommandPaletteItem", () => {
-  it("moves the preferred item to the front without disturbing the remaining order", () => {
-    const items = [makeActionItem("first"), makeActionItem("second"), makeActionItem("third")];
-
-    expect(prioritizeCommandPaletteItem(items, "third").map((item) => item.value)).toEqual([
-      "third",
-      "first",
-      "second",
-    ]);
-    expect(prioritizeCommandPaletteItem(items, "missing")).toEqual(items);
-  });
 });
 
 describe("buildNewThreadPickerGroups", () => {

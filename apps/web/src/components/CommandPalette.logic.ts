@@ -69,20 +69,6 @@ export function enumerateCommandPaletteItems(
   });
 }
 
-export function prioritizeCommandPaletteItem(
-  items: ReadonlyArray<CommandPaletteActionItem>,
-  preferredValue: string | null,
-): CommandPaletteActionItem[] {
-  if (preferredValue === null) return [...items];
-
-  const preferredIndex = items.findIndex((item) => item.value === preferredValue);
-  if (preferredIndex <= 0) return [...items];
-
-  const preferredItem = items[preferredIndex];
-  if (preferredItem === undefined) return [...items];
-  return [preferredItem, ...items.slice(0, preferredIndex), ...items.slice(preferredIndex + 1)];
-}
-
 export function buildNewThreadPickerGroups(input: {
   projectItems: ReadonlyArray<CommandPaletteActionItem>;
   addProjectItem: CommandPaletteActionItem;

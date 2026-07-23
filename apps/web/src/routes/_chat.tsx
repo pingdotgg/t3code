@@ -11,7 +11,11 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import {
+  buildSidebarProjectSnapshots,
+  resolveScopedNewThreadProjectRef,
+} from "../sidebarProjectGrouping";
+import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
@@ -42,15 +46,23 @@ function ChatRouteGlobalShortcuts() {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupCount = useMemo(
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
         projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
-      }).length,
+      }),
     [primaryEnvironmentId, projectGroupingSettings, projects],
+  );
+  const projectScopeKey = useSidebarProjectScopeStore((state) => state.projectScopeKey);
+  const scopedProjectGroup = useMemo(
+    () =>
+      projectScopeKey === null
+        ? null
+        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [projectGroups, projectScopeKey],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -108,17 +120,20 @@ function ChatRouteGlobalShortcuts() {
         // keep the immediate contextual create.
         const behavior = resolveChatNewShortcutBehavior({
           sidebarV2Enabled,
-          projectCount: projectGroupCount,
+          projectCount: projectGroups.length,
           commandPaletteOpen,
         });
         if (behavior === "open-project-picker") {
           openCommandPalette({
             open: "new-thread-in",
-            preferredProjectRef: resolveThreadActionProjectRef({
-              activeDraftThread,
-              activeThread: activeThread ?? undefined,
-              defaultProjectRef,
-              handleNewThread,
+            preferredProjectRef: resolveScopedNewThreadProjectRef({
+              scopedProjectGroup,
+              contextualProjectRef: resolveThreadActionProjectRef({
+                activeDraftThread,
+                activeThread: activeThread ?? undefined,
+                defaultProjectRef,
+                handleNewThread,
+              }),
             }),
           });
           return;
@@ -191,7 +206,8 @@ function ChatRouteGlobalShortcuts() {
     keybindings,
     defaultProjectRef,
     previewOpen,
-    projectGroupCount,
+    projectGroups.length,
+    scopedProjectGroup,
     routeThreadRef,
     selectedThreadKeysSize,
     sidebarV2Enabled,
