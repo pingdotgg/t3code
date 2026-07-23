@@ -165,16 +165,14 @@ function DocumentTitleSync() {
   });
 
   useEffect(() => {
-    const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-    let frame = 0;
-    const updateTitle = () => {
-      document.title = isActive ? `${frames[frame++ % frames.length]} ${title}` : title;
-    };
-
-    updateTitle();
+    document.title = title;
     if (!isActive) return;
 
-    const timer = window.setInterval(updateTitle, 500);
+    const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+    let frame = 0;
+    const timer = window.setInterval(() => {
+      document.title = `${frames[frame++ % frames.length]} ${title}`;
+    }, 500);
     return () => {
       window.clearInterval(timer);
       document.title = title;
