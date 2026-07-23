@@ -14,6 +14,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CopyIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -23,6 +24,7 @@ import {
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
+  Trash2Icon,
   Undo2Icon,
 } from "lucide-react";
 import {
@@ -136,17 +138,6 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
-
-function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
-  switch (mode) {
-    case "repository":
-      return "Projects from the same repository share one sidebar row.";
-    case "repository_path":
-      return "Projects group only when both the repository and repo-relative path match.";
-    case "separate":
-      return "This project always appears as its own sidebar entry.";
-  }
-}
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -792,18 +783,10 @@ export default function SidebarV2() {
       );
     },
   });
-  const [projectRenameTarget, setProjectRenameTarget] = useState<SidebarProjectGroupMember | null>(
-    null,
-  );
-  const [projectRenameTitle, setProjectRenameTitle] = useState("");
   const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
     null,
   );
-  const [projectGroupingTarget, setProjectGroupingTarget] =
-    useState<SidebarProjectGroupMember | null>(null);
-  const [projectGroupingSelection, setProjectGroupingSelection] = useState<
-    SidebarProjectGroupingMode | "inherit"
-  >("inherit");
+  const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -1069,67 +1052,52 @@ export default function SidebarV2() {
     [deleteProject, router, threads],
   );
 
-  const closeProjectRenameDialog = useCallback(() => {
-    setProjectRenameTarget(null);
-    setProjectRenameTitle("");
-  }, []);
-  const submitProjectRename = useCallback(async () => {
-    if (!projectRenameTarget) return;
-    const title = projectRenameTitle.trim();
-    if (!title) {
-      toastManager.add({ type: "warning", title: "Project title cannot be empty" });
-      return;
-    }
-    if (title === projectRenameTarget.title) {
-      closeProjectRenameDialog();
-      return;
-    }
-    const result = await updateProject({
-      environmentId: projectRenameTarget.environmentId,
-      input: { projectId: projectRenameTarget.id, title },
-    });
-    if (result._tag === "Success") {
-      closeProjectRenameDialog();
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to rename project",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
-  }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle, updateProject]);
+  const renameProjectMember = useCallback(
+    async (member: SidebarProjectGroupMember, nextTitle: string) => {
+      const title = nextTitle.trim();
+      if (!title) {
+        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+        return;
+      }
+      if (title === member.title) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, title },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
 
-  const closeProjectGroupingDialog = useCallback(() => {
-    setProjectGroupingTarget(null);
-    setProjectGroupingSelection("inherit");
-  }, []);
-  const saveProjectGroupingPreference = useCallback(() => {
-    if (!projectGroupingTarget) return;
-    const overrideKey = deriveProjectGroupingOverrideKey(projectGroupingTarget);
-    const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
-    if (projectGroupingSelection === "inherit") {
-      delete nextOverrides[overrideKey];
-    } else {
-      nextOverrides[overrideKey] = projectGroupingSelection;
-    }
-    updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
-    closeProjectGroupingDialog();
-  }, [
-    closeProjectGroupingDialog,
-    projectGroupingSelection,
-    projectGroupingSettings.sidebarProjectGroupingOverrides,
-    projectGroupingTarget,
-    updateSettings,
-  ]);
+  const updateProjectGroupingPreference = useCallback(
+    (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
+      const overrideKey = deriveProjectGroupingOverrideKey(member);
+      const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
+      if (selection === "inherit") {
+        delete nextOverrides[overrideKey];
+      } else {
+        nextOverrides[overrideKey] = selection;
+      }
+      updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+    },
+    [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
+  );
 
   const handleProjectActions = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
-      setProjectActionsTarget(projectGroup);
+      setProjectScopeMenuOpen(false);
+      window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
     },
     [],
   );
@@ -1774,7 +1742,7 @@ export default function SidebarV2() {
         {projectGroups.length > 0 ? (
           <SidebarGroup className="px-2 pb-2 pt-0">
             <div className="flex items-center gap-1">
-              <Menu>
+              <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                 <MenuTrigger
                   aria-label="Filter threads by project"
                   className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
@@ -1998,98 +1966,154 @@ export default function SidebarV2() {
           if (!open) setProjectActionsTarget(null);
         }}
       >
-        <DialogPopup className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Manage {projectActionsTarget?.displayName ?? "project"}</DialogTitle>
+        <DialogPopup className="max-w-xl">
+          <DialogHeader className="gap-1.5">
+            <DialogTitle className="text-balance">Project settings</DialogTitle>
             <DialogDescription>
               {projectActionsTarget && projectActionsTarget.memberProjects.length > 1
-                ? "Manage each environment's project entry independently."
-                : "Rename, regroup, copy, or remove this project entry."}
+                ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
+                : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
-            {projectActionsTarget?.memberProjects.map((member) => (
-              <div
-                key={member.physicalProjectKey}
-                className="rounded-lg border border-border/70 bg-muted/20 p-3"
-              >
-                <div className="flex min-w-0 items-start gap-2">
-                  <ProjectFavicon
-                    environmentId={member.environmentId}
-                    cwd={member.workspaceRoot}
-                    className="mt-0.5 size-4 shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {member.title}
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {member.environmentLabel
-                        ? `${member.environmentLabel} · ${member.workspaceRoot}`
-                        : member.workspaceRoot}
+          <DialogPanel className="p-0">
+            <div className="divide-y divide-border/60">
+              {projectActionsTarget?.memberProjects.map((member) => (
+                <section
+                  key={member.physicalProjectKey}
+                  className="flex min-w-0 flex-col gap-4 px-6 py-5 sm:gap-3 sm:py-4"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <ProjectFavicon
+                      environmentId={member.environmentId}
+                      cwd={member.workspaceRoot}
+                      className="size-5 shrink-0 sm:size-4"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-1.5 text-base text-muted-foreground sm:text-sm">
+                        <ServerIcon className="size-4 shrink-0 stroke-muted-foreground" />
+                        <p className="min-w-0 truncate">
+                          {member.environmentLabel ?? "Current environment"}
+                        </p>
+                      </div>
+                      <p
+                        className="truncate font-mono text-base text-muted-foreground/72 sm:text-sm"
+                        title={member.workspaceRoot}
+                      >
+                        {member.workspaceRoot}
+                      </p>
                     </div>
                   </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setProjectActionsTarget(null);
-                      setProjectRenameTarget(member);
-                      setProjectRenameTitle(member.title);
-                    }}
-                  >
-                    Rename
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setProjectActionsTarget(null);
-                      setProjectGroupingTarget(member);
-                      setProjectGroupingSelection(
-                        projectGroupingSettings.sidebarProjectGroupingOverrides?.[
-                          deriveProjectGroupingOverrideKey(member)
-                        ] ?? "inherit",
-                      );
-                    }}
-                  >
-                    Grouping
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
-                    }
-                  >
-                    Copy path
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    className="ml-auto"
-                    onClick={() => {
-                      const projectGroup = projectActionsTarget;
-                      if (!projectGroup) return;
-                      setProjectActionsTarget(null);
-                      void handleRemoveProjectMembers(projectGroup, [member]);
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+                  <div className="grid gap-4 sm:grid-cols-2 sm:gap-3 sm:pl-7">
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Project name</span>
+                      <Input
+                        key={`${member.physicalProjectKey}:${member.title}`}
+                        size="sm"
+                        aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
+                        defaultValue={member.title}
+                        onBlur={(event) => {
+                          void renameProjectMember(member, event.currentTarget.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />
+                    </label>
+                    <label className="grid min-w-0 gap-1.5">
+                      <span className="font-medium text-foreground">Grouping rule</span>
+                      <Select
+                        value={
+                          projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                            deriveProjectGroupingOverrideKey(member)
+                          ] ?? "inherit"
+                        }
+                        onValueChange={(value) => {
+                          if (
+                            value === "inherit" ||
+                            value === "repository" ||
+                            value === "repository_path" ||
+                            value === "separate"
+                          ) {
+                            updateProjectGroupingPreference(member, value);
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full"
+                          aria-label={`Grouping rule for ${member.environmentLabel ?? "current environment"}`}
+                        >
+                          <SelectValue>
+                            {(() => {
+                              const selection =
+                                projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+                                  deriveProjectGroupingOverrideKey(member)
+                                ] ?? "inherit";
+                              return selection === "inherit"
+                                ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                                : PROJECT_GROUPING_MODE_LABELS[selection];
+                            })()}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          <SelectItem hideIndicator value="inherit">
+                            Use global default
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository">
+                            {PROJECT_GROUPING_MODE_LABELS.repository}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository_path">
+                            {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="separate">
+                            {PROJECT_GROUPING_MODE_LABELS.separate}
+                          </SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:pl-7">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
+                      }
+                    >
+                      <CopyIcon />
+                      Copy path
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
+                      onClick={() => {
+                        const projectGroup = projectActionsTarget;
+                        if (!projectGroup) return;
+                        setProjectActionsTarget(null);
+                        void handleRemoveProjectMembers(projectGroup, [member]);
+                      }}
+                    >
+                      <Trash2Icon />
+                      Remove
+                    </Button>
+                  </div>
+                </section>
+              ))}
+            </div>
             {projectActionsTarget && projectActionsTarget.memberProjects.length > 1 ? (
-              <div className="flex items-center justify-between gap-4 border-t border-border/70 pt-3">
-                <p className="text-xs text-muted-foreground">
-                  Removes every grouped entry and its conversation history.
-                </p>
+              <div className="flex flex-col gap-3 border-t border-border/60 bg-muted/32 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-base font-medium text-foreground sm:text-sm">
+                    Remove this project everywhere
+                  </p>
+                  <p className="text-base text-pretty text-muted-foreground sm:text-sm">
+                    Deletes all grouped entries and their conversation history.
+                  </p>
+                </div>
                 <Button
                   size="sm"
-                  variant="destructive"
+                  variant="destructive-outline"
                   className="shrink-0"
                   onClick={() => {
                     const projectGroup = projectActionsTarget;
@@ -2097,140 +2121,14 @@ export default function SidebarV2() {
                     void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
                   }}
                 >
+                  <Trash2Icon />
                   Remove all entries
                 </Button>
               </div>
             ) : null}
           </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setProjectActionsTarget(null)}>
-              Done
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-      <Dialog
-        open={projectRenameTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) closeProjectRenameDialog();
-        }}
-      >
-        <DialogPopup className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {projectRenameTarget &&
-              projectGroups.some(
-                (group) =>
-                  group.memberProjects.length > 1 &&
-                  group.memberProjects.some(
-                    (member) =>
-                      member.environmentId === projectRenameTarget.environmentId &&
-                      member.id === projectRenameTarget.id,
-                  ),
-              )
-                ? "Rename project entry"
-                : "Rename project"}
-            </DialogTitle>
-            <DialogDescription>
-              {projectRenameTarget
-                ? `Update the title for ${projectRenameTarget.workspaceRoot}. Repository-grouped labels still use repository identity.`
-                : "Update the project title."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Project title</span>
-              <Input
-                aria-label="Project title"
-                value={projectRenameTitle}
-                onChange={(event) => setProjectRenameTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void submitProjectRename();
-                  }
-                }}
-              />
-            </div>
-            {projectRenameTarget?.environmentLabel ? (
-              <p className="text-xs text-muted-foreground">
-                Environment: {projectRenameTarget.environmentLabel}
-              </p>
-            ) : null}
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeProjectRenameDialog}>
-              Cancel
-            </Button>
-            <Button onClick={() => void submitProjectRename()}>Save</Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-      <Dialog
-        open={projectGroupingTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) closeProjectGroupingDialog();
-        }}
-      >
-        <DialogPopup className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Project grouping</DialogTitle>
-            <DialogDescription>
-              {projectGroupingTarget
-                ? `Choose how ${projectGroupingTarget.workspaceRoot} should be grouped in the sidebar.`
-                : "Choose how this project should be grouped in the sidebar."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Grouping rule</span>
-              <Select
-                value={projectGroupingSelection}
-                onValueChange={(value) => {
-                  if (
-                    value === "inherit" ||
-                    value === "repository" ||
-                    value === "repository_path" ||
-                    value === "separate"
-                  ) {
-                    setProjectGroupingSelection(value);
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full" aria-label="Project grouping rule">
-                  <SelectValue>
-                    {projectGroupingSelection === "inherit"
-                      ? `Use global default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                      : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="inherit">
-                    Use global default
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository">
-                    {PROJECT_GROUPING_MODE_LABELS.repository}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository_path">
-                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="separate">
-                    {PROJECT_GROUPING_MODE_LABELS.separate}
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {projectGroupingSelection === "inherit"
-                ? projectGroupingModeDescription(projectGroupingSettings.sidebarProjectGroupingMode)
-                : projectGroupingModeDescription(projectGroupingSelection)}
-            </p>
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeProjectGroupingDialog}>
-              Cancel
-            </Button>
-            <Button onClick={saveProjectGroupingPreference}>Save</Button>
+          <DialogFooter variant="bare">
+            <Button onClick={() => setProjectActionsTarget(null)}>Done</Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
