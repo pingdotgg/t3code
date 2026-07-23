@@ -1619,7 +1619,7 @@ export default function SidebarV2() {
                             cwd={project.workspaceRoot}
                             className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate text-sm">{project.title}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm">{project.title}</span>
                           {projectIsRemote ? (
                             <span
                               aria-label="Remote environment"
