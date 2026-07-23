@@ -42,7 +42,7 @@ vi.mock("./threads", () => ({
   },
 }));
 
-import { shouldSubscribeToThreadDetail, useThread } from "./entities";
+import { shouldSubscribeToThreadDetail, useThread, useThreadDetailWhenReady } from "./entities";
 
 const THREAD_REF: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -94,6 +94,23 @@ describe("thread detail subscription", () => {
 
     mocks.shell = { id: THREAD_REF.threadId };
     renderToStaticMarkup(createElement(Probe));
+    expect(mocks.detailAtom).toHaveBeenCalledOnce();
+    expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
+  });
+
+  it("gates direct detail consumers until a local draft receives its shell", () => {
+    function Probe({ hasServerShell }: { readonly hasServerShell: boolean }) {
+      useThreadDetailWhenReady(THREAD_REF, {
+        hasLocalDraft: true,
+        hasServerShell,
+      });
+      return null;
+    }
+
+    renderToStaticMarkup(createElement(Probe, { hasServerShell: false }));
+    expect(mocks.detailAtom).not.toHaveBeenCalled();
+
+    renderToStaticMarkup(createElement(Probe, { hasServerShell: true }));
     expect(mocks.detailAtom).toHaveBeenCalledOnce();
     expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
   });

@@ -153,20 +153,26 @@ export function shouldSubscribeToThreadDetail(input: {
   return !input.hasLocalDraft || input.hasServerShell;
 }
 
+export function useThreadDetailWhenReady(
+  ref: ScopedThreadRef | null,
+  input: {
+    readonly hasLocalDraft: boolean;
+    readonly hasServerShell: boolean;
+  },
+): EnvironmentThread | null {
+  return useThreadDetail(shouldSubscribeToThreadDetail(input) ? ref : null);
+}
+
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
 export function useThread(ref: ScopedThreadRef | null): EnvironmentThread | null {
   const shell = useThreadShell(ref);
   const hasLocalDraft = useComposerDraftStore((store) =>
     ref === null ? false : store.getDraftThreadByRef(ref) !== null,
   );
-  const detail = useThreadDetail(
-    shouldSubscribeToThreadDetail({
-      hasLocalDraft,
-      hasServerShell: shell !== null,
-    })
-      ? ref
-      : null,
-  );
+  const detail = useThreadDetailWhenReady(ref, {
+    hasLocalDraft,
+    hasServerShell: shell !== null,
+  });
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 

@@ -438,8 +438,9 @@ describe("EnvironmentThreads", () => {
         harness.observed,
         (value) => value.status === "deleted",
       );
+      yield* Queue.offer(harness.wakeups, "application-active");
       yield* TestClock.adjust("1 second");
-      for (let attempt = 0; attempt < 10; attempt += 1) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
         yield* Effect.yieldNow;
       }
 
@@ -494,7 +495,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("does not resurrect a deleted thread when the app returns to the foreground", () =>
+  it.effect("does not resubscribe a deleted thread when the app returns to the foreground", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         cached: BASE_THREAD,
@@ -516,7 +517,7 @@ describe("EnvironmentThreads", () => {
       }
 
       const latest = yield* Ref.get(harness.latest);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
       expect(latest.status).toBe("deleted");
       expect(Option.isNone(latest.data)).toBe(true);
