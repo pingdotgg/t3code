@@ -2407,12 +2407,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
   const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) => {
-    let unsubscribe: (() => void) | null = null;
-    let detachTerminalStream: (() => void) | null = null;
+    let releaseAttachment: (() => void) | null = null;
 
     return Effect.gen(function* () {
-      detachTerminalStream = yield* Effect.sync(() => {
+      const bufferedEvents: TerminalEvent[] = [];
+      let deliverLive = false;
+
+      releaseAttachment = yield* Effect.sync(() => {
         const sessionKey = toSessionKey(input.threadId, input.terminalId);
+        const handleEvent = (event: TerminalEvent) => {
+          if (event.threadId !== input.threadId || event.terminalId !== input.terminalId) {
+            return Effect.void;
+          }
+
+          if (!deliverLive) {
+            bufferedEvents.push(event);
+            return Effect.void;
+          }
+
+          const attachEvent = terminalEventToAttachEvent(event);
+          return attachEvent ? listener(attachEvent) : Effect.void;
+        };
+
+        terminalEventListeners.add(handleEvent);
         attachedTerminalStreams.set(sessionKey, (attachedTerminalStreams.get(sessionKey) ?? 0) + 1);
 
         let attached = true;
@@ -2421,6 +2438,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           if (!attached) return;
           attached = false;
 
+          terminalEventListeners.delete(handleEvent);
+
           const remaining = (attachedTerminalStreams.get(sessionKey) ?? 1) - 1;
           if (remaining > 0) {
             attachedTerminalStreams.set(sessionKey, remaining);
@@ -2428,23 +2447,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             attachedTerminalStreams.delete(sessionKey);
           }
         };
-      });
-
-      const bufferedEvents: TerminalEvent[] = [];
-      let deliverLive = false;
-
-      unsubscribe = yield* subscribe((event) => {
-        if (event.threadId !== input.threadId || event.terminalId !== input.terminalId) {
-          return Effect.void;
-        }
-
-        if (!deliverLive) {
-          bufferedEvents.push(event);
-          return Effect.void;
-        }
-
-        const attachEvent = terminalEventToAttachEvent(event);
-        return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
       const initialSnapshot = yield* openOrAttachForStream(input);
@@ -2467,19 +2469,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
       deliverLive = true;
       return () => {
-        unsubscribe?.();
-        unsubscribe = null;
-        detachTerminalStream?.();
-        detachTerminalStream = null;
+        releaseAttachment?.();
+        releaseAttachment = null;
       };
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.flatMap(
           Effect.sync(() => {
-            unsubscribe?.();
-            unsubscribe = null;
-            detachTerminalStream?.();
-            detachTerminalStream = null;
+            releaseAttachment?.();
+            releaseAttachment = null;
           }),
           () => Effect.failCause(cause),
         ),

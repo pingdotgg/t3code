@@ -367,6 +367,51 @@ it.layer(
     }),
   );
 
+  it.effect("releases the attached terminal registration when initial delivery fails", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      yield* manager.open(openInput());
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+
+      if (!process) return;
+
+      const leakedLiveEvents = yield* Ref.make(0);
+      const exit = yield* Effect.exit(
+        manager.attachStream(
+          {
+            threadId: "thread-1",
+            terminalId: DEFAULT_TERMINAL_ID,
+          },
+          (event) =>
+            event.type === "snapshot"
+              ? Effect.die("snapshot listener failed")
+              : Ref.update(leakedLiveEvents, (count) => count + 1),
+        ),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+
+      process.emitData("\u001b[0c");
+      process.emitData("after failed attach\n");
+
+      yield* waitFor(
+        Effect.all([
+          Effect.sync(() => process.writes.includes("\u001b[?1;2c")),
+          Effect.map(getEvents, (events) =>
+            events.some(
+              (event) => event.type === "output" && event.data === "after failed attach\n",
+            ),
+          ),
+        ]).pipe(Effect.map((conditions) => conditions.every(Boolean))),
+        "1200 millis",
+      );
+
+      expect(yield* Ref.get(leakedLiveEvents)).toBe(0);
+    }),
+  );
+
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
