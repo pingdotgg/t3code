@@ -2,6 +2,36 @@ import type { PreviewRenderedViewportSize, PreviewViewportSetting } from "@t3too
 
 const MAX_ROLLBACK_WAIT_MS = 2_000;
 
+export interface PreviewResizeTransactionQueue {
+  readonly run: <Output>(key: string, transaction: () => Promise<Output>) => Promise<Output>;
+}
+
+export function createPreviewResizeTransactionQueue(): PreviewResizeTransactionQueue {
+  const tailByKey = new Map<string, Promise<void>>();
+
+  return {
+    async run<Output>(key: string, transaction: () => Promise<Output>): Promise<Output> {
+      const previous = tailByKey.get(key) ?? Promise.resolve();
+      let release = () => {};
+      const completion = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const tail = previous.then(() => completion);
+      tailByKey.set(key, tail);
+
+      await previous;
+      try {
+        return await transaction();
+      } finally {
+        release();
+        if (tailByKey.get(key) === tail) {
+          tailByKey.delete(key);
+        }
+      }
+    },
+  };
+}
+
 export async function resizePreviewViewportTransaction<Snapshot>(input: {
   readonly setting: PreviewViewportSetting;
   readonly previousSetting: PreviewViewportSetting;
