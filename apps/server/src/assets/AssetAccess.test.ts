@@ -70,6 +70,74 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact-file workspace URLs for video files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-video-",
+      });
+      const videoPath = path.join(root, "recordings", "demo.webm");
+      yield* fileSystem.makeDirectory(path.join(root, "recordings"), { recursive: true });
+      yield* fileSystem.writeFileString(videoPath, "webm-bytes");
+      const canonicalVideoPath = yield* fileSystem.realPath(videoPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: "recordings/demo.webm",
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "demo.webm")).toEqual({
+        kind: "file",
+        path: canonicalVideoPath,
+      });
+      // Exact-file claim: the token must not grant access to sibling files.
+      expect(yield* resolveAsset(token, "other.webm")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues and resolves browser artifact URLs by file name only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true });
+      const artifactPath = path.join(config.browserArtifactsDir, "browser-recording-demo.webm");
+      yield* fileSystem.writeFileString(artifactPath, "webm-bytes");
+      yield* fileSystem.writeFileString(
+        path.join(config.browserArtifactsDir, "notes.txt"),
+        "not media",
+      );
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "browser-recording-demo.webm" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      expect(yield* resolveAsset(token, "browser-recording-demo.webm")).toEqual({
+        kind: "file",
+        path: artifactPath,
+      });
+
+      // Non-media files and traversal-style names are not issuable.
+      const nonMedia = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "notes.txt" },
+      }).pipe(Effect.flip);
+      expect(nonMedia._tag).toBe("AssetBrowserArtifactNotFoundError");
+      const traversal = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "../state.sqlite" },
+      }).pipe(Effect.flip);
+      expect(traversal._tag).toBe("AssetBrowserArtifactNotFoundError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
