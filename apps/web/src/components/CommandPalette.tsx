@@ -1,6 +1,7 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { completeSourceControlCloneProgress } from "@t3tools/client-runtime/state/source-control";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -25,6 +26,7 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  CheckIcon,
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -1336,7 +1338,7 @@ function OpenCommandPaletteDialog(props: {
     setRemoteProjectCloneProgress({
       type: "progress",
       stage: "connecting",
-      percent: null,
+      percent: 0,
       completed: null,
       total: null,
       receivedBytes: null,
@@ -1350,9 +1352,9 @@ function OpenCommandPaletteDialog(props: {
       },
       onProgress: setRemoteProjectCloneProgress,
     });
-    setIsRemoteProjectCloning(false);
-    setRemoteProjectCloneProgress(null);
     if (cloneResult._tag === "Failure") {
+      setIsRemoteProjectCloning(false);
+      setRemoteProjectCloneProgress(null);
       if (!isAtomCommandInterrupted(cloneResult)) {
         toastManager.add(
           stackedThreadToast({
@@ -1364,7 +1366,10 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
+    setRemoteProjectCloneProgress((progress) => completeSourceControlCloneProgress(progress));
     await handleAddProject(cloneResult.value.cwd);
+    setIsRemoteProjectCloning(false);
+    setRemoteProjectCloneProgress(null);
   }
 
   function browseTo(name: string): void {
@@ -1863,17 +1868,24 @@ function OpenCommandPaletteDialog(props: {
                 className="flex min-w-0 flex-1 items-center gap-2 text-foreground"
                 aria-live="polite"
               >
-                <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin text-primary" />
+                {remoteProjectCloneProgress.percent === 100 ? (
+                  <CheckIcon className="size-3.5 shrink-0 text-primary" />
+                ) : (
+                  <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin text-primary" />
+                )}
                 <span className="truncate font-medium">
-                  {remoteProjectCloneProgress.stage === "connecting"
-                    ? "Connecting to remote"
-                    : remoteProjectCloneProgress.stage === "receiving"
-                      ? "Receiving objects"
-                      : remoteProjectCloneProgress.stage === "resolving"
-                        ? "Resolving deltas"
-                        : "Checking out files"}
+                  {remoteProjectCloneProgress.percent === 100
+                    ? "Pull complete"
+                    : remoteProjectCloneProgress.stage === "connecting"
+                      ? "Connecting to remote"
+                      : remoteProjectCloneProgress.stage === "receiving"
+                        ? "Receiving objects"
+                        : remoteProjectCloneProgress.stage === "resolving"
+                          ? "Resolving deltas"
+                          : "Checking out files"}
                 </span>
-                {remoteProjectCloneProgress.percent === null ? null : (
+                {remoteProjectCloneProgress.percent === null ||
+                remoteProjectCloneProgress.percent === 100 ? null : (
                   <span className="ms-auto shrink-0 font-medium tabular-nums text-muted-foreground">
                     {Math.round(remoteProjectCloneProgress.percent)}%
                   </span>

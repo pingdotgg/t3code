@@ -21,6 +21,7 @@ import {
   inferProjectTitleFromPath,
   isFilesystemBrowseQuery,
 } from "@t3tools/client-runtime/state/projects";
+import { completeSourceControlCloneProgress } from "@t3tools/client-runtime/state/source-control";
 import {
   CommandId,
   type EnvironmentId,
@@ -199,8 +200,10 @@ function PrimaryActionButton(props: {
   readonly onPress: () => void;
 }) {
   const primaryForeground = useThemeColor("--color-primary-foreground");
-  const progressLabel =
-    props.progress?.stage === "connecting"
+  const isComplete = props.progress?.percent === 100;
+  const progressLabel = isComplete
+    ? "Pull complete"
+    : props.progress?.stage === "connecting"
       ? "Connecting to remote"
       : props.progress?.stage === "receiving"
         ? "Receiving objects"
@@ -221,13 +224,22 @@ function PrimaryActionButton(props: {
     >
       {props.loading ? (
         <>
-          <ActivityIndicator size="small" color={String(primaryForeground)} />
+          {isComplete ? (
+            <SymbolView
+              name="checkmark"
+              size={15}
+              tintColor={String(primaryForeground)}
+              type="monochrome"
+            />
+          ) : (
+            <ActivityIndicator size="small" color={String(primaryForeground)} />
+          )}
           {props.progress ? (
             <>
               <Text className="text-base font-t3-bold text-primary-foreground">
                 {progressLabel}
               </Text>
-              {props.progress.percent === null ? null : (
+              {props.progress.percent === null || isComplete ? null : (
                 <Text className="text-sm font-t3-medium text-primary-foreground/65">
                   {Math.round(props.progress.percent)}%
                 </Text>
@@ -836,7 +848,7 @@ export function AddProjectDestinationScreen(props: {
     setCloneProgress({
       type: "progress",
       stage: "connecting",
-      percent: null,
+      percent: 0,
       completed: null,
       total: null,
       receivedBytes: null,
@@ -853,6 +865,7 @@ export function AddProjectDestinationScreen(props: {
     if (AsyncResult.isFailure(cloneResult)) {
       setError(errorMessage(Cause.squash(cloneResult.cause)));
     } else {
+      setCloneProgress((progress) => completeSourceControlCloneProgress(progress));
       const createResult = await createProject(cloneResult.value.cwd);
       if (createResult && AsyncResult.isFailure(createResult)) {
         setError(errorMessage(Cause.squash(createResult.cause)));
