@@ -83,12 +83,16 @@ interface ActiveRecording {
   readonly tabId: string;
   readonly canvas: HTMLCanvasElement;
   readonly context: CanvasRenderingContext2D;
-  readonly recorder: MediaRecorder;
   readonly chunks: Blob[];
-  readonly mimeType: string;
   readonly startedAt: string;
   readonly startupSettled: Promise<void>;
+  readonly firstFrameSize: Promise<void>;
+  readonly settleFirstFrameSize: () => void;
+  recorder: MediaRecorder | null;
+  mimeType: string | null;
+  frameSizeEstablished: boolean;
   frameSequence: number;
+  lastDrawnFrameSequence: number;
   lifecycle: BrowserRecordingLifecycle;
 }
 
@@ -108,6 +112,7 @@ const activeRecordings = new Map<string, ActiveRecording>();
 let unsubscribeFrames: (() => void) | null = null;
 
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
+const BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS = 250;
 
 const preferredMimeType = (): string => {
   const candidates = ["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9", "video/webm"];
@@ -127,6 +132,12 @@ const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
   }
   const width = Math.max(1, Math.round(frame.width));
   const height = Math.max(1, Math.round(frame.height));
+  if (!recording.frameSizeEstablished) {
+    recording.canvas.width = width;
+    recording.canvas.height = height;
+    recording.frameSizeEstablished = true;
+    recording.settleFirstFrameSize();
+  }
   const frameSequence = ++recording.frameSequence;
   const image = new Image();
   image.addEventListener(
@@ -134,21 +145,27 @@ const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
     () => {
       if (
         activeRecordings.get(frame.tabId) !== recording ||
-        recording.frameSequence !== frameSequence
+        frameSequence <= recording.lastDrawnFrameSequence
       ) {
         return;
       }
-      if (recording.canvas.width !== width) recording.canvas.width = width;
-      if (recording.canvas.height !== height) recording.canvas.height = height;
-      recording.context.drawImage(image, 0, 0, width, height);
+      recording.lastDrawnFrameSequence = frameSequence;
+      const scale = Math.min(recording.canvas.width / width, recording.canvas.height / height);
+      const targetWidth = width * scale;
+      const targetHeight = height * scale;
+      const targetX = (recording.canvas.width - targetWidth) / 2;
+      const targetY = (recording.canvas.height - targetHeight) / 2;
+      recording.context.fillStyle = "#000000";
+      recording.context.fillRect(0, 0, recording.canvas.width, recording.canvas.height);
+      recording.context.drawImage(image, targetX, targetY, targetWidth, targetHeight);
     },
     { once: true },
   );
   image.src = `data:image/jpeg;base64,${frame.data}`;
 };
 
-const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
-  if (recorder.state === "inactive") return;
+const stopMediaRecorder = async (recorder: MediaRecorder | null): Promise<void> => {
+  if (!recorder || recorder.state === "inactive") return;
   const stopped = new Promise<void>((resolve) =>
     recorder.addEventListener("stop", () => resolve(), { once: true }),
   );
@@ -158,6 +175,7 @@ const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
 
 const clearActiveRecording = (recording: ActiveRecording): void => {
   if (activeRecordings.get(recording.tabId) !== recording) return;
+  recording.settleFirstFrameSize();
   activeRecordings.delete(recording.tabId);
   if (activeRecordings.size === 0) {
     unsubscribeFrames?.();
@@ -166,6 +184,32 @@ const clearActiveRecording = (recording: ActiveRecording): void => {
   appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
     tabIds: new Set(activeRecordings.keys()),
   });
+};
+
+const cleanupFailedRecordingStart = async (
+  bridge: NonNullable<typeof previewBridge>,
+  recording: ActiveRecording,
+): Promise<unknown | undefined> => {
+  const errors: unknown[] = [];
+  try {
+    await bridge.recording.stopScreencast(recording.tabId);
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await stopMediaRecorder(recording.recorder);
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    clearActiveRecording(recording);
+  }
+  if (errors.length === 0) return undefined;
+  if (errors.length === 1) return errors[0];
+  return new AggregateError(
+    errors,
+    `Browser recording startup cleanup failed for tab ${recording.tabId}.`,
+    { cause: errors[0] },
+  );
 };
 
 const recordingStartupCancelledError = (
@@ -180,6 +224,19 @@ const recordingStartupCancelledError = (
 
 const isRecordingStarting = (recording: ActiveRecording): boolean =>
   activeRecordings.get(recording.tabId) === recording && recording.lifecycle.phase === "starting";
+
+const waitForFirstFrameSize = async (recording: ActiveRecording): Promise<void> => {
+  if (recording.frameSizeEstablished) return;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  await Promise.race([
+    recording.firstFrameSize,
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS);
+    }),
+  ]);
+  if (timeout !== null) clearTimeout(timeout);
+  recording.frameSizeEstablished = true;
+};
 
 const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Promise<void> => {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -232,40 +289,30 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
       height: canvas.height,
     });
   }
-  let mimeType: string;
-  let recorder: MediaRecorder;
-  try {
-    mimeType = preferredMimeType();
-    recorder = new MediaRecorder(canvas.captureStream(12), {
-      mimeType,
-      videoBitsPerSecond: 4_000_000,
-    });
-  } catch (cause) {
-    throw new BrowserRecordingOperationError({
-      operation: "initialize-media-recorder",
-      tabId,
-      cause,
-    });
-  }
   const startedAt = new Date().toISOString();
   const chunks: Blob[] = [];
   let settleStartup: (() => void) | undefined;
   const startupSettled = new Promise<void>((resolve) => {
     settleStartup = resolve;
   });
-  recorder.addEventListener("dataavailable", (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
+  let settleFirstFrameSize: (() => void) | undefined;
+  const firstFrameSize = new Promise<void>((resolve) => {
+    settleFirstFrameSize = resolve;
   });
   const recording: ActiveRecording = {
     tabId,
     canvas,
     context,
-    recorder,
     chunks,
-    mimeType,
     startedAt,
     startupSettled,
+    firstFrameSize,
+    settleFirstFrameSize: () => settleFirstFrameSize?.(),
+    recorder: null,
+    mimeType: null,
+    frameSizeEstablished: false,
     frameSequence: 0,
+    lastDrawnFrameSequence: 0,
     lifecycle: { phase: "starting" },
   };
   activeRecordings.set(tabId, recording);
@@ -281,46 +328,20 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
       });
     }
     try {
-      recorder.start(1_000);
-    } catch (cause) {
-      clearActiveRecording(recording);
-      throw new BrowserRecordingOperationError({
-        operation: "start-media-recorder",
-        tabId,
-        cause,
-      });
-    }
-    if (!isRecordingStarting(recording)) {
-      throw recordingStartupCancelledError(recording);
-    }
-    try {
       await bridge.recording.startScreencast(tabId);
     } catch (cause) {
       if (!isRecordingStarting(recording)) {
         throw recordingStartupCancelledError(recording, cause);
       }
-      let cleanupCause: unknown;
-      try {
-        await stopMediaRecorder(recorder);
-      } catch (error) {
-        cleanupCause = error;
-      } finally {
-        clearActiveRecording(recording);
-      }
+      clearActiveRecording(recording);
       throw new BrowserRecordingOperationError({
         operation: "start-screencast",
         tabId,
-        cause:
-          cleanupCause === undefined
-            ? cause
-            : new AggregateError(
-                [cause, cleanupCause],
-                `Browser recording start and cleanup failed for tab ${tabId}.`,
-                { cause },
-              ),
+        cause,
       });
     }
-    if (!isRecordingStarting(recording)) {
+    const throwIfStartupCancelled = async (): Promise<void> => {
+      if (isRecordingStarting(recording)) return;
       try {
         await bridge.recording.stopScreencast(tabId);
       } catch (cause) {
@@ -334,6 +355,55 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
         );
       }
       throw recordingStartupCancelledError(recording);
+    };
+    await throwIfStartupCancelled();
+    await waitForFirstFrameSize(recording);
+    await throwIfStartupCancelled();
+
+    let mimeType: string;
+    let recorder: MediaRecorder;
+    try {
+      mimeType = preferredMimeType();
+      recorder = new MediaRecorder(canvas.captureStream(12), {
+        mimeType,
+        videoBitsPerSecond: 4_000_000,
+      });
+      recording.mimeType = mimeType;
+      recording.recorder = recorder;
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      });
+    } catch (cause) {
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      throw new BrowserRecordingOperationError({
+        operation: "initialize-media-recorder",
+        tabId,
+        cause:
+          cleanupCause === undefined
+            ? cause
+            : new AggregateError(
+                [cause, cleanupCause],
+                `Browser recording initialization and cleanup failed for tab ${tabId}.`,
+                { cause },
+              ),
+      });
+    }
+    try {
+      recorder.start(1_000);
+    } catch (cause) {
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      throw new BrowserRecordingOperationError({
+        operation: "start-media-recorder",
+        tabId,
+        cause:
+          cleanupCause === undefined
+            ? cause
+            : new AggregateError(
+                [cause, cleanupCause],
+                `Browser media recorder start and cleanup failed for tab ${tabId}.`,
+                { cause },
+              ),
+      });
     }
     recording.lifecycle = { phase: "recording" };
     appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
@@ -348,10 +418,13 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
 const finalizeBrowserRecording = async (
   bridge: NonNullable<typeof previewBridge>,
   recording: ActiveRecording,
-): Promise<DesktopPreviewRecordingArtifact> => {
+): Promise<DesktopPreviewRecordingArtifact | null> => {
   const { tabId } = recording;
   let result:
-    | { readonly _tag: "Success"; readonly artifact: DesktopPreviewRecordingArtifact }
+    | {
+        readonly _tag: "Success";
+        readonly artifact: DesktopPreviewRecordingArtifact | null;
+      }
     | { readonly _tag: "Failure"; readonly error: unknown };
   try {
     try {
@@ -364,29 +437,33 @@ const finalizeBrowserRecording = async (
       });
     }
     await waitForRecordingStartupToSettle(recording);
-    try {
-      await stopMediaRecorder(recording.recorder);
-    } catch (cause) {
-      throw new BrowserRecordingOperationError({
-        operation: "stop-media-recorder",
-        tabId,
-        cause,
-      });
-    }
-    try {
-      const blob = new Blob(recording.chunks, { type: recording.mimeType });
-      const artifact = await bridge.recording.save(
-        tabId,
-        recording.mimeType,
-        new Uint8Array(await blob.arrayBuffer()),
-      );
-      result = { _tag: "Success", artifact };
-    } catch (cause) {
-      throw new BrowserRecordingOperationError({
-        operation: "save-artifact",
-        tabId,
-        cause,
-      });
+    if (!recording.recorder || !recording.mimeType) {
+      result = { _tag: "Success", artifact: null };
+    } else {
+      try {
+        await stopMediaRecorder(recording.recorder);
+      } catch (cause) {
+        throw new BrowserRecordingOperationError({
+          operation: "stop-media-recorder",
+          tabId,
+          cause,
+        });
+      }
+      try {
+        const blob = new Blob(recording.chunks, { type: recording.mimeType });
+        const artifact = await bridge.recording.save(
+          tabId,
+          recording.mimeType,
+          new Uint8Array(await blob.arrayBuffer()),
+        );
+        result = { _tag: "Success", artifact };
+      } catch (cause) {
+        throw new BrowserRecordingOperationError({
+          operation: "save-artifact",
+          tabId,
+          cause,
+        });
+      }
     }
   } catch (error) {
     result = { _tag: "Failure", error };
@@ -452,6 +529,7 @@ export function stopBrowserRecording(
   if (!bridge || !recording) return Promise.resolve(null);
   if (recording.lifecycle.phase === "stopping") return recording.lifecycle.stopPromise;
 
+  recording.settleFirstFrameSize();
   const stopPromise = Promise.resolve()
     .then(() => finalizeBrowserRecording(bridge, recording))
     .catch((error) => {

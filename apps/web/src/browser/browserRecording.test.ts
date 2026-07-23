@@ -1,44 +1,72 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { events, onFrame, registrySet, save, startScreencast, stopScreencast, surfaceState } =
-  vi.hoisted(() => {
-    const events: string[] = [];
-    const surfaceState = {
-      byTabId: {} as Record<string, unknown>,
-    };
-    return {
-      events,
-      onFrame: vi.fn(
-        (
-          _listener: (frame: {
-            readonly tabId: string;
-            readonly data: string;
-            readonly width: number;
-            readonly height: number;
-            readonly receivedAt: string;
-          }) => void,
-        ) => vi.fn(),
-      ),
-      registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
-        events.push(
-          value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
-        );
-      }),
-      save: vi.fn(async (tabId: string) => ({
-        id: "recording-test",
+const {
+  events,
+  frameSubscription,
+  onFrame,
+  registrySet,
+  save,
+  startScreencast,
+  stopScreencast,
+  surfaceState,
+} = vi.hoisted(() => {
+  const events: string[] = [];
+  type Frame = {
+    readonly tabId: string;
+    readonly data: string;
+    readonly width: number;
+    readonly height: number;
+    readonly receivedAt: string;
+  };
+  const frameSubscription: { listener: ((frame: Frame) => void) | null } = {
+    listener: null,
+  };
+  const surfaceState = {
+    byTabId: {} as Record<string, unknown>,
+  };
+  return {
+    events,
+    frameSubscription,
+    onFrame: vi.fn((listener: (frame: Frame) => void) => {
+      frameSubscription.listener = listener;
+      return () => {
+        if (frameSubscription.listener === listener) frameSubscription.listener = null;
+      };
+    }),
+    registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
+      events.push(
+        value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
+      );
+    }),
+    save: vi.fn(async (tabId: string) => ({
+      id: "recording-test",
+      tabId,
+      path: "/tmp/recording-test.webm",
+      mimeType: "video/webm" as const,
+      sizeBytes: 0,
+      createdAt: "2026-06-26T00:00:00.000Z",
+    })),
+    startScreencast: vi.fn(async (tabId: string) => {
+      events.push("start-screencast");
+      const surface = surfaceState.byTabId[tabId] as
+        | {
+            readonly content?: { readonly width: number; readonly height: number };
+            readonly rect?: { readonly width: number; readonly height: number };
+          }
+        | undefined;
+      const size = surface?.content ?? surface?.rect;
+      frameSubscription.listener?.({
         tabId,
-        path: "/tmp/recording-test.webm",
-        mimeType: "video/webm" as const,
-        sizeBytes: 0,
-        createdAt: "2026-06-26T00:00:00.000Z",
-      })),
-      startScreencast: vi.fn(async () => {
-        events.push("start-screencast");
-      }),
-      stopScreencast: vi.fn(async () => undefined),
-      surfaceState,
-    };
-  });
+        data: "initial-frame",
+        width: size?.width ?? 1280,
+        height: size?.height ?? 800,
+        receivedAt: "2026-06-26T00:00:00.000Z",
+      });
+    }),
+    stopScreencast: vi.fn(async () => undefined),
+    surfaceState,
+  };
+});
 
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
@@ -94,6 +122,7 @@ class FakeMediaRecorder {
 describe("browser recording", () => {
   beforeEach(() => {
     events.length = 0;
+    frameSubscription.listener = null;
     surfaceState.byTabId = {
       "recording-tab": {
         visible: true,
@@ -104,12 +133,26 @@ describe("browser recording", () => {
     vi.clearAllMocks();
     vi.stubGlobal("window", globalThis);
     vi.stubGlobal("MediaRecorder", FakeMediaRecorder as unknown as typeof MediaRecorder);
+    class ImmediateImage {
+      private loadListener: EventListenerOrEventListenerObject | undefined;
+
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+        if (type === "load") this.loadListener = listener;
+      }
+
+      set src(_value: string) {
+        const event = new Event("load");
+        if (typeof this.loadListener === "function") this.loadListener(event);
+        else this.loadListener?.handleEvent(event);
+      }
+    }
+    vi.stubGlobal("Image", ImmediateImage as unknown as typeof Image);
     vi.stubGlobal("document", {
       createElement: () => ({
         width: 0,
         height: 0,
         captureStream: () => ({}),
-        getContext: () => ({ drawImage: vi.fn() }),
+        getContext: () => ({ drawImage: vi.fn(), fillRect: vi.fn(), fillStyle: "" }),
       }),
     });
   });
@@ -144,46 +187,108 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab");
   });
 
-  it("resizes a hidden recording canvas to the captured frame dimensions", async () => {
+  it("fixes hidden recording dimensions before MediaRecorder starts", async () => {
     const drawImage = vi.fn();
+    const fillRect = vi.fn();
+    let capturedStreamSize: { readonly width: number; readonly height: number } | undefined;
     const canvas = {
       width: 0,
       height: 0,
-      captureStream: () => ({}),
-      getContext: () => ({ drawImage }),
+      captureStream: () => {
+        capturedStreamSize = { width: canvas.width, height: canvas.height };
+        return {};
+      },
+      getContext: () => ({ drawImage, fillRect, fillStyle: "" }),
     };
-    class FakeImage {
+    vi.stubGlobal("document", {
+      createElement: () => canvas,
+    });
+    surfaceState.byTabId = {};
+    startScreencast.mockImplementationOnce(async (tabId: string) => {
+      events.push("start-screencast");
+      frameSubscription.listener?.({
+        tabId,
+        data: "captured-frame",
+        width: 390,
+        height: 844,
+        receivedAt: "2026-06-26T00:00:00.000Z",
+      });
+    });
+
+    await startBrowserRecording("recording-tab");
+
+    expect(canvas).toMatchObject({ width: 390, height: 844 });
+    expect(capturedStreamSize).toEqual({ width: 390, height: 844 });
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 390, 844);
+
+    frameSubscription.listener?.({
+      tabId: "recording-tab",
+      data: "different-sized-frame",
+      width: 1280,
+      height: 720,
+      receivedAt: "2026-06-26T00:00:01.000Z",
+    });
+
+    expect(canvas).toMatchObject({ width: 390, height: 844 });
+    expect(fillRect).toHaveBeenLastCalledWith(0, 0, 390, 844);
+
+    await stopBrowserRecording("recording-tab");
+  });
+
+  it("draws the newest decoded frames without starving behind decode latency", async () => {
+    const drawImage = vi.fn();
+    class DeferredImage {
+      static readonly instances: DeferredImage[] = [];
       private loadListener: EventListenerOrEventListenerObject | undefined;
+
+      constructor() {
+        DeferredImage.instances.push(this);
+      }
 
       addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
         if (type === "load") this.loadListener = listener;
       }
 
-      set src(_value: string) {
+      set src(_value: string) {}
+
+      finishLoading(): void {
         const event = new Event("load");
         if (typeof this.loadListener === "function") this.loadListener(event);
         else this.loadListener?.handleEvent(event);
       }
     }
-    vi.stubGlobal("Image", FakeImage as unknown as typeof Image);
+    vi.stubGlobal("Image", DeferredImage as unknown as typeof Image);
     vi.stubGlobal("document", {
-      createElement: () => canvas,
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        captureStream: () => ({}),
+        getContext: () => ({ drawImage, fillRect: vi.fn(), fillStyle: "" }),
+      }),
     });
-    surfaceState.byTabId = {};
 
     await startBrowserRecording("recording-tab");
-    const frameListener = onFrame.mock.calls[0]?.[0];
-    expect(frameListener).toBeDefined();
-    frameListener?.({
+    frameSubscription.listener?.({
       tabId: "recording-tab",
-      data: "captured-frame",
-      width: 390,
-      height: 844,
-      receivedAt: "2026-06-26T00:00:00.000Z",
+      data: "second-frame",
+      width: 800,
+      height: 600,
+      receivedAt: "2026-06-26T00:00:01.000Z",
+    });
+    frameSubscription.listener?.({
+      tabId: "recording-tab",
+      data: "third-frame",
+      width: 800,
+      height: 600,
+      receivedAt: "2026-06-26T00:00:02.000Z",
     });
 
-    expect(canvas).toMatchObject({ width: 390, height: 844 });
-    expect(drawImage).toHaveBeenCalledWith(expect.any(FakeImage), 0, 0, 390, 844);
+    DeferredImage.instances[1]?.finishLoading();
+    expect(drawImage).toHaveBeenCalledOnce();
+    DeferredImage.instances[2]?.finishLoading();
+    expect(drawImage).toHaveBeenCalledTimes(2);
+    DeferredImage.instances[0]?.finishLoading();
+    expect(drawImage).toHaveBeenCalledTimes(2);
 
     await stopBrowserRecording("recording-tab");
   });
