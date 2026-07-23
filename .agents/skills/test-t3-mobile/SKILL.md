@@ -50,11 +50,21 @@ Running `project add` before the backend starts gives it exclusive offline datab
 
 Use direct SQLite mutation only for disposable projection fixtures. Follow `test-t3-app` and stop the backend before writing.
 
-Start a headless backend after seeding:
+For an iOS Simulator or Android Emulator, start the backend through the worktree-aware dev runner after seeding:
+
+```bash
+vp run dev:server \
+  --host 127.0.0.1 \
+  --home-dir <base-dir>
+```
+
+Keep the process alive and retain the selected server port plus the explicitly labeled reusable iOS and Android pairing URLs. They contain the worktree-scoped development credential and can be retried against this loopback server.
+
+For a physical device, use the real-pairing path because the reusable development credential is refused on non-loopback hosts:
 
 ```bash
 node apps/server/src/bin.ts serve \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port <server-port> \
   --base-dir <base-dir> \
   --no-browser
@@ -64,7 +74,7 @@ Use these client origins:
 
 - iOS Simulator: `http://127.0.0.1:<server-port>`
 - Android Emulator: `http://10.0.2.2:<server-port>`
-- Physical device: bind the backend to `0.0.0.0` and use the host's reachable LAN origin
+- Physical device: use the host's reachable LAN origin
 
 Always enter the complete `http://` origin; the mobile host field otherwise assumes HTTPS. When testing web and mobile together, run `vp run dev --home-dir <base-dir> --host 127.0.0.1` instead and do not launch a second backend over the same base directory.
 
@@ -123,7 +133,21 @@ adb -s <emulator-serial> shell am start -W \
 
 Do not start, stop, erase, or reconfigure an emulator owned by another task. Track and later stop only processes owned by this test.
 
-## Pair each client once
+## Connect a simulator or emulator
+
+After the development client is running the correct Metro bundle, open the matching reusable URL printed by `vp run dev:server`:
+
+```bash
+xcrun simctl openurl <simulator-udid> '<printed-reusable-ios-pairing-url>'
+adb -s <emulator-serial> shell am start -W \
+  -a android.intent.action.VIEW \
+  -d '<printed-reusable-android-pairing-url>' \
+  com.t3tools.t3code.dev
+```
+
+Run only the command for the selected platform. The `connections/new` route automatically sends the embedded credential through the normal onboarding exchange; verify that it closes and the expected seeded projects appear. The reusable development URL may be reopened after resetting the client connection.
+
+## Pair a physical device or test real pairing
 
 Issue a fresh credential against the running backend's exact base directory:
 
@@ -137,21 +161,9 @@ T3CODE_PORT=<server-port> node apps/server/src/bin.ts auth pairing create \
 
 In PowerShell, set `$env:T3CODE_PORT = "<server-port>"` first and run the `node ... auth pairing create` command without the leading assignment.
 
-If the visible Add Environment action is not exposed as a semantic target, open the app's registered route instead of guessing coordinates:
-
-```bash
-xcrun simctl openurl <simulator-udid> 't3code-dev://connections/new'
-adb -s <emulator-serial> shell am start -W \
-  -a android.intent.action.VIEW \
-  -d 't3code-dev://connections/new' \
-  com.t3tools.t3code.dev
-```
-
-Run only the command for the selected platform.
-
 In T3 Code Dev, open Add Environment and enter the complete `<mobile-origin>` and newly printed `Token`. Verify the expected seeded projects appear before exercising the affected flow.
 
-Pairing credentials are secret, short-lived, and single-use. Create a different credential for every simulator, emulator, physical device, or browser. If an attempt fails, issue a new credential rather than retrying the old one. Do not expose tokens in screenshots, commits, or final responses.
+Real pairing credentials are secret, short-lived, and single-use. Create a different credential for every physical device or real-pairing test client. If an attempt fails, issue a new credential rather than retrying the old one. Do not expose tokens in screenshots, commits, or final responses.
 
 ## Drive and observe the affected flow
 
@@ -182,7 +194,8 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 
 - **Old UI or an old error appears:** verify Metro's worktree, variant, URL, and port before diagnosing the app.
 - **The environment remains empty:** verify the platform-specific HTTP origin, use a fresh token, and confirm project seeding used the identical base directory.
-- **A second client cannot pair:** pairing tokens are single-use; issue another token.
+- **A simulator or emulator cannot reconnect:** reopen the platform-specific reusable URL and confirm the backend is still loopback-only.
+- **A physical or real-pairing client cannot pair:** pairing tokens are single-use; issue another token.
 - **iOS semantic actions fail:** set explicit XcodeBuildMCP defaults and refresh with `snapshot_ui`.
 - **Android cannot reach Metro:** verify `adb reverse` for the exact Metro port and relaunch the development-client URL.
 - **Android cannot reach the backend:** use `10.0.2.2`, not `127.0.0.1`, for the Android Emulator.

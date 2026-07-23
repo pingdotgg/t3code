@@ -242,7 +242,8 @@ const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 // gets logged anywhere by accident) means a page reload past the 5-min
 // window can still recover by re-bootstrapping rather than locking
 // the user out of the backend.
-const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
+const DESKTOP_BOOTSTRAP_TTL = Duration.hours(24);
+const DEVELOPMENT_BOOTSTRAP_EXPIRES_AT = DateTime.makeUnsafe("9999-12-31T23:59:59.999Z");
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
@@ -304,13 +305,23 @@ export const make = Effect.gen(function* () {
       scopes: AuthAdministrativeScopes,
       subject: "desktop-bootstrap",
       expiresAt: DateTime.add(now, {
-        milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
+        milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL),
       }),
       // Unbounded uses so the renderer can re-exchange the seed for a
       // fresh bearer session after a page reload (or after the prior
       // bearer expires). The seed itself stays inside the desktop
       // process and the rendered page, both of which the user already
       // implicitly trusts.
+      remainingUses: "unbounded",
+    });
+  }
+
+  if (config.devAuthKey) {
+    yield* seedGrant(config.devAuthKey, {
+      method: "desktop-bootstrap",
+      scopes: AuthAdministrativeScopes,
+      subject: "development-bootstrap",
+      expiresAt: DEVELOPMENT_BOOTSTRAP_EXPIRES_AT,
       remainingUses: "unbounded",
     });
   }

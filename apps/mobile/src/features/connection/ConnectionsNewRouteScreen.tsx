@@ -2,7 +2,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -17,6 +17,7 @@ import { buildPairingUrl, parsePairingUrl } from "./pairing";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
+  readonly pairingUrl?: string | readonly string[];
 };
 
 export function ConnectionsNewRouteScreen({
@@ -37,6 +38,7 @@ export function ConnectionsNewRouteScreen({
   const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [scannerLocked, setScannerLocked] = useState(false);
+  const lastAutomaticPairingUrl = useRef<string | null>(null);
 
   const headerIconColor = useThemeColor("--color-icon");
 
@@ -61,6 +63,40 @@ export function ConnectionsNewRouteScreen({
   const handleCodeChange = useCallback((value: string) => {
     setCodeInput(value);
   }, []);
+
+  const connectPairingUrl = useCallback(
+    async (pairingUrl: string) => {
+      const { host, code } = parsePairingUrl(pairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
+      setIsSubmitting(true);
+      onChangeConnectionPairingUrl(pairingUrl);
+
+      const result = await onConnectPress(pairingUrl);
+      if (AsyncResult.isSuccess(result)) {
+        if (navigation.canGoBack()) {
+          navigation.goBack();
+        } else {
+          navigation.dispatch(StackActions.replace("Home"));
+        }
+      } else {
+        setIsSubmitting(false);
+      }
+    },
+    [navigation, onChangeConnectionPairingUrl, onConnectPress],
+  );
+
+  useEffect(() => {
+    const routePairingUrl = Array.isArray(params.pairingUrl)
+      ? params.pairingUrl[0]
+      : params.pairingUrl;
+    if (!routePairingUrl?.trim() || lastAutomaticPairingUrl.current === routePairingUrl) {
+      return;
+    }
+
+    lastAutomaticPairingUrl.current = routePairingUrl;
+    void connectPairingUrl(routePairingUrl);
+  }, [connectPairingUrl, params.pairingUrl]);
 
   const openScanner = useCallback(async () => {
     if (cameraPermission?.granted) {
@@ -117,21 +153,8 @@ export function ConnectionsNewRouteScreen({
   );
 
   const handleSubmit = useCallback(async () => {
-    setIsSubmitting(true);
-
-    const pairingUrl = buildPairingUrl(hostInput, codeInput);
-    onChangeConnectionPairingUrl(pairingUrl);
-    const result = await onConnectPress(pairingUrl);
-    if (AsyncResult.isSuccess(result)) {
-      if (navigation.canGoBack()) {
-        navigation.goBack();
-      } else {
-        navigation.dispatch(StackActions.replace("Home"));
-      }
-    } else {
-      setIsSubmitting(false);
-    }
-  }, [codeInput, hostInput, onChangeConnectionPairingUrl, onConnectPress, navigation]);
+    await connectPairingUrl(buildPairingUrl(hostInput, codeInput));
+  }, [codeInput, connectPairingUrl, hostInput]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">

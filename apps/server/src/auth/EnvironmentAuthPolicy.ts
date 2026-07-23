@@ -1,11 +1,11 @@
 import type { ServerAuthDescriptor } from "@t3tools/contracts";
+import { isLoopbackHost, isWildcardHost } from "@t3tools/shared/networkHost";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { resolveSessionCookieName } from "./utils.ts";
-import { isLoopbackHost, isWildcardHost } from "../startupAccess.ts";
 
 export class EnvironmentAuthPolicy extends Context.Service<
   EnvironmentAuthPolicy,
@@ -41,6 +41,7 @@ export const make = Effect.gen(function* () {
     sessionCookieName: resolveSessionCookieName({
       mode: config.mode,
       port: config.port,
+      devAuthEnabled: config.devAuthKey !== undefined,
     }),
   };
 

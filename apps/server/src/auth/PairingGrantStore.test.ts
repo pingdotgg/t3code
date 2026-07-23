@@ -13,7 +13,9 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
 const makeServerConfigLayer = (
-  overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
+  overrides?: Partial<
+    Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken" | "devAuthKey">
+  >,
 ) =>
   Layer.effect(
     ServerConfig.ServerConfig,
@@ -29,7 +31,9 @@ const makeServerConfigLayer = (
   );
 
 const makePairingGrantStoreLayer = (
-  overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
+  overrides?: Partial<
+    Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken" | "devAuthKey">
+  >,
 ) =>
   PairingGrantStore.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
@@ -187,6 +191,38 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
         Layer.merge(
           makePairingGrantStoreLayer({
             desktopBootstrapToken: "desktop-bootstrap-token",
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("seeds the development credential as a reusable administrative grant", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const first = yield* bootstrapCredentials.consume("development-auth-key");
+      yield* TestClock.adjust(Duration.days(2));
+      const second = yield* bootstrapCredentials.consume("development-auth-key");
+
+      expect(first.method).toBe("desktop-bootstrap");
+      expect(first.subject).toBe("development-bootstrap");
+      expect(first.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
+      expect(second.subject).toBe("development-bootstrap");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          makePairingGrantStoreLayer({
+            devAuthKey: "development-auth-key",
           }),
           TestClock.layer(),
         ),
