@@ -54,6 +54,9 @@ const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const GIT_TEMPORARY_PACK_PREFIX = "tmp_pack_";
 const GIT_TEMPORARY_PACK_STALE_AGE = Duration.hours(1);
+const GIT_STATUS_FETCH_OBJECT_DIRECTORY = "t3-status-fetch";
+const GIT_STATUS_FETCH_REF_PREFIX = "refs/t3-status-fetch";
+const GIT_ZERO_OID = "0".repeat(40);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -95,6 +98,7 @@ type TraceTailState = {
 class StatusRemoteRefreshCacheKey extends Data.Class<{
   gitCommonDir: string;
   remoteName: string;
+  branchName: string;
 }> {}
 
 interface ExecuteGitOptions {
@@ -944,11 +948,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemoteForStatus = (
     gitCommonDir: string,
     remoteName: string,
+    branchName: string,
   ): Effect.Effect<void, GitCommandError> =>
     Effect.gen(function* () {
       const fetchCwd =
         path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-      const packDirectory = path.join(gitCommonDir, "objects", "pack");
+      const objectDirectory = path.join(gitCommonDir, "objects");
+      const packDirectory = path.join(objectDirectory, "pack");
+      // Older builds wrote interrupted fetches into the shared pack directory.
+      // New fetches use the isolated object directory below; this only reaps legacy leftovers.
       const cleanupStaleTemporaryPacks = Effect.gen(function* () {
         if (!(yield* fileSystem.exists(packDirectory))) return;
         const now = yield* DateTime.now;
@@ -983,17 +991,182 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
 
       yield* cleanupStaleTemporaryPacks;
-      const result = yield* executeGit(
-        "GitVcsDriver.fetchRemoteForStatus",
-        fetchCwd,
-        ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
-        {
-          allowNonZeroExit: true,
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-        },
-      ).pipe(Effect.ensuring(cleanupStaleTemporaryPacks));
-      if (result.exitCode !== 0) return;
+      const operationId = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.fetchRemoteForStatus",
+              command: "crypto.randomUUIDv4",
+              cwd: fetchCwd,
+              detail: "Failed to create an isolated status fetch identifier.",
+              cause,
+            }),
+        ),
+      );
+      const temporaryRoot = path.join(
+        objectDirectory,
+        GIT_STATUS_FETCH_OBJECT_DIRECTORY,
+        operationId,
+      );
+      const temporaryObjectDirectory = path.join(temporaryRoot, "objects");
+      const temporaryPackDirectory = path.join(temporaryObjectDirectory, "pack");
+      const temporaryRef = `${GIT_STATUS_FETCH_REF_PREFIX}/${operationId}`;
+      const targetRef = `refs/remotes/${remoteName}/${branchName}`;
+
+      yield* fileSystem.makeDirectory(temporaryPackDirectory, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.fetchRemoteForStatus",
+              command: "filesystem.makeDirectory",
+              cwd: fetchCwd,
+              detail: "Failed to create an isolated Git object directory for status fetch.",
+              cause,
+            }),
+        ),
+      );
+
+      const cleanupIsolatedFetch = Effect.all(
+        [
+          executeGit(
+            "GitVcsDriver.fetchRemoteForStatus.cleanupRef",
+            fetchCwd,
+            ["--git-dir", gitCommonDir, "update-ref", "-d", temporaryRef],
+            { allowNonZeroExit: true, timeoutMs: 2_000 },
+          ).pipe(Effect.ignore),
+          fileSystem.remove(temporaryRoot, { recursive: true, force: true }).pipe(Effect.ignore),
+        ],
+        { concurrency: "unbounded", discard: true },
+      );
+
+      const promoteFile = (source: string, destination: string) =>
+        fileSystem
+          .rename(source, destination)
+          .pipe(
+            Effect.catch((cause) =>
+              fileSystem
+                .exists(destination)
+                .pipe(
+                  Effect.flatMap((exists) =>
+                    exists ? fileSystem.remove(source, { force: true }) : Effect.fail(cause),
+                  ),
+                ),
+            ),
+          );
+      const promoteObjectFiles = Effect.gen(function* () {
+        const objectEntries = yield* fileSystem.readDirectory(temporaryObjectDirectory, {
+          recursive: false,
+        });
+        for (const entry of objectEntries) {
+          if (entry === "pack") {
+            const packEntries = yield* fileSystem.readDirectory(temporaryPackDirectory, {
+              recursive: false,
+            });
+            yield* Effect.forEach(
+              packEntries.filter((packEntry) => packEntry.startsWith("pack-")),
+              (packEntry) =>
+                promoteFile(
+                  path.join(temporaryPackDirectory, packEntry),
+                  path.join(packDirectory, packEntry),
+                ),
+              { concurrency: 1, discard: true },
+            );
+            continue;
+          }
+          if (!/^[0-9a-f]{2}$/u.test(entry)) continue;
+          const sourceDirectory = path.join(temporaryObjectDirectory, entry);
+          const destinationDirectory = path.join(objectDirectory, entry);
+          yield* fileSystem.makeDirectory(destinationDirectory, { recursive: true });
+          const looseObjects = yield* fileSystem.readDirectory(sourceDirectory, {
+            recursive: false,
+          });
+          yield* Effect.forEach(
+            looseObjects,
+            (looseObject) =>
+              promoteFile(
+                path.join(sourceDirectory, looseObject),
+                path.join(destinationDirectory, looseObject),
+              ),
+            { concurrency: 1, discard: true },
+          );
+        }
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.fetchRemoteForStatus",
+              command: "filesystem.rename",
+              cwd: fetchCwd,
+              detail: "Failed to promote isolated Git objects.",
+              cause,
+            }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const previousTarget = yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus.readTarget",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "rev-parse", "--verify", targetRef],
+          { allowNonZeroExit: true },
+        );
+        const expectedTarget =
+          previousTarget.exitCode === 0 ? previousTarget.stdout.trim() : GIT_ZERO_OID;
+        const result = yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus",
+          fetchCwd,
+          [
+            "--git-dir",
+            gitCommonDir,
+            "-c",
+            "fetch.unpackLimit=0",
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--refmap=",
+            remoteName,
+            `+refs/heads/${branchName}:${temporaryRef}`,
+          ],
+          {
+            allowNonZeroExit: true,
+            env: {
+              ...STATUS_UPSTREAM_REFRESH_ENV,
+              GIT_OBJECT_DIRECTORY: temporaryObjectDirectory,
+              GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory,
+            },
+            timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+          },
+        );
+        if (result.exitCode !== 0) return;
+
+        yield* fileSystem.makeDirectory(packDirectory, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "GitVcsDriver.fetchRemoteForStatus",
+                command: "filesystem.makeDirectory",
+                cwd: fetchCwd,
+                detail: "Failed to prepare the Git pack directory.",
+                cause,
+              }),
+          ),
+        );
+        yield* promoteObjectFiles;
+        const fetchedCommit = yield* runGitStdout(
+          "GitVcsDriver.fetchRemoteForStatus.resolve",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "rev-parse", "--verify", temporaryRef],
+        ).pipe(Effect.map((stdout) => stdout.trim()));
+        yield* runGit("GitVcsDriver.fetchRemoteForStatus.promoteRef", fetchCwd, [
+          "--git-dir",
+          gitCommonDir,
+          "update-ref",
+          targetRef,
+          fetchedCommit,
+          expectedTarget,
+        ]);
+      }).pipe(Effect.ensuring(cleanupIsolatedFetch));
     });
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
@@ -1007,7 +1180,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const refreshStatusRemoteCacheEntry = Effect.fn("refreshStatusRemoteCacheEntry")(function* (
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
-    yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName);
+    yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName, cacheKey.branchName);
     return true as const;
   });
 
@@ -1031,6 +1204,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       new StatusRemoteRefreshCacheKey({
         gitCommonDir,
         remoteName: upstream.remoteName,
+        branchName: upstream.branchName,
       }),
     );
   });

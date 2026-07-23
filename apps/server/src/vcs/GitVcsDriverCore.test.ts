@@ -465,9 +465,26 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           refreshUpstream: false,
         });
         const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
+        const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
+          ? gitCommonDirRaw
+          : pathService.resolve(cwd, gitCommonDirRaw);
+        const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
+        const isolatedFetchEntries = (yield* fileSystem.exists(isolatedFetchRoot))
+          ? yield* fileSystem.readDirectory(isolatedFetchRoot, { recursive: false })
+          : [];
+        const temporaryRefs = yield* git(cwd, [
+          "for-each-ref",
+          "--format=%(refname)",
+          "refs/t3-status-fetch",
+        ]);
 
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
+        assert.deepStrictEqual(isolatedFetchEntries, []);
+        assert.equal(temporaryRefs, "");
       }),
     );
 
