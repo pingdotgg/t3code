@@ -1644,6 +1644,28 @@ function ChatViewContent(props: ChatViewProps) {
     return envs;
   }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+  const logicalProjectCheckouts = useMemo(() => {
+    if (!activeProject) return [];
+    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    const seenWorkspaceRoots = new Set<string>();
+    return allProjects
+      .filter(
+        (project) =>
+          project.environmentId === activeProject.environmentId &&
+          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings) === logicalKey,
+      )
+      .filter((project) => {
+        const workspaceRoot = project.workspaceRoot.replaceAll("\\", "/").toLowerCase();
+        if (seenWorkspaceRoots.has(workspaceRoot)) return false;
+        seenWorkspaceRoots.add(workspaceRoot);
+        return true;
+      })
+      .map((project) => ({
+        projectId: project.id,
+        title: project.title,
+        workspaceRoot: project.workspaceRoot,
+      }));
+  }, [activeProject, allProjects, projectGroupingSettings]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -2415,6 +2437,32 @@ function ChatViewContent(props: ChatViewProps) {
       });
     },
     [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+  );
+
+  const onWorkspaceChange = useCallback(
+    (projectId: ProjectId, mode: DraftThreadEnvMode) => {
+      if (envLocked || !draftId || !activeProject) return;
+      const target = logicalProjectCheckouts.find((checkout) => checkout.projectId === projectId);
+      if (!target) return;
+      setDraftThreadContext(draftId, {
+        projectRef: scopeProjectRef(activeProject.environmentId, target.projectId),
+        envMode: mode,
+        startFromOrigin: resolveNewDraftStartFromOrigin({
+          envMode: mode,
+          newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+        }),
+        ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+      });
+    },
+    [
+      activeProject,
+      draftId,
+      draftThread?.worktreePath,
+      envLocked,
+      logicalProjectCheckouts,
+      primaryServerSettings.newWorktreesStartFromOrigin,
+      setDraftThreadContext,
+    ],
   );
 
   const activeTerminalGroup =
@@ -5711,6 +5759,8 @@ function ChatViewContent(props: ChatViewProps) {
                                   : {})}
                                 {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
                                 availableEnvironments={logicalProjectEnvironments}
+                                availableCheckouts={logicalProjectCheckouts}
+                                onWorkspaceChange={onWorkspaceChange}
                               />
                             </div>
                           )}
