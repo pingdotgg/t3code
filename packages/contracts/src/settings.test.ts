@@ -75,10 +75,12 @@ describe("ClientSettings sidebar thread filters", () => {
     expect(DEFAULT_SIDEBAR_THREAD_FILTERS).toEqual({
       statuses: ["needs_attention", "unread", "working", "done"],
       environmentIds: [],
+      projectKeys: [],
       sources: [],
       recentOnly: false,
       attentionOnly: false,
       includeArchived: false,
+      groupByProject: true,
     });
   });
 
@@ -96,19 +98,23 @@ describe("ClientSettings sidebar thread filters", () => {
         sidebarThreadFilters: {
           statuses: ["unread"],
           environmentIds: ["environment-local"],
+          projectKeys: ["environment-local:project-1"],
           sources: ["codex"],
           recentOnly: true,
           attentionOnly: true,
           includeArchived: true,
+          groupByProject: false,
         },
       }).sidebarThreadFilters,
     ).toEqual({
       statuses: ["unread"],
       environmentIds: ["environment-local"],
+      projectKeys: ["environment-local:project-1"],
       sources: ["codex"],
       recentOnly: true,
       attentionOnly: true,
       includeArchived: true,
+      groupByProject: false,
     });
   });
 

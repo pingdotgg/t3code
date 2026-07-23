@@ -251,6 +251,7 @@ type SidebarThreadFilterInput = Pick<
   | "archivedAt"
   | "createdAt"
   | "environmentId"
+  | "projectId"
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
@@ -353,6 +354,12 @@ export function matchesSidebarThreadFilters(input: {
     return false;
   }
   if (
+    filters.projectKeys.length > 0 &&
+    !filters.projectKeys.includes(`${thread.environmentId}:${thread.projectId}`)
+  ) {
+    return false;
+  }
+  if (
     filters.sources.length > 0 &&
     (input.providerDriverKind === null || !filters.sources.includes(input.providerDriverKind))
   ) {
@@ -399,6 +406,7 @@ export function hasNarrowingSidebarThreadFilters(filters: SidebarThreadFilters):
     filters.attentionOnly ||
     filters.recentOnly ||
     filters.environmentIds.length > 0 ||
+    filters.projectKeys.length > 0 ||
     filters.sources.length > 0 ||
     selectedStatuses.size !== SIDEBAR_THREAD_FILTER_STATUSES.length ||
     !includesEveryStatus

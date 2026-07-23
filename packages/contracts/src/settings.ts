@@ -43,10 +43,14 @@ export const SidebarThreadFilters = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([...SIDEBAR_THREAD_FILTER_STATUSES])),
   ),
   environmentIds: Schema.Array(EnvironmentId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  projectKeys: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   sources: Schema.Array(ProviderDriverKind).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   recentOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   attentionOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   includeArchived: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  groupByProject: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type SidebarThreadFilters = typeof SidebarThreadFilters.Type;
 export const DEFAULT_SIDEBAR_THREAD_FILTERS: SidebarThreadFilters = Schema.decodeSync(

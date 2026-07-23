@@ -9,6 +9,7 @@ import {
   resolveProjectGroupingMode,
 } from "./logicalProject";
 import {
+  buildFlatSidebarProjectSnapshot,
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -348,5 +349,43 @@ describe("environment grouping", () => {
     });
 
     expect(groups.map((group) => group.displayName)).toEqual(["separate", "shared-repo"]);
+  });
+
+  it("combines project groups into one flat thread-list snapshot", () => {
+    const stale = makeProject({
+      id: ProjectId.make("project-stale"),
+      repositoryIdentity,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const canonical = makeProject({
+      id: ProjectId.make("project-canonical"),
+      repositoryIdentity,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const second = makeProject({
+      id: ProjectId.make("project-second"),
+      title: "another-repo",
+      workspaceRoot: "/tmp/another-repo",
+      repositoryIdentity: {
+        ...repositoryIdentity,
+        canonicalKey: "github.com/example/another-repo",
+      },
+    });
+    const snapshots = buildSidebarProjectSnapshots({
+      projects: [stale, canonical, second],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => "primary",
+    });
+
+    const flat = buildFlatSidebarProjectSnapshot(snapshots);
+
+    expect(flat?.displayName).toBe("Threads");
+    expect(flat?.memberProjectRefs.map((projectRef) => projectRef.projectId)).toEqual([
+      stale.id,
+      canonical.id,
+      second.id,
+    ]);
+    expect(flat?.memberProjects.map((project) => project.id)).toEqual([canonical.id, second.id]);
   });
 });

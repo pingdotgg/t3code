@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -35,6 +35,42 @@ export interface SidebarProjectPickerEntry {
   group: SidebarProjectSnapshot;
   targetProject: SidebarProjectGroupMember;
   isPreferred: boolean;
+}
+
+const FLAT_THREAD_LIST_PROJECT_KEY = "__all_threads__";
+
+export function buildFlatSidebarProjectSnapshot(
+  projects: ReadonlyArray<SidebarProjectSnapshot>,
+): SidebarProjectSnapshot | null {
+  const representative = projects[0];
+  if (!representative) {
+    return null;
+  }
+
+  const membersByKey = new Map<string, SidebarProjectGroupMember>();
+  const projectRefsByKey = new Map<string, ScopedProjectRef>();
+  for (const project of projects) {
+    for (const member of project.memberProjects) {
+      membersByKey.set(scopedProjectKey(scopeProjectRef(member.environmentId, member.id)), member);
+    }
+    for (const projectRef of project.memberProjectRefs) {
+      projectRefsByKey.set(scopedProjectKey(projectRef), projectRef);
+    }
+  }
+  const memberProjects = [...membersByKey.values()];
+  const memberProjectRefs = [...projectRefsByKey.values()];
+
+  return {
+    ...representative,
+    projectKey: FLAT_THREAD_LIST_PROJECT_KEY,
+    displayName: "Threads",
+    groupedProjectCount: memberProjects.length,
+    memberProjects,
+    memberProjectRefs,
+    remoteEnvironmentLabels: projects
+      .flatMap((project) => project.remoteEnvironmentLabels)
+      .filter((label, index, labels) => labels.indexOf(label) === index),
+  };
 }
 
 interface SidebarProjectGroupCandidate {
