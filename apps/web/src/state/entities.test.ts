@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   hasLocalDraft: false,
   shell: null as object | null,
   detailAtom: vi.fn((ref: ScopedThreadRef) => ({ kind: "detail", ref })),
+  statusAtom: vi.fn((ref: ScopedThreadRef) => ({ kind: "status", ref })),
   threadShellAtom: vi.fn((ref: ScopedThreadRef) => ({ kind: "shell", ref })),
 }));
 
@@ -15,6 +16,7 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: { readonly kind?: string }) => {
     if (atom.kind === "shell") return mocks.shell;
     if (atom.kind === "detail") return { id: "detail" };
+    if (atom.kind === "status") return "deleted";
     return null;
   },
 }));
@@ -36,13 +38,19 @@ vi.mock("../composerDraftStore", () => ({
 vi.mock("./threads", () => ({
   environmentThreadDetails: {
     detailAtom: mocks.detailAtom,
+    statusAtom: mocks.statusAtom,
   },
   environmentThreadShells: {
     threadShellAtom: mocks.threadShellAtom,
   },
 }));
 
-import { shouldSubscribeToThreadDetail, useThread, useThreadDetailWhenReady } from "./entities";
+import {
+  shouldSubscribeToThreadDetail,
+  useThread,
+  useThreadDetailWhenReady,
+  useThreadStatusWhenReady,
+} from "./entities";
 
 const THREAD_REF: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -53,6 +61,7 @@ beforeEach(() => {
   mocks.hasLocalDraft = false;
   mocks.shell = null;
   mocks.detailAtom.mockClear();
+  mocks.statusAtom.mockClear();
   mocks.threadShellAtom.mockClear();
 });
 
@@ -98,20 +107,25 @@ describe("thread detail subscription", () => {
     expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
   });
 
-  it("gates direct detail consumers until a local draft receives its shell", () => {
+  it("gates direct detail state consumers until a local draft receives its shell", () => {
     function Probe({ hasServerShell }: { readonly hasServerShell: boolean }) {
-      useThreadDetailWhenReady(THREAD_REF, {
+      const readiness = {
         hasLocalDraft: true,
         hasServerShell,
-      });
+      };
+      useThreadDetailWhenReady(THREAD_REF, readiness);
+      useThreadStatusWhenReady(THREAD_REF, readiness);
       return null;
     }
 
     renderToStaticMarkup(createElement(Probe, { hasServerShell: false }));
     expect(mocks.detailAtom).not.toHaveBeenCalled();
+    expect(mocks.statusAtom).not.toHaveBeenCalled();
 
     renderToStaticMarkup(createElement(Probe, { hasServerShell: true }));
     expect(mocks.detailAtom).toHaveBeenCalledOnce();
     expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
+    expect(mocks.statusAtom).toHaveBeenCalledOnce();
+    expect(mocks.statusAtom).toHaveBeenCalledWith(THREAD_REF);
   });
 });
