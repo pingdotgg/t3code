@@ -4,11 +4,7 @@ import * as Effect from "effect/Effect";
 
 import type { EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
 
-import {
-  buildCodexLaunchArgs,
-  buildCodexThreadConfig,
-  monitorEmbeddedCuaDriverExit,
-} from "./CuaDriverEmbedded.ts";
+import { buildCodexLaunchArgs, monitorEmbeddedCuaDriverExit } from "./CuaDriverEmbedded.ts";
 
 const connection = {
   mcp: {
@@ -26,45 +22,6 @@ describe("embedded cua-driver Codex configuration", () => {
     expect(buildCodexLaunchArgs(connection)).toBe(
       '-c "mcp_servers.cua-driver.command=\\"/Applications/T3 Code/cua-driver\\"" -c "mcp_servers.cua-driver.args=[\\"mcp\\",\\"--embedded\\",\\"--socket\\",\\"/tmp/t3 code.sock\\"]" -c "mcp_servers.cua-driver.env={CUA_DRIVER_EMBEDDED=\\"1\\",CUA_DRIVER_HOST_BUNDLE_ID=\\"com.t3tools.t3code\\"}"',
     );
-  });
-
-  it("builds structured thread configuration", () => {
-    expect(JSON.parse(buildCodexThreadConfig(connection))).toEqual({
-      mcp_servers: {
-        "cua-driver": {
-          command: "/Applications/T3 Code/cua-driver",
-          args: ["mcp", "--embedded", "--socket", "/tmp/t3 code.sock"],
-          env: {
-            CUA_DRIVER_EMBEDDED: "1",
-            CUA_DRIVER_HOST_BUNDLE_ID: "com.t3tools.t3code",
-          },
-        },
-      },
-    });
-  });
-
-  it("preserves configuration from earlier integrations", () => {
-    expect(
-      JSON.parse(
-        buildCodexThreadConfig(
-          connection,
-          '{"features":{"example":true},"mcp_servers":{"existing":{"command":"existing"}}}',
-        ),
-      ),
-    ).toEqual({
-      features: { example: true },
-      mcp_servers: {
-        existing: { command: "existing" },
-        "cua-driver": {
-          command: "/Applications/T3 Code/cua-driver",
-          args: ["mcp", "--embedded", "--socket", "/tmp/t3 code.sock"],
-          env: {
-            CUA_DRIVER_EMBEDDED: "1",
-            CUA_DRIVER_HOST_BUNDLE_ID: "com.t3tools.t3code",
-          },
-        },
-      },
-    });
   });
 
   it("reports an unexpected driver exit", async () => {
