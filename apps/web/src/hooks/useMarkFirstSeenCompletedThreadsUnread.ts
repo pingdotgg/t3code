@@ -6,6 +6,10 @@ import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import {
+  archivedThreadObservationSeeds,
+  type ObservedThreadTurn,
+} from "../lib/firstSeenCompletedThreadObservations";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import { useUiStateStore } from "../uiStateStore";
@@ -37,15 +41,14 @@ interface FirstSeenThreadInput {
   } | null;
 }
 
-export interface ObservedThreadTurn {
-  readonly turnId: string | null;
-  readonly state: string | null;
-}
-
 export function resolveFirstSeenCompletedThreads(input: {
   readonly threads: ReadonlyArray<FirstSeenThreadInput>;
   readonly environmentSnapshotIds: ReadonlyArray<EnvironmentId>;
   readonly previouslyObservedThreadsByEnvironment: ReadonlyMap<
+    EnvironmentId,
+    ReadonlyMap<string, ObservedThreadTurn>
+  >;
+  readonly seededObservedThreadsByEnvironment?: ReadonlyMap<
     EnvironmentId,
     ReadonlyMap<string, ObservedThreadTurn>
   >;
@@ -72,6 +75,14 @@ export function resolveFirstSeenCompletedThreads(input: {
     if (!nextObservedThreadsByEnvironment.has(environmentId)) {
       nextObservedThreadsByEnvironment.set(environmentId, new Map());
     }
+    const nextEnvironmentThreads = nextObservedThreadsByEnvironment.get(environmentId);
+    for (const [threadKey, observedThread] of input.seededObservedThreadsByEnvironment?.get(
+      environmentId,
+    ) ?? []) {
+      if (!nextEnvironmentThreads?.has(threadKey)) {
+        nextEnvironmentThreads?.set(threadKey, observedThread);
+      }
+    }
   }
 
   for (const thread of input.threads) {
@@ -87,7 +98,9 @@ export function resolveFirstSeenCompletedThreads(input: {
     const previousEnvironmentThreads = input.previouslyObservedThreadsByEnvironment.get(
       thread.environmentId,
     );
-    const previousThread = previousEnvironmentThreads?.get(threadKey);
+    const previousThread =
+      previousEnvironmentThreads?.get(threadKey) ??
+      input.seededObservedThreadsByEnvironment?.get(thread.environmentId)?.get(threadKey);
     if (
       previousEnvironmentThreads !== undefined &&
       thread.latestTurn?.state === "completed" &&
@@ -119,6 +132,7 @@ export function useMarkFirstSeenCompletedThreadsUnread(): void {
         threads,
         environmentSnapshotIds,
         previouslyObservedThreadsByEnvironment: observedThreadsByEnvironmentRef.current,
+        seededObservedThreadsByEnvironment: archivedThreadObservationSeeds.snapshot(),
         activeThreadKey: useUiStateStore.getState().activeThreadVisit?.threadId ?? null,
       });
     for (const thread of newlyUnreadThreads) {

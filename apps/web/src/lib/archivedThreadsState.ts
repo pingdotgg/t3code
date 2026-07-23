@@ -5,10 +5,11 @@ import {
   makeArchivedThreadsEnvironmentKey,
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { archivedThreadObservationSeeds } from "./firstSeenCompletedThreadObservations";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({
@@ -37,6 +38,19 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
     [environmentIds],
   );
   const result = useAtomValue(archivedSnapshotsAtom(environmentKey));
+  useEffect(() => {
+    archivedThreadObservationSeeds.seed(
+      result.snapshots.flatMap((entry) =>
+        entry.snapshot.threads
+          .filter((thread) => thread.archivedAt !== null)
+          .map((thread) => ({
+            environmentId: entry.environmentId,
+            id: thread.id,
+            latestTurn: thread.latestTurn,
+          })),
+      ),
+    );
+  }, [result.snapshots]);
   const refresh = useCallback(() => {
     for (const environmentId of environmentIds) {
       appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));

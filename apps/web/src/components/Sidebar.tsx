@@ -196,24 +196,29 @@ import { openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  filterSidebarThreadsForActiveRoute,
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
+  getVisibleThreadsForProject,
   hasActiveSidebarThreadFilters,
   hasNarrowingSidebarThreadFilters,
   matchesSidebarThreadFilters,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
+  resolvePinnedCollapsedSidebarThread,
   resolveProjectStatusIndicator,
   resolveSidebarArchiveEnvironmentIds,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarThreadFilterStatuses,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
   sidebarProviderInstanceKey,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  startSidebarRecentFilterClock,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
@@ -1155,6 +1160,7 @@ interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
   archivedThreads: readonly SidebarThreadSummary[];
   sidebarThreadFilters: SidebarThreadFilters;
+  sidebarFilterNowMs: number;
   providerDriverKindByScopedInstanceKey: ReadonlyMap<string, ProviderDriverKind>;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
@@ -1179,6 +1185,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     project,
     archivedThreads,
     sidebarThreadFilters,
+    sidebarFilterNowMs,
     providerDriverKindByScopedInstanceKey,
     isThreadListExpanded,
     activeRouteThreadKey,
@@ -1402,20 +1409,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => {
-        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        const providerInstanceId =
-          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
-        return matchesSidebarThreadFilters({
-          thread,
-          lastVisitedAt: lastVisitedAtByThreadKey.get(threadKey),
-          isExplicitlyUnread: explicitlyUnreadByThreadKey.get(threadKey),
-          providerDriverKind:
-            providerDriverKindByScopedInstanceKey.get(
-              sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
-            ) ?? null,
-          filters: sidebarThreadFilters,
-        });
+      filterSidebarThreadsForActiveRoute({
+        threads: projectThreads,
+        activeThreadKey: activeRouteThreadKey,
+        getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        matchesFilters: (thread) => {
+          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          const providerInstanceId =
+            thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+          return matchesSidebarThreadFilters({
+            thread,
+            lastVisitedAt: lastVisitedAtByThreadKey.get(threadKey),
+            isExplicitlyUnread: explicitlyUnreadByThreadKey.get(threadKey),
+            providerDriverKind:
+              providerDriverKindByScopedInstanceKey.get(
+                sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
+              ) ?? null,
+            filters: sidebarThreadFilters,
+            nowMs: sidebarFilterNowMs,
+          });
+        },
       }),
       threadSortOrder,
     );
@@ -1435,22 +1448,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   }, [
     projectThreads,
     providerDriverKindByScopedInstanceKey,
+    activeRouteThreadKey,
+    sidebarFilterNowMs,
     sidebarThreadFilters,
     threadExplicitlyUnreadStates,
     threadLastVisitedAts,
     threadSortOrder,
   ]);
   const pinnedCollapsedThread = useMemo(() => {
-    const activeThreadKey = activeRouteThreadKey ?? undefined;
-    if (!activeThreadKey || projectExpanded) {
-      return null;
-    }
-    return (
-      visibleProjectThreads.find(
-        (thread) =>
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
-      ) ?? null
-    );
+    return resolvePinnedCollapsedSidebarThread({
+      threads: visibleProjectThreads,
+      activeThreadKey: activeRouteThreadKey,
+      projectExpanded,
+      getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    });
   }, [activeRouteThreadKey, projectExpanded, visibleProjectThreads]);
 
   const {
@@ -1483,25 +1494,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
-    const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
-        ? visibleProjectThreads
-        : visibleProjectThreads.slice(0, sidebarThreadPreviewCount);
-    const visibleThreadKeys = new Set(
-      [...previewThreads, ...(pinnedCollapsedThread ? [pinnedCollapsedThread] : [])].map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    );
-    const renderedThreads = pinnedCollapsedThread
-      ? [pinnedCollapsedThread]
-      : visibleProjectThreads.filter((thread) =>
-          visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-        );
-    const hiddenThreads = visibleProjectThreads.filter(
-      (thread) =>
-        !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    );
+    const {
+      hasHiddenThreads: hasOverflowingThreads,
+      hiddenThreads,
+      visibleThreads: previewThreads,
+    } = getVisibleThreadsForProject({
+      threads: visibleProjectThreads,
+      activeThreadKey: activeRouteThreadKey,
+      getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      isThreadListExpanded,
+      previewLimit: sidebarThreadPreviewCount,
+    });
+    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
     return {
       hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
@@ -1513,6 +1517,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     };
   }, [
     isThreadListExpanded,
+    activeRouteThreadKey,
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
@@ -2944,9 +2949,10 @@ function SidebarFilterMenu({
   onFiltersChange: (filters: SidebarThreadFilters) => void;
 }) {
   const filtersActive = hasActiveSidebarThreadFilters(filters);
+  const selectedStatuses = resolveSidebarThreadFilterStatuses(filters.statuses);
   const statusFilterActive =
-    filters.statuses.length !== SIDEBAR_THREAD_FILTER_STATUSES.length ||
-    !SIDEBAR_THREAD_FILTER_STATUSES.every((status) => filters.statuses.includes(status));
+    selectedStatuses.length !== SIDEBAR_THREAD_FILTER_STATUSES.length ||
+    !SIDEBAR_THREAD_FILTER_STATUSES.every((status) => selectedStatuses.includes(status));
 
   return (
     <Menu>
@@ -3023,13 +3029,13 @@ function SidebarFilterMenu({
             {SIDEBAR_THREAD_FILTER_STATUSES.map((status) => (
               <MenuCheckboxItem
                 key={status}
-                checked={filters.statuses.includes(status)}
+                checked={selectedStatuses.includes(status)}
                 closeOnClick={false}
                 className="sm:text-xs"
                 onCheckedChange={(checked) => {
                   onFiltersChange({
                     ...filters,
-                    statuses: toggleSidebarFilterValue(filters.statuses, status, checked),
+                    statuses: toggleSidebarFilterValue(selectedStatuses, status, checked),
                   });
                 }}
               >
@@ -3179,6 +3185,7 @@ interface SidebarProjectsContentProps {
   threadSortOrder: SidebarThreadSortOrder;
   threadPreviewCount: SidebarThreadPreviewCount;
   sidebarThreadFilters: SidebarThreadFilters;
+  sidebarFilterNowMs: number;
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>;
   providerSources: ReadonlyArray<{
     readonly driverKind: ProviderDriverKind;
@@ -3231,6 +3238,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     threadSortOrder,
     threadPreviewCount,
     sidebarThreadFilters,
+    sidebarFilterNowMs,
     environments,
     providerSources,
     providerDriverKindByScopedInstanceKey,
@@ -3403,6 +3411,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         project={project}
                         archivedThreads={archivedThreads}
                         sidebarThreadFilters={sidebarThreadFilters}
+                        sidebarFilterNowMs={sidebarFilterNowMs}
                         providerDriverKindByScopedInstanceKey={
                           providerDriverKindByScopedInstanceKey
                         }
@@ -3441,6 +3450,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 project={project}
                 archivedThreads={archivedThreads}
                 sidebarThreadFilters={sidebarThreadFilters}
+                sidebarFilterNowMs={sidebarFilterNowMs}
                 providerDriverKindByScopedInstanceKey={providerDriverKindByScopedInstanceKey}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
@@ -3493,6 +3503,15 @@ export default function Sidebar() {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const sidebarThreadFilters = useClientSettings((s) => s.sidebarThreadFilters);
+  const [sidebarFilterNowMs, setSidebarFilterNowMs] = useState(() => Date.now());
+  useEffect(
+    () =>
+      startSidebarRecentFilterClock({
+        enabled: sidebarThreadFilters.recentOnly,
+        onTick: setSidebarFilterNowMs,
+      }),
+    [sidebarThreadFilters.recentOnly],
+  );
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, unarchiveThread, deleteThread } = useThreadActions();
@@ -3691,23 +3710,31 @@ export default function Sidebar() {
   const narrowingFiltersActive = hasNarrowingSidebarThreadFilters(sidebarThreadFilters);
   const filteredSidebarThreads = useMemo(
     () =>
-      sidebarThreadsWithArchived.filter((thread) => {
-        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        const providerInstanceId =
-          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
-        return matchesSidebarThreadFilters({
-          thread,
-          lastVisitedAt: threadLastVisitedAtById[threadKey],
-          isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
-          providerDriverKind:
-            providerDriverKindByScopedInstanceKey.get(
-              sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
-            ) ?? null,
-          filters: sidebarThreadFilters,
-        });
+      filterSidebarThreadsForActiveRoute({
+        threads: sidebarThreadsWithArchived,
+        activeThreadKey: routeThreadKey,
+        getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        matchesFilters: (thread) => {
+          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          const providerInstanceId =
+            thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+          return matchesSidebarThreadFilters({
+            thread,
+            lastVisitedAt: threadLastVisitedAtById[threadKey],
+            isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
+            providerDriverKind:
+              providerDriverKindByScopedInstanceKey.get(
+                sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
+              ) ?? null,
+            filters: sidebarThreadFilters,
+            nowMs: sidebarFilterNowMs,
+          });
+        },
       }),
     [
       providerDriverKindByScopedInstanceKey,
+      routeThreadKey,
+      sidebarFilterNowMs,
       sidebarThreadFilters,
       sidebarThreadsWithArchived,
       threadExplicitlyUnreadById,
@@ -3905,29 +3932,28 @@ export default function Sidebar() {
           projectExpandedById,
           projectExpansionPreferenceKeys(project),
         );
-        const activeThreadKey = routeThreadKey ?? undefined;
-        const pinnedCollapsedThread =
-          !projectExpanded && activeThreadKey
-            ? (projectThreads.find(
-                (thread) =>
-                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
-                  activeThreadKey,
-              ) ?? null)
-            : null;
+        const getThreadKey = (thread: SidebarThreadSummary) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        const pinnedCollapsedThread = resolvePinnedCollapsedSidebarThread({
+          threads: projectThreads,
+          activeThreadKey: routeThreadKey,
+          projectExpanded,
+          getThreadKey,
+        });
         const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
         if (!shouldShowThreadPanel) {
           return [];
         }
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-        const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
+        const { visibleThreads: previewThreads } = getVisibleThreadsForProject({
+          threads: projectThreads,
+          activeThreadKey: routeThreadKey,
+          getThreadKey,
+          isThreadListExpanded,
+          previewLimit: sidebarThreadPreviewCount,
+        });
         const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-        return renderedThreads
-          .filter((thread) => thread.archivedAt === null)
-          .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
+        return renderedThreads.filter((thread) => thread.archivedAt === null).map(getThreadKey);
       }),
     [
       sidebarThreadSortOrder,
@@ -4205,6 +4231,7 @@ export default function Sidebar() {
             threadSortOrder={sidebarThreadSortOrder}
             threadPreviewCount={sidebarThreadPreviewCount}
             sidebarThreadFilters={sidebarThreadFilters}
+            sidebarFilterNowMs={sidebarFilterNowMs}
             environments={environments}
             providerSources={providerSources}
             providerDriverKindByScopedInstanceKey={providerDriverKindByScopedInstanceKey}

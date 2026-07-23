@@ -4,6 +4,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   classifySidebarThreadFilterStatus,
   createThreadJumpHintVisibilityController,
+  filterSidebarThreadsForActiveRoute,
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -19,10 +20,12 @@ import {
   matchesSidebarThreadFilters,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolvePinnedCollapsedSidebarThread,
   resolveSidebarArchiveEnvironmentIds,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadFilterStatuses,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
   resolveSidebarV2TopStatus,
@@ -37,6 +40,8 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   sidebarProviderInstanceKey,
+  SIDEBAR_RECENT_FILTER_REFRESH_MS,
+  startSidebarRecentFilterClock,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -220,6 +225,26 @@ describe("sidebar thread filters", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it("treats an empty status selection as an unrestricted status filter", () => {
+    const filters = {
+      ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+      statuses: [],
+    };
+
+    expect(
+      matchesSidebarThreadFilters({
+        thread: filterableThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(resolveSidebarThreadFilterStatuses(filters.statuses)).toEqual(
+      DEFAULT_SIDEBAR_THREAD_FILTERS.statuses,
+    );
+    expect(hasNarrowingSidebarThreadFilters(filters)).toBe(false);
+    expect(hasActiveSidebarThreadFilters(filters)).toBe(false);
   });
 
   it("matches the attention quick filter as unread OR needs attention", () => {
@@ -543,6 +568,46 @@ describe("sidebar thread filters", () => {
         recentOnly: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("sidebar recent filter clock", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("ticks only while the Recent filter is enabled and stops on cleanup", () => {
+    let nowMs = 100;
+    const ticks: number[] = [];
+    const disabledCleanup = startSidebarRecentFilterClock({
+      enabled: false,
+      now: () => nowMs,
+      onTick: (nextNowMs) => ticks.push(nextNowMs),
+    });
+
+    vi.advanceTimersByTime(SIDEBAR_RECENT_FILTER_REFRESH_MS);
+    expect(ticks).toEqual([]);
+    disabledCleanup();
+
+    const cleanup = startSidebarRecentFilterClock({
+      enabled: true,
+      now: () => nowMs,
+      onTick: (nextNowMs) => ticks.push(nextNowMs),
+    });
+    expect(ticks).toEqual([100]);
+
+    nowMs = 200;
+    vi.advanceTimersByTime(SIDEBAR_RECENT_FILTER_REFRESH_MS);
+    expect(ticks).toEqual([100, 200]);
+
+    cleanup();
+    nowMs = 300;
+    vi.advanceTimersByTime(SIDEBAR_RECENT_FILTER_REFRESH_MS);
+    expect(ticks).toEqual([100, 200]);
   });
 });
 
@@ -1654,6 +1719,55 @@ describe("resolveProjectStatusIndicator", () => {
 });
 
 describe("getVisibleThreadsForProject", () => {
+  it("keeps only the active route when every thread fails the filters", () => {
+    const threads = [
+      { threadKey: "environment-local:thread-active", matches: false },
+      { threadKey: "environment-local:thread-hidden", matches: false },
+    ];
+
+    const filteredThreads = filterSidebarThreadsForActiveRoute({
+      threads,
+      activeThreadKey: "environment-local:thread-active",
+      getThreadKey: (thread) => thread.threadKey,
+      matchesFilters: (thread) => thread.matches,
+    });
+
+    expect(filteredThreads).toEqual([threads[0]]);
+    expect(
+      resolvePinnedCollapsedSidebarThread({
+        threads: filteredThreads,
+        activeThreadKey: "environment-local:thread-active",
+        projectExpanded: false,
+        getThreadKey: (thread) => thread.threadKey,
+      }),
+    ).toBe(threads[0]);
+    expect(
+      resolvePinnedCollapsedSidebarThread({
+        threads: filteredThreads,
+        activeThreadKey: "environment-local:thread-active",
+        projectExpanded: true,
+        getThreadKey: (thread) => thread.threadKey,
+      }),
+    ).toBeNull();
+  });
+
+  it("continues applying filters to non-active rows", () => {
+    const threads = [
+      { threadKey: "active", matches: false },
+      { threadKey: "matching", matches: true },
+      { threadKey: "hidden", matches: false },
+    ];
+
+    expect(
+      filterSidebarThreadsForActiveRoute({
+        threads,
+        activeThreadKey: "active",
+        getThreadKey: (thread) => thread.threadKey,
+        matchesFilters: (thread) => thread.matches,
+      }).map((thread) => thread.threadKey),
+    ).toEqual(["active", "matching"]);
+  });
+
   it("includes the active thread even when it falls below the folded preview", () => {
     const threads = Array.from({ length: 8 }, (_, index) =>
       makeThread({
@@ -1664,7 +1778,8 @@ describe("getVisibleThreadsForProject", () => {
 
     const result = getVisibleThreadsForProject({
       threads,
-      activeThreadId: ThreadId.make("thread-8"),
+      activeThreadKey: "environment-local:thread-8",
+      getThreadKey: (thread) => `environment-local:${thread.id}`,
       isThreadListExpanded: false,
       previewLimit: 6,
     });
@@ -1691,7 +1806,8 @@ describe("getVisibleThreadsForProject", () => {
 
     const result = getVisibleThreadsForProject({
       threads,
-      activeThreadId: ThreadId.make("thread-8"),
+      activeThreadKey: "environment-local:thread-8",
+      getThreadKey: (thread) => `environment-local:${thread.id}`,
       isThreadListExpanded: true,
       previewLimit: 6,
     });

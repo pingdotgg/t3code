@@ -2,6 +2,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { createFirstSeenCompletedThreadObservationSeedStore } from "../lib/firstSeenCompletedThreadObservations";
 import { resolveFirstSeenCompletedThreads } from "./useMarkFirstSeenCompletedThreadsUnread";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -183,6 +184,55 @@ describe("resolveFirstSeenCompletedThreads", () => {
       whileArchived.nextObservedThreadsByEnvironment.get(localEnvironmentId)?.has(threadKey),
     ).toBe(true);
     expect(afterUnarchive.newlyUnreadThreads).toEqual([]);
+  });
+
+  it("seeds loaded archived history before the thread is unarchived", () => {
+    const archivedKey = scopedThreadKey(
+      scopeThreadRef(localEnvironmentId, ThreadId.make("archived")),
+    );
+    const seedStore = createFirstSeenCompletedThreadObservationSeedStore();
+    seedStore.seed([thread("archived")]);
+
+    const afterUnarchive = resolveFirstSeenCompletedThreads({
+      threads: [thread("archived")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map([[localEnvironmentId, new Map()]]),
+      seededObservedThreadsByEnvironment: seedStore.snapshot(),
+    });
+    expect(afterUnarchive.newlyUnreadThreads).toEqual([]);
+    expect(
+      afterUnarchive.nextObservedThreadsByEnvironment.get(localEnvironmentId)?.get(archivedKey),
+    ).toEqual({
+      turnId: "turn-archived",
+      state: "completed",
+    });
+
+    const laterCompletion = resolveFirstSeenCompletedThreads({
+      threads: [thread("archived", "completed", localEnvironmentId, "turn-new")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: afterUnarchive.nextObservedThreadsByEnvironment,
+      seededObservedThreadsByEnvironment: seedStore.snapshot(),
+    });
+    expect(laterCompletion.newlyUnreadThreads).toEqual([
+      {
+        threadKey: archivedKey,
+        completedAt: "2026-06-18T09:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("does not let archived seeds turn initial active history into unread history", () => {
+    const seedStore = createFirstSeenCompletedThreadObservationSeedStore();
+    seedStore.seed([thread("archived")]);
+
+    const initialSnapshot = resolveFirstSeenCompletedThreads({
+      threads: [thread("active-history")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map(),
+      seededObservedThreadsByEnvironment: seedStore.snapshot(),
+    });
+
+    expect(initialSnapshot.newlyUnreadThreads).toEqual([]);
   });
 
   it("does not mark the currently active thread unread", () => {
