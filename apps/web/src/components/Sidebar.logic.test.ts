@@ -20,9 +20,12 @@ import {
   resolveThreadRowClassName,
   resolveSidebarV2Status,
   resolveThreadStatusPill,
+  resolveWorkingStartedAt,
+  formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
+  sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -209,8 +212,10 @@ function makeLatestTurn(overrides?: {
     state: "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
-    startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
-    completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
+    startedAt:
+      overrides?.startedAt !== undefined ? overrides.startedAt : "2026-03-09T10:00:00.000Z",
+    completedAt:
+      overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
 
@@ -780,6 +785,141 @@ describe("sortThreadsForSidebarV2", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("sortSettledThreadsForSidebarV2", () => {
+  const settled = (input: {
+    id: string;
+    settledAt?: string | null;
+    latestUserMessageAt?: string | null;
+    latestTurn?: OrchestrationLatestTurn | null;
+    updatedAt?: string;
+  }) => ({
+    id: input.id,
+    settledAt: input.settledAt ?? null,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+    latestTurn: input.latestTurn ?? null,
+    updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
+  });
+
+  it("orders by settle time, most recently settled first", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({
+        id: "settled-first",
+        settledAt: "2026-03-09T10:00:00.000Z",
+        // Created/active later than the other thread: settle time must win.
+        latestUserMessageAt: "2026-03-09T09:59:00.000Z",
+      }),
+      settled({
+        id: "settled-last",
+        settledAt: "2026-03-09T12:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T08:00:00.000Z",
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["settled-last", "settled-first"]);
+  });
+
+  it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
+      settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["auto-recent", "explicit", "auto-old"]);
+  });
+
+  it("counts a turn completion as activity for auto-settled threads", () => {
+    // The message came in before the other thread's, but its turn finished
+    // after: completion time is the real "work ended" moment.
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
+      settled({
+        id: "completed-later",
+        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+        latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
+  });
+
+  it("breaks timestamp ties by id so the order is stable", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("resolveWorkingStartedAt", () => {
+  const session = {
+    threadId: ThreadId.make("thread-1"),
+    status: "running" as const,
+    providerName: "Codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    activeTurnId: "turn-1" as never,
+    lastError: null,
+    updatedAt: "2026-03-09T10:02:00.000Z",
+  };
+
+  it("uses the running turn's start time", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ completedAt: null }),
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("uses the request time while a turn awaits adoption", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ startedAt: null, completedAt: null }),
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("falls back to the session transition when the latest turn already completed", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn(),
+        session,
+      }),
+    ).toBe("2026-03-09T10:02:00.000Z");
+  });
+
+  it("skips a malformed startedAt instead of returning it", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ startedAt: "not-a-date", completedAt: null }),
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("returns null with neither a running turn nor a session", () => {
+    expect(resolveWorkingStartedAt({ latestTurn: null, session: null })).toBeNull();
+  });
+});
+
+describe("formatWorkingDurationLabel", () => {
+  it("formats seconds, minutes, and hours", () => {
+    expect(formatWorkingDurationLabel(0)).toBe("0s");
+    expect(formatWorkingDurationLabel(42_000)).toBe("42s");
+    expect(formatWorkingDurationLabel(5 * 60_000)).toBe("5m");
+    expect(formatWorkingDurationLabel(90 * 60_000)).toBe("1h 30m");
+  });
+
+  it("clamps negative and non-finite elapsed values to zero", () => {
+    expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
+    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
   });
 });
 
