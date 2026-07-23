@@ -178,9 +178,7 @@ struct SergeCodeApp: App {
                 Button("Quick Chat") {
                     Task {
                         let owner = multi.local
-                        if let thread = await owner.startQuickChat(
-                            scenery: scenery, passport: passport)
-                        {
+                        if let thread = await owner.startQuickChat(scenery: scenery) {
                             multi.select(threadID: thread.id, on: .local)
                         }
                     }

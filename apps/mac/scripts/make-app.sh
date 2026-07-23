@@ -82,7 +82,7 @@ else
   # survive. Parsed dynamically: don't hardcode a specific developer's name
   # or team ID here, since any contributor's keychain may have one.
   DEV_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
-    | grep '"Apple Development:' | head -n1 | sed -E 's/.*"(Apple Development:[^"]*)".*/\1/')"
+    | grep '"Apple Development:' | head -n1 | sed -E 's/.*"(Apple Development:[^"]*)".*/\1/' || true)"
   if [[ -n "$DEV_IDENTITY" ]]; then
     echo "note: '$IDENTITY' identity not found/trusted; using '$DEV_IDENTITY' instead" >&2
     codesign --force --deep -s "$DEV_IDENTITY" "$APP"
