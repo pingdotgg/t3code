@@ -297,6 +297,17 @@ struct SidebarView: View {
                 }
                 .disabled(!item.isSelectable)
                 Divider()
+                if item.thread.status != .settled && item.thread.status != .archived {
+                    Button("Settle Thread", systemImage: "checkmark.circle") {
+                        Task { await model.settleThread(item.thread) }
+                    }
+                    .disabled(!item.isSelectable)
+                } else if item.thread.status == .settled {
+                    Button("Mark as Active", systemImage: "arrow.counterclockwise") {
+                        Task { await model.unsettleThread(item.thread) }
+                    }
+                    .disabled(!item.isSelectable)
+                }
                 Button("Archive", systemImage: "archivebox") {
                     Task { await model.archiveThread(item.thread) }
                 }

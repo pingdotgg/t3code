@@ -705,6 +705,7 @@ public actor LiveBackend: BackendService {
         // turn to go stale, so their count must not influence this projection.
         let wireStatus = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
+            settledOverride: shell.settledOverride,
             hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
             activeSubagentCount: 0)
         if wireStatus == .running {
@@ -1567,6 +1568,16 @@ public actor LiveBackend: BackendService {
     public func unarchiveThread(id: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         _ = try await client.unarchiveThread(threadId: id)
+    }
+
+    public func settleThread(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.settleThread(threadId: id)
+    }
+
+    public func unsettleThread(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.unsettleThread(threadId: id)
     }
 
     public func deleteThread(id: String) async throws {
@@ -2615,6 +2626,7 @@ public actor LiveBackend: BackendService {
         let activeSubagentCount = subagentTasksByThread[shell.id]?.activeTaskCount ?? 0
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
+            settledOverride: shell.settledOverride,
             hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
             activeSubagentCount: activeSubagentCount)
         let presentedStatus =
@@ -2673,11 +2685,11 @@ public actor LiveBackend: BackendService {
 
     private func mapStatus(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?, archivedAt: String?,
-        hasPendingApprovals: Bool, activeSubagentCount: Int
+        settledOverride: String?, hasPendingApprovals: Bool, activeSubagentCount: Int
     ) -> ThreadStatus {
         switch ThreadStatusProjection.project(
             session: session, latestTurn: latestTurn, archivedAt: archivedAt,
-            hasPendingApprovals: hasPendingApprovals,
+            settledOverride: settledOverride, hasPendingApprovals: hasPendingApprovals,
             activeSubagentCount: activeSubagentCount)
         {
         case .idle: return .idle
@@ -2687,6 +2699,7 @@ public actor LiveBackend: BackendService {
         case .backgroundWork: return .backgroundWork
         case .error: return .error
         case .archived: return .archived
+        case .settled: return .settled
         }
     }
 
