@@ -1192,12 +1192,6 @@ export default function SidebarV2() {
       setProjectScopeKey(null);
     }
   }, [projectScopeKey, scopedProjectGroup]);
-  useEffect(
-    () => () => {
-      setProjectScopeKey(null);
-    },
-    [setProjectScopeKey],
-  );
   // Scope flips drop the selection: rows selected under the old scope may be
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
