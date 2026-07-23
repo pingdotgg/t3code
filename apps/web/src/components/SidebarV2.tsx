@@ -823,10 +823,16 @@ export default function SidebarV2() {
       ),
     [projects],
   );
-  const projectTitleByKey = useMemo(
+  const projectDisplayNameByKey = useMemo(
     () =>
-      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.title])),
-    [projects],
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjects.map(
+            (project) => [`${project.environmentId}:${project.id}`, group.displayName] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
   );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
@@ -1768,7 +1774,8 @@ export default function SidebarV2() {
                       projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                     }
                     projectTitle={
-                      projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                      projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                      null
                     }
                     providerEntryByInstanceId={providerEntryByInstanceId}
                     onThreadClick={handleThreadClick}
