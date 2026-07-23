@@ -8,6 +8,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  type DesktopPreviewColorScheme,
   type PreviewEvent,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
@@ -24,6 +25,7 @@ export interface DesktopPreviewOverlay {
   loading: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
 }
 

@@ -297,6 +297,7 @@ describe("previewStateStore (single-tab)", () => {
       loading: false,
       zoomFactor: 1,
       pictureInPicture: false,
+      colorScheme: "system",
       controller: "none",
     });
     const state = readThreadPreviewState(ref);
@@ -316,6 +317,7 @@ describe("previewStateStore (single-tab)", () => {
       loading: false,
       zoomFactor: 1,
       pictureInPicture: false,
+      colorScheme: "system",
       controller: "none",
     });
     setActivePreviewTab(ref, first.tabId);
@@ -363,6 +365,7 @@ describe("previewStateStore (single-tab)", () => {
       loading: false,
       zoomFactor: 1,
       pictureInPicture: false,
+      colorScheme: "system",
       controller: "none",
     });
 

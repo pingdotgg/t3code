@@ -79,6 +79,7 @@ function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverl
     loading: state.navStatus.kind === "Loading",
     zoomFactor: state.zoomFactor,
     pictureInPicture: state.pictureInPicture,
+    colorScheme: state.colorScheme,
     controller: state.controller,
   };
 }
