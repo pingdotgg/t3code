@@ -110,7 +110,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderDisplayName } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -198,6 +198,8 @@ function isInsideComposerFloatingLayer(element: Element): boolean {
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
+  showRuntimeModeSelector: boolean;
+  toolAccessDescription?: string | undefined;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   showPlanToggle: boolean;
@@ -252,7 +254,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     </>
   ) : null;
 
-  return (
+  const runtimeModeSelector = props.showRuntimeModeSelector ? (
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
@@ -305,7 +307,33 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </Select>
         <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
       </Tooltip>
+    </>
+  ) : null;
+  const toolAccessNotice = props.toolAccessDescription ? (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className="inline-flex shrink-0 items-center gap-1.5 px-2 text-muted-foreground/80 text-xs"
+              aria-label="Pi-managed tool access"
+              tabIndex={0}
+            />
+          }
+        >
+          <CircleAlertIcon className="size-3.5" />
+          <span className="hidden sm:inline">Pi-managed tools</span>
+        </TooltipTrigger>
+        <TooltipPopup side="top">{props.toolAccessDescription}</TooltipPopup>
+      </Tooltip>
+    </>
+  ) : null;
 
+  return (
+    <>
+      {runtimeModeSelector}
+      {toolAccessNotice}
       {interactionModeToggle}
 
       {props.showPlanToggle ? (
@@ -832,12 +860,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const composerProviderControls = useMemo(
     () => ({
-      showInteractionModeToggle: getProviderInteractionModeToggle(
-        providerStatuses,
-        selectedProvider,
-      ),
+      showInteractionModeToggle: selectedProviderStatus?.showInteractionModeToggle ?? true,
+      showRuntimeModeSelector: selectedProviderStatus?.showRuntimeModeSelector ?? true,
+      toolAccessDescription: selectedProviderStatus?.toolAccessDescription,
     }),
-    [providerStatuses, selectedProvider],
+    [selectedProviderStatus],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -2589,6 +2616,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                    showRuntimeModeSelector={composerProviderControls.showRuntimeModeSelector}
+                    toolAccessDescription={composerProviderControls.toolAccessDescription}
                     traitsMenuContent={providerTraitsMenuContent}
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
@@ -2604,6 +2633,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ) : null}
                     <ComposerFooterModeControls
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      showRuntimeModeSelector={composerProviderControls.showRuntimeModeSelector}
+                      toolAccessDescription={composerProviderControls.toolAccessDescription}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
                       showPlanToggle={showPlanSidebarToggle}

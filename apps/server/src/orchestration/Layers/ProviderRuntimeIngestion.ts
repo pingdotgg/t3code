@@ -614,6 +614,25 @@ export function runtimeEventToActivities(
     }
 
     case "item.updated": {
+      if (event.payload.itemType === "context_compaction") {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "context-compaction",
+            summary: event.payload.title ?? "Compacting conversation",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -637,6 +656,29 @@ export function runtimeEventToActivities(
     }
 
     case "item.completed": {
+      if (event.payload.itemType === "context_compaction") {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: event.payload.status === "failed" ? "error" : "info",
+            kind: "context-compaction",
+            summary:
+              event.payload.title ??
+              (event.payload.status === "failed"
+                ? "Context compaction failed"
+                : "Context compacted"),
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -644,11 +686,12 @@ export function runtimeEventToActivities(
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
+          tone: event.payload.status === "failed" ? "error" : "tool",
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
@@ -659,6 +702,24 @@ export function runtimeEventToActivities(
     }
 
     case "item.started": {
+      if (event.payload.itemType === "context_compaction") {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "context-compaction",
+            summary: event.payload.title ?? "Compacting conversation",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -671,6 +732,7 @@ export function runtimeEventToActivities(
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
             itemType: event.payload.itemType,
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,

@@ -14,6 +14,9 @@ const PI_DRIVER = ProviderDriverKind.make("pi");
 const PI_PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: false,
+  showRuntimeModeSelector: false,
+  toolAccessDescription:
+    "Pi manages enabled tool access; Pi tools can run without a T3 Code per-tool confirmation.",
 } as const;
 
 export interface PiModelCatalogProbeInput {

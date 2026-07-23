@@ -165,6 +165,10 @@ export const ServerProvider = Schema.Struct({
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
+  /** Whether T3 Code may present its provider-managed runtime access selector. */
+  showRuntimeModeSelector: Schema.optional(Schema.Boolean),
+  /** Provider-owned tool-access policy shown beside composer controls. */
+  toolAccessDescription: Schema.optional(TrimmedNonEmptyString),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,

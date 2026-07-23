@@ -130,6 +130,25 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.answers.sandbox_mode).toBe("workspace-write");
   });
 
+  it("preserves Pi RPC payloads as canonical runtime-event diagnostics", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "runtime.warning",
+      eventId: "event-pi-raw-1",
+      provider: "pi",
+      createdAt: "2026-02-28T00:00:03.000Z",
+      threadId: "thread-pi-1",
+      payload: { message: "Pi will retry a transient provider error." },
+      raw: {
+        source: "pi.rpc.event",
+        messageType: "auto_retry_start",
+        payload: { type: "auto_retry_start", attempt: 1 },
+      },
+    });
+
+    expect(parsed.raw?.source).toBe("pi.rpc.event");
+    expect(parsed.raw?.messageType).toBe("auto_retry_start");
+  });
+
   it("rejects legacy message.delta type", () => {
     expect(() =>
       decodeRuntimeEvent({

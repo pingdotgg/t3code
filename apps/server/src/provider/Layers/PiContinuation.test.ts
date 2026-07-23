@@ -58,6 +58,8 @@ function makePiRuntimeFactory() {
         setModel: () => Effect.void,
         getAvailableThinkingLevels: () => Effect.succeed(["off", "high"]),
         setThinkingLevel: () => Effect.void,
+        prompt: () => Effect.void,
+        abort: () => Effect.void,
         events: Stream.empty,
         close: Effect.void,
       };
@@ -176,16 +178,13 @@ describe("Pi native continuation", () => {
         );
         expect(workRuntime.options).toEqual([]);
 
-        // Prompt delivery is introduced by the following Pi slice. Reaching
-        // this adapter error proves ProviderService first recovered the native
-        // session using its persisted runtime binding.
-        yield* provider
-          .sendTurn({
-            threadId: THREAD_ID,
-            input: "continue this native session",
-            attachments: [],
-          })
-          .pipe(Effect.flip);
+        // Prompt delivery recovers the persisted native session through its
+        // original runtime binding before it reaches Pi.
+        yield* provider.sendTurn({
+          threadId: THREAD_ID,
+          input: "continue this native session",
+          attachments: [],
+        });
 
         expect(initial.resumeCursor).toEqual({ schemaVersion: 1, sessionId: THREAD_ID });
         expect(personalRuntime.options).toHaveLength(2);

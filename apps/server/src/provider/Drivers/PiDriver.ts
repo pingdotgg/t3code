@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -15,7 +16,7 @@ import { ProcessRunner } from "../../processRunner.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makePiAdapter } from "../Layers/PiAdapter.ts";
+import { makePiAdapter, makePiImageAttachmentLoader } from "../Layers/PiAdapter.ts";
 import { makePiSessionRuntime } from "./PiSessionRuntime.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -75,6 +76,7 @@ const unavailableTextGeneration = TextGeneration.TextGeneration.of({
 
 export type PiDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
   | Path.Path
   | ProcessRunner
   | ServerConfig
@@ -114,6 +116,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const processRunner = yield* ProcessRunner;
+      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -137,6 +140,10 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         instanceId,
         sessionDirectory,
         environment: processEnv,
+        loadImageAttachment: makePiImageAttachmentLoader({
+          attachmentsDir: serverConfig.attachmentsDir,
+          fileSystem,
+        }),
         makeRuntime: makePiSessionRuntime,
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

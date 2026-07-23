@@ -756,6 +756,34 @@ describe("deriveWorkLogEntries", () => {
     expect(entries[0]?.label).toBe("Searching for API endpoints");
   });
 
+  it("collapses adjacent progress updates for the same task", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "thinking-progress-1",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Thinking",
+        tone: "info",
+        payload: { taskId: "thinking-1", summary: "Inspecting the session" },
+      }),
+      makeActivity({
+        id: "thinking-progress-2",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.progress",
+        summary: "Thinking",
+        tone: "info",
+        payload: { taskId: "thinking-1", summary: "Inspecting the session and tools" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "thinking-progress-2",
+      label: "Inspecting the session and tools",
+    });
+  });
+
   it("uses payload detail as label for task.completed and preserves error tone", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

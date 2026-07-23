@@ -52,6 +52,18 @@ export interface PiSessionRuntimeState {
   readonly thinkingLevel?: string | undefined;
 }
 
+export interface PiPromptImage {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+export interface PiPromptInput {
+  readonly message: string;
+  readonly images?: ReadonlyArray<PiPromptImage> | undefined;
+  readonly streamingBehavior?: "steer" | "followUp" | undefined;
+}
+
 export interface PiSessionRuntimeShape {
   readonly start: () => Effect.Effect<PiSessionRuntimeState, PiSessionRuntimeError>;
   readonly getState: () => Effect.Effect<PiSessionRuntimeState, PiSessionRuntimeError>;
@@ -68,6 +80,10 @@ export interface PiSessionRuntimeShape {
     PiSessionRuntimeError
   >;
   readonly setThinkingLevel: (level: string) => Effect.Effect<void, PiSessionRuntimeError>;
+  /** Accept a normal Pi RPC prompt; lifecycle events continue asynchronously. */
+  readonly prompt: (input: PiPromptInput) => Effect.Effect<void, PiSessionRuntimeError>;
+  /** Invoke Pi's native abort command for the active operation. */
+  readonly abort: () => Effect.Effect<void, PiSessionRuntimeError>;
   /** Raw Pi protocol events retained for later lifecycle/diagnostic mapping. */
   readonly events: Stream.Stream<unknown>;
   readonly close: Effect.Effect<void>;
@@ -538,6 +554,16 @@ export const makePiSessionRuntime = (
     const setThinkingLevel = (level: string) =>
       request({ type: "set_thinking_level", level }).pipe(Effect.asVoid);
 
+    const prompt = (input: PiPromptInput) =>
+      request({
+        type: "prompt",
+        message: input.message,
+        ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+        ...(input.streamingBehavior ? { streamingBehavior: input.streamingBehavior } : {}),
+      }).pipe(Effect.asVoid);
+
+    const abort = () => request({ type: "abort" }).pipe(Effect.asVoid);
+
     const close = Ref.getAndSet(closed, true).pipe(
       Effect.flatMap((wasClosed) => {
         if (wasClosed) {
@@ -571,6 +597,8 @@ export const makePiSessionRuntime = (
       setModel,
       getAvailableThinkingLevels,
       setThinkingLevel,
+      prompt,
+      abort,
       events: Stream.fromQueue(rawEvents),
       close,
     } satisfies PiSessionRuntimeShape;

@@ -57,6 +57,8 @@ export interface ServerProviderPresentation {
   readonly displayName: string;
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
+  readonly showRuntimeModeSelector?: boolean;
+  readonly toolAccessDescription?: string;
   readonly requiresNewThreadForModelChange?: boolean;
 }
 
@@ -261,6 +263,12 @@ export function buildServerProvider(input: {
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
+      : {}),
+    ...(typeof input.presentation.showRuntimeModeSelector === "boolean"
+      ? { showRuntimeModeSelector: input.presentation.showRuntimeModeSelector }
+      : {}),
+    ...(input.presentation.toolAccessDescription
+      ? { toolAccessDescription: input.presentation.toolAccessDescription }
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }

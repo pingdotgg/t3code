@@ -35,9 +35,19 @@ function makeMockPiBinary(): string {
   const binaryPath = NodePath.join(directory, "fake-pi.sh");
   NodeFS.writeFileSync(
     agentPath,
-    `let buffer = "";
+    `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+let buffer = "";
 let selected = { provider: "custom", id: "starter", name: "Starter" };
 let thinkingLevel = "high";
+const argumentValue = (name) => {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+};
+const sessionDirectory = argumentValue("--session-dir");
+const sessionId = argumentValue("--session-id") ?? "thread-native";
+const sessionFile = sessionDirectory ? join(sessionDirectory, \`\${sessionId}.jsonl\`) : "/tmp/thread-native.jsonl";
 
 function respond(command, data) {
   process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, ...(data === undefined ? {} : { data }) }) + "\\n");
@@ -46,7 +56,7 @@ function respond(command, data) {
 function handle(command) {
   switch (command.type) {
     case "get_state":
-      respond(command, { sessionId: "thread-native", sessionFile: "/tmp/thread-native.jsonl", model: selected, thinkingLevel });
+      respond(command, { sessionId, sessionFile, model: selected, thinkingLevel });
       return;
     case "get_available_models":
       respond(command, { models: [selected, { provider: "custom", id: "team/coder", name: "Team Coder" }] });
@@ -60,6 +70,16 @@ function handle(command) {
       return;
     case "set_thinking_level":
       thinkingLevel = command.level;
+      respond(command);
+      return;
+    case "prompt":
+      if (sessionDirectory) {
+        mkdirSync(sessionDirectory, { recursive: true });
+        writeFileSync(sessionFile, JSON.stringify({ type: "session", id: sessionId, message: command.message }) + "\\n");
+      }
+      respond(command);
+      return;
+    case "abort":
       respond(command);
       return;
     default:
@@ -83,7 +103,7 @@ process.stdin.on("data", (chunk) => {
   NodeFS.writeFileSync(
     binaryPath,
     `#!/bin/sh
-exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)}\n`,
+exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)} "$@"\n`,
     "utf8",
   );
   NodeFS.chmodSync(binaryPath, 0o755);
@@ -93,19 +113,25 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)}\n`,
 it.effect("starts Pi persistent mode with a stable native ID and drives model RPC", () =>
   Effect.gen(function* () {
     const binaryPath = makeMockPiBinary();
+    const sessionDirectory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-pi-native-session-"),
+    );
+    const siblingInstanceDirectory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-pi-native-session-sibling-"),
+    );
     const runtime = yield* makePiSessionRuntime({
       binaryPath,
       configDirectory: "/tmp/pi-config",
       launchArgs: "",
       cwd: process.cwd(),
-      sessionDirectory: "/tmp/t3-pi-sessions/instance-a",
+      sessionDirectory,
       sessionId: "thread-native",
     });
 
     const started = yield* runtime.start();
     expect(started).toMatchObject({
       sessionId: "thread-native",
-      sessionFile: "/tmp/thread-native.jsonl",
+      sessionFile: NodePath.join(sessionDirectory, "thread-native.jsonl"),
       model: { provider: "custom", id: "starter" },
     });
 
@@ -117,11 +143,20 @@ it.effect("starts Pi persistent mode with a stable native ID and drives model RP
     yield* runtime.setModel({ provider: "custom", modelId: "team/coder" });
     expect(yield* runtime.getAvailableThinkingLevels()).toEqual(["off", "high", "max"]);
     yield* runtime.setThinkingLevel("max");
+    yield* runtime.prompt({ message: "Persist the first native Pi turn" });
+    const sessionFile = NodePath.join(sessionDirectory, "thread-native.jsonl");
+    expect(NodeFS.existsSync(sessionFile)).toBe(true);
+    expect(NodeFS.readFileSync(sessionFile, "utf8")).toContain("thread-native");
+    expect(NodeFS.existsSync(NodePath.join(siblingInstanceDirectory, "thread-native.jsonl"))).toBe(
+      false,
+    );
     expect(yield* runtime.getState()).toMatchObject({
       model: { provider: "custom", id: "team/coder" },
       thinkingLevel: "max",
     });
 
     NodeFS.rmSync(NodePath.dirname(binaryPath), { recursive: true, force: true });
+    NodeFS.rmSync(sessionDirectory, { recursive: true, force: true });
+    NodeFS.rmSync(siblingInstanceDirectory, { recursive: true, force: true });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

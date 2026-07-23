@@ -36,6 +36,8 @@ describe("checkPiProviderStatus", () => {
           expect(snapshot.installed).toBe(true);
           expect(snapshot.status).toBe("ready");
           expect(snapshot.version).toBe("0.81.1");
+          expect(snapshot.showRuntimeModeSelector).toBe(false);
+          expect(snapshot.toolAccessDescription).toContain("Pi manages enabled tool access");
         }),
       ),
     ),
