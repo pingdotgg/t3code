@@ -92,6 +92,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
+  buildArchivedProjectRemovalPlans,
   filterVisibleSidebarThreads,
   firstValidTimestampMs,
   getArchivedProjectRemovalWarning,
@@ -99,7 +100,6 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
-  resolveArchivedProjectRemovalCommandOptions,
   resolveSidebarV2Status,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -963,6 +963,7 @@ export default function SidebarV2() {
       const projectThreads = threads.filter((thread) =>
         memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
+      const memberRemovalPlans = buildArchivedProjectRemovalPlans(members, projectThreads);
       const isWholeGroup = members.length === projectGroup.memberProjects.length;
       const singleMember = members.length === 1 ? members[0]! : null;
       const targetLabel = singleMember?.title ?? projectGroup.displayName;
@@ -1013,11 +1014,7 @@ export default function SidebarV2() {
 
       const draftStore = useComposerDraftStore.getState();
       let shouldNavigate = false;
-      for (const project of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
-        );
+      for (const { member: project, memberThreads, commandOptions } of memberRemovalPlans) {
         const projectRef = scopeProjectRef(project.environmentId, project.id);
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
@@ -1030,7 +1027,7 @@ export default function SidebarV2() {
           environmentId: project.environmentId,
           input: {
             projectId: project.id,
-            ...resolveArchivedProjectRemovalCommandOptions(memberThreads.length > 0),
+            ...commandOptions,
           },
         });
         if (result._tag === "Failure") {

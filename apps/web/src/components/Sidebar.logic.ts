@@ -687,6 +687,29 @@ export function resolveArchivedProjectRemovalCommandOptions(
   return { deleteArchivedThreads: true };
 }
 
+export function buildArchivedProjectRemovalPlans<
+  TMember extends { readonly environmentId: string; readonly id: string },
+  TThread extends { readonly environmentId: string; readonly projectId: string },
+>(
+  members: readonly TMember[],
+  projectThreads: readonly TThread[],
+): {
+  readonly member: TMember;
+  readonly memberThreads: TThread[];
+  readonly commandOptions: { readonly force: true } | { readonly deleteArchivedThreads: true };
+}[] {
+  return members.map((member) => {
+    const memberThreads = projectThreads.filter(
+      (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
+    );
+    return {
+      member,
+      memberThreads,
+      commandOptions: resolveArchivedProjectRemovalCommandOptions(memberThreads.length > 0),
+    };
+  });
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {

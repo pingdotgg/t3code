@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   archiveSelectedThreadEntries,
+  buildArchivedProjectRemovalPlans,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   filterVisibleSidebarThreads,
@@ -16,7 +17,6 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
-  resolveArchivedProjectRemovalCommandOptions,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
@@ -1085,20 +1085,36 @@ describe("filterVisibleSidebarThreads", () => {
 });
 
 describe("archived project removal with grouped project actions", () => {
-  it("keeps archived-bundle command scope independent for each project member", () => {
+  it("derives archived-bundle command scope from each project member's threads", () => {
     const members = [
-      { id: "project-with-live-threads", hasLiveThreads: true },
-      { id: "archived-only-project", hasLiveThreads: false },
+      { environmentId: "environment-live", id: "grouped-project" },
+      { environmentId: "environment-archived", id: "grouped-project" },
+    ];
+    const projectThreads = [
+      {
+        environmentId: "environment-live",
+        projectId: "grouped-project",
+        id: "thread-live",
+      },
     ];
 
     expect(
-      members.map((member) => ({
-        id: member.id,
-        options: resolveArchivedProjectRemovalCommandOptions(member.hasLiveThreads),
+      buildArchivedProjectRemovalPlans(members, projectThreads).map((plan) => ({
+        environmentId: plan.member.environmentId,
+        threadIds: plan.memberThreads.map((thread) => thread.id),
+        options: plan.commandOptions,
       })),
     ).toEqual([
-      { id: "project-with-live-threads", options: { force: true } },
-      { id: "archived-only-project", options: { deleteArchivedThreads: true } },
+      {
+        environmentId: "environment-live",
+        threadIds: ["thread-live"],
+        options: { force: true },
+      },
+      {
+        environmentId: "environment-archived",
+        threadIds: [],
+        options: { deleteArchivedThreads: true },
+      },
     ]);
   });
 
