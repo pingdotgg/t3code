@@ -91,12 +91,29 @@ export function canSettle(
 }
 
 /**
- * Settled resolution over the server-backed settled lifecycle. The explicit
- * user override (thread.settle / thread.unsettle commands, projected into
- * settledOverride + settledAt) wins in both directions; without one, a
- * thread auto-settles on a merged/closed PR or inactivity past the window.
- * The server un-settles on real activity (user message, session start,
- * approval/user-input request), so an override never goes stale silently.
+ * A merged/closed change request settles its thread only once the thread has
+ * been idle this long. Without the idle guard the merge signal is permanent:
+ * sending a message to a merged-PR thread would un-settle the row only until
+ * its turn completed, then the still-merged PR would snap it straight back
+ * into the settled tail. An hour keeps the follow-up conversation visible
+ * while it is warm; once the burst goes stale the merge signal settles it
+ * again. Activity timestamps can originate on another device while `now` is
+ * this caller's clock: skew shortens or stretches the window by its size,
+ * the same exposure the inactivity auto-settle already accepts — worst case
+ * is a row changing lists early or late, never lost work.
+ */
+export const CHANGE_REQUEST_SETTLE_IDLE_MS = 60 * 60 * 1_000;
+
+/**
+ * Settled resolution over the server-backed settled lifecycle. Activity
+ * blockers (pending approval/user-input, a live session, an unadjudicated
+ * queued turn) are checked first and hold a thread active regardless of any
+ * override. Past the blockers, the explicit user override (thread.settle /
+ * thread.unsettle commands, projected into settledOverride + settledAt)
+ * wins in both directions; without one, a thread auto-settles on a
+ * merged/closed PR (once idle) or inactivity past the window. The server
+ * un-settles on real activity (user message, session start, approval/
+ * user-input request), so an override never goes stale silently.
  */
 export function effectiveSettled(
   shell: OrchestrationThreadShell,
@@ -130,7 +147,16 @@ export function effectiveSettled(
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
   if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
-    return true;
+    // Only an idle thread settles on the merge signal: the signal itself
+    // never clears, so without this guard fresh activity (a message sent in
+    // a settled thread) would re-settle the moment its turn completed.
+    const lastActivityAt = threadLastActivityAt(shell);
+    if (
+      lastActivityAt === null ||
+      Date.parse(lastActivityAt) < Date.parse(options.now) - CHANGE_REQUEST_SETTLE_IDLE_MS
+    ) {
+      return true;
+    }
   }
   if (options.autoSettleAfterDays === null) return false;
 
