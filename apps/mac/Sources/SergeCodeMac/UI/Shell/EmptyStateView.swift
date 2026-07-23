@@ -5,6 +5,7 @@ import SwiftUI
 /// required Unsplash attribution in the corner.
 struct EmptyStateView: View {
     let scenery: SceneryStore
+    var onQuickChat: () -> Void
     var onNewSession: () -> Void
 
     @UIState private var hasAppeared = false
@@ -38,16 +39,28 @@ struct EmptyStateView: View {
                 BrandMarkView()
                     .frame(width: 44, height: 44)
                 BrandWordmark(size: 26)
-                Text("Select a session, or start a new one.")
+                Text("Select a session, start a quick chat, or choose a project.")
                     .foregroundStyle(.white.opacity(0.88))
-                Button(action: onNewSession) {
-                    Label("New Session", systemImage: "plus")
-                        .font(.headline)
-                        .foregroundStyle(AlpineTheme.forest)
-                }
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 12) {
+                    Button(action: onQuickChat) {
+                        Label("Quick Chat", systemImage: "bubble.left.and.bubble.right")
+                            .font(.headline)
+                            .foregroundStyle(AlpineTheme.forest)
+                    }
                     .buttonStyle(.borderedProminent)
                     .tint(AlpineTheme.accent)
                     .controlSize(.large)
+                    .help("Start a general session in \(GeneralWorkspace.relativePath)")
+
+                    Button(action: onNewSession) {
+                        Label("New Session", systemImage: "plus")
+                            .font(.headline)
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.large)
+                    .help("Choose a project and provider")
+                }
             }
             .padding(32)
             .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))

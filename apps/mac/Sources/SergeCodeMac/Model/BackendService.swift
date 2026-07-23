@@ -123,7 +123,10 @@ public protocol BackendService: Sendable {
     /// as edit-resend can sequence a follow-up send after it.
     func restoreCheckpoint(threadID: String, turnCount: Int) async throws
 
-    func addProject(path: String) async throws -> Project
+    /// Registers a project for `path`. When `createWorkspaceRootIfMissing` is
+    /// true, the server creates the directory tree if it does not exist
+    /// (Quick Chat / General workspace). User-picked folders pass false.
+    func addProject(path: String, createWorkspaceRootIfMissing: Bool) async throws -> Project
     /// Renames a project (its display title; the workspace path is unchanged).
     func renameProject(id: String, name: String) async throws
     /// Deletes a project and all of its sessions (force-cascades server-side).

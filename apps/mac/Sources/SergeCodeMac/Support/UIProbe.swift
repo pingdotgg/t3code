@@ -1015,7 +1015,8 @@
             aboutWindow.orderOut(nil)
 
             let emptyHosting = NSHostingView(
-                rootView: EmptyStateView(scenery: scenery, onNewSession: {}))
+                rootView: EmptyStateView(
+                    scenery: scenery, onQuickChat: {}, onNewSession: {}))
             let emptyWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
                 styleMask: [.titled], backing: .buffered, defer: false)

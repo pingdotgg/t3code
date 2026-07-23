@@ -318,8 +318,9 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
         continuation.yield(event)
     }
 
-    func addProject(path: String) async throws -> Project {
-        Project(id: "p", name: "p", path: path)
+    func addProject(path: String, createWorkspaceRootIfMissing: Bool) async throws -> Project {
+        _ = createWorkspaceRootIfMissing
+        return Project(id: "p", name: "p", path: path)
     }
     func renameProject(id: String, name: String) async throws {}
     func deleteProject(id: String) async throws {}

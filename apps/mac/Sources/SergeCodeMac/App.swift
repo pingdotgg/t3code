@@ -179,6 +179,19 @@ struct SergeCodeApp: App {
             // top-level window here would just be a redundant duplicate of
             // the same sidebar/model, not a useful window to spawn).
             CommandGroup(replacing: .newItem) {
+                Button("Quick Chat") {
+                    Task {
+                        let owner = multi.local
+                        if let thread = await owner.startQuickChat(
+                            scenery: scenery, passport: passport)
+                        {
+                            multi.select(threadID: thread.id, on: .local)
+                        }
+                    }
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .help("Start a general session in \(GeneralWorkspace.relativePath)")
+
                 // Same AppKit-window workaround as About above — this opens
                 // an independent standalone window rather than RootView's
                 // own New Session sheet.

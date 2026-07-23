@@ -297,7 +297,9 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] { [] }
     func checkpoints(threadID: String) async throws -> [Checkpoint] { [] }
     func restoreCheckpoint(threadID: String, turnCount: Int) async throws {}
-    func addProject(path: String) async throws -> Project { fatalError("unused") }
+    func addProject(path: String, createWorkspaceRootIfMissing: Bool) async throws -> Project {
+        fatalError("unused")
+    }
     func renameProject(id: String, name: String) async throws {}
     func deleteProject(id: String) async throws {}
     func watchVcsStatus(threadID: String) async throws {}

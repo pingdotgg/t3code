@@ -1691,11 +1691,73 @@ public final class AppModel {
 
     public func addProject(path: String) async {
         do {
-            _ = try await backend.addProject(path: path)
+            _ = try await backend.addProject(path: path, createWorkspaceRootIfMissing: false)
             await refreshAll()
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    /// Prefer the provider of the most recently updated active thread when it
+    /// is still runnable; otherwise the first runnable provider.
+    public var preferredQuickChatProvider: ProviderKind? {
+        let runnable = runnableProviderKinds
+        guard !runnable.isEmpty else { return nil }
+        if let lastUsed = threads.max(by: { $0.updatedAt < $1.updatedAt }),
+            runnable.contains(lastUsed.provider)
+        {
+            return lastUsed.provider
+        }
+        return runnable.first
+    }
+
+    /// Reuse or create the host-local General project at
+    /// `GeneralWorkspace.resolvedPath`.
+    public func ensureGeneralProject() async -> Project? {
+        let path = GeneralWorkspace.resolvedPath
+        if let existing = projects.first(where: { GeneralWorkspace.pathsMatch($0.path, path) }) {
+            return existing
+        }
+        do {
+            let project = try await backend.addProject(
+                path: path, createWorkspaceRootIfMissing: true)
+            // Prefer the server-normalized list when available; fall back to
+            // the create response so callers can proceed immediately.
+            await refreshAll()
+            if let refreshed = projects.first(where: { GeneralWorkspace.pathsMatch($0.path, path) })
+            {
+                return refreshed
+            }
+            if !projects.contains(where: { $0.id == project.id }) {
+                projects.append(project)
+            }
+            return project
+        } catch {
+            lastError = String(describing: error)
+            return nil
+        }
+    }
+
+    /// One-click general session: ensure General workspace, last-used provider,
+    /// scene-named thread. Local Mac only.
+    @discardableResult
+    public func startQuickChat(scenery: SceneryStore, passport: PassportStore? = nil) async
+        -> ChatThread?
+    {
+        guard capabilities.canBrowseLocalFolders else {
+            lastError = "Quick Chat is only available on this Mac."
+            return nil
+        }
+        guard let provider = preferredQuickChatProvider else {
+            lastError = "No providers are ready. Open Settings ▸ Providers and refresh."
+            return nil
+        }
+        guard let project = await ensureGeneralProject() else { return nil }
+        return await createSceneThread(
+            projectID: project.id,
+            provider: provider,
+            scenery: scenery,
+            passport: passport)
     }
 
     /// Every session of a project, archived included — the delete cascade

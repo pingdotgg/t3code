@@ -128,7 +128,8 @@ struct LiveIntegrationTests {
             await remoteBackend.start()
             try await waitForReady(remoteEvents)
 
-            let localProject = try await local.addProject(path: projectPath)
+            let localProject = try await local.addProject(
+                path: projectPath, createWorkspaceRootIfMissing: false)
             let remoteProjects = try await waitForProject(remoteBackend, id: localProject.id)
             let remoteThreads = try await remoteBackend.threads()
             #expect(remoteProjects.contains { $0.id == localProject.id })
