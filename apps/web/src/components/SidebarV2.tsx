@@ -1597,7 +1597,7 @@ export default function SidebarV2() {
                           key={scopeKey}
                           value={scopeKey}
                           closeOnClick
-                          className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                          className="group/project-row h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                         >
                           <ProjectFavicon
                             environmentId={project.environmentId}
@@ -1609,7 +1609,7 @@ export default function SidebarV2() {
                             type="button"
                             aria-label={`Remove project ${project.title}`}
                             title={`Remove ${project.title}`}
-                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
+                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 opacity-0 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-destructive/40 group-hover/project-row:opacity-100"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
                               event.preventDefault();
