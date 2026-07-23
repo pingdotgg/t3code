@@ -1,0 +1,22 @@
+<svg width="432" height="432" viewBox="0 0 432 432" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mark" x1="0" y1="0" x2="0" y2="47" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.48" stop-color="#F7F7F7"/>
+      <stop offset="0.76" stop-color="#D8D8D8"/>
+      <stop offset="1" stop-color="#AAAAAA"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-20%" width="130%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+  <g transform="translate(79.8 133.9) scale(3.55)" filter="url(#shadow)">
+    <path
+      d="M14.56 45.5V8.58H0V0H39.65V8.58H25.09V45.5H14.56ZM57.8454 46.28C54.6821 46.28 51.5404 45.8683 48.4204 45.045C45.3004 44.1783 42.6571 42.965 40.4904 41.405L44.5854 33.345C46.3188 34.6017 48.3338 35.5983 50.6304 36.335C52.9271 37.0717 55.2454 37.44 57.5854 37.44C60.2288 37.44 62.3088 36.92 63.8254 35.88C65.3421 34.84 66.1004 33.41 66.1004 31.59C66.1004 29.8567 65.4288 28.4917 64.0854 27.495C62.7421 26.4983 60.5754 26 57.5854 26H52.7754V19.045L65.4504 4.68L66.6204 8.45H42.7654V0H74.6154V6.825L62.0054 21.19L56.6754 18.135H59.7304C65.3204 18.135 69.5454 19.3917 72.4054 21.905C75.2654 24.4183 76.6954 27.6467 76.6954 31.59C76.6954 34.1467 76.0238 36.5517 74.6804 38.805C73.3371 41.015 71.2788 42.8133 68.5054 44.2C65.7321 45.5867 62.1788 46.28 57.8454 46.28Z"
+      fill="url(#mark)"
+      stroke="#FFFFFF"
+      stroke-width="1.25"
+      vector-effect="non-scaling-stroke"
+    />
+  </g>
+</svg>
