@@ -81,6 +81,14 @@ export function resolveSidebarThreadGitCwd(input: {
   return input.worktreePath ?? input.threadProjectCwd ?? input.sidebarProjectCwd;
 }
 
+export function shouldQuerySidebarThreadGitStatus(input: {
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly gitCwd: string | null;
+}): boolean {
+  return (input.branch !== null || input.worktreePath !== null) && input.gitCwd !== null;
+}
+
 export function pruneSidebarChangeRequestStates<T>(
   current: ReadonlyMap<string, T>,
   liveThreadKeys: ReadonlySet<string>,

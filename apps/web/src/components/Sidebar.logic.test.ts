@@ -30,6 +30,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   shouldDismissThreadSettleConfirmation,
+  shouldQuerySidebarThreadGitStatus,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -52,6 +53,35 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldQuerySidebarThreadGitStatus", () => {
+  it("queries worktree-only threads so their pull request state can be reported", () => {
+    expect(
+      shouldQuerySidebarThreadGitStatus({
+        branch: null,
+        worktreePath: "/repo/.t3/worktrees/feature",
+        gitCwd: "/repo/.t3/worktrees/feature",
+      }),
+    ).toBe(true);
+  });
+
+  it("requires a cwd and either a branch or worktree", () => {
+    expect(
+      shouldQuerySidebarThreadGitStatus({
+        branch: "feature",
+        worktreePath: null,
+        gitCwd: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldQuerySidebarThreadGitStatus({
+        branch: null,
+        worktreePath: null,
+        gitCwd: "/repo",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

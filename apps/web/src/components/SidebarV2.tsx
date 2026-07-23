@@ -123,6 +123,7 @@ import {
   resolveSidebarThreadGitCwd,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
+  shouldQuerySidebarThreadGitStatus,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
@@ -181,7 +182,11 @@ function SidebarV2HiddenThreadChangeRequestStateReporter(props: {
     sidebarProjectCwd: null,
   });
   const gitStatus = useEnvironmentQuery(
-    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+    shouldQuerySidebarThreadGitStatus({
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+      gitCwd,
+    })
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
@@ -530,7 +535,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     sidebarProjectCwd: null,
   });
   const gitStatus = useEnvironmentQuery(
-    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+    shouldQuerySidebarThreadGitStatus({
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+      gitCwd,
+    })
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
