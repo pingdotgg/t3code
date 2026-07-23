@@ -113,7 +113,8 @@ export function resolveEmacsReadlineAction(event: KeyboardEvent): EmacsReadlineA
 }
 
 function lineStart(value: string, position: number): number {
-  return value.lastIndexOf("\n", Math.max(0, position - 1)) + 1;
+  if (position <= 0) return 0;
+  return value.lastIndexOf("\n", position - 1) + 1;
 }
 
 function lineEnd(value: string, position: number): number {
@@ -398,6 +399,13 @@ function candidateSurfaceBelongsToFocus(
 
   const controlledIds = focusedElement.getAttribute("aria-controls")?.split(/\s+/) ?? [];
   if (surface.id && controlledIds.includes(surface.id)) return true;
+
+  if (
+    surface.getAttribute("data-composer-command-menu") !== null &&
+    focusedElement.closest("[data-emacs-readline-managed]") !== null
+  ) {
+    return true;
+  }
 
   // Composer suggestions keep focus in the editor while rendering their list
   // immediately above it. Accept a nearby shared container, but never climb

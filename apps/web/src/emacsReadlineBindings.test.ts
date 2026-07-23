@@ -167,6 +167,65 @@ describe("resolveEmacsReadlineAction", () => {
     expect(yieldToAppShortcut).not.toHaveBeenCalled();
   });
 
+  it("routes candidate navigation to a portaled composer command menu", () => {
+    class TestElement extends EventTarget {
+      ownerDocument!: Document;
+      parentElement: TestElement | null = null;
+      hidden = false;
+      id = "";
+
+      contains(candidate: unknown): boolean {
+        return candidate === this;
+      }
+
+      getAttribute(name: string): string | null {
+        return name === "data-composer-command-menu" && this === candidateList ? "" : null;
+      }
+
+      closest(selector: string): TestElement | null {
+        return selector === "[data-emacs-readline-managed]" && this === target ? this : null;
+      }
+    }
+    class TestKeyboardEvent extends Event {
+      readonly key: string;
+
+      constructor(type: string, init: KeyboardEventInit) {
+        super(type, init);
+        this.key = init.key ?? "";
+      }
+    }
+    vi.stubGlobal("Element", TestElement);
+    vi.stubGlobal("HTMLElement", TestElement);
+
+    const target = new TestElement();
+    const body = new TestElement();
+    const candidateList = new TestElement();
+    candidateList.parentElement = body;
+    const document = {
+      activeElement: target,
+      body,
+      defaultView: { KeyboardEvent: TestKeyboardEvent },
+      querySelectorAll: () => [candidateList],
+    } as unknown as Document;
+    target.ownerDocument = document;
+    const dispatchedKeys: string[] = [];
+    target.addEventListener("keydown", (event) => {
+      dispatchedKeys.push((event as unknown as KeyboardEvent).key);
+    });
+
+    createEmacsReadlineKeydownHandler({
+      shouldYieldToApplicationShortcut: () => true,
+    })({
+      ...keyboardEvent({ key: "p", ctrlKey: true }),
+      preventDefault: vi.fn(),
+      repeat: false,
+      stopImmediatePropagation: vi.fn(),
+      target,
+    } as unknown as KeyboardEvent);
+
+    expect(dispatchedKeys).toEqual(["ArrowUp"]);
+  });
+
   it("does not send candidate navigation to an unrelated visible picker", () => {
     class TestElement extends EventTarget {
       ownerDocument!: Document;
@@ -355,6 +414,11 @@ describe("applyEmacsReadlineActionToPlainText", () => {
     expect(apply("forward-word", "one, two", 0).selectionStart).toBe(3);
     expect(apply("beginning-of-line", "one\ntwo", 6).selectionStart).toBe(4);
     expect(apply("end-of-line", "one\ntwo", 4).selectionStart).toBe(7);
+  });
+
+  it("keeps a caret before a leading newline on the first line", () => {
+    expect(apply("beginning-of-line", "\nsecond", 0).selectionStart).toBe(0);
+    expect(apply("forward-line", "\nsecond", 0).selectionStart).toBe(1);
   });
 
   it("preserves the logical column for Control-N and Control-P", () => {
