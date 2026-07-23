@@ -109,6 +109,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
+  withReservedThreadArchiveEntries,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
@@ -1605,29 +1606,29 @@ export default function SidebarV2() {
     },
     [archiveThread],
   );
-  // One archive per thread at a time: repeated button clicks and menu picks
-  // must not overlap and surface a false failure after the first one wins.
+  // One archive per thread at a time across row, selection, and settled
+  // partition flows. Later flows skip entries already owned by an earlier one.
   const archivingThreadKeysRef = useRef(new Set<string>());
   const attemptArchive = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
         const threadKey = scopedThreadKey(threadRef);
-        if (archivingThreadKeysRef.current.has(threadKey)) return;
-        archivingThreadKeysRef.current.add(threadKey);
-        try {
-          const thread = threadByKeyRef.current.get(threadKey);
-          if (
-            !(await confirmArchive(
-              thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
-            ))
-          ) {
-            return;
-          }
-          const outcome = await archiveThreadEntries([{ threadKey, threadRef }]);
-          removeFromSelection(outcome.archivedThreadKeys);
-        } finally {
-          archivingThreadKeysRef.current.delete(threadKey);
-        }
+        await withReservedThreadArchiveEntries({
+          entries: [{ threadKey, threadRef }],
+          reservedThreadKeys: archivingThreadKeysRef.current,
+          run: async (entries) => {
+            const thread = threadByKeyRef.current.get(threadKey);
+            if (
+              !(await confirmArchive(
+                thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
+              ))
+            ) {
+              return;
+            }
+            const outcome = await archiveThreadEntries(entries);
+            removeFromSelection(outcome.archivedThreadKeys);
+          },
+        });
       })();
     },
     [archiveThreadEntries, confirmArchive, removeFromSelection],
@@ -1640,19 +1641,25 @@ export default function SidebarV2() {
       archivingAllSettledRef.current = true;
       setIsArchivingAllSettled(true);
       try {
-        const count = archivableSettledThreads.length;
-        if (
-          !(await confirmArchive(`Archive all ${count} settled thread${count === 1 ? "" : "s"}?`))
-        ) {
-          return;
-        }
-        const outcome = await archiveThreadEntries(
-          archivableSettledThreads.map((thread) => {
+        await withReservedThreadArchiveEntries({
+          entries: archivableSettledThreads.map((thread) => {
             const threadRef = scopeThreadRef(thread.environmentId, thread.id);
             return { threadKey: scopedThreadKey(threadRef), threadRef };
           }),
-        );
-        removeFromSelection(outcome.archivedThreadKeys);
+          reservedThreadKeys: archivingThreadKeysRef.current,
+          run: async (entries) => {
+            const count = entries.length;
+            if (
+              !(await confirmArchive(
+                `Archive all ${count} settled thread${count === 1 ? "" : "s"}?`,
+              ))
+            ) {
+              return;
+            }
+            const outcome = await archiveThreadEntries(entries);
+            removeFromSelection(outcome.archivedThreadKeys);
+          },
+        });
       } finally {
         archivingAllSettledRef.current = false;
         setIsArchivingAllSettled(false);
@@ -1707,9 +1714,8 @@ export default function SidebarV2() {
         return;
       }
       if (clicked.value === "archive") {
-        if (!(await confirmArchive(`Archive ${count} thread${count === 1 ? "" : "s"}?`))) return;
-        const outcome = await archiveThreadEntries(
-          threadKeys.flatMap((threadKey) => {
+        await withReservedThreadArchiveEntries({
+          entries: threadKeys.flatMap((threadKey) => {
             const thread = threadByKeyRef.current.get(threadKey);
             if (!thread) return [];
             return [
@@ -1719,8 +1725,20 @@ export default function SidebarV2() {
               },
             ];
           }),
-        );
-        removeFromSelection(outcome.archivedThreadKeys);
+          reservedThreadKeys: archivingThreadKeysRef.current,
+          run: async (entries) => {
+            const archiveCount = entries.length;
+            if (
+              !(await confirmArchive(
+                `Archive ${archiveCount} thread${archiveCount === 1 ? "" : "s"}?`,
+              ))
+            ) {
+              return;
+            }
+            const outcome = await archiveThreadEntries(entries);
+            removeFromSelection(outcome.archivedThreadKeys);
+          },
+        });
         return;
       }
       if (clicked.value === "mark-unread") {

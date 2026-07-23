@@ -80,6 +80,31 @@ export async function archiveSelectedThreadEntries<
   return { archivedThreadKeys, mutationFailure: null, followupFailures };
 }
 
+export async function withReservedThreadArchiveEntries<
+  TEntry extends { readonly threadKey: string },
+  TResult,
+>(input: {
+  entries: readonly TEntry[];
+  reservedThreadKeys: Set<string>;
+  run: (entries: readonly TEntry[]) => Promise<TResult>;
+}): Promise<TResult | null> {
+  const reservedEntries: TEntry[] = [];
+  for (const entry of input.entries) {
+    if (input.reservedThreadKeys.has(entry.threadKey)) continue;
+    input.reservedThreadKeys.add(entry.threadKey);
+    reservedEntries.push(entry);
+  }
+  if (reservedEntries.length === 0) return null;
+
+  try {
+    return await input.run(reservedEntries);
+  } finally {
+    for (const entry of reservedEntries) {
+      input.reservedThreadKeys.delete(entry.threadKey);
+    }
+  }
+}
+
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;
