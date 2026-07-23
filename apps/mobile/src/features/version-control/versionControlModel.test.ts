@@ -13,6 +13,7 @@ import {
   reconcileSelectedPaths,
   selectedFileStats,
   stashIdentityKey,
+  workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
 } from "./versionControlModel";
 
@@ -192,6 +193,27 @@ describe("native Version Control model", () => {
     };
     expect(discardPathGroups([conflictOnlyFile])).toEqual({ staged: [], unstaged: [] });
     expect(discardableFiles([conflictOnlyFile])).toEqual([]);
+  });
+
+  it("opens only staged-only working-tree files from the staged side", () => {
+    expect(
+      workingTreeDiffIsStaged({
+        hasStagedChanges: true,
+        hasUnstagedChanges: false,
+      }),
+    ).toBe(true);
+    expect(
+      workingTreeDiffIsStaged({
+        hasStagedChanges: true,
+        hasUnstagedChanges: true,
+      }),
+    ).toBe(false);
+    expect(
+      workingTreeDiffIsStaged({
+        hasStagedChanges: false,
+        hasUnstagedChanges: false,
+      }),
+    ).toBe(false);
   });
 
   it("keeps only files with discardable staged or unstaged changes", () => {

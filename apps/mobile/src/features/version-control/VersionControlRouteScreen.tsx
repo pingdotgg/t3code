@@ -46,6 +46,7 @@ import {
   reconcileSelectedPaths,
   selectedFileStats,
   stashIdentityKey,
+  workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
   type VersionControlChangeSet,
 } from "./versionControlModel";
@@ -405,6 +406,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
   const [stashDetails, setStashDetails] = useState<ReadonlyMap<string, VcsPanelStashDetails>>(
     new Map(),
   );
+  const [detailErrors, setDetailErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [showAddRemote, setShowAddRemote] = useState(false);
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
@@ -489,6 +491,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
           snapshotRevision.current += 1;
           setBranchDetails(new Map());
           setStashDetails(new Map());
+          setDetailErrors(new Map());
           setExpandedRows(
             (current) =>
               new Set(
@@ -722,6 +725,12 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       toggleExpanded(key);
       if (!snapshot || branchDetails.has(key) || wasExpanded) return;
       const revision = snapshotRevision.current;
+      setDetailErrors((current) => {
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
       void retryInterruptedVersionControlRequest(() =>
         api.branchDetails({
           cwd: selectedThreadCwd ?? "",
@@ -733,13 +742,21 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
         .then((details) => {
           if (revision !== snapshotRevision.current) return;
           setBranchDetails((current) => new Map(current).set(key, details));
+          setDetailErrors((current) => {
+            if (!current.has(key)) return current;
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+          });
         })
         .catch((cause) => {
           if (
             revision === snapshotRevision.current &&
             !(cause instanceof VersionControlCommandInterrupted)
           ) {
-            setError(errorMessage(cause));
+            const message = errorMessage(cause);
+            setDetailErrors((current) => new Map(current).set(key, message));
+            setError(message);
           }
         });
     },
@@ -933,19 +950,33 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
       toggleExpanded(key);
       if (!selectedThreadCwd || stashDetails.has(detailsKey) || wasExpanded) return;
       const revision = snapshotRevision.current;
+      setDetailErrors((current) => {
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
       void retryInterruptedVersionControlRequest(() =>
         api.stashDetails({ cwd: selectedThreadCwd, stashRef: stash.refName }),
       )
         .then((details) => {
           if (revision !== snapshotRevision.current) return;
           setStashDetails((current) => new Map(current).set(detailsKey, details));
+          setDetailErrors((current) => {
+            if (!current.has(key)) return current;
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+          });
         })
         .catch((cause) => {
           if (
             revision === snapshotRevision.current &&
             !(cause instanceof VersionControlCommandInterrupted)
           ) {
-            setError(errorMessage(cause));
+            const message = errorMessage(cause);
+            setDetailErrors((current) => new Map(current).set(key, message));
+            setError(message);
           }
         });
     },
@@ -1171,7 +1202,7 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                             file,
                             source: {
                               kind: "working-tree",
-                              staged: !file.hasUnstagedChanges,
+                              staged: workingTreeDiffIsStaged(file),
                             },
                           };
                           return (
@@ -1300,7 +1331,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                           </>
                         ) : (
                           <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
-                            Loading branch details…
+                            {detailErrors.has(key)
+                              ? `Unable to load branch details: ${detailErrors.get(key)}`
+                              : "Loading branch details…"}
                           </Text>
                         )}
                       </View>
@@ -1368,7 +1401,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                           </>
                         ) : (
                           <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
-                            Loading comparison…
+                            {detailErrors.has(key)
+                              ? `Unable to load comparison: ${detailErrors.get(key)}`
+                              : "Loading comparison…"}
                           </Text>
                         )}
                       </View>
@@ -1475,7 +1510,9 @@ export function VersionControlRouteScreen(props: VersionControlRouteScreenProps)
                           })
                         ) : (
                           <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
-                            Loading stash details…
+                            {detailErrors.has(key)
+                              ? `Unable to load stash details: ${detailErrors.get(key)}`
+                              : "Loading stash details…"}
                           </Text>
                         )}
                       </View>

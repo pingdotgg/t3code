@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -2965,6 +2967,95 @@ describe("SourceControlPanelService", () => {
                 hasWorkingTreeChanges: dirty,
                 hasUpstream: true,
                 aheadCount,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("promotes working-tree refreshes while a full snapshot is in flight", () => {
+    let fullSnapshotStarted: Deferred.Deferred<void> | null = null;
+    let releaseFullSnapshot: Deferred.Deferred<void> | null = null;
+    let localBranchesCalls = 0;
+    let fresh = false;
+    return Effect.gen(function* () {
+      fullSnapshotStarted = yield* Deferred.make<void>();
+      releaseFullSnapshot = yield* Deferred.make<void>();
+      const service = yield* SourceControlPanelService;
+
+      const initial = yield* service.snapshot({ cwd: "/repo", refresh: "full" });
+      assert.equal(initial.stashes[0]?.message, "old stash");
+      fresh = true;
+
+      const fullSnapshotFiber = yield* Effect.forkChild(
+        service.snapshot({ cwd: "/repo", refresh: "full" }),
+      );
+      yield* Deferred.await(fullSnapshotStarted);
+
+      const watcherSnapshot = yield* service.snapshot({
+        cwd: "/repo",
+        refresh: "working-tree",
+      });
+      assert.equal(watcherSnapshot.stashes[0]?.message, "fresh stash");
+      assert.equal(localBranchesCalls, 3);
+
+      yield* Deferred.succeed(releaseFullSnapshot, undefined);
+      yield* Fiber.join(fullSnapshotFiber);
+
+      const cachedSnapshot = yield* service.snapshot({
+        cwd: "/repo",
+        refresh: "working-tree",
+      });
+      assert.equal(cachedSnapshot.stashes[0]?.message, "fresh stash");
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.gen(function* () {
+              switch (input.operation) {
+                case "vcs.panel.localBranches": {
+                  localBranchesCalls += 1;
+                  if (localBranchesCalls === 2) {
+                    if (!fullSnapshotStarted || !releaseFullSnapshot) {
+                      throw new Error("Expected snapshot gates to be initialized");
+                    }
+                    yield* Deferred.succeed(fullSnapshotStarted, undefined);
+                    yield* Deferred.await(releaseFullSnapshot);
+                  }
+                  return success("main\t*\t/repo\t2026-07-20T10:00:00.000Z\torigin/main\t");
+                }
+                case "vcs.panel.statusPorcelain":
+                  return success(
+                    [
+                      "# branch.oid abc",
+                      "# branch.head main",
+                      "# branch.upstream origin/main",
+                      "# branch.ab +0 -0",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.stashes":
+                  return success(
+                    `stash@{0}\tabc123\t2026-07-20T10:00:00.000Z\t${
+                      fresh ? "fresh stash" : "old stash"
+                    }`,
+                  );
+                default:
+                  return success("");
+              }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "main",
+                isDefaultRef: true,
+                hasWorkingTreeChanges: false,
+                hasUpstream: true,
+                aheadCount: 0,
                 behindCount: 0,
                 aheadOfDefaultCount: 0,
                 pr: null,

@@ -127,6 +127,12 @@ export function discardableFiles(files: readonly PanelChangedFile[]): readonly P
   return files.filter((file) => file.hasStagedChanges || file.hasUnstagedChanges);
 }
 
+export function workingTreeDiffIsStaged(
+  file: Pick<PanelChangedFile, "hasStagedChanges" | "hasUnstagedChanges">,
+): boolean {
+  return file.hasStagedChanges && !file.hasUnstagedChanges;
+}
+
 export function workingTreeEnrichmentRequests(
   snapshot: VcsPanelSnapshotResult,
   cwd: string,

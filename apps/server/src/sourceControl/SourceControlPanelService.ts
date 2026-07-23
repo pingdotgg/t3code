@@ -89,6 +89,8 @@ interface WorktreeBranchEntry {
 
 interface PanelSnapshotCacheState {
   readonly latestRequestByCwd: ReadonlyMap<string, number>;
+  readonly latestFullRequestByCwd: ReadonlyMap<string, number>;
+  readonly completedFullRequestByCwd: ReadonlyMap<string, number>;
   readonly snapshotsByCwd: ReadonlyMap<string, VcsPanelSnapshotResult>;
 }
 
@@ -956,6 +958,8 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
   const snapshotCacheRef = yield* Ref.make<PanelSnapshotCacheState>({
     latestRequestByCwd: new Map(),
+    latestFullRequestByCwd: new Map(),
+    completedFullRequestByCwd: new Map(),
     snapshotsByCwd: new Map(),
   });
 
@@ -2174,23 +2178,39 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       const cacheKey = path.resolve(input.cwd);
       const request = yield* Ref.modify(snapshotCacheRef, (state) => {
         const requestId = (state.latestRequestByCwd.get(cacheKey) ?? 0) + 1;
+        const cached = state.snapshotsByCwd.get(cacheKey) ?? null;
+        const latestFullRequest = state.latestFullRequestByCwd.get(cacheKey) ?? 0;
+        const completedFullRequest = state.completedFullRequestByCwd.get(cacheKey) ?? 0;
+        const full =
+          input.refresh !== "working-tree" ||
+          cached === null ||
+          latestFullRequest > completedFullRequest;
         const latestRequestByCwd = setBoundedMapEntry(
           state.latestRequestByCwd,
           cacheKey,
           requestId,
           PANEL_SNAPSHOT_CACHE_CAPACITY,
         );
+        const latestFullRequestByCwd = full
+          ? setBoundedMapEntry(
+              state.latestFullRequestByCwd,
+              cacheKey,
+              requestId,
+              PANEL_SNAPSHOT_CACHE_CAPACITY,
+            )
+          : state.latestFullRequestByCwd;
         return [
           {
             requestId,
-            cached: state.snapshotsByCwd.get(cacheKey) ?? null,
+            cached,
+            full,
           },
-          { ...state, latestRequestByCwd },
+          { ...state, latestRequestByCwd, latestFullRequestByCwd },
         ] as const;
       });
 
       let nextSnapshot: VcsPanelSnapshotResult;
-      if (input.refresh === "working-tree" && request.cached !== null) {
+      if (!request.full && request.cached !== null) {
         const incremental = yield* readWorkingTreeSnapshot(input.cwd, request.cached);
         nextSnapshot = repositoryStatusChanged(request.cached.status, incremental.status)
           ? yield* readFullSnapshot(input.cwd)
@@ -2205,14 +2225,24 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       }
 
       yield* Ref.update(snapshotCacheRef, (state) => {
-        if (state.latestRequestByCwd.get(cacheKey) !== request.requestId) return state;
+        const completedFullRequestByCwd = request.full
+          ? setBoundedMapEntry(
+              state.completedFullRequestByCwd,
+              cacheKey,
+              Math.max(state.completedFullRequestByCwd.get(cacheKey) ?? 0, request.requestId),
+              PANEL_SNAPSHOT_CACHE_CAPACITY,
+            )
+          : state.completedFullRequestByCwd;
+        if (state.latestRequestByCwd.get(cacheKey) !== request.requestId) {
+          return { ...state, completedFullRequestByCwd };
+        }
         const snapshotsByCwd = setBoundedMapEntry(
           state.snapshotsByCwd,
           cacheKey,
           nextSnapshot,
           PANEL_SNAPSHOT_CACHE_CAPACITY,
         );
-        return { ...state, snapshotsByCwd };
+        return { ...state, completedFullRequestByCwd, snapshotsByCwd };
       });
       return nextSnapshot;
     },
