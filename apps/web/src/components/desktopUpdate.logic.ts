@@ -1,4 +1,5 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import { isWindowsPlatform } from "../lib/utils";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -78,9 +79,13 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
 
 export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
+  platform = "",
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
-  return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
+  const windowsInstallWarning = isWindowsPlatform(platform)
+    ? "\n\nOn Windows, T3 Code may remain closed for several minutes while the update installs, and no installer window may appear. T3 Code will reopen automatically when installation finishes."
+    : "";
+  return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.${windowsInstallWarning}`;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
