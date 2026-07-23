@@ -1998,8 +1998,11 @@ function toWorkspaceRelativeFilePath(
   workspaceRoot: string | undefined,
 ): string | null {
   const normalizedPath = filePath.replaceAll("\\", "/").replace(/^\/(?=[A-Za-z]:\/)/, "");
+  const isAbsoluteWindowsPath = /^[A-Za-z]:\//.test(normalizedPath);
   if (!workspaceRoot) {
-    return normalizedPath.startsWith("/") ? null : normalizedPath.replace(/^\.\/+/, "");
+    return normalizedPath.startsWith("/") || isAbsoluteWindowsPath
+      ? null
+      : normalizedPath.replace(/^\.\/+/, "");
   }
 
   const normalizedRoot = workspaceRoot
@@ -2015,7 +2018,7 @@ function toWorkspaceRelativeFilePath(
   if (isInsideWorkspace) {
     return normalizedPath.slice(rootWithSeparator.length);
   }
-  return normalizedPath.startsWith("/") || /^[A-Za-z]:\//.test(normalizedPath)
+  return normalizedPath.startsWith("/") || isAbsoluteWindowsPath
     ? null
     : normalizedPath.replace(/^\.\/+/, "");
 }

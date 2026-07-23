@@ -548,6 +548,31 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Open file apps/web/src/session-logic.ts"');
   });
 
+  it("rejects absolute Windows paths while the workspace root is unavailable", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Updated file",
+              tone: "tool",
+              changedFiles: ["C:\\repo\\outside.ts"],
+            },
+          },
+        ]}
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Open file');
+  });
+
   it("rejects case-mismatched POSIX paths outside the workspace", () => {
     const renderChangedFile = (filePath: string) =>
       renderToStaticMarkup(
