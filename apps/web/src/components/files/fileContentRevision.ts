@@ -10,3 +10,7 @@ export function fileContentRevision(contents: string): string {
 export function projectFileCacheKey(cwd: string, relativePath: string, contents: string): string {
   return `${cwd}:${relativePath}:${fileContentRevision(contents)}`;
 }
+
+export function projectFileEditorCacheKey(cwd: string, relativePath: string): string {
+  return `editor:${cwd}:${relativePath}`;
+}

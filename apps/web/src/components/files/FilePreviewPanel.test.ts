@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatFileCommentRange,
   normalizeFileCommentRange,
+  reconcileFileCommentAnnotations,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
@@ -51,6 +52,30 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+
+  it("preserves annotation identity when an edit does not move any annotations", () => {
+    const annotations = [
+      {
+        lineNumber: 7,
+        metadata: {
+          entries: [
+            {
+              id: "comment-1",
+              kind: "comment" as const,
+              startLine: 7,
+              endLine: 7,
+              text: "Keep this guarded.",
+            },
+          ],
+        },
+      },
+    ];
+
+    expect(reconcileFileCommentAnnotations(annotations, annotations)).toBe(annotations);
+    expect(reconcileFileCommentAnnotations(annotations, structuredClone(annotations))).toBe(
+      annotations,
+    );
   });
 });
 

@@ -229,6 +229,13 @@ export function AnnotatableCodeView({
     [filesByKey, sectionId, sectionTitle],
   );
 
+  const handleGutterUtilityClick = useCallback(
+    (range: SelectedLineRange, context: DiffSelectionContext) => {
+      setSelectedLines({ id: context.item.id, range });
+    },
+    [],
+  );
+
   const hasOpenComment = draft !== null;
   return (
     <CodeView<DiffCommentAnnotationGroup>
@@ -241,6 +248,7 @@ export function AnnotatableCodeView({
         ...options,
         enableGutterUtility: !hasOpenComment,
         enableLineSelection: !hasOpenComment,
+        onGutterUtilityClick: handleGutterUtilityClick,
         onLineSelectionEnd: beginComment,
       }}
       renderHeaderPrefix={(item) =>

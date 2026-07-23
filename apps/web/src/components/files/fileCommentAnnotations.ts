@@ -52,3 +52,38 @@ export function remapFileCommentAnnotations(
     },
   }));
 }
+
+export function reconcileFileCommentAnnotations(
+  current: FileCommentLineAnnotation[],
+  next: FileCommentLineAnnotation[],
+): FileCommentLineAnnotation[] {
+  if (next === current) return current;
+  const remapped = remapFileCommentAnnotations(next);
+  if (
+    remapped.length === current.length &&
+    remapped.every((annotation, annotationIndex) => {
+      const currentAnnotation = current[annotationIndex];
+      if (
+        currentAnnotation === undefined ||
+        annotation.lineNumber !== currentAnnotation.lineNumber ||
+        annotation.metadata.entries.length !== currentAnnotation.metadata.entries.length
+      ) {
+        return false;
+      }
+      return annotation.metadata.entries.every((entry, entryIndex) => {
+        const currentEntry = currentAnnotation.metadata.entries[entryIndex];
+        return (
+          currentEntry !== undefined &&
+          entry.id === currentEntry.id &&
+          entry.kind === currentEntry.kind &&
+          entry.startLine === currentEntry.startLine &&
+          entry.endLine === currentEntry.endLine &&
+          entry.text === currentEntry.text
+        );
+      });
+    })
+  ) {
+    return current;
+  }
+  return remapped;
+}
