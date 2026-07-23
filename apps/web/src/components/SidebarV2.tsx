@@ -97,7 +97,6 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import { Button } from "./ui/button";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
