@@ -106,6 +106,8 @@ function makeClaudeTestAppThread(input: {
     createdAt: input.now,
     updatedAt: input.now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
   };
 }
@@ -227,6 +229,21 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(queryPolicy, {
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      installPermissionCallback: false,
+    });
+  });
+
+  it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
+    const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "auto",
       installPermissionCallback: false,
     });
   });
@@ -978,6 +995,8 @@ describe("ClaudeAdapterV2 native fork", () => {
             createdAt: now,
             updatedAt: now,
             archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
             deletedAt: null,
           },
           threadId: targetThreadId,

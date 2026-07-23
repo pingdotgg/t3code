@@ -191,7 +191,9 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 describe("CodexAdapterV2 runtime policy", () => {
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
-      const build = (runtimeMode: "approval-required" | "auto-accept-edits" | "full-access") =>
+      const build = (
+        runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+      ) =>
         buildCodexTurnStartParams({
           nativeThreadId: `native-${runtimeMode}`,
           codexInput: [{ type: "text", text: "test" }],
@@ -208,13 +210,20 @@ describe("CodexAdapterV2 runtime policy", () => {
 
       const approvalRequired = yield* build("approval-required");
       const autoAcceptEdits = yield* build("auto-accept-edits");
+      const auto = yield* build("auto");
       const fullAccess = yield* build("full-access");
 
       assert.equal(approvalRequired.approvalPolicy, "untrusted");
+      assert.equal(approvalRequired.approvalsReviewer, "user");
       assert.equal(approvalRequired.sandboxPolicy?.type, "readOnly");
       assert.equal(autoAcceptEdits.approvalPolicy, "on-request");
+      assert.equal(autoAcceptEdits.approvalsReviewer, "user");
       assert.equal(autoAcceptEdits.sandboxPolicy?.type, "workspaceWrite");
+      assert.equal(auto.approvalPolicy, "on-request");
+      assert.equal(auto.approvalsReviewer, "auto_review");
+      assert.equal(auto.sandboxPolicy?.type, "workspaceWrite");
       assert.equal(fullAccess.approvalPolicy, "never");
+      assert.equal(fullAccess.approvalsReviewer, "user");
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
     }),
   );
@@ -670,6 +679,8 @@ function makeCodexTestAppThread(input: {
     createdAt: input.now,
     updatedAt: input.now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
   };
 }
@@ -805,6 +816,9 @@ function codexReplayPreamble(input: {
           input: [{ type: "text", text: input.prompt }],
           cwd: "/workspace",
           model: "gpt-5.4",
+          approvalPolicy: "never",
+          approvalsReviewer: "user",
+          sandboxPolicy: { type: "dangerFullAccess" },
         },
       },
     },

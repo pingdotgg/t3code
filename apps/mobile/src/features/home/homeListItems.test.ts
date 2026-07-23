@@ -58,6 +58,8 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
     status: "idle",
     pendingRuntimeRequest: null,
     latestVisibleMessage: null,
+    settledOverride: null,
+    settledAt: null,
     latestUserMessageAt: null,
     hasActionableProposedPlan: false,
     itemCount: 0,

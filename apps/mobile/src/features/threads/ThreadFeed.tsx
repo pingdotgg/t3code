@@ -11,6 +11,7 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -99,7 +100,7 @@ import {
   type ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import { ThreadWorkLog } from "./thread-work-log";
+import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -142,6 +143,7 @@ export interface ThreadFeedProps {
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
+  readonly activeWorkStartedAt: string | null;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
@@ -907,6 +909,10 @@ function renderFeedEntry(
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
+  if (entry.type === "working") {
+    return <WorkingTimelineRow startedAt={entry.createdAt} />;
+  }
+
   if (entry.type === "run-fold") {
     return (
       <Pressable
@@ -926,6 +932,18 @@ function renderFeedEntry(
           type="monochrome"
         />
       </Pressable>
+    );
+  }
+
+  if (entry.type === "work-toggle") {
+    return (
+      <ThreadWorkGroupToggle
+        expanded={entry.expanded}
+        hiddenCount={entry.hiddenCount}
+        iconSubtleColor={iconSubtleColor}
+        onlyToolActivities={entry.onlyToolActivities}
+        onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+      />
     );
   }
 
@@ -1087,6 +1105,32 @@ function renderFeedEntry(
     />
   );
 }
+
+const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => clearInterval(intervalId);
+  }, [props.startedAt]);
+
+  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+
+  return (
+    <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
+      <View className="flex-row items-center gap-1">
+        <View className="h-1 w-1 rounded-full bg-neutral-400 dark:bg-neutral-500" />
+        <View className="h-1 w-1 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
+        <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
+      </View>
+      <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+        Working for {durationLabel}
+      </Text>
+    </View>
+  );
+});
 
 function UserMessageContent(props: {
   readonly text: string;
@@ -1497,8 +1541,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, [props.threadId, reportHeaderMaterialVisibility]);
 
   const presentedFeed = useMemo(
-    () => deriveThreadFeedPresentation(props.feed, props.latestRun, expandedTurnIds),
-    [expandedTurnIds, props.feed, props.latestRun],
+    () =>
+      deriveThreadFeedPresentation(
+        props.feed,
+        props.latestRun,
+        expandedTurnIds,
+        new Set(
+          Object.entries(expandedWorkGroups)
+            .filter(([, expanded]) => expanded)
+            .map(([groupId]) => groupId),
+        ),
+        props.activeWorkStartedAt,
+      ),
+    [expandedTurnIds, expandedWorkGroups, props.activeWorkStartedAt, props.feed, props.latestRun],
   );
 
   // The empty↔filled key below remounts the list, which resets its imperative
@@ -1633,7 +1688,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onToggleWorkGroup = useCallback(
     (groupId: string) => {
-      suspendEndScrollMaintenanceForDisclosure(groupId);
+      suspendEndScrollMaintenanceForDisclosure(`work-toggle:${groupId}`);
       setInteractionState((current) => ({
         ...current,
         expandedWorkGroups: {
@@ -1854,7 +1909,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }}
           />
         </View>
-        {props.feed.length === 0 && props.contentPresentation.kind === "ready" ? (
+        {props.feed.length === 0 &&
+        props.activeWorkStartedAt === null &&
+        props.contentPresentation.kind === "ready" ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder
               title="No conversation yet"

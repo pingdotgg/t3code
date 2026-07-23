@@ -77,6 +77,8 @@ const emptyProjection = {
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
   },
   runs: [],

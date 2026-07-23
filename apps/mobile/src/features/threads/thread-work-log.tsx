@@ -358,3 +358,54 @@ export function ThreadWorkLog(props: {
     </View>
   );
 }
+
+export function ThreadWorkGroupToggle(props: {
+  readonly expanded: boolean;
+  readonly hiddenCount: number;
+  readonly iconSubtleColor: import("react-native").ColorValue;
+  readonly onlyToolActivities: boolean;
+  readonly onToggle: () => void;
+}) {
+  const colorScheme = useColorScheme();
+  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const noun = props.onlyToolActivities
+    ? props.hiddenCount === 1
+      ? "tool call"
+      : "tool calls"
+    : props.hiddenCount === 1
+      ? "log entry"
+      : "log entries";
+
+  return (
+    <View className="-mx-1 mb-1 px-1">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
+        accessibilityLabel={
+          props.expanded ? `Show fewer ${noun}` : `Show ${props.hiddenCount} previous ${noun}`
+        }
+        hitSlop={4}
+        onPress={() => {
+          triggerDisclosureFeedback();
+          props.onToggle();
+        }}
+        style={({ pressed }) => ({
+          backgroundColor: pressed ? pressedBackground : "transparent",
+        })}
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5"
+      >
+        <View className="h-[18px] w-5 items-center justify-center">
+          <SymbolView
+            name={props.expanded ? "chevron.up" : "chevron.down"}
+            size={12}
+            tintColor={props.iconSubtleColor}
+            type="monochrome"
+          />
+        </View>
+        <Text className="font-t3-medium text-xs text-foreground opacity-80">
+          {props.expanded ? `Show fewer ${noun}` : `+${props.hiddenCount} previous ${noun}`}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}

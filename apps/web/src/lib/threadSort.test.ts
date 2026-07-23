@@ -27,6 +27,8 @@ function makeThread(overrides: ThreadFixtureOverrides = {}): Thread {
     proposedPlans: [],
     createdAt: "2026-03-09T10:00:00.000Z",
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestRun: null,

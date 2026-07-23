@@ -155,6 +155,10 @@
       "types": "./src/state/threadWorkflows.ts",
       "default": "./src/state/threadWorkflows.ts"
     },
+    "./state/thread-settled": {
+      "types": "./src/state/threadSettled.ts",
+      "default": "./src/state/threadSettled.ts"
+    },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"

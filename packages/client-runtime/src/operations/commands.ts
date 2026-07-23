@@ -71,6 +71,11 @@ export interface ThreadCommandInput extends CommandMetadata {
 export type DeleteThreadInput = ThreadCommandInput;
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
+export type SettleThreadInput = ThreadCommandInput;
+
+export interface UnsettleThreadInput extends ThreadCommandInput {
+  readonly reason: "user";
+}
 
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly title?: string;
@@ -309,7 +314,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 });
 
 function simpleThreadCommand(
-  type: "thread.delete" | "thread.archive" | "thread.unarchive",
+  type: "thread.delete" | "thread.archive" | "thread.unarchive" | "thread.settle",
   input: ThreadCommandInput,
 ) {
   return allocateCommandId(input).pipe(
@@ -333,6 +338,23 @@ export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
   input: UnarchiveThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.unarchive", input);
+});
+
+export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
+  input: SettleThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.settle", input);
+});
+
+export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
+  input: UnsettleThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.unsettle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
+  });
 });
 
 export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadMetadata")(

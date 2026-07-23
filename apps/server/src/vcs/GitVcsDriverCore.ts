@@ -25,7 +25,7 @@ import {
   type ReviewDiffPreviewSource,
   type VcsRef,
 } from "@t3tools/contracts";
-import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
@@ -233,14 +233,6 @@ function sanitizeRemoteName(value: string): string {
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return sanitized.length > 0 ? sanitized : "fork";
-}
-
-function normalizeRemoteUrl(value: string): string {
-  return value
-    .trim()
-    .replace(/\/+$/g, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
@@ -1092,7 +1084,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "ensureRemote",
   )(function* (input) {
     const preferredName = sanitizeRemoteName(input.preferredName);
-    const normalizedTargetUrl = normalizeRemoteUrl(input.url);
+    const normalizedTargetUrl = normalizeGitRemoteUrl(input.url);
     const remoteFetchUrls = yield* runGitStdout(
       "GitVcsDriver.ensureRemote.listRemoteUrls",
       input.cwd,
@@ -1100,7 +1092,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => parseRemoteFetchUrls(stdout)));
 
     for (const [remoteName, remoteUrl] of remoteFetchUrls.entries()) {
-      if (normalizeRemoteUrl(remoteUrl) === normalizedTargetUrl) {
+      if (normalizeGitRemoteUrl(remoteUrl) === normalizedTargetUrl) {
         return remoteName;
       }
     }
@@ -2217,7 +2209,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 name: refName.name,
                 current: false,
                 isRemote: true,
-                isDefault: false,
+                // origin/HEAD's target is the repo default even when no local
+                // copy of the default branch exists.
+                isDefault:
+                  defaultBranch !== null &&
+                  parsedRemoteRef?.remoteName === "origin" &&
+                  parsedRemoteRef.branchName === defaultBranch,
                 worktreePath: null,
               };
               if (parsedRemoteRef) {
@@ -2232,9 +2229,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             })
           : [];
 
-      const allBranches = input.includeMatchingRemoteRefs
+      const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...remoteBranches]
         : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...remoteBranches]);
+      // Keep current/default refs on the first page even when the default
+      // only exists as origin/<default> (remote refs sort after all locals).
+      const allBranches = combinedBranches.toSorted((a, b) => {
+        const aPriority = a.current ? 0 : a.isDefault ? 1 : 2;
+        const bPriority = b.current ? 0 : b.isDefault ? 1 : 2;
+        return aPriority - bPriority;
+      });
       const branchesForKind =
         input.refKind === "local"
           ? allBranches.filter((ref) => !ref.isRemote)

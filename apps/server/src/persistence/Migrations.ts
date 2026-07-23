@@ -53,6 +53,7 @@ import Migration0037 from "./Migrations/037_OrchestrationV2ThreadLaunchWorkflows
 import Migration0038 from "./Migrations/038_ApplicationEventSource.ts";
 import Migration0039 from "./Migrations/039_OrchestrationV2EffectCancellation.ts";
 import Migration0040 from "./Migrations/040_ScheduledTasks.ts";
+import Migration0041 from "./Migrations/041_ProjectionThreadsSettled.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -105,6 +106,7 @@ export const migrationEntries = [
   [38, "ApplicationEventSource", Migration0038],
   [39, "OrchestrationV2EffectCancellation", Migration0039],
   [40, "ScheduledTasks", Migration0040],
+  [41, "ProjectionThreadsSettled", Migration0041],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

@@ -236,7 +236,21 @@ describe("buildThreadFeed", () => {
     );
   });
 
-  it("keeps work-log overflow inside grouped activity rows", () => {
+  it("appends active work as a normal timeline row", () => {
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
+
+    expect(presented).toEqual([
+      {
+        type: "working",
+        id: "working-indicator-row",
+        createdAt: startedAt,
+      },
+    ]);
+    expect(deriveThreadFeedPresentation(presented, null, new Set())).toEqual([]);
+  });
+
+  it("models work-log overflow as list rows", () => {
     const activity = (
       id: string,
       createdAt: string,
@@ -271,17 +285,26 @@ describe("buildThreadFeed", () => {
       },
     ];
 
-    const presented = deriveThreadFeedPresentation(feed, null, new Set());
-    expect(presented).toHaveLength(1);
-    expect(presented[0]).toMatchObject({
-      type: "activity-group",
-      id: "work-group-1",
+    const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual(["activity-3", "work-toggle:work-group-1"]);
+    expect(collapsed[1]).toMatchObject({
+      type: "work-toggle",
+      groupId: "work-group-1",
+      hiddenCount: 2,
+      expanded: false,
     });
-    expect(
-      presented[0]?.type === "activity-group"
-        ? presented[0].activities.map((entry) => entry.id)
-        : [],
-    ).toEqual(["activity-1", "activity-neutral", "activity-2", "activity-3"]);
+
+    const expanded = deriveThreadFeedPresentation(feed, null, new Set(), new Set(["work-group-1"]));
+    expect(expanded.map((entry) => entry.id)).toEqual([
+      "activity-1",
+      "activity-2",
+      "activity-3",
+      "work-toggle:work-group-1",
+    ]);
+    expect(expanded.at(-1)).toMatchObject({
+      type: "work-toggle",
+      expanded: true,
+    });
   });
 
   it("pretty prints T3 MCP dynamic tool activities and attaches the product logo", () => {

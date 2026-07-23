@@ -203,6 +203,25 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
         modelSelection: { ...modelSelection, model: "gpt-5.5" },
       });
 
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-settle"),
+        threadId,
+      });
+      const settledProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settledProjection.thread.settledOverride, "settled");
+      assert.isNotNull(settledProjection.thread.settledAt);
+
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("runtime-layer-lifecycle-unsettle"),
+        threadId,
+        reason: "user",
+      });
+      const activeProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(activeProjection.thread.settledOverride, "active");
+      assert.isNull(activeProjection.thread.settledAt);
+
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("runtime-layer-lifecycle-archive"),
@@ -280,6 +299,59 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
 
       assert.equal(first._tag, "OrchestratorProjectionError");
       assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
+    }),
+  );
+
+  it.effect("rejects settling a thread while a run is active", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-active-settle-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-settle-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-active-settle-project"),
+        title: "Active settle",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-active-settle",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-active-settle-initial"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-settle-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-active-settle-message"),
+        text: "Keep this run active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+
+      const error = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("runtime-layer-active-settle"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.isNull(projection.thread.settledOverride);
+      assert.isNull(projection.thread.settledAt);
     }),
   );
 });

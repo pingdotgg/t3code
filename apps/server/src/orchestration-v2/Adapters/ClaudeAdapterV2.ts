@@ -1174,6 +1174,8 @@ function permissionModeForClaudeRuntimePolicy(
       return "default";
     case "auto-accept-edits":
       return "acceptEdits";
+    case "auto":
+      return "auto";
     case "full-access":
       return "bypassPermissions";
   }

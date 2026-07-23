@@ -177,6 +177,8 @@ export function applyToProjection(
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
+    case "thread.settled":
+    case "thread.unsettled":
     case "thread.metadata-updated":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
@@ -793,6 +795,8 @@ export function threadShellFromProjection(
     createdAt: projection.thread.createdAt,
     updatedAt: projection.updatedAt,
     archivedAt: projection.thread.archivedAt,
+    settledOverride: projection.thread.settledOverride,
+    settledAt: projection.thread.settledAt,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -949,6 +953,8 @@ function shellFromState(input: {
     createdAt: input.state.thread.createdAt,
     updatedAt: input.state.updatedAt,
     archivedAt: input.state.thread.archivedAt,
+    settledOverride: input.state.thread.settledOverride,
+    settledAt: input.state.thread.settledAt,
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -965,6 +971,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.archived":
           case "thread.unarchived":
           case "thread.deleted":
+          case "thread.settled":
+          case "thread.unsettled":
           case "thread.metadata-updated":
           case "thread.runtime-mode-updated":
           case "thread.interaction-mode-updated":
@@ -1734,6 +1742,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.archived" &&
           event.type !== "thread.unarchived" &&
           event.type !== "thread.deleted" &&
+          event.type !== "thread.settled" &&
+          event.type !== "thread.unsettled" &&
           event.type !== "thread.metadata-updated" &&
           event.type !== "thread.runtime-mode-updated" &&
           event.type !== "thread.interaction-mode-updated" &&

@@ -43,7 +43,9 @@ import {
   promoteQueuedRun,
   reorderQueuedRun,
   revertThreadCheckpoint,
+  settleThread,
   startThreadTurn,
+  unsettleThread,
   updateThreadMetadata,
 } from "./commands.ts";
 
@@ -453,6 +455,37 @@ describe("V2 environment commands", () => {
           commandId: "switch-provider",
           threadId: v2ThreadId,
           modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches settle and unsettle commands without timestamps", () =>
+    Effect.gen(function* () {
+      const dispatched: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
+
+      yield* settleThread({
+        commandId: CommandId.make("settle-command"),
+        threadId: ThreadId.make("thread-1"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* unsettleThread({
+        commandId: CommandId.make("unsettle-command"),
+        threadId: ThreadId.make("thread-1"),
+        reason: "user",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.settle",
+          commandId: "settle-command",
+          threadId: "thread-1",
+        },
+        {
+          type: "thread.unsettle",
+          commandId: "unsettle-command",
+          threadId: "thread-1",
+          reason: "user",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

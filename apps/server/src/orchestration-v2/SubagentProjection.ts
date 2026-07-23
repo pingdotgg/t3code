@@ -70,6 +70,8 @@ export function makeSubagentChildThread(input: {
     createdAt: input.now,
     updatedAt: input.now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
   };
 }
