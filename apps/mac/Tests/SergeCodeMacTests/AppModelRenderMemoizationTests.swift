@@ -97,6 +97,57 @@ struct AppModelRenderMemoizationTests {
         #expect(model.timelineStructureVersion(threadID: "t1") == 4)
     }
 
+    @Test("in-place tool detail while still running is content-only")
+    func runningToolDetailIsContentOnly() {
+        let model = makeModel()
+        let date = Date(timeIntervalSince1970: 1)
+
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .toolEvent(
+                    id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .running,
+                    at: date, output: nil, outputIsError: false)))
+        model.flushPendingEvents()
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
+
+        // Detail churn while still running must not force a full regroup —
+        // that path blanked LazyVStack under high-frequency tool progress.
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .toolEvent(
+                    id: "tool1", name: "Bash", detail: "ls -la", kind: .command, status: .running,
+                    at: date, output: "…", outputIsError: false)))
+        model.flushPendingEvents()
+        #expect(model.timelineVersion(threadID: "t1") == 2)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
+    }
+
+    @Test("timelineAppendIsStructural pure rules")
+    func timelineAppendStructuralRules() {
+        let toolRunning = TimelineItem.toolEvent(
+            id: "t", name: "Bash", detail: "x", kind: .command, status: .running,
+            at: Date(), output: nil, outputIsError: false)
+        let toolDone = TimelineItem.toolEvent(
+            id: "t", name: "Bash", detail: "x", kind: .command, status: .succeeded,
+            at: Date(), output: nil, outputIsError: false)
+        #expect(
+            AppModel.timelineAppendIsStructural(
+                item: toolRunning, existed: false, previousRunning: nil))
+        #expect(
+            !AppModel.timelineAppendIsStructural(
+                item: toolRunning, existed: true, previousRunning: true))
+        #expect(
+            AppModel.timelineAppendIsStructural(
+                item: toolDone, existed: true, previousRunning: true))
+        #expect(
+            !AppModel.timelineAppendIsStructural(
+                item: .reasoning(id: "r", text: "…", at: Date()),
+                existed: true,
+                previousRunning: nil))
+    }
+
     @Test("subagent progress refreshes content without regrouping the transcript")
     func subagentProgressIsContentOnly() {
         let model = makeModel()
