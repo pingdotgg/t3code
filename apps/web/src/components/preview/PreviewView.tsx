@@ -610,6 +610,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
               tabId={tabId}
               hasWebContents={desktopOverlay !== null}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
+              colorScheme={desktopOverlay?.colorScheme ?? "system"}
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
             />

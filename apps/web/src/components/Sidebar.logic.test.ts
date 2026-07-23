@@ -20,7 +20,12 @@ import {
   resolveThreadRowClassName,
   resolveSidebarV2Status,
   resolveThreadStatusPill,
+  resolveWorkingStartedAt,
+  formatWorkingDurationLabel,
+  shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  sortLogicalProjectsForSidebar,
+  sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -33,6 +38,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -41,6 +47,56 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldNavigateAfterProjectRemoval", () => {
+  const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
+
+  it("navigates away from a draft route owned by the removed project", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: { kind: "draft", draftId: "draft-1" as never },
+        projectThreads,
+        projectDraftId: "draft-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not navigate away from a different draft route", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: { kind: "draft", draftId: "draft-2" as never },
+        projectThreads,
+        projectDraftId: "draft-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("navigates away from a server thread owned by the removed project", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: {
+          kind: "server",
+          threadRef: {
+            environmentId: EnvironmentId.make("environment-local"),
+            threadId: ThreadId.make("thread-1"),
+          },
+        },
+        projectThreads,
+        projectDraftId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not navigate from an unrelated route", () => {
+    expect(
+      shouldNavigateAfterProjectRemoval({
+        routeTarget: null,
+        projectThreads,
+        projectDraftId: null,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("archiveSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -156,8 +212,10 @@ function makeLatestTurn(overrides?: {
     state: "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
-    startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
-    completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
+    startedAt:
+      overrides?.startedAt !== undefined ? overrides.startedAt : "2026-03-09T10:00:00.000Z",
+    completedAt:
+      overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
 
@@ -730,6 +788,141 @@ describe("sortThreadsForSidebarV2", () => {
   });
 });
 
+describe("sortSettledThreadsForSidebarV2", () => {
+  const settled = (input: {
+    id: string;
+    settledAt?: string | null;
+    latestUserMessageAt?: string | null;
+    latestTurn?: OrchestrationLatestTurn | null;
+    updatedAt?: string;
+  }) => ({
+    id: input.id,
+    settledAt: input.settledAt ?? null,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+    latestTurn: input.latestTurn ?? null,
+    updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
+  });
+
+  it("orders by settle time, most recently settled first", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({
+        id: "settled-first",
+        settledAt: "2026-03-09T10:00:00.000Z",
+        // Created/active later than the other thread: settle time must win.
+        latestUserMessageAt: "2026-03-09T09:59:00.000Z",
+      }),
+      settled({
+        id: "settled-last",
+        settledAt: "2026-03-09T12:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T08:00:00.000Z",
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["settled-last", "settled-first"]);
+  });
+
+  it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
+      settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["auto-recent", "explicit", "auto-old"]);
+  });
+
+  it("counts a turn completion as activity for auto-settled threads", () => {
+    // The message came in before the other thread's, but its turn finished
+    // after: completion time is the real "work ended" moment.
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
+      settled({
+        id: "completed-later",
+        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+        latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
+      }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["completed-later", "message-only"]);
+  });
+
+  it("breaks timestamp ties by id so the order is stable", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
+      settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("resolveWorkingStartedAt", () => {
+  const session = {
+    threadId: ThreadId.make("thread-1"),
+    status: "running" as const,
+    providerName: "Codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    activeTurnId: "turn-1" as never,
+    lastError: null,
+    updatedAt: "2026-03-09T10:02:00.000Z",
+  };
+
+  it("uses the running turn's start time", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ completedAt: null }),
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("uses the request time while a turn awaits adoption", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ startedAt: null, completedAt: null }),
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("falls back to the session transition when the latest turn already completed", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn(),
+        session,
+      }),
+    ).toBe("2026-03-09T10:02:00.000Z");
+  });
+
+  it("skips a malformed startedAt instead of returning it", () => {
+    expect(
+      resolveWorkingStartedAt({
+        latestTurn: makeLatestTurn({ startedAt: "not-a-date", completedAt: null }),
+        session,
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("returns null with neither a running turn nor a session", () => {
+    expect(resolveWorkingStartedAt({ latestTurn: null, session: null })).toBeNull();
+  });
+});
+
+describe("formatWorkingDurationLabel", () => {
+  it("formats seconds, minutes, and hours", () => {
+    expect(formatWorkingDurationLabel(0)).toBe("0s");
+    expect(formatWorkingDurationLabel(42_000)).toBe("42s");
+    expect(formatWorkingDurationLabel(5 * 60_000)).toBe("5m");
+    expect(formatWorkingDurationLabel(90 * 60_000)).toBe("1h 30m");
+  });
+
+  it("clamps negative and non-finite elapsed values to zero", () => {
+    expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
+    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
+  });
+});
+
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
     hasActionableProposedPlan: false,
@@ -834,26 +1027,24 @@ describe("resolveThreadStatusPill", () => {
 });
 
 describe("resolveThreadRowClassName", () => {
-  it("uses the darker selected palette when a thread is both selected and active", () => {
+  it("uses the active sidebar surface when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
-    expect(className).toContain("bg-primary/22");
-    expect(className).toContain("hover:bg-primary/26");
-    expect(className).toContain("dark:bg-primary/30");
-    expect(className).not.toContain("bg-accent/85");
+    expect(className).toContain("bg-sidebar-row-active");
+    expect(className).toContain("text-sidebar-foreground");
+    expect(className).not.toContain("bg-primary");
   });
 
   it("uses selected hover colors for selected threads", () => {
     const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-primary/15");
-    expect(className).toContain("hover:bg-primary/19");
-    expect(className).toContain("dark:bg-primary/22");
-    expect(className).not.toContain("hover:bg-accent");
+    expect(className).toContain("bg-sidebar-row-selected");
+    expect(className).toContain("hover:bg-sidebar-row-active");
+    expect(className).not.toContain("bg-primary");
   });
 
-  it("keeps the accent palette for active-only threads", () => {
+  it("uses the active sidebar surface for active-only threads", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
-    expect(className).toContain("bg-accent/85");
-    expect(className).toContain("hover:bg-accent");
+    expect(className).toContain("bg-sidebar-row-active");
+    expect(className).toContain("hover:bg-sidebar-row-active");
   });
 });
 
@@ -1302,5 +1493,42 @@ describe("sortScopedProjectsForSidebar", () => {
       "Visible project",
       "Archived-only project",
     ]);
+  });
+});
+
+describe("sortLogicalProjectsForSidebar", () => {
+  it("uses saved order only in manual mode and activity order otherwise", () => {
+    const olderProjectId = ProjectId.make("project-older");
+    const newerProjectId = ProjectId.make("project-newer");
+    const projects = [
+      {
+        ...makeProject({ id: olderProjectId, title: "Older project" }),
+        projectKey: "logical-older",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: olderProjectId }],
+      },
+      {
+        ...makeProject({ id: newerProjectId, title: "Newer project" }),
+        projectKey: "logical-newer",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: newerProjectId }],
+      },
+    ];
+    const threads = [
+      makeThread({
+        projectId: olderProjectId,
+        updatedAt: "2026-03-09T10:01:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-newer"),
+        projectId: newerProjectId,
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      }),
+    ];
+
+    expect(sortLogicalProjectsForSidebar(projects, threads, "manual")).toEqual(projects);
+    expect(
+      sortLogicalProjectsForSidebar(projects, threads, "updated_at").map(
+        (project) => project.projectKey,
+      ),
+    ).toEqual(["logical-newer", "logical-older"]);
   });
 });

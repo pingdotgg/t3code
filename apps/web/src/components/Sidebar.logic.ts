@@ -8,6 +8,7 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -33,6 +34,14 @@ type ScopedSidebarThread = ThreadSortInput & {
   environmentId: string;
   projectId: string;
   archivedAt: string | null;
+};
+
+type LogicalSidebarProject = SidebarProject & {
+  projectKey: string;
+  memberProjectRefs: readonly {
+    environmentId: string;
+    projectId: string;
+  }[];
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
@@ -377,6 +386,28 @@ export function resolveAdjacentThreadId<T>(input: {
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
+export function shouldNavigateAfterProjectRemoval(input: {
+  routeTarget: ThreadRouteTarget | null;
+  projectThreads: readonly {
+    environmentId: string;
+    id: string;
+  }[];
+  projectDraftId: string | null;
+}): boolean {
+  const { projectDraftId, projectThreads, routeTarget } = input;
+  if (routeTarget?.kind === "draft") {
+    return projectDraftId === routeTarget.draftId;
+  }
+  if (routeTarget?.kind !== "server") {
+    return false;
+  }
+  return projectThreads.some(
+    (thread) =>
+      thread.environmentId === routeTarget.threadRef.environmentId &&
+      thread.id === routeTarget.threadRef.threadId,
+  );
+}
+
 export function isContextMenuPointerDown(input: {
   button: number;
   ctrlKey: boolean;
@@ -391,30 +422,33 @@ export function resolveThreadRowClassName(input: {
   isSelected: boolean;
 }): string {
   const baseClassName =
-    "h-6 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring sm:h-7";
+    "h-8 w-full translate-x-0 cursor-pointer justify-start rounded-md px-2 text-left text-sm select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (input.isSelected && input.isActive) {
     return cn(
       baseClassName,
-      "bg-primary/22 text-foreground font-medium hover:bg-primary/26 hover:text-foreground dark:bg-primary/30 dark:hover:bg-primary/36",
+      "bg-sidebar-row-active text-sidebar-foreground font-medium hover:bg-sidebar-row-active hover:text-sidebar-foreground",
     );
   }
 
   if (input.isSelected) {
     return cn(
       baseClassName,
-      "bg-primary/15 text-foreground hover:bg-primary/19 hover:text-foreground dark:bg-primary/22 dark:hover:bg-primary/28",
+      "bg-sidebar-row-selected text-sidebar-foreground hover:bg-sidebar-row-active hover:text-sidebar-foreground",
     );
   }
 
   if (input.isActive) {
     return cn(
       baseClassName,
-      "bg-accent/85 text-foreground font-medium hover:bg-accent hover:text-foreground dark:bg-accent/55 dark:hover:bg-accent/70",
+      "bg-sidebar-row-active text-sidebar-foreground font-medium hover:bg-sidebar-row-active hover:text-sidebar-foreground",
     );
   }
 
-  return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+  return cn(
+    baseClassName,
+    "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+  );
 }
 
 // ── Sidebar v2 status model ─────────────────────────────────────────
@@ -468,6 +502,18 @@ export function firstValidTimestampMs(
   return 0;
 }
 
+/** String twin of firstValidTimestampMs for callers that need the ISO string
+    (display labels, tick anchors) rather than epoch ms. */
+export function firstValidTimestamp(
+  ...candidates: ReadonlyArray<string | null | undefined>
+): string | null {
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    if (!Number.isNaN(Date.parse(candidate))) return candidate;
+  }
+  return null;
+}
+
 // v2 sort: static creation order, newest thread on top. Activity NEVER
 // reorders the list — a row holds its position from open until settled, so
 // the screen only moves at lifecycle transitions. Status (including pending
@@ -480,6 +526,73 @@ export function sortThreadsForSidebarV2<
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );
+}
+
+type SettledTimestampInput = Pick<
+  SidebarThreadSummary,
+  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
+>;
+
+/** The timestamp a settled row sorts and labels by: settledAt when stamped
+    (explicit settles), otherwise last activity — the same candidates
+    threadLastActivityAt feeds the auto-settle window (user message plus all
+    latestTurn stamps), so a thread whose last activity was a turn completion
+    doesn't sort by an older message time. updatedAt is the final net. */
+export function resolveSettledTimestamp(thread: SettledTimestampInput): string | null {
+  const settledAt = firstValidTimestamp(thread.settledAt);
+  if (settledAt !== null) return settledAt;
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  return latest ?? firstValidTimestamp(thread.updatedAt);
+}
+
+// Settled rows are history, so they order by when the work ENDED, not when
+// the thread was created or last touched.
+export function sortSettledThreadsForSidebarV2<
+  T extends SettledTimestampInput & { readonly id: string },
+>(threads: readonly T[]): T[] {
+  const timestampMs = (thread: T) => {
+    const timestamp = resolveSettledTimestamp(thread);
+    return timestamp === null ? 0 : Date.parse(timestamp);
+  };
+  return [...threads].toSorted(
+    (left, right) => timestampMs(right) - timestampMs(left) || left.id.localeCompare(right.id),
+  );
+}
+
+/** The timestamp a working thread's elapsed label counts from: the running
+    turn's start (request time until adoption), falling back to the session's
+    last transition when the turn projection lags behind. Malformed
+    timestamps fall through to the next candidate, not just missing ones. */
+export function resolveWorkingStartedAt(
+  thread: Pick<SidebarThreadSummary, "latestTurn" | "session">,
+): string | null {
+  const turn = thread.latestTurn;
+  if (turn && turn.completedAt === null) {
+    return firstValidTimestamp(turn.startedAt, turn.requestedAt, thread.session?.updatedAt);
+  }
+  return firstValidTimestamp(thread.session?.updatedAt);
+}
+
+export function formatWorkingDurationLabel(elapsedMs: number): string {
+  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function resolveThreadStatusPill(input: {
@@ -698,6 +811,44 @@ export function sortProjectsForSidebar<
     sortOrder,
     (project) => threadsByProjectId.get(project.id) ?? [],
     (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+  );
+}
+
+export function sortLogicalProjectsForSidebar<
+  TProject extends LogicalSidebarProject,
+  TThread extends ScopedSidebarThread,
+>(
+  projects: readonly TProject[],
+  threads: readonly TThread[],
+  sortOrder: SidebarProjectSortOrder,
+): TProject[] {
+  const groupKeyByProjectRef = new Map(
+    projects.flatMap((project) =>
+      project.memberProjectRefs.map(
+        (projectRef) =>
+          [`${projectRef.environmentId}\0${projectRef.projectId}`, project.projectKey] as const,
+      ),
+    ),
+  );
+  const threadsByProjectKey = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
+    if (!projectKey) continue;
+    const existing = threadsByProjectKey.get(projectKey);
+    if (existing) {
+      existing.push(thread);
+    } else {
+      threadsByProjectKey.set(projectKey, [thread]);
+    }
+  }
+
+  return sortProjectsByActivity(
+    projects,
+    sortOrder,
+    (project) => threadsByProjectKey.get(project.projectKey) ?? [],
+    (left, right) =>
+      left.title.localeCompare(right.title) || left.projectKey.localeCompare(right.projectKey),
   );
 }
 
