@@ -4,6 +4,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   classifySidebarThreadFilterStatus,
   createThreadJumpHintVisibilityController,
+  getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -17,6 +18,7 @@ import {
   matchesSidebarThreadFilters,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarArchiveEnvironmentIds,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
@@ -33,6 +35,7 @@ import {
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
+  sidebarProviderInstanceKey,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -150,6 +153,16 @@ describe("sidebar thread filters", () => {
       }),
     ).toBe("unread");
     expect(classifySidebarThreadFilterStatus(filterableThread)).toBe("done");
+  });
+
+  it("keeps needs-attention status when a thread is also explicitly unread", () => {
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        hasPendingUserInput: true,
+        isExplicitlyUnread: true,
+      }),
+    ).toBe("needs_attention");
   });
 
   it("matches status, environment, source, and archived controls", () => {
@@ -296,6 +309,52 @@ describe("sidebar thread filters", () => {
         recentOnly: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("sidebar filter scoping", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+  it("scopes provider instance ids by environment", () => {
+    const instanceId = ProviderInstanceId.make("codex_work");
+
+    expect(sidebarProviderInstanceKey(localEnvironmentId, instanceId)).not.toBe(
+      sidebarProviderInstanceKey(remoteEnvironmentId, instanceId),
+    );
+  });
+
+  it("loads archived snapshots only for selected environments", () => {
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [remoteEnvironmentId],
+        includeArchived: true,
+      }),
+    ).toEqual([remoteEnvironmentId]);
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [],
+        includeArchived: true,
+      }),
+    ).toEqual([localEnvironmentId, remoteEnvironmentId]);
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [remoteEnvironmentId],
+        includeArchived: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("excludes archived rows from shift-range selection order", () => {
+    expect(
+      getSidebarRangeSelectionThreadKeys([
+        { threadKey: "active-1", archivedAt: null },
+        { threadKey: "archived", archivedAt: "2026-03-09T11:00:00.000Z" },
+        { threadKey: "active-2", archivedAt: null },
+      ]),
+    ).toEqual(["active-1", "active-2"]);
   });
 });
 

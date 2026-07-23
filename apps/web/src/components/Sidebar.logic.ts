@@ -1,5 +1,10 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import {
   SIDEBAR_THREAD_FILTER_STATUSES,
   type SidebarProjectSortOrder,
@@ -7,7 +12,6 @@ import {
   type SidebarThreadFilterStatus,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
-import type { ProviderDriverKind } from "@t3tools/contracts";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -265,10 +269,6 @@ const SIDEBAR_RECENT_WINDOW_MS = SIDEBAR_RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1_0
 export function classifySidebarThreadFilterStatus(
   thread: SidebarThreadFilterInput & { readonly lastVisitedAt?: string | undefined },
 ): SidebarThreadFilterStatus {
-  if (thread.isExplicitlyUnread) {
-    return "unread";
-  }
-
   const needsAttention =
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
@@ -278,6 +278,10 @@ export function classifySidebarThreadFilterStatus(
       thread.hasActionableProposedPlan);
   if (needsAttention) {
     return "needs_attention";
+  }
+
+  if (thread.isExplicitlyUnread) {
+    return "unread";
   }
 
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
@@ -348,6 +352,40 @@ export function hasActiveSidebarThreadFilters(filters: SidebarThreadFilters): bo
     selectedStatuses.size !== SIDEBAR_THREAD_FILTER_STATUSES.length ||
     !includesEveryStatus
   );
+}
+
+export function sidebarProviderInstanceKey(
+  environmentId: EnvironmentId,
+  instanceId: ProviderInstanceId,
+): string {
+  return `${environmentId}\u0000${instanceId}`;
+}
+
+export function resolveSidebarArchiveEnvironmentIds(input: {
+  readonly availableEnvironmentIds: readonly EnvironmentId[];
+  readonly selectedEnvironmentIds: readonly EnvironmentId[];
+  readonly includeArchived: boolean;
+}): EnvironmentId[] {
+  if (!input.includeArchived) {
+    return [];
+  }
+  if (input.selectedEnvironmentIds.length === 0) {
+    return [...input.availableEnvironmentIds];
+  }
+
+  const selectedEnvironmentIds = new Set(input.selectedEnvironmentIds);
+  return input.availableEnvironmentIds.filter((environmentId) =>
+    selectedEnvironmentIds.has(environmentId),
+  );
+}
+
+export function getSidebarRangeSelectionThreadKeys(
+  threads: readonly {
+    readonly threadKey: string;
+    readonly archivedAt: string | null;
+  }[],
+): string[] {
+  return threads.filter((thread) => thread.archivedAt === null).map((thread) => thread.threadKey);
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {

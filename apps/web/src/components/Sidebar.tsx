@@ -196,6 +196,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   hasActiveSidebarThreadFilters,
   matchesSidebarThreadFilters,
@@ -203,11 +204,13 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSidebarArchiveEnvironmentIds,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  sidebarProviderInstanceKey,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
@@ -219,11 +222,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import {
-  primaryServerKeybindingsAtom,
-  primaryServerProvidersAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerSettingsAtom } from "../state/server";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import {
   derivePhysicalProjectKey,
@@ -557,6 +556,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      if (event.target !== event.currentTarget) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       if (isArchived) return;
@@ -1142,7 +1142,7 @@ interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
   archivedThreads: readonly SidebarThreadSummary[];
   sidebarThreadFilters: SidebarThreadFilters;
-  providerDriverKindByInstanceId: ReadonlyMap<string, ProviderDriverKind>;
+  providerDriverKindByScopedInstanceKey: ReadonlyMap<string, ProviderDriverKind>;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
@@ -1166,7 +1166,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     project,
     archivedThreads,
     sidebarThreadFilters,
-    providerDriverKindByInstanceId,
+    providerDriverKindByScopedInstanceKey,
     isThreadListExpanded,
     activeRouteThreadKey,
     newThreadShortcutLabel,
@@ -1397,7 +1397,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           thread,
           lastVisitedAt: lastVisitedAtByThreadKey.get(threadKey),
           isExplicitlyUnread: explicitlyUnreadByThreadKey.get(threadKey),
-          providerDriverKind: providerDriverKindByInstanceId.get(providerInstanceId) ?? null,
+          providerDriverKind:
+            providerDriverKindByScopedInstanceKey.get(
+              sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
+            ) ?? null,
           filters: sidebarThreadFilters,
         });
       }),
@@ -1407,15 +1410,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
     return {
-      orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      orderedProjectThreadKeys: getSidebarRangeSelectionThreadKeys(
+        visibleProjectThreads.map((thread) => ({
+          threadKey: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          archivedAt: thread.archivedAt,
+        })),
       ),
       projectStatus,
       visibleProjectThreads,
     };
   }, [
     projectThreads,
-    providerDriverKindByInstanceId,
+    providerDriverKindByScopedInstanceKey,
     sidebarThreadFilters,
     threadExplicitlyUnreadStates,
     threadLastVisitedAts,
@@ -2955,16 +2961,16 @@ function SidebarFilterMenu({
       <MenuPopup align="end" side="bottom" className="w-60">
         <div className="flex items-center justify-between px-2 py-0.5 text-xs font-medium text-muted-foreground">
           <span>Filters</span>
-          <button
-            type="button"
-            className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground disabled:cursor-default disabled:opacity-40"
+          <MenuItem
+            closeOnClick={false}
+            className="min-h-0 cursor-pointer p-0 text-[11px] text-muted-foreground hover:text-foreground sm:min-h-0 sm:text-[11px]"
             disabled={!filtersActive}
             onClick={() => {
               onFiltersChange(DEFAULT_SIDEBAR_THREAD_FILTERS);
             }}
           >
             Reset
-          </button>
+          </MenuItem>
         </div>
         <MenuCheckboxItem
           checked={filters.recentOnly}
@@ -3097,7 +3103,15 @@ function SidebarFilterMenu({
           <span className="flex items-center gap-2">
             Archived
             {archiveLoading ? <LoaderIcon className="size-3 animate-spin" /> : null}
-            {archiveError ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
+            {archiveError ? (
+              <span
+                role="img"
+                aria-label={`Archived threads failed to load: ${archiveError}`}
+                title={archiveError}
+              >
+                <TriangleAlertIcon aria-hidden className="size-3 text-warning" />
+              </span>
+            ) : null}
           </span>
         </MenuCheckboxItem>
       </MenuPopup>
@@ -3157,7 +3171,7 @@ interface SidebarProjectsContentProps {
     readonly driverKind: ProviderDriverKind;
     readonly label: string;
   }>;
-  providerDriverKindByInstanceId: ReadonlyMap<string, ProviderDriverKind>;
+  providerDriverKindByScopedInstanceKey: ReadonlyMap<string, ProviderDriverKind>;
   archivedThreads: readonly SidebarThreadSummary[];
   archiveLoading: boolean;
   archiveError: string | null;
@@ -3206,7 +3220,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     sidebarThreadFilters,
     environments,
     providerSources,
-    providerDriverKindByInstanceId,
+    providerDriverKindByScopedInstanceKey,
     archivedThreads,
     archiveLoading,
     archiveError,
@@ -3239,6 +3253,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     attachProjectListAutoAnimateRef,
     projectsLength,
   } = props;
+  const clearThreadSelection = useThreadSelectionStore((state) => state.clearSelection);
 
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
@@ -3248,9 +3263,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   );
   const handleSidebarThreadFiltersChange = useCallback(
     (filters: SidebarThreadFilters) => {
+      clearThreadSelection();
       updateSettings({ sidebarThreadFilters: filters });
     },
-    [updateSettings],
+    [clearThreadSelection, updateSettings],
   );
   const handleThreadSortOrderChange = useCallback(
     (sortOrder: SidebarThreadSortOrder) => {
@@ -3374,7 +3390,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         project={project}
                         archivedThreads={archivedThreads}
                         sidebarThreadFilters={sidebarThreadFilters}
-                        providerDriverKindByInstanceId={providerDriverKindByInstanceId}
+                        providerDriverKindByScopedInstanceKey={
+                          providerDriverKindByScopedInstanceKey
+                        }
                         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -3410,7 +3428,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 project={project}
                 archivedThreads={archivedThreads}
                 sidebarThreadFilters={sidebarThreadFilters}
-                providerDriverKindByInstanceId={providerDriverKindByInstanceId}
+                providerDriverKindByScopedInstanceKey={providerDriverKindByScopedInstanceKey}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -3484,7 +3502,6 @@ export default function Sidebar() {
       : false,
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
     [],
@@ -3504,10 +3521,12 @@ export default function Sidebar() {
   const { environments } = useEnvironments();
   const archiveEnvironmentIds = useMemo(
     () =>
-      sidebarThreadFilters.includeArchived
-        ? environments.map((environment) => environment.environmentId)
-        : [],
-    [environments, sidebarThreadFilters.includeArchived],
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: environments.map((environment) => environment.environmentId),
+        selectedEnvironmentIds: sidebarThreadFilters.environmentIds,
+        includeArchived: sidebarThreadFilters.includeArchived,
+      }),
+    [environments, sidebarThreadFilters.environmentIds, sidebarThreadFilters.includeArchived],
   );
   const {
     snapshots: archivedSnapshots,
@@ -3524,11 +3543,26 @@ export default function Sidebar() {
     [archivedSnapshots],
   );
   const providerEntries = useMemo(
-    () => deriveProviderInstanceEntries(serverProviders),
-    [serverProviders],
+    () =>
+      environments.flatMap((environment) =>
+        deriveProviderInstanceEntries(environment.serverConfig?.providers ?? []).map((entry) => ({
+          ...entry,
+          environmentId: environment.environmentId,
+        })),
+      ),
+    [environments],
   );
-  const providerDriverKindByInstanceId = useMemo(
-    () => new Map(providerEntries.map((entry) => [entry.instanceId, entry.driverKind] as const)),
+  const providerDriverKindByScopedInstanceKey = useMemo(
+    () =>
+      new Map(
+        providerEntries.map(
+          (entry) =>
+            [
+              sidebarProviderInstanceKey(entry.environmentId, entry.instanceId),
+              entry.driverKind,
+            ] as const,
+        ),
+      ),
     [providerEntries],
   );
   const providerSources = useMemo(() => {
@@ -3651,12 +3685,15 @@ export default function Sidebar() {
           thread,
           lastVisitedAt: threadLastVisitedAtById[threadKey],
           isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
-          providerDriverKind: providerDriverKindByInstanceId.get(providerInstanceId) ?? null,
+          providerDriverKind:
+            providerDriverKindByScopedInstanceKey.get(
+              sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
+            ) ?? null,
           filters: sidebarThreadFilters,
         });
       }),
     [
-      providerDriverKindByInstanceId,
+      providerDriverKindByScopedInstanceKey,
       sidebarThreadFilters,
       sidebarThreadsWithArchived,
       threadExplicitlyUnreadById,
@@ -4156,7 +4193,7 @@ export default function Sidebar() {
             sidebarThreadFilters={sidebarThreadFilters}
             environments={environments}
             providerSources={providerSources}
-            providerDriverKindByInstanceId={providerDriverKindByInstanceId}
+            providerDriverKindByScopedInstanceKey={providerDriverKindByScopedInstanceKey}
             archivedThreads={archivedThreads}
             archiveLoading={archiveLoading}
             archiveError={archiveError}
