@@ -175,7 +175,10 @@ function DocumentTitleSync() {
     if (!isActive) return;
 
     const timer = window.setInterval(updateTitle, 500);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      document.title = title;
+    };
   }, [isActive, title]);
 
   return null;
