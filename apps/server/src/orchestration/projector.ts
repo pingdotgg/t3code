@@ -589,14 +589,15 @@ export function projectEvent(
         // a still-running latest turn so its duration reflects the whole turn.
         const settledTurnState = settledTurnStateForSessionStatus(session.status);
         // Mirrors the SQL pipeline's pending-turn-start clearing: a running
-        // session with an active turn adopts the pending start, and terminal
-        // statuses (error/stopped/interrupted) abandon it. "starting" and
-        // idle-ish statuses leave it pending.
+        // session with an active turn adopts the pending start; every settled
+        // or terminal status (ready/idle/error/stopped/interrupted) clears it
+        // — a mid-turn steer re-arms the flag without any adopting session
+        // transition, so the turn-end ready must release it or drains would
+        // be rejected forever. Only "starting" (and running while waiting on
+        // a turn id) keeps it pending.
         const pendingTurnStart =
           (session.status === "running" && session.activeTurnId !== null) ||
-          session.status === "error" ||
-          session.status === "stopped" ||
-          session.status === "interrupted"
+          settledTurnStateForSessionStatus(session.status) !== null
             ? null
             : thread.pendingTurnStart;
         return {

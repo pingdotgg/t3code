@@ -877,13 +877,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // While a turn start is still pending there is no provider turn to
       // steer into — dispatching now would race the pending turn/start with
       // a second one. The message stays queued; steer again once running.
-      // A `starting` session that already tracks an active turn (provider
-      // reconnect mid-turn) is steerable. Rejected shapes: starting with no
-      // active turn, and a seemingly-idle session whose just-dispatched
-      // turn start the provider has not adopted yet.
+      // A session that already tracks an active turn (running, or a
+      // provider reconnect mid-turn) is steerable. Rejected shapes: starting
+      // with no active turn, and any session without an active turn while a
+      // just-dispatched turn start is still awaiting adoption — including
+      // "running" with a null activeTurnId (provider waiting).
       const steerRacesPendingStart =
         (thread.session?.status === "starting" && thread.session.activeTurnId === null) ||
-        (thread.session?.status !== "running" && thread.pendingTurnStart !== null);
+        (thread.pendingTurnStart !== null && (thread.session?.activeTurnId ?? null) === null);
       if (steerRacesPendingStart) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,

@@ -212,6 +212,60 @@ it.layer(NodeServices.layer)("decider queue flows", (it) => {
     }),
   );
 
+  it.effect("drains after a mid-turn steer once the turn settles to ready", () =>
+    Effect.gen(function* () {
+      // Two messages queue while running; the first is steered mid-turn
+      // (re-arming pendingTurnStart), then the turn completes → ready.
+      let readModel = yield* withSessionStatus(yield* seedReadModel, "running", 3);
+      readModel = yield* applyPlanned(
+        readModel,
+        yield* decideOrchestrationCommand({ command: turnStartCommand("settle-1"), readModel }),
+      );
+      readModel = yield* applyPlanned(
+        readModel,
+        yield* decideOrchestrationCommand({ command: turnStartCommand("settle-2"), readModel }),
+      );
+      readModel = yield* applyPlanned(
+        readModel,
+        yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.queue.steer",
+            commandId: asCommandId("cmd-steer-settle"),
+            threadId: THREAD_ID,
+            messageId: asMessageId("message-settle-1"),
+            createdAt: NOW,
+          },
+          readModel,
+        }),
+      );
+      // The steer left pendingTurnStart armed with the session still running.
+      let thread = readModel.threads.find((entry) => entry.id === THREAD_ID);
+      expect(thread?.pendingTurnStart?.messageId).toEqual(asMessageId("message-settle-1"));
+
+      // Turn end: session settles to ready, which must release the pending
+      // flag so the queued follow-up can drain.
+      readModel = yield* withSessionStatus(readModel, "ready", readModel.snapshotSequence + 1);
+      thread = readModel.threads.find((entry) => entry.id === THREAD_ID);
+      expect(thread?.pendingTurnStart).toBeNull();
+
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.drain",
+          commandId: asCommandId("cmd-drain-settle"),
+          threadId: THREAD_ID,
+          createdAt: NOW,
+        },
+        readModel,
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.queued-message-removed",
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+    }),
+  );
+
   it.effect("rejects queueing past the per-thread cap", () =>
     Effect.gen(function* () {
       let readModel = yield* withSessionStatus(yield* seedReadModel, "running", 3);

@@ -661,6 +661,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     requestedAt: IsoDateTime,
   });
 
+  const getPendingTurnStartRowByThread = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: PendingTurnStartDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          requested_at AS "requestedAt"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id IS NOT NULL
+          AND checkpoint_turn_count IS NULL
+        ORDER BY requested_at DESC
+        LIMIT 1
+      `,
+  });
+
   const listPendingTurnStartRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: PendingTurnStartDbRowSchema,
@@ -2104,6 +2124,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         messageRows,
         proposedPlanRows,
         queuedMessageRows,
+        pendingTurnStartRow,
         activityRows,
         checkpointRows,
         latestTurnRow,
@@ -2138,6 +2159,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listQueuedMessages:query",
               "ProjectionSnapshotQuery.getThreadDetailById:listQueuedMessages:decodeRows",
+            ),
+          ),
+        ),
+        getPendingTurnStartRowByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:getPendingTurnStart:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:getPendingTurnStart:decodeRow",
             ),
           ),
         ),
@@ -2211,6 +2240,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           return message;
         }),
         queuedMessages: queuedMessageRows.map(mapQueuedMessageRow),
+        pendingTurnStart: Option.isSome(pendingTurnStartRow)
+          ? {
+              messageId: pendingTurnStartRow.value.messageId,
+              requestedAt: pendingTurnStartRow.value.requestedAt,
+            }
+          : null,
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         activities: activityRows.map((row) => {
           const activity = {

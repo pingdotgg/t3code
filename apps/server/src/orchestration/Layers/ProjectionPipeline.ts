@@ -1134,19 +1134,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
-            if (
-              event.payload.session.status === "error" ||
-              event.payload.session.status === "stopped" ||
-              event.payload.session.status === "interrupted"
-            ) {
-              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
-                threadId: event.payload.threadId,
-              });
-            }
             // Leaving the "running" session status is the turn-end signal:
             // settle still-running turns so their duration reflects the whole
             // turn rather than the last assistant message.
             const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
+            // Any settled status abandons an unadopted pending turn start —
+            // including "ready": a mid-turn steer re-arms the pending row
+            // without a fresh adoption, and a stale row would block queue
+            // drains (and re-arm the read model's pendingTurnStart flag on
+            // restart hydration). Ready-with-genuinely-pending starts never
+            // reach this projection: ingestion maps that shape to
+            // "starting" before dispatching the session set.
+            if (settledTurnState !== null) {
+              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+                threadId: event.payload.threadId,
+              });
+            }
             if (settledTurnState === null) {
               return;
             }
