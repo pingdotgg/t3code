@@ -8,6 +8,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
+import type { SourceControlCloneProgress } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -192,6 +193,81 @@ it.effect("clones a looked-up repository into the requested destination", () =>
         }),
       ),
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("publishes structured progress while cloning with forced Git progress output", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-progress-parent-",
+    });
+    const destinationPath = `${parent}/t3code`;
+    const progressEvents: SourceControlCloneProgress[] = [];
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository(
+        {
+          remoteUrl: CLONE_URLS.url,
+          destinationPath,
+        },
+        {
+          publish: (progress) =>
+            Effect.sync(() => {
+              progressEvents.push(progress);
+            }),
+        },
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: (input) =>
+              Effect.gen(function* () {
+                assert.deepStrictEqual(input.args, [
+                  "clone",
+                  "--progress",
+                  CLONE_URLS.url,
+                  "t3code",
+                ]);
+                assert.strictEqual(input.env?.LC_ALL, "C");
+                assert.strictEqual(input.progress?.includeCarriageReturnLines, true);
+                yield* (
+                  input.progress?.onStderrLine?.(
+                    "Receiving objects: 64% (64/100), 18.40 MiB | 4.20 MiB/s",
+                  ) ?? Effect.void
+                );
+                yield* (
+                  input.progress?.onStderrLine?.("repository-controlled output") ?? Effect.void
+                );
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+
+    assert.deepStrictEqual(progressEvents, [
+      {
+        type: "progress",
+        stage: "connecting",
+        percent: null,
+        completed: null,
+        total: null,
+        receivedBytes: null,
+        bytesPerSecond: null,
+      },
+      {
+        type: "progress",
+        stage: "receiving",
+        percent: 64,
+        completed: 64,
+        total: 100,
+        receivedBytes: 19_293_798,
+        bytesPerSecond: 4_404_019,
+      },
+    ]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

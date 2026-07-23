@@ -14,6 +14,7 @@ import {
   type ProjectId,
   ProviderInstanceId,
   type SourceControlDiscoveryResult,
+  type SourceControlCloneProgress,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -28,6 +29,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   LinkIcon,
+  LoaderCircleIcon,
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -465,9 +467,12 @@ function OpenCommandPaletteDialog(props: {
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
-  const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
-    reportFailure: false,
-  });
+  const cloneRepositoryWithProgress = useAtomCommand(
+    sourceControlEnvironment.cloneRepositoryWithProgress,
+    {
+      reportFailure: false,
+    },
+  );
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -486,6 +491,8 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [remoteProjectCloneProgress, setRemoteProjectCloneProgress] =
+    useState<SourceControlCloneProgress | null>(null);
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
 
   const addProjectEnvironmentOptions = useMemo(() => {
@@ -1326,14 +1333,25 @@ function OpenCommandPaletteDialog(props: {
     }
 
     setIsRemoteProjectCloning(true);
-    const cloneResult = await cloneRepository({
+    setRemoteProjectCloneProgress({
+      type: "progress",
+      stage: "connecting",
+      percent: null,
+      completed: null,
+      total: null,
+      receivedBytes: null,
+      bytesPerSecond: null,
+    });
+    const cloneResult = await cloneRepositoryWithProgress({
       environmentId: addProjectCloneFlow.environmentId,
       input: {
         remoteUrl: addProjectCloneFlow.remoteUrl,
         destinationPath,
       },
+      onProgress: setRemoteProjectCloneProgress,
     });
     setIsRemoteProjectCloning(false);
+    setRemoteProjectCloneProgress(null);
     if (cloneResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(cloneResult)) {
         toastManager.add(
@@ -1833,42 +1851,93 @@ function OpenCommandPaletteDialog(props: {
                     : {})}
           />
         </CommandPanel>
-        <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
-          <div className="flex items-center gap-3">
-            <KbdGroup className="items-center gap-1.5">
-              <Kbd>
-                <ArrowUpIcon />
-              </Kbd>
-              <Kbd>
-                <ArrowDownIcon />
-              </Kbd>
-              <span className={cn("text-muted-foreground/80")}>Navigate</span>
-            </KbdGroup>
-            {addProjectCloneFlow?.step === "repository" ? (
-              <KbdGroup className="items-center gap-1.5">
-                <Kbd>Enter</Kbd>
-                <span className={cn("text-muted-foreground/80")}>
-                  {remoteProjectButtonLabel ?? "Continue"}
+        <CommandFooter
+          className={cn(
+            "relative overflow-hidden gap-3 max-sm:flex-col max-sm:items-start",
+            isRemoteProjectCloning && "min-h-11 py-2.5",
+          )}
+        >
+          {isRemoteProjectCloning && remoteProjectCloneProgress !== null ? (
+            <>
+              <div
+                className="flex min-w-0 flex-1 items-center gap-2 text-foreground"
+                aria-live="polite"
+              >
+                <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin text-primary" />
+                <span className="truncate font-medium">
+                  {remoteProjectCloneProgress.stage === "connecting"
+                    ? "Connecting to remote"
+                    : remoteProjectCloneProgress.stage === "receiving"
+                      ? "Receiving objects"
+                      : remoteProjectCloneProgress.stage === "resolving"
+                        ? "Resolving deltas"
+                        : "Checking out files"}
                 </span>
-              </KbdGroup>
-            ) : !canSubmitBrowsePath || hasHighlightedBrowseItem ? (
+                {remoteProjectCloneProgress.percent === null ? null : (
+                  <span className="ms-auto shrink-0 font-medium tabular-nums text-muted-foreground">
+                    {Math.round(remoteProjectCloneProgress.percent)}%
+                  </span>
+                )}
+              </div>
+              <div
+                className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-border/70"
+                role="progressbar"
+                aria-label="Clone progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                {...(remoteProjectCloneProgress.percent === null
+                  ? {}
+                  : { "aria-valuenow": remoteProjectCloneProgress.percent })}
+              >
+                {remoteProjectCloneProgress.percent === null ? (
+                  <div className="h-full w-1/3 animate-pulse bg-primary/70" />
+                ) : (
+                  <div
+                    className="h-full bg-primary transition-[width] duration-200"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, remoteProjectCloneProgress.percent))}%`,
+                    }}
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-3">
               <KbdGroup className="items-center gap-1.5">
-                <Kbd>Enter</Kbd>
-                <span className={cn("text-muted-foreground/80")}>Select</span>
+                <Kbd>
+                  <ArrowUpIcon />
+                </Kbd>
+                <Kbd>
+                  <ArrowDownIcon />
+                </Kbd>
+                <span className={cn("text-muted-foreground/80")}>Navigate</span>
               </KbdGroup>
-            ) : null}
-            {isSubmenu ? (
+              {addProjectCloneFlow?.step === "repository" ? (
+                <KbdGroup className="items-center gap-1.5">
+                  <Kbd>Enter</Kbd>
+                  <span className={cn("text-muted-foreground/80")}>
+                    {remoteProjectButtonLabel ?? "Continue"}
+                  </span>
+                </KbdGroup>
+              ) : !canSubmitBrowsePath || hasHighlightedBrowseItem ? (
+                <KbdGroup className="items-center gap-1.5">
+                  <Kbd>Enter</Kbd>
+                  <span className={cn("text-muted-foreground/80")}>Select</span>
+                </KbdGroup>
+              ) : null}
+              {isSubmenu ? (
+                <KbdGroup className="items-center gap-1.5">
+                  <Kbd>Backspace</Kbd>
+                  <span className={cn("text-muted-foreground/80")}>Back</span>
+                </KbdGroup>
+              ) : null}
               <KbdGroup className="items-center gap-1.5">
-                <Kbd>Backspace</Kbd>
-                <span className={cn("text-muted-foreground/80")}>Back</span>
+                <Kbd>Esc</Kbd>
+                <span className={cn("text-muted-foreground/80")}>Close</span>
               </KbdGroup>
-            ) : null}
-            <KbdGroup className="items-center gap-1.5">
-              <Kbd>Esc</Kbd>
-              <span className={cn("text-muted-foreground/80")}>Close</span>
-            </KbdGroup>
-          </div>
-          {canOpenProjectFromFileManager ? (
+            </div>
+          )}
+          {canOpenProjectFromFileManager && !isRemoteProjectCloning ? (
             <Button
               variant="ghost"
               size="xs"

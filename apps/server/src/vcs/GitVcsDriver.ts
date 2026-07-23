@@ -87,6 +87,7 @@ export interface GitPreparedCommitContext {
 export interface ExecuteGitProgress {
   readonly onStdoutLine?: (line: string) => Effect.Effect<void, never>;
   readonly onStderrLine?: (line: string) => Effect.Effect<void, never>;
+  readonly includeCarriageReturnLines?: boolean;
   readonly onHookStarted?: (hookName: string) => Effect.Effect<void, never>;
   readonly onHookFinished?: (input: {
     hookName: string;

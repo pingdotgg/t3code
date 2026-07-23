@@ -568,6 +568,7 @@ const collectOutput = Effect.fnUntraced(function* (
   maxOutputBytes: number,
   appendTruncationMarker: boolean,
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
+  includeCarriageReturnLines: boolean,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
   let bytes = 0;
@@ -576,14 +577,29 @@ const collectOutput = Effect.fnUntraced(function* (
   let truncated = false;
 
   const emitCompleteLines = Effect.fnUntraced(function* (flush: boolean) {
-    let newlineIndex = lineBuffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      const line = lineBuffer.slice(0, newlineIndex).replace(/\r$/, "");
-      lineBuffer = lineBuffer.slice(newlineIndex + 1);
+    const nextSeparatorIndex = (): number => {
+      const newlineIndex = lineBuffer.indexOf("\n");
+      if (!includeCarriageReturnLines) {
+        return newlineIndex;
+      }
+      const carriageReturnIndex = lineBuffer.indexOf("\r");
+      if (newlineIndex < 0) {
+        return carriageReturnIndex;
+      }
+      if (carriageReturnIndex < 0) {
+        return newlineIndex;
+      }
+      return Math.min(newlineIndex, carriageReturnIndex);
+    };
+
+    let separatorIndex = nextSeparatorIndex();
+    while (separatorIndex >= 0) {
+      const line = lineBuffer.slice(0, separatorIndex).replace(/\r$/, "");
+      lineBuffer = lineBuffer.slice(separatorIndex + 1);
       if (line.length > 0 && onLine) {
         yield* onLine(line);
       }
-      newlineIndex = lineBuffer.indexOf("\n");
+      separatorIndex = nextSeparatorIndex();
     }
 
     if (flush) {
@@ -702,6 +718,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               maxOutputBytes,
               appendTruncationMarker,
               input.progress?.onStdoutLine,
+              input.progress?.includeCarriageReturnLines ?? false,
             ),
             collectOutput(
               commandInput,
@@ -709,6 +726,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               maxOutputBytes,
               appendTruncationMarker,
               input.progress?.onStderrLine,
+              input.progress?.includeCarriageReturnLines ?? false,
             ),
             child.exitCode.pipe(
               Effect.mapError(
