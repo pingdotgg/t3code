@@ -53,7 +53,6 @@ public struct SettingsScene: View {
         model: AppModel,
         scenery: SceneryStore,
         backend: any BackendService,
-        passport: PassportStore? = nil,
         multi: MultiDeviceModel? = nil,
         initialTab: SettingsTab = .general
     ) {
@@ -61,7 +60,7 @@ public struct SettingsScene: View {
         self.multi = multi ?? MultiDeviceModel(local: model)
         self.scenery = scenery
         _sceneSetComposer = UIState(
-            initialValue: SceneSetComposer(store: scenery, backend: backend, passport: passport))
+            initialValue: SceneSetComposer(store: scenery, backend: backend))
         _selectedTab = UIState(initialValue: initialTab)
     }
 

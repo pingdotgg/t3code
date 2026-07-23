@@ -249,13 +249,6 @@ public final class SceneryStore {
         pools[setId] ?? []
     }
 
-    /// Resolves a photo within an explicit set. Passport pages retain their
-    /// set id, so they must not infer ownership from a photo id that may be
-    /// shared by more than one pool.
-    public func photo(for photoID: String, inSet setId: String) -> SceneryPhoto? {
-        pools[setId]?.first { $0.id == photoID }
-    }
-
     /// Palette for a resolved set. An explicit set id wins; otherwise the
     /// photo's owning set and then the global default are used.
     public func palette(for photo: SceneryPhoto?, setId: String? = nil) -> SceneryPalette? {
@@ -279,15 +272,6 @@ public final class SceneryStore {
 
     public func projectPrefs(for path: String) -> ProjectSceneryPrefs? {
         projectPrefs[path]
-    }
-
-    /// Read-only snapshots consumed by Passport backfill at app startup.
-    public var passportNamesBySet: [String: [String: String]] {
-        namesBySet
-    }
-
-    public var passportAssignments: [String: SceneryAssignment] {
-        assignments
     }
 
     // MARK: - Assignment & naming
@@ -1435,7 +1419,6 @@ extension AppModel {
         projectID: String,
         provider: ProviderKind,
         scenery: SceneryStore,
-        passport: PassportStore? = nil,
         scenerySetId: String? = nil
     ) async -> ChatThread? {
         // First launch races the initial pool fetch; start() is idempotent and
@@ -1459,19 +1442,6 @@ extension AppModel {
                 to: threadKey,
                 projectPath: projectPath,
                 setIdOverride: effectiveSetId)
-            let setId = scenery.resolvedSetId(forThread: threadKey)
-            if let set = scenery.set(id: setId) {
-                // Builtin manifests pin createdAt to epoch 0; a visit that races
-                // the startup backfill must not issue a 1970-dated page.
-                let issuedAt = set.createdAt.timeIntervalSince1970 == 0 ? Date() : set.createdAt
-                passport?.ensurePage(setId: set.id, title: set.title, issuedAt: issuedAt)
-            }
-            passport?.recordVisit(
-                threadID: threadKey,
-                setId: setId,
-                placeName: sceneTitle,
-                photoID: scene.id,
-                date: Date())
         }
         return thread
     }

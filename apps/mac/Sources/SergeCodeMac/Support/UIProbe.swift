@@ -84,7 +84,7 @@
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
-                    remote, multi: multi, scenery: scenery, passport: PassportStore(), dir: dir)
+                    remote, multi: multi, scenery: scenery, dir: dir)
             }
 
             // Plan strip above the composer: expand, snapshot, collapse.
@@ -239,10 +239,6 @@
                 // register the resulting bare-title pool and create a thread.
                 // Confirms new threads get "Iceland", not "Iceland 5".
                 await probeIcelandSceneSetCreate(model: model, multi: multi, scenery: scenery)
-
-                // Passport sheet: seed a temp store with Dolomites visits and
-                // capture the sheet's view tree.
-                await probePassport(scenery: scenery, dir: dir)
 
                 // Brand surfaces: About window + empty state with the
                 // BrandMark/BrandWordmark treatment.
@@ -632,7 +628,6 @@
             _ session: RemoteDeviceSession,
             multi: MultiDeviceModel,
             scenery: SceneryStore,
-            passport: PassportStore,
             dir: String
         ) async {
             let previousSelection = multi.selection
@@ -646,7 +641,7 @@
                 try? await Task.sleep(for: .milliseconds(250))
             }
             await snapshotRemoteSidebar(
-                multi: multi, scenery: scenery, passport: passport, dir: dir)
+                multi: multi, scenery: scenery, dir: dir)
 
             guard let thread = session.model.threads.first(where: { $0.status != .archived }) else {
                 print("UIProbe: remote session has no selectable thread")
@@ -665,11 +660,10 @@
         private static func snapshotRemoteSidebar(
             multi: MultiDeviceModel,
             scenery: SceneryStore,
-            passport: PassportStore,
             dir: String
         ) async {
             let hosting = NSHostingView(
-                rootView: SidebarView(multi: multi, scenery: scenery, passport: passport))
+                rootView: SidebarView(multi: multi, scenery: scenery))
             hosting.frame = NSRect(x: 0, y: 0, width: 340, height: 760)
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 340, height: 760),
@@ -913,80 +907,6 @@
             } else {
                 print("UIProbe: PASS polluted pool-index title strips to Iceland")
             }
-        }
-
-        /// Seeds a throwaway PassportStore with a few Dolomites visits (one
-        /// place visited twice for the ×N badge) and captures PassportView
-        /// hosted in its own window — sheets can't be presented
-        /// programmatically here, and this exercises the identical view tree.
-        private static func probePassport(scenery: SceneryStore, dir: String) async {
-            let root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("probe-passport-\(UUID().uuidString)", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: root) }
-
-            let passport = PassportStore(rootOverride: root)
-            let set = scenery.set(id: ScenerySet.dolomitesID)
-            passport.ensurePage(
-                setId: ScenerySet.dolomitesID,
-                title: set?.title ?? "Dolomites",
-                issuedAt: Date())
-            let configuredSceneNames = set?.sceneNames ?? []
-            let places = Array(
-                (configuredSceneNames.isEmpty
-                    ? ["Seceda", "Tre Cime", "Marmolada"]
-                    : configuredSceneNames).prefix(3))
-            for (index, place) in places.enumerated() {
-                passport.recordVisit(
-                    threadID: "probe-passport-\(index)",
-                    setId: ScenerySet.dolomitesID,
-                    placeName: place,
-                    photoID: nil,
-                    date: Date())
-            }
-            if let repeated = places.first {
-                passport.recordVisit(
-                    threadID: "probe-passport-repeat",
-                    setId: ScenerySet.dolomitesID,
-                    placeName: repeated,
-                    photoID: nil,
-                    date: Date())
-            }
-
-            let stamps = passport.pages.first?.stamps ?? []
-            let repeatOK = stamps.first?.visitCount == 2
-            let sceneNameCount = set?.sceneNames.count ?? 0
-            print(
-                "UIProbe: passport pages=\(passport.pages.count) stamps=\(stamps.count) "
-                    + "repeatBadge=\(repeatOK) sceneNames=\(sceneNameCount)")
-            if passport.pages.count == 1, stamps.count == places.count, repeatOK {
-                print("UIProbe: PASS passport page seeded with stamps + repeat visit")
-            } else {
-                print("UIProbe: FAIL passport seeding unexpected shape")
-            }
-
-            let hosting = NSHostingView(
-                rootView: PassportView(
-                    scenery: scenery,
-                    passport: passport,
-                    isPresented: .constant(true)))
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
-                styleMask: [.titled], backing: .buffered, defer: false)
-            DarkAppearanceConfigurator.applyAppearance(to: window)
-            window.contentView = hosting
-            window.orderFront(nil)
-            try? await Task.sleep(for: .seconds(2))
-            if let view = window.contentView,
-                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-            {
-                view.cacheDisplay(in: view.bounds, to: rep)
-                if let data = rep.representation(using: .png, properties: [:]) {
-                    let url = URL(fileURLWithPath: dir).appendingPathComponent("15-passport.png")
-                    try? data.write(to: url)
-                    print("UIProbe: wrote \(url.path)")
-                }
-            }
-            window.orderOut(nil)
         }
 
         /// Hosts AboutView and EmptyStateView in throwaway windows and
