@@ -100,6 +100,8 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadShellExists: true,
         serverThreadDetailExists: false,
+        serverThreadDetailDeleted: false,
+        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
@@ -111,6 +113,8 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadShellExists: true,
         serverThreadDetailExists: true,
+        serverThreadDetailDeleted: false,
+        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("ready");
@@ -119,6 +123,8 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
+        serverThreadDetailDeleted: false,
+        serverThreadDetailFailed: false,
         draftThreadExists: true,
       }),
     ).toBe("ready");
@@ -130,6 +136,8 @@ describe("threadRoutes", () => {
         bootstrapComplete: false,
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
+        serverThreadDetailDeleted: false,
+        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
@@ -138,6 +146,31 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
+        serverThreadDetailDeleted: false,
+        serverThreadDetailFailed: false,
+        draftThreadExists: false,
+      }),
+    ).toBe("missing");
+  });
+
+  it("does not leave failed or deleted shell-only threads loading", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadShellExists: true,
+        serverThreadDetailExists: false,
+        serverThreadDetailDeleted: false,
+        serverThreadDetailFailed: true,
+        draftThreadExists: false,
+      }),
+    ).toBe("error");
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadShellExists: true,
+        serverThreadDetailExists: false,
+        serverThreadDetailDeleted: true,
+        serverThreadDetailFailed: false,
         draftThreadExists: false,
       }),
     ).toBe("missing");

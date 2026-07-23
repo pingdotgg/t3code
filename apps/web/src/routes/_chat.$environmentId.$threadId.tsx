@@ -5,8 +5,15 @@ import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import { SidebarInset } from "~/components/ui/sidebar";
-import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
+import {
+  useEnvironmentThreadRefs,
+  useThreadDetail,
+  useThreadError,
+  useThreadShell,
+  useThreadStatus,
+} from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 
@@ -20,9 +27,10 @@ function ChatThreadRouteView() {
   );
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
+  const serverThreadStatus = useThreadStatus(threadRef);
+  const serverThreadError = useThreadError(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
-  const threadExists = serverThreadShell !== null || serverThreadDetail !== null;
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
   const draftThreadExists = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) !== null : false,
@@ -36,11 +44,12 @@ function ChatThreadRouteView() {
     }
     return store.hasDraftThreadsInEnvironment(threadRef.environmentId);
   });
-  const routeThreadExists = threadExists || draftThreadExists;
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadShellExists: serverThreadShell !== null,
     serverThreadDetailExists: serverThreadDetail !== null,
+    serverThreadDetailDeleted: serverThreadStatus === "deleted",
+    serverThreadDetailFailed: serverThreadError !== null,
     draftThreadExists,
   });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
@@ -51,10 +60,10 @@ function ChatThreadRouteView() {
       return;
     }
 
-    if (!routeThreadExists && environmentHasAnyThreads) {
+    if (renderState === "missing" && environmentHasAnyThreads) {
       void navigate({ to: "/", replace: true });
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, routeThreadExists, threadRef]);
+  }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, threadRef]);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread) {
@@ -64,6 +73,9 @@ function ChatThreadRouteView() {
   }, [draftThread, serverThreadStarted, threadRef]);
 
   if (!threadRef || renderState !== "ready") {
+    if (renderState === "error") {
+      return <ThreadLoadErrorState error={serverThreadError} />;
+    }
     return null;
   }
 
@@ -74,6 +86,21 @@ function ChatThreadRouteView() {
         threadId={threadRef.threadId}
         routeKind="server"
       />
+    </SidebarInset>
+  );
+}
+
+function ThreadLoadErrorState({ error }: { error: string | null }) {
+  return (
+    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+      <Empty className="flex-1">
+        <EmptyHeader>
+          <EmptyTitle>Couldn’t load thread</EmptyTitle>
+          <EmptyDescription>
+            {error ?? "T3 Code will keep trying to reconnect automatically."}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     </SidebarInset>
   );
 }
