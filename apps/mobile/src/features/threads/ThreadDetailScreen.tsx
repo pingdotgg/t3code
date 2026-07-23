@@ -238,6 +238,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     instanceId: selectedInstanceId,
     cwd: props.threadCwd ?? props.projectWorkspaceRoot,
     enabled: true,
+    connectionAvailable: props.connectionStateLabel === "connected",
     fallbackSkills: selectedProviderFallbackSkills,
   });
 

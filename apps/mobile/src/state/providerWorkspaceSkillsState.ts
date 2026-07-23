@@ -1,6 +1,7 @@
 import {
   EMPTY_PROVIDER_WORKSPACE_SKILLS,
   formatProviderWorkspaceSkillsError,
+  PROVIDER_WORKSPACE_SKILLS_UNAVAILABLE_MESSAGE,
   providerWorkspaceSkillsTargetKey,
   resolveNextProviderWorkspaceSkillsSnapshot,
   resolveProviderWorkspaceSkills,
@@ -22,12 +23,24 @@ export function useProviderWorkspaceSkills(
       instanceId: target.instanceId,
       cwd: target.cwd?.trim() || null,
       enabled: target.enabled,
+      connectionAvailable: target.connectionAvailable !== false,
     }),
-    [target.cwd, target.enabled, target.environmentId, target.instanceId],
+    [
+      target.connectionAvailable,
+      target.cwd,
+      target.enabled,
+      target.environmentId,
+      target.instanceId,
+    ],
   );
-  const key = providerWorkspaceSkillsTargetKey(stableTarget);
+  const targetKey = providerWorkspaceSkillsTargetKey({ ...stableTarget, enabled: true });
+  const key = stableTarget.enabled ? targetKey : null;
+  const unavailable = key !== null && !stableTarget.connectionAvailable;
   const query = useEnvironmentQuery(
-    key !== null && stableTarget.environmentId !== null && stableTarget.instanceId !== null
+    key !== null &&
+      !unavailable &&
+      stableTarget.environmentId !== null &&
+      stableTarget.instanceId !== null
       ? serverEnvironment.providerSkills({
           environmentId: stableTarget.environmentId,
           input: {
@@ -42,13 +55,15 @@ export function useProviderWorkspaceSkills(
   const querySkills = query.data?.skills ?? null;
   useEffect(() => {
     previousWorkspaceSkillsRef.current = resolveNextProviderWorkspaceSkillsSnapshot({
-      key,
+      key: targetKey,
       skills: querySkills,
       isPending: query.isPending,
       error: query.error,
+      inactive: key === null,
+      unavailable,
       current: previousWorkspaceSkillsRef.current,
     });
-  }, [key, query.error, query.isPending, querySkills]);
+  }, [key, query.error, query.isPending, querySkills, targetKey, unavailable]);
 
   if (key === null) {
     return { skills: target.fallbackSkills, isPending: false, error: null };
@@ -60,11 +75,14 @@ export function useProviderWorkspaceSkills(
       nextSkills: querySkills,
       isPending: query.isPending,
       error: query.error,
+      unavailable,
       currentKey: previousWorkspaceSkills?.key ?? null,
       currentSkills: previousWorkspaceSkills?.skills ?? EMPTY_PROVIDER_WORKSPACE_SKILLS,
       fallbackSkills: target.fallbackSkills,
     }),
-    isPending: query.isPending,
-    error: formatProviderWorkspaceSkillsError({ error: query.error, cause: query.errorCause }),
+    isPending: unavailable ? false : query.isPending,
+    error: unavailable
+      ? PROVIDER_WORKSPACE_SKILLS_UNAVAILABLE_MESSAGE
+      : formatProviderWorkspaceSkillsError({ error: query.error, cause: query.errorCause }),
   };
 }

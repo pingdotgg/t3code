@@ -51,6 +51,7 @@ import {
 } from "../../state/use-thread-outbox";
 import {
   setPendingConnectionError,
+  useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { useProviderWorkspaceSkills } from "../../state/providerWorkspaceSkillsState";
@@ -175,6 +176,7 @@ const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(n
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const { connectedEnvironments } = useRemoteConnectionStatus();
   const { savedConnectionsById } = useSavedRemoteConnections();
 
   const repositoryGroups = useMemo(
@@ -283,6 +285,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
       ? editingPendingProject
       : (projectsForEnvironment[0] ?? null));
+  const providerSkillsConnectionAvailable =
+    selectedProject !== null &&
+    connectedEnvironments.some(
+      (environment) =>
+        environment.environmentId === selectedProject.environmentId &&
+        environment.connectionState === "connected",
+    );
 
   // Only offer machines that actually host the currently selected repository, so
   // switching computers moves the same repo across machines instead of jumping to
@@ -419,6 +428,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       projectWorkspaceRoot: selectedProject?.workspaceRoot ?? null,
     }),
     enabled: promptNeedsWorkspaceSkills,
+    connectionAvailable: providerSkillsConnectionAvailable,
     fallbackSkills: selectedProviderFallbackSkills,
   }).skills;
   const setSelectedModelKey = useCallback(

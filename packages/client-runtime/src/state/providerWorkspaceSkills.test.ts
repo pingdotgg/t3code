@@ -213,6 +213,21 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
     ).toBeNull();
   });
 
+  it("clears a different workspace snapshot while the next lookup is pending", () => {
+    expect(
+      resolveNextProviderWorkspaceSkillsSnapshot({
+        key: "local:codex:/repo-b",
+        skills: null,
+        isPending: true,
+        error: null,
+        current: {
+          key: "local:codex:/repo-a",
+          skills: [skill("repo-a")],
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("clears a stale snapshot after a failed refresh", () => {
     expect(
       resolveNextProviderWorkspaceSkillsSnapshot({

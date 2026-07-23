@@ -128,13 +128,14 @@ export function resolveNextProviderWorkspaceSkillsSnapshot(input: {
   readonly current: ProviderWorkspaceSkillsSnapshot | null;
 }): ProviderWorkspaceSkillsSnapshot | null {
   if (input.key === null) return null;
+  const current = input.current?.key === input.key ? input.current : null;
   if (input.inactive === true) {
-    return input.current?.key === input.key ? input.current : null;
+    return current;
   }
   if (input.unavailable === true) {
-    return input.current?.key === input.key ? input.current : null;
+    return current;
   }
   if (input.error !== null) return null;
-  if (input.skills === null) return input.isPending ? input.current : null;
-  return input.isPending ? input.current : { key: input.key, skills: input.skills };
+  if (input.skills === null) return input.isPending ? current : null;
+  return input.isPending ? current : { key: input.key, skills: input.skills };
 }
