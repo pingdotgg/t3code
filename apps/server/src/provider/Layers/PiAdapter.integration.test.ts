@@ -28,6 +28,7 @@ import type {
   AgentSessionEvent,
   PiRpcTransport,
   PiStdoutMessage,
+  PiTurnCommand,
   RpcCommand,
   RpcExtensionUIRequest,
   RpcExtensionUIResponse,
@@ -48,6 +49,11 @@ interface FakePiTransport {
   readonly pushEvent: (event: AgentSessionEvent) => Effect.Effect<void>;
   readonly pushExtensionUI: (request: RpcExtensionUIRequest) => Effect.Effect<void>;
   readonly setResponse: (commandType: string, response: RpcResponse) => void;
+  readonly gateRequests: (
+    commandType: string,
+    entered: Deferred.Deferred<void>,
+    release: Deferred.Deferred<void>,
+  ) => void;
   readonly failNextWrite: (defect?: Error) => void;
 }
 
@@ -58,6 +64,10 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
   const commands: Array<RpcCommand> = [];
   const extensionResponses: Array<RpcExtensionUIResponse> = [];
   const responses = new Map<string, RpcResponse>();
+  const requestGates = new Map<
+    string,
+    { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+  >();
   let nextWriteDefect: Error | undefined;
   responses.set(
     "get_state",
@@ -104,9 +114,15 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
         });
       }),
     request: (command) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const commandType = (command as { type: string }).type;
         commands.push(command);
-        return responses.get((command as { type: string }).type);
+        const gate = requestGates.get(commandType);
+        if (gate !== undefined) {
+          yield* Deferred.succeed(gate.entered, undefined).pipe(Effect.ignore);
+          yield* Deferred.await(gate.release);
+        }
+        return responses.get(commandType);
       }),
     messages,
     isClosed: Effect.succeed(false),
@@ -122,6 +138,9 @@ const makeFakePiRpcTransport = Effect.gen(function* () {
       Queue.offer(messages, { _tag: "extension-ui", request }).pipe(Effect.asVoid),
     setResponse: (commandType, response) => {
       responses.set(commandType, response);
+    },
+    gateRequests: (commandType, entered, release) => {
+      requestGates.set(commandType, { entered, release });
     },
     failNextWrite: (defect = new Error("Pi transport write failed.")) => {
       nextWriteDefect = defect;
@@ -783,6 +802,74 @@ it.layer(HarnessLayer)("PiAdapter integration", (it) => {
       const turnStarts = events.filter((event) => event.type === "turn.started");
       expect(turnStarts.length).toBe(1);
       expect(fake.commands.some((command) => command.type === "steer")).toBe(true);
+    }),
+  );
+
+  it.effect("serializes concurrent sends into one prompt followed by a steer", () =>
+    Effect.gen(function* () {
+      const { adapter, fake } = yield* makePiAdapterForTest(enabledSettings());
+      const threadId = ThreadId.make("pi-int-concurrent-send");
+      yield* adapter.startSession({
+        threadId,
+        provider: PI,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      fake.setResponse(
+        "set_model",
+        asResponse({
+          type: "response",
+          id: "x",
+          command: "set_model",
+          success: true,
+          data: {},
+        }),
+      );
+      const enteredSetModel = yield* Deferred.make<void>();
+      const releaseSetModel = yield* Deferred.make<void>();
+      fake.gateRequests("set_model", enteredSetModel, releaseSetModel);
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("pi"),
+        model: "anthropic/claude-test",
+      };
+
+      const sendsFiber = yield* Effect.all(
+        [
+          adapter.sendTurn({
+            threadId,
+            input: "first",
+            attachments: [],
+            modelSelection,
+          }),
+          adapter.sendTurn({
+            threadId,
+            input: "second",
+            attachments: [],
+            modelSelection,
+          }),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+
+      yield* Deferred.await(enteredSetModel);
+      yield* Effect.yieldNow;
+      const modelRequestsBeforeRelease = fake.commands.filter(
+        (command) => command.type === "set_model",
+      ).length;
+      yield* Deferred.succeed(releaseSetModel, undefined).pipe(Effect.ignore);
+      const results = yield* Fiber.join(sendsFiber);
+
+      const turnCommands = fake.commands.filter(
+        (command): command is PiTurnCommand =>
+          command.type === "prompt" || command.type === "steer",
+      );
+      expect(modelRequestsBeforeRelease).toBe(1);
+      expect(results[1].turnId).toBe(results[0].turnId);
+      expect(turnCommands.map((command) => command.type)).toEqual(["prompt", "steer"]);
+      expect(turnCommands.map((command) => command.message).sort()).toEqual(["first", "second"]);
+
+      yield* adapter.stopSession(threadId);
     }),
   );
 

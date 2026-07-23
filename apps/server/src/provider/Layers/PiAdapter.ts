@@ -29,6 +29,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -138,6 +139,7 @@ interface PiSessionContext {
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  readonly sendTurnSemaphore: Semaphore.Semaphore;
   turnState: PiTurnState | undefined;
   readonly turns: Array<{ id: TurnId; items: Array<PiToolItem> }>;
   stopped: boolean;
@@ -923,6 +925,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       createdAt: startedAt,
       updatedAt: startedAt,
     };
+    const sendTurnSemaphore = yield* Semaphore.make(1);
 
     const context: PiSessionContext = {
       session,
@@ -931,6 +934,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       notificationFiber: undefined,
       pendingApprovals: new Map(),
       pendingUserInputs: new Map(),
+      sendTurnSemaphore,
       turnState: undefined,
       turns: [],
       stopped: false,
@@ -1048,62 +1052,66 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const sendTurn: PiAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
 
-    const modelSelection =
-      input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-    const requestedModel = modelSelection?.model;
-    const promptText = typeof input.input === "string" ? input.input : "";
-    // resolve before mutating turn state so a bad attachment fails cleanly
-    const images = yield* resolvePromptImages(input.attachments);
+    return yield* context.sendTurnSemaphore.withPermit(
+      Effect.gen(function* () {
+        const modelSelection =
+          input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+        const requestedModel = modelSelection?.model;
+        const promptText = typeof input.input === "string" ? input.input : "";
+        // resolve before mutating turn state so a bad attachment fails cleanly
+        const images = yield* resolvePromptImages(input.attachments);
 
-    if (promptText.length === 0 && images.length === 0) {
-      return yield* new ProviderAdapterValidationError({
-        provider: PROVIDER,
-        operation: "sendTurn",
-        issue: "Pi turns require non-empty text or at least one attachment.",
-      });
-    }
+        if (promptText.length === 0 && images.length === 0) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: "Pi turns require non-empty text or at least one attachment.",
+          });
+        }
 
-    // a message mid-turn steers the running turn; otherwise it opens a fresh one
-    const isMidTurn = context.turnState !== undefined;
+        // a message mid-turn steers the running turn; otherwise it opens a fresh one
+        const isMidTurn = context.turnState !== undefined;
 
-    // only on a fresh turn — changing options mid-stream would race the active turn
-    if (!isMidTurn) {
-      yield* maybeSwitchPiModel(context, requestedModel);
-      yield* applyThinkingLevel(context, modelSelection);
-    }
+        // only on a fresh turn — changing options mid-stream would race the active turn
+        if (!isMidTurn) {
+          yield* maybeSwitchPiModel(context, requestedModel);
+          yield* applyThinkingLevel(context, modelSelection);
+        }
 
-    if (!context.turnState) {
-      yield* openTurn(context);
-    }
+        if (!context.turnState) {
+          yield* openTurn(context);
+        }
 
-    const turnId = context.turnState!.turnId;
+        const turnId = context.turnState!.turnId;
 
-    yield* context.transport
-      .writeCommand(buildPiTurnCommand({ isMidTurn, message: promptText, images }))
-      .pipe(
-        Effect.catchCause((cause) =>
-          completeTurn(context, "failed", "Failed to send message to Pi.").pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ProviderAdapterRequestError({
-                  provider: PROVIDER,
-                  method: isMidTurn ? "steer" : "prompt",
-                  detail: "Failed to deliver the message to Pi.",
-                  cause,
-                }),
+        yield* context.transport
+          .writeCommand(buildPiTurnCommand({ isMidTurn, message: promptText, images }))
+          .pipe(
+            Effect.catchCause((cause) =>
+              completeTurn(context, "failed", "Failed to send message to Pi.").pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: isMidTurn ? "steer" : "prompt",
+                      detail: "Failed to deliver the message to Pi.",
+                      cause,
+                    }),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      );
+          );
 
-    return {
-      threadId: context.session.threadId,
-      turnId,
-      ...(context.session.resumeCursor !== undefined
-        ? { resumeCursor: context.session.resumeCursor }
-        : {}),
-    };
+        return {
+          threadId: context.session.threadId,
+          turnId,
+          ...(context.session.resumeCursor !== undefined
+            ? { resumeCursor: context.session.resumeCursor }
+            : {}),
+        };
+      }),
+    );
   });
 
   const interruptTurn: PiAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
