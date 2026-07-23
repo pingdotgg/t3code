@@ -38,6 +38,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import type { CodexAppServerAuth } from "./JudeCodexAuth.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
@@ -106,6 +107,7 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly auth?: CodexAppServerAuth;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -1201,6 +1203,9 @@ export const makeCodexSessionRuntime = (
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
+      if (options.auth) {
+        yield* options.auth.authenticate(client);
+      }
 
       const requestedModel = normalizeCodexModelSlug(options.model);
 

@@ -33,6 +33,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import type { CodexAppServerAuth, CodexAppServerAuthFactory } from "./JudeCodexAuth.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
@@ -320,6 +321,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly auth?: CodexAppServerAuth;
 }) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
@@ -374,6 +376,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     },
   });
   yield* client.notify("initialized", undefined);
+  if (input.auth) {
+    yield* input.auth.authenticate(client);
+  }
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
@@ -503,12 +508,14 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly auth?: CodexAppServerAuth;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
+  makeAuth?: CodexAppServerAuthFactory,
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -535,6 +542,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const auth = makeAuth?.();
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
@@ -542,6 +550,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
+    ...(auth ? { auth } : {}),
   }).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),
