@@ -38,6 +38,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -300,9 +301,17 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ),
       );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-      const customIconPath = serverSettings.projectIcons[workspaceRoot];
+      const repositoryIdentityResolver =
+        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
+      const customIconPaths = [
+        serverSettings.projectIcons[workspaceRoot],
+        ...(repositoryIdentity
+          ? [serverSettings.projectIconsByGitRemote[repositoryIdentity.canonicalKey]]
+          : []),
+      ].filter((iconPath): iconPath is string => iconPath !== undefined);
       const faviconPath = yield* faviconResolver
-        .resolvePath(workspaceRoot, customIconPath === undefined ? undefined : { customIconPath })
+        .resolvePath(workspaceRoot, customIconPaths.length === 0 ? undefined : { customIconPaths })
         .pipe(
           Effect.mapError(
             (cause) =>

@@ -14,14 +14,16 @@ export function ProjectFavicon(input: {
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
-  const configuredIconPath = useEnvironmentSettings(
-    input.environmentId,
-    (settings) => settings.projectIcons[input.cwd],
-  );
+  const configuredIconRevision = useEnvironmentSettings(input.environmentId, (settings) => {
+    const pathIcon = settings.projectIcons[input.cwd];
+    if (pathIcon) return `path:${pathIcon}`;
+    const remoteEntries = Object.entries(settings.projectIconsByGitRemote);
+    return remoteEntries.length === 0 ? undefined : `remotes:${JSON.stringify(remoteEntries)}`;
+  });
   const src = useAssetUrl(input.environmentId, {
     _tag: "project-favicon",
     cwd: input.cwd,
-    ...(configuredIconPath ? { revision: configuredIconPath } : {}),
+    ...(configuredIconRevision ? { revision: configuredIconRevision } : {}),
   });
   const FallbackIcon = input.fallbackIcon ?? FolderIcon;
 

@@ -139,26 +139,44 @@ describe("ServerSettings worktree defaults", () => {
 describe("ServerSettings project icons", () => {
   it("defaults to an empty map for existing settings files", () => {
     expect(decodeServerSettings({}).projectIcons).toEqual({});
+    expect(decodeServerSettings({}).projectIconsByGitRemote).toEqual({});
   });
 
-  it("trims project roots and icon paths in settings and patches", () => {
+  it("trims project roots, git remotes, and icon paths in settings and patches", () => {
     const input = {
       projectIcons: {
         "  /workspace/t3code  ": "  ~/.config/t3code/icons/t3code.svg  ",
+      },
+      projectIconsByGitRemote: {
+        "  github.com/t3tools/t3code  ": "  ~/.config/t3code/icons/t3code.svg  ",
       },
     };
 
     expect(decodeServerSettings(input).projectIcons).toEqual({
       "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
     });
+    expect(decodeServerSettings(input).projectIconsByGitRemote).toEqual({
+      "github.com/t3tools/t3code": "~/.config/t3code/icons/t3code.svg",
+    });
     expect(decodeServerSettingsPatch(input).projectIcons).toEqual({
       "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
     });
+    expect(decodeServerSettingsPatch(input).projectIconsByGitRemote).toEqual({
+      "github.com/t3tools/t3code": "~/.config/t3code/icons/t3code.svg",
+    });
   });
 
-  it("rejects empty project roots and icon paths", () => {
+  it("rejects empty project roots, git remotes, and icon paths", () => {
     expect(() => decodeServerSettings({ projectIcons: { "": "/icons/project.svg" } })).toThrow();
     expect(() => decodeServerSettingsPatch({ projectIcons: { "/workspace": "  " } })).toThrow();
+    expect(() =>
+      decodeServerSettings({ projectIconsByGitRemote: { "": "/icons/project.svg" } }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        projectIconsByGitRemote: { "github.com/example/project": "  " },
+      }),
+    ).toThrow();
   });
 });
 

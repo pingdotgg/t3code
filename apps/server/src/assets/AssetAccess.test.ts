@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -27,6 +28,7 @@ const testLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
+  RepositoryIdentityResolver.layer,
   ServerSettings.ServerSettingsService.layerTest(),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
@@ -275,6 +277,59 @@ describe("AssetAccess", () => {
       const result = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root, revision: iconPath },
       }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: canonicalIconPath });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("uses a configured git-remote icon across clone paths", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-remote-root-",
+      });
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-remote-custom-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg />");
+      const canonicalIconPath = yield* fileSystem.realPath(iconPath);
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIconsByGitRemote: { "github.com/t3tools/t3code": iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+      const repositoryIdentityResolver = RepositoryIdentityResolver.RepositoryIdentityResolver.of({
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/t3tools/t3code",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "git@github.com:T3Tools/T3Code.git",
+            },
+          }),
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root, revision: iconPath },
+      }).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, settings),
+        Effect.provideService(
+          RepositoryIdentityResolver.RepositoryIdentityResolver,
+          repositoryIdentityResolver,
+        ),
+      );
       const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const separatorIndex = suffix.indexOf("/");
 

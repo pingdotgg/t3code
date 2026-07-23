@@ -81,6 +81,9 @@ export function applyServerSettingsPatch(
   const nextWithReplacements = {
     ...next,
     ...(patch.projectIcons !== undefined ? { projectIcons: patch.projectIcons } : {}),
+    ...(patch.projectIconsByGitRemote !== undefined
+      ? { projectIconsByGitRemote: patch.projectIconsByGitRemote }
+      : {}),
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),

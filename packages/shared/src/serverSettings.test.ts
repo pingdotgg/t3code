@@ -202,16 +202,26 @@ describe("serverSettings helpers", () => {
         "/workspace/one": "/icons/one.svg",
         "/workspace/two": "/icons/two.svg",
       },
+      projectIconsByGitRemote: {
+        "github.com/example/one": "/icons/one.svg",
+        "github.com/example/two": "/icons/two.svg",
+      },
     };
 
-    expect(
-      applyServerSettingsPatch(current, {
-        projectIcons: {
-          "/workspace/two": "/icons/two-next.svg",
-        },
-      }).projectIcons,
-    ).toEqual({
+    const next = applyServerSettingsPatch(current, {
+      projectIcons: {
+        "/workspace/two": "/icons/two-next.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/two": "/icons/two-next.svg",
+      },
+    });
+
+    expect(next.projectIcons).toEqual({
       "/workspace/two": "/icons/two-next.svg",
+    });
+    expect(next.projectIconsByGitRemote).toEqual({
+      "github.com/example/two": "/icons/two-next.svg",
     });
   });
 });

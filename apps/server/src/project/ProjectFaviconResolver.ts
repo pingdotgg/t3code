@@ -93,7 +93,7 @@ export class ProjectFaviconResolver extends Context.Service<
      */
     readonly resolvePath: (
       cwd: string,
-      options?: { readonly customIconPath?: string },
+      options?: { readonly customIconPaths?: ReadonlyArray<string> },
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
@@ -195,8 +195,8 @@ export const make = Effect.gen(function* () {
     // User-local settings override checked-in metadata and automatic discovery.
     // Relative paths are resolved from the workspace; absolute and home-relative
     // paths may point at a central icon directory outside the repository.
-    if (options?.customIconPath !== undefined) {
-      const expandedIconPath = expandHomePath(options.customIconPath.trim(), path);
+    for (const configuredPath of options?.customIconPaths ?? []) {
+      const expandedIconPath = expandHomePath(configuredPath.trim(), path);
       const customIconPath = path.isAbsolute(expandedIconPath)
         ? path.resolve(expandedIconPath)
         : path.resolve(projectCwd, expandedIconPath);

@@ -399,6 +399,7 @@ export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 const ProjectIconPath = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 const ProjectIconWorkspaceRoot = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
+const ProjectIconGitRemote = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -416,6 +417,9 @@ export const ServerSettings = Schema.Struct({
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   projectIcons: Schema.Record(ProjectIconWorkspaceRoot, ProjectIconPath).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  projectIconsByGitRemote: Schema.Record(ProjectIconGitRemote, ProjectIconPath).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   textGenerationModelSelection: ModelSelection.pipe(
@@ -552,6 +556,9 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   // Whole-map replacement. Omitting a key removes that project's override.
   projectIcons: Schema.optionalKey(Schema.Record(ProjectIconWorkspaceRoot, ProjectIconPath)),
+  // Whole-map replacement. Keys are normalized repository identities such as
+  // github.com/t3tools/t3code, independent of clone URL or local path.
+  projectIconsByGitRemote: Schema.optionalKey(Schema.Record(ProjectIconGitRemote, ProjectIconPath)),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

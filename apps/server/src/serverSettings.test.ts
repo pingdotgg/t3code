@@ -491,6 +491,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         projectIcons: {
           "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
         },
+        projectIconsByGitRemote: {
+          "github.com/t3tools/t3code": "~/.config/t3code/icons/t3code.svg",
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
@@ -515,6 +518,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         addProjectBaseDirectory: "~/Development",
         projectIcons: {
           "/workspace/t3code": "~/.config/t3code/icons/t3code.svg",
+        },
+        projectIconsByGitRemote: {
+          "github.com/t3tools/t3code": "~/.config/t3code/icons/t3code.svg",
         },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
