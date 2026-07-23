@@ -7,6 +7,7 @@ import {
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -48,6 +49,21 @@ function shouldPersistThread(thread: OrchestrationThread): boolean {
   return status !== "starting" && status !== "running";
 }
 
+// Unsent drafts legitimately subscribe to threads that do not exist server-side
+// yet, so expected failures can persist for minutes and must not hot-loop; the
+// first retry stays fast so transient errors still recover quickly. The cap has
+// two regimes: without data the thread likely does not exist yet and may be
+// created at any moment (draft submission), so retries must stay frequent
+// enough to pick it up promptly; once data exists a persistently failing
+// subscription can back way off.
+const RETRY_BASE_MILLIS = 250;
+const RETRY_CAP_NO_DATA_MILLIS = 2_000;
+const RETRY_CAP_WITH_DATA_MILLIS = 10_000;
+
+function retrySubscribeBackoff(attempt: number, capMillis: number): Duration.Duration {
+  return Duration.millis(Math.min(RETRY_BASE_MILLIS * 2 ** attempt, capMillis));
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
 ) {
@@ -69,6 +85,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     ),
   );
   const cachedThread = Option.map(cached, (snapshot) => snapshot.thread);
+  // The retry-delay callback runs synchronously, so track data presence in a
+  // plain flag (kept current by setThread/setDeleted) instead of reading the
+  // SubscriptionRef effectfully.
+  let hasData = Option.isSome(cachedThread);
   const state = yield* SubscriptionRef.make<EnvironmentThreadState>({
     data: cachedThread,
     status: statusWithoutLiveData(cachedThread),
@@ -144,6 +164,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationThread,
   ) {
+    hasData = true;
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
       data: Option.some(thread),
@@ -160,6 +181,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
+    hasData = false;
     yield* Ref.set(awaitingCompletion, false);
     yield* SubscriptionRef.set(state, {
       data: Option.none(),
@@ -252,7 +274,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* setSynchronizing;
 
         let current = yield* SubscriptionRef.get(state);
-        if (Option.isNone(current.data) && current.status !== "deleted") {
+        // A cached body with no messages but a current snapshot sequence would
+        // resume past the events that carried the messages and could never
+        // self-heal, so treat it like a cold cache and reload the snapshot.
+        // If the loader yields nothing (offline/404) we still resume from the
+        // cached sequence below, exactly as before.
+        const needsSnapshot =
+          Option.isNone(current.data) || current.data.value.messages.length === 0;
+        if (needsSnapshot && current.status !== "deleted") {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -292,7 +321,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }),
       {
         onExpectedFailure: setStreamError,
-        retryExpectedFailureAfter: "250 millis",
+        retryExpectedFailureAfter: (attempt) =>
+          retrySubscribeBackoff(
+            attempt,
+            hasData ? RETRY_CAP_WITH_DATA_MILLIS : RETRY_CAP_NO_DATA_MILLIS,
+          ),
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(Stream.runForEach(applyItem)),
