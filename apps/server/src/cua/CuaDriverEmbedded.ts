@@ -53,19 +53,23 @@ export const monitorEmbeddedCuaDriverExit = Effect.fn("server.monitorEmbeddedCua
   Effect.catch((cause) => Effect.logWarning("embedded cua-driver exit monitor failed", { cause })),
 );
 
-const restartServerAfterCuaDriverExit = Effect.fn("server.restartAfterCuaDriverExit")(function* (
-  exit: EmbeddedDriverExit,
+export const installCodexLaunchArgs = Effect.fn("server.installCodexLaunchArgs")(function* (
+  launchArgs: string,
 ) {
-  yield* Effect.logError("embedded cua-driver exited unexpectedly; restarting server", {
-    component: "embedded-cua-driver",
-    generation: exit.generation,
-    code: exit.code,
-    success: exit.success,
+  const previous = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+  let active = true;
+  const deactivate = Effect.sync(() => {
+    if (!active) return false;
+    active = false;
+    if (previous === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+    else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = previous;
+    return true;
   });
-  yield* Effect.sync(() => {
-    process.exitCode = 1;
-    process.kill(process.pid, "SIGTERM");
-  });
+  yield* Effect.addFinalizer(() => deactivate.pipe(Effect.asVoid));
+  process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = [previous?.trim() ?? "", launchArgs]
+    .filter((value) => value.length > 0)
+    .join(" ");
+  return () => deactivate;
 });
 
 /**
@@ -100,22 +104,22 @@ export const startEmbeddedCuaDriver = Effect.fn("server.startEmbeddedCuaDriver")
     catch: (cause) => new CuaDriverStartError({ binaryPath, cause }),
   });
 
-  const previousAppendArgs = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      if (previousAppendArgs === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-      else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = previousAppendArgs;
-    }),
-  );
-  process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = [
-    previousAppendArgs?.trim() ?? "",
-    buildCodexLaunchArgs(connection),
-  ]
-    .filter((value) => value.length > 0)
-    .join(" ");
+  const disableCua = yield* installCodexLaunchArgs(buildCodexLaunchArgs(connection));
   yield* monitorEmbeddedCuaDriverExit(
     () => driver.waitForExit(connection.generation),
-    restartServerAfterCuaDriverExit,
+    (exit) =>
+      disableCua().pipe(
+        Effect.flatMap((disabled) =>
+          disabled
+            ? Effect.logWarning("embedded cua-driver exited; computer use is unavailable", {
+                component: "embedded-cua-driver",
+                generation: exit.generation,
+                code: exit.code,
+                success: exit.success,
+              })
+            : Effect.void,
+        ),
+      ),
   ).pipe(Effect.forkScoped);
 
   yield* Effect.logInfo("embedded cua-driver ready", {
