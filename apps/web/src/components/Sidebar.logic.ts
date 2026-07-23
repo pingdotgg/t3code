@@ -15,6 +15,7 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const SIDEBAR_THREAD_LIST_ANIMATION_LIMIT = 30;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
@@ -44,6 +45,13 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function shouldSuspendSidebarThreadListAnimation(input: {
+  projectExpanded: boolean;
+  renderedThreadCount: number;
+}): boolean {
+  return input.projectExpanded && input.renderedThreadCount > SIDEBAR_THREAD_LIST_ANIMATION_LIMIT;
+}
 
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },

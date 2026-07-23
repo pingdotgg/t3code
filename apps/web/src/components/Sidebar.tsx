@@ -23,7 +23,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
-import { autoAnimate } from "@formkit/auto-animate";
+import { autoAnimate, type AnimationController } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -181,6 +181,7 @@ import {
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
+  shouldSuspendSidebarThreadListAnimation,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
@@ -1062,7 +1063,7 @@ interface SidebarProjectItemProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
+  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => AnimationController | null;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
   dragInProgressRef: React.RefObject<boolean>;
@@ -1210,6 +1211,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const threadListAnimationControllerRef = useRef<AnimationController | null>(null);
   const memberProjectByScopedKey = useMemo(
     () =>
       new Map(
@@ -1344,6 +1346,32 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     visibleProjectThreads,
   ]);
 
+  const attachProjectThreadListAutoAnimateRef = useCallback(
+    (node: HTMLElement | null) => {
+      threadListAnimationControllerRef.current = attachThreadListAutoAnimateRef(node);
+    },
+    [attachThreadListAutoAnimateRef],
+  );
+
+  const toggleProjectExpanded = useCallback(() => {
+    const animationController = threadListAnimationControllerRef.current;
+    const shouldSuspendAnimation = shouldSuspendSidebarThreadListAnimation({
+      projectExpanded,
+      renderedThreadCount: renderedThreads.length,
+    });
+    if (shouldSuspendAnimation) {
+      animationController?.disable();
+    }
+
+    setProjectExpanded(projectPreferenceKeys, !projectExpanded);
+
+    if (shouldSuspendAnimation && animationController) {
+      requestAnimationFrame(() => {
+        animationController.enable();
+      });
+    }
+  }, [projectExpanded, projectPreferenceKeys, renderedThreads.length, setProjectExpanded]);
+
   const handleProjectButtonClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       if (suppressProjectClickForContextMenuRef.current) {
@@ -1366,16 +1394,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (useThreadSelectionStore.getState().hasSelection()) {
         clearSelection();
       }
-      setProjectExpanded(projectPreferenceKeys, !projectExpanded);
+      toggleProjectExpanded();
     },
     [
       clearSelection,
       dragInProgressRef,
-      projectExpanded,
-      projectPreferenceKeys,
-      setProjectExpanded,
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
+      toggleProjectExpanded,
     ],
   );
 
@@ -1386,9 +1412,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
-      setProjectExpanded(projectPreferenceKeys, !projectExpanded);
+      toggleProjectExpanded();
     },
-    [dragInProgressRef, projectExpanded, projectPreferenceKeys, setProjectExpanded],
+    [dragInProgressRef, toggleProjectExpanded],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -2345,7 +2371,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         confirmingArchiveThreadKey={confirmingArchiveThreadKey}
         setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
         confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+        attachThreadListAutoAnimateRef={attachProjectThreadListAutoAnimateRef}
         handleThreadClick={handleThreadClick}
         navigateToThread={navigateToThread}
         handleMultiSelectContextMenu={handleMultiSelectContextMenu}
@@ -2753,7 +2779,7 @@ interface SidebarProjectsContentProps {
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
+  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => AnimationController | null;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
   dragInProgressRef: React.RefObject<boolean>;
@@ -3249,13 +3275,18 @@ export default function Sidebar() {
     animatedProjectListsRef.current.add(node);
   }, []);
 
-  const animatedThreadListsRef = useRef(new WeakSet<HTMLElement>());
+  const animatedThreadListsRef = useRef(new WeakMap<HTMLElement, AnimationController>());
   const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadListsRef.current.has(node)) {
-      return;
+    if (!node) {
+      return null;
     }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadListsRef.current.add(node);
+    const existingController = animatedThreadListsRef.current.get(node);
+    if (existingController) {
+      return existingController;
+    }
+    const controller = autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+    animatedThreadListsRef.current.set(node, controller);
+    return controller;
   }, []);
 
   const visibleThreads = useMemo(
