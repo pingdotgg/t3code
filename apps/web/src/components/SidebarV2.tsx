@@ -113,6 +113,7 @@ import { cn } from "~/lib/utils";
 import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
+  getSidebarThreadKeysNeedingChangeRequestReporter,
   hasUnseenCompletion,
   isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
@@ -165,6 +166,36 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
+
+function SidebarV2HiddenThreadChangeRequestStateReporter(props: {
+  thread: SidebarThreadSummary;
+  projectCwd: string | null;
+  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+}) {
+  const { thread, projectCwd, onChangeRequestState } = props;
+  const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const gitCwd = thread.worktreePath ?? projectCwd;
+  const gitStatus = useEnvironmentQuery(
+    thread.branch != null && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const prState =
+    resolveThreadPr({
+      threadBranch: thread.branch,
+      gitStatus: gitStatus.data,
+      hasDedicatedWorktree: thread.worktreePath !== null,
+    })?.state ?? null;
+
+  useEffect(() => {
+    onChangeRequestState(threadKey, prState);
+  }, [onChangeRequestState, prState, threadKey]);
+
+  return null;
+}
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -1566,6 +1597,16 @@ export default function SidebarV2() {
       ),
     [orderedThreads],
   );
+  const visibleThreadKeySet = useMemo(() => new Set(orderedThreadKeys), [orderedThreadKeys]);
+  const hiddenChangeRequestReporterThreadKeys = useMemo(
+    () =>
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        allUnarchivedThreadKeys,
+        visibleThreadKeySet,
+        true,
+      ),
+    [allUnarchivedThreadKeys, visibleThreadKeySet],
+  );
   // Handlers read these through refs: depending on per-update Map/Set
   // identities would give every row a fresh callback prop on each shell
   // event and defeat row memoization during streaming.
@@ -2319,6 +2360,17 @@ export default function SidebarV2() {
     shortcutLabelForCommand(keybindings, "chat.new");
   return (
     <>
+      {hiddenChangeRequestReporterThreadKeys.map((threadKey) => {
+        const thread = allThreadByKey.get(threadKey);
+        return thread ? (
+          <SidebarV2HiddenThreadChangeRequestStateReporter
+            key={threadKey}
+            thread={thread}
+            projectCwd={projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
+            onChangeRequestState={handleChangeRequestState}
+          />
+        ) : null;
+      })}
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 pb-2 pt-3">
