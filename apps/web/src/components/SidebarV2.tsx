@@ -176,7 +176,7 @@ function SidebarV2HiddenThreadChangeRequestStateReporter(props: {
   const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const gitCwd = thread.worktreePath ?? projectCwd;
   const gitStatus = useEnvironmentQuery(
-    thread.branch != null && gitCwd !== null
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
