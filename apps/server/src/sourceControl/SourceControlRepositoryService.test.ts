@@ -233,6 +233,8 @@ it.effect("publishes structured progress while cloning with forced Git progress 
                 ]);
                 assert.strictEqual(input.env?.LC_ALL, "C");
                 assert.strictEqual(input.progress?.includeCarriageReturnLines, true);
+                assert.strictEqual(input.maxOutputBytes, 256 * 1024);
+                assert.strictEqual(input.appendTruncationMarker, true);
                 yield* (
                   input.progress?.onStderrLine?.(
                     "Receiving objects: 64% (64/100), 18.40 MiB | 4.20 MiB/s",

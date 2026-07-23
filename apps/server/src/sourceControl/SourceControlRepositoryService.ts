@@ -244,6 +244,7 @@ export const make = Effect.gen(function* () {
           }),
       timeoutMs: 120_000,
       maxOutputBytes: 256 * 1024,
+      ...(progressReporter === undefined ? {} : { appendTruncationMarker: true }),
     });
 
     return {
