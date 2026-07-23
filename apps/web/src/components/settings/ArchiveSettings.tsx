@@ -191,17 +191,37 @@ export function ArchivedThreadsPanel() {
     ],
   );
 
-  const tryBeginArchivedThreadActions = useCallback(
-    (threadRefs: ReadonlyArray<ScopedThreadRef>): (() => void) | null => {
+  const tryReserveArchivedThreadActions = useCallback(
+    (
+      threadRefs: ReadonlyArray<ScopedThreadRef>,
+    ): { readonly start: () => void; readonly finish: () => void } | null => {
       const lock = tryAcquireArchivedThreadActionLock(
         inFlightArchivedThreadKeysRef.current,
         threadRefs,
       );
-      if (!lock) return null;
-      setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
-      return () => {
-        releaseArchivedThreadActionLock(inFlightArchivedThreadKeysRef.current, lock);
-        setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
+      if (!lock) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Archive action already in progress",
+            description: "Wait for the current archived thread action to finish.",
+          }),
+        );
+        return null;
+      }
+      let started = false;
+      return {
+        start: () => {
+          if (started) return;
+          started = true;
+          setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
+        },
+        finish: () => {
+          releaseArchivedThreadActionLock(inFlightArchivedThreadKeysRef.current, lock);
+          if (started) {
+            setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
+          }
+        },
       };
     },
     [],
@@ -300,22 +320,23 @@ export function ArchivedThreadsPanel() {
 
   const handleUnarchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
-      const finishAction = tryBeginArchivedThreadActions([threadRef]);
-      if (!finishAction) return;
+      const reservation = tryReserveArchivedThreadActions([threadRef]);
+      if (!reservation) return;
+      reservation.start();
       try {
         const result = await unarchiveThread(threadRef);
         showArchivedActionFailure("Failed to unarchive thread", result);
       } finally {
-        finishAction();
+        reservation.finish();
       }
     },
-    [showArchivedActionFailure, tryBeginArchivedThreadActions, unarchiveThread],
+    [showArchivedActionFailure, tryReserveArchivedThreadActions, unarchiveThread],
   );
 
   const handleDeleteArchivedThread = useCallback(
     async (threadRef: ScopedThreadRef, title: string) => {
-      const finishAction = tryBeginArchivedThreadActions([threadRef]);
-      if (!finishAction) return;
+      const reservation = tryReserveArchivedThreadActions([threadRef]);
+      if (!reservation) return;
       try {
         if (confirmThreadDelete) {
           const confirmed = await confirmArchivedAction(
@@ -326,10 +347,11 @@ export function ArchivedThreadsPanel() {
           );
           if (!confirmed) return;
         }
+        reservation.start();
         const result = await deleteThread(threadRef);
         showArchivedActionFailure("Failed to delete thread", result);
       } finally {
-        finishAction();
+        reservation.finish();
       }
     },
     [
@@ -337,7 +359,7 @@ export function ArchivedThreadsPanel() {
       confirmThreadDelete,
       deleteThread,
       showArchivedActionFailure,
-      tryBeginArchivedThreadActions,
+      tryReserveArchivedThreadActions,
     ],
   );
 
@@ -348,8 +370,8 @@ export function ArchivedThreadsPanel() {
       scope: ArchivedProjectBulkScope,
     ) => {
       const threadRefs = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
-      const finishAction = tryBeginArchivedThreadActions(threadRefs);
-      if (!finishAction) return;
+      const reservation = tryReserveArchivedThreadActions(threadRefs);
+      if (!reservation) return;
       try {
         const scopeLabel = archivedProjectBulkScopeLabel(scope);
         // Bulk unarchive always asks because there is no unarchive confirmation preference.
@@ -360,6 +382,7 @@ export function ArchivedThreadsPanel() {
           ].join("\n"),
         );
         if (!confirmed) return;
+        reservation.start();
         try {
           const failures = await runArchivedProjectThreadActions(threads, (thread) =>
             unarchiveThread(scopeThreadRef(thread.environmentId, thread.id), {
@@ -379,7 +402,7 @@ export function ArchivedThreadsPanel() {
           refreshArchivedThreads();
         }
       } finally {
-        finishAction();
+        reservation.finish();
       }
     },
     [
@@ -387,7 +410,7 @@ export function ArchivedThreadsPanel() {
       refreshArchivedThreads,
       showArchivedBulkActionException,
       showArchivedBulkActionFailure,
-      tryBeginArchivedThreadActions,
+      tryReserveArchivedThreadActions,
       unarchiveThread,
     ],
   );
@@ -399,8 +422,8 @@ export function ArchivedThreadsPanel() {
       scope: ArchivedProjectBulkScope,
     ) => {
       const threadRefs = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
-      const finishAction = tryBeginArchivedThreadActions(threadRefs);
-      if (!finishAction) return;
+      const reservation = tryReserveArchivedThreadActions(threadRefs);
+      if (!reservation) return;
       try {
         const scopeLabel = archivedProjectBulkScopeLabel(scope);
         if (confirmThreadDelete) {
@@ -412,6 +435,7 @@ export function ArchivedThreadsPanel() {
           );
           if (!confirmed) return;
         }
+        reservation.start();
         try {
           const failures = await runArchivedProjectThreadActions(threads, (thread) =>
             deleteThread(scopeThreadRef(thread.environmentId, thread.id), {
@@ -431,7 +455,7 @@ export function ArchivedThreadsPanel() {
           refreshArchivedThreads();
         }
       } finally {
-        finishAction();
+        reservation.finish();
       }
     },
     [
@@ -441,7 +465,7 @@ export function ArchivedThreadsPanel() {
       refreshArchivedThreads,
       showArchivedBulkActionException,
       showArchivedBulkActionFailure,
-      tryBeginArchivedThreadActions,
+      tryReserveArchivedThreadActions,
     ],
   );
 
