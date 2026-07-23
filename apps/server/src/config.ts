@@ -100,7 +100,7 @@ export const deriveServerPaths = Effect.fn(function* (
   const { join } = yield* Path.Path;
   const stateDir = join(
     baseDir,
-    devUrl !== undefined && !options.baseDirIsExplicit ? "dev" : "userdata-v2",
+    devUrl !== undefined && !options.baseDirIsExplicit ? "dev" : "userdata",
   );
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");

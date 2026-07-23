@@ -19,6 +19,7 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
     const record = (label: string) => Ref.update(calls, (current) => [...current, label]);
 
     const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
+      importLegacyShells: record("import"),
       verify: record("verify").pipe(Effect.as({ valid: false })),
       rebuild: record("rebuild").pipe(Effect.as({ valid: true })),
       recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
@@ -27,6 +28,7 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
     });
 
     assert.deepEqual(yield* Ref.get(calls), [
+      "import",
       "verify",
       "rebuild",
       "recover",
@@ -44,6 +46,7 @@ it.effect("does not rebuild valid projections", () =>
   Effect.gen(function* () {
     const rebuilt = yield* Ref.make(false);
     yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
+      importLegacyShells: Effect.void,
       verify: Effect.succeed({ valid: true }),
       rebuild: Ref.set(rebuilt, true).pipe(Effect.as({ valid: true })),
       recover: Effect.void,

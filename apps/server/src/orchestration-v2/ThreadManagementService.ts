@@ -29,6 +29,7 @@ import {
   type OrchestratorV2DispatchResult,
   type OrchestratorV2Error,
 } from "./Orchestrator.ts";
+import { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -132,6 +133,7 @@ export class ThreadManagementError extends Schema.TaggedErrorClass<ThreadManagem
 type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly ensureLegacyTranscript: (threadId: ThreadId) => Effect.Effect<void>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -235,9 +237,41 @@ function managementError(
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
+  const legacyImporter = yield* LegacyV1ThreadImporter;
+
+  const ensureLegacyTranscript = (threadId: ThreadId) =>
+    legacyImporter.ensureTranscript(threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Unable to hydrate migrated v1 thread transcript", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.ignore,
+    );
+
+  const getThreadProjection: ThreadManagementServiceShape["getThreadProjection"] = (threadId) =>
+    ensureLegacyTranscript(threadId).pipe(
+      Effect.andThen(orchestrator.getThreadProjection(threadId)),
+    );
+
+  const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (threadId) =>
+    ensureLegacyTranscript(threadId).pipe(Effect.andThen(orchestrator.getThreadSnapshot(threadId)));
+
+  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) => {
+    const threadId =
+      command.type === "message.dispatch"
+        ? command.threadId
+        : command.type === "thread.fork" || command.type === "thread.merge_back"
+          ? command.sourceThreadId
+          : undefined;
+    return threadId === undefined
+      ? orchestrator.dispatch(command)
+      : ensureLegacyTranscript(threadId).pipe(Effect.andThen(orchestrator.dispatch(command)));
+  };
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
-    orchestrator.getThreadProjection(input.threadId).pipe(
+    getThreadProjection(input.threadId).pipe(
       Effect.mapError((cause) =>
         managementError(
           "thread_not_found",
@@ -450,9 +484,10 @@ const make = Effect.gen(function* () {
     });
 
   return ThreadManagementService.of({
-    dispatch: orchestrator.dispatch,
-    getThreadProjection: orchestrator.getThreadProjection,
-    getThreadSnapshot: orchestrator.getThreadSnapshot,
+    ensureLegacyTranscript,
+    dispatch,
+    getThreadProjection,
+    getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listProjectThreads,
@@ -466,7 +501,22 @@ const make = Effect.gen(function* () {
   });
 });
 
+const legacyV1ThreadImporterNoopLayer = Layer.succeed(
+  LegacyV1ThreadImporter,
+  LegacyV1ThreadImporter.of({
+    reconcileShells: Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+    ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+    importPendingTranscripts: Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+  }),
+);
+
 export const layer: Layer.Layer<ThreadManagementService, never, OrchestratorV2> = Layer.effect(
   ThreadManagementService,
   make,
-);
+).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer));
+
+export const layerWithLegacyImporter: Layer.Layer<
+  ThreadManagementService,
+  never,
+  LegacyV1ThreadImporter | OrchestratorV2
+> = Layer.effect(ThreadManagementService, make);

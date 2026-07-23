@@ -254,7 +254,7 @@ describe("DesktopConnectionCatalogStore", () => {
         _tag: "PermissionDenied",
         module: "FileSystem",
         method: "readFileString",
-        pathOrDescriptor: `${baseDir}/userdata-v2/connection-catalog.json`,
+        pathOrDescriptor: `${baseDir}/userdata/connection-catalog.json`,
       });
       const fileSystemLayer = Layer.succeed(
         FileSystem.FileSystem,
@@ -271,11 +271,11 @@ describe("DesktopConnectionCatalogStore", () => {
         error,
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
       );
-      assert.equal(error.catalogPath, `${baseDir}/userdata-v2/connection-catalog.json`);
+      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
       assert.strictEqual(error.cause, permissionError);
       assert.equal(
         error.message,
-        `Failed to read the desktop connection catalog at ${baseDir}/userdata-v2/connection-catalog.json.`,
+        `Failed to read the desktop connection catalog at ${baseDir}/userdata/connection-catalog.json.`,
       );
       assert.notEqual(error.message, permissionError.message);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -291,7 +291,7 @@ describe("DesktopConnectionCatalogStore", () => {
         _tag: "PermissionDenied",
         module: "FileSystem",
         method: "makeDirectory",
-        pathOrDescriptor: `${baseDir}/userdata-v2`,
+        pathOrDescriptor: `${baseDir}/userdata`,
       });
       const fileSystemLayer = Layer.succeed(
         FileSystem.FileSystem,
@@ -309,11 +309,11 @@ describe("DesktopConnectionCatalogStore", () => {
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreWriteError,
       );
       assert.equal(error.operation, "create-directory");
-      assert.equal(error.path, `${baseDir}/userdata-v2`);
+      assert.equal(error.path, `${baseDir}/userdata`);
       assert.strictEqual(error.cause, permissionError);
       assert.equal(
         error.message,
-        `Desktop connection catalog write failed during create-directory at ${baseDir}/userdata-v2.`,
+        `Desktop connection catalog write failed during create-directory at ${baseDir}/userdata.`,
       );
       assert.notEqual(error.message, permissionError.message);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -398,14 +398,14 @@ describe("DesktopConnectionCatalogStore", () => {
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
       );
       assert.equal(error.operation, "decrypt-catalog");
-      assert.equal(error.catalogPath, `${baseDir}/userdata-v2/connection-catalog.json`);
+      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
       assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
       const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
       assert.instanceOf(decryptError.cause, Error);
       assert.equal(decryptError.cause.message, "invalid encrypted catalog");
       assert.equal(
         error.message,
-        `Desktop connection catalog protection failed during decrypt-catalog at ${baseDir}/userdata-v2/connection-catalog.json.`,
+        `Desktop connection catalog protection failed during decrypt-catalog at ${baseDir}/userdata/connection-catalog.json.`,
       );
       assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);
