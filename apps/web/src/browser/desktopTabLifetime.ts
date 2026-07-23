@@ -1,5 +1,7 @@
 import { previewBridge } from "~/components/preview/previewBridge";
 
+import { stopBrowserRecording } from "./browserRecording";
+
 interface DesktopTabLease {
   references: number;
   closeTimer: number | null;
@@ -7,6 +9,12 @@ interface DesktopTabLease {
 }
 
 const leases = new Map<string, DesktopTabLease>();
+
+const closeReleasedDesktopTab = async (tabId: string): Promise<void> => {
+  await stopBrowserRecording(tabId).catch(() => null);
+  if (leases.has(tabId)) return;
+  await previewBridge?.closeTab(tabId);
+};
 
 export interface AcquiredDesktopTab {
   readonly ready: Promise<void>;
@@ -37,7 +45,7 @@ export function acquireDesktopTab(tabId: string): AcquiredDesktopTab {
         const latest = leases.get(tabId);
         if (!latest || latest.references > 0) return;
         leases.delete(tabId);
-        void previewBridge?.closeTab(tabId);
+        void closeReleasedDesktopTab(tabId).catch(() => undefined);
       }, 0);
     },
   };

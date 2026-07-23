@@ -114,6 +114,68 @@ const withManager = <A>(
     return yield* use(manager);
   }).pipe(Effect.provide(layer), Effect.scoped);
 
+interface TestCapturedPreviewImage {
+  readonly toJPEG: () => Buffer;
+  readonly getSize: () => { readonly width: number; readonly height: number };
+}
+
+const makeTestPreviewWebContents = (
+  capturePage: () => Promise<TestCapturedPreviewImage>,
+  id = 42,
+) =>
+  ({
+    id,
+    isDestroyed: () => false,
+    getType: () => "webview",
+    getURL: () => "https://example.com",
+    getTitle: () => "Example",
+    isLoading: () => false,
+    getZoomFactor: () => 1,
+    setZoomFactor: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    ipc: { on: vi.fn(), off: vi.fn() },
+    send: webviewSend,
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    setWindowOpenHandler: vi.fn(),
+    debugger: {
+      isAttached: () => false,
+      attach: vi.fn(),
+      sendCommand: vi.fn(async () => undefined),
+      on: vi.fn(),
+      off: vi.fn(),
+    },
+    capturePage,
+  }) as never;
+
+const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () => undefined) => {
+  const listeners = new Map<string, () => void>();
+  const send = vi.fn();
+  let destroyed = false;
+  const pictureInPictureWindow = {
+    isDestroyed: vi.fn(() => destroyed),
+    once: vi.fn((event: string, listener: () => void) => {
+      listeners.set(event, listener);
+    }),
+    setAlwaysOnTop: vi.fn(),
+    setVisibleOnAllWorkspaces: vi.fn(),
+    setAspectRatio: vi.fn(),
+    loadURL: vi.fn(loadURL),
+    showInactive: vi.fn(() => {
+      if (destroyed) throw new Error("Picture-in-picture window is closed.");
+    }),
+    close: vi.fn(() => {
+      if (destroyed) return;
+      destroyed = true;
+      listeners.get("closed")?.();
+    }),
+    webContents: {
+      send,
+    },
+  };
+  return { pictureInPictureWindow, send };
+};
+
 describe("PreviewManager", () => {
   beforeEach(() => {
     browserWindowConstructor.mockReset();
@@ -830,6 +892,101 @@ describe("PreviewManager", () => {
         expect(recordingFrames).toHaveLength(1);
 
         yield* manager.closePictureInPicture("tab_pip");
+        expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
+        expect(states.at(-1)?.pictureInPicture).toBe(false);
+        const capturesAfterClose = capturePage.mock.calls.length;
+        yield* TestClock.adjust(200);
+        expect(capturePage).toHaveBeenCalledTimes(capturesAfterClose);
+      }),
+    ),
+  );
+
+  effectIt.effect("drops empty frames before picture-in-picture delivery", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const validImage: TestCapturedPreviewImage = {
+          toJPEG: () => Buffer.from("valid-preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        };
+        const capturePage = vi.fn(async () => validImage);
+        capturePage.mockResolvedValueOnce({
+          toJPEG: () => Buffer.from("empty-preview-frame"),
+          getSize: () => ({ width: 0, height: 0 }),
+        });
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+
+        yield* manager.createTab("tab_empty_frame");
+        yield* manager.registerWebview("tab_empty_frame", 42);
+        yield* manager.openPictureInPicture("tab_empty_frame");
+
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.setAspectRatio).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+
+        yield* TestClock.adjust(100);
+
+        expect(pictureInPictureWindow.setAspectRatio).toHaveBeenCalledWith(1280 / 720);
+        expect(send).toHaveBeenCalledOnce();
+        yield* manager.closePictureInPicture("tab_empty_frame");
+      }),
+    ),
+  );
+
+  effectIt.effect("serializes concurrent picture-in-picture open and close operations", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("serialized-preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        let resolveLoad: (() => void) | undefined;
+        const { pictureInPictureWindow } = makeTestPictureInPictureWindow(
+          () =>
+            new Promise<void>((resolve) => {
+              resolveLoad = resolve;
+            }),
+        );
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_concurrent_pip");
+        yield* manager.registerWebview("tab_concurrent_pip", 42);
+
+        const firstOpen = yield* manager
+          .openPictureInPicture("tab_concurrent_pip")
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        const secondOpen = yield* manager
+          .openPictureInPicture("tab_concurrent_pip")
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        const close = yield* manager
+          .closePictureInPicture("tab_concurrent_pip")
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        expect(browserWindowConstructor).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.loadURL).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.close).not.toHaveBeenCalled();
+
+        resolveLoad?.();
+        yield* Fiber.join(firstOpen);
+        yield* Fiber.join(secondOpen);
+        yield* Fiber.join(close);
+
+        expect(browserWindowConstructor).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.showInactive).toHaveBeenCalledTimes(2);
         expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
         expect(states.at(-1)?.pictureInPicture).toBe(false);
         const capturesAfterClose = capturePage.mock.calls.length;
