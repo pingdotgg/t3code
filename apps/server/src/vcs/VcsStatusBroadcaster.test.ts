@@ -96,6 +96,11 @@ function makeTestLayer(state: {
           Effect.sync(() => {
             state.remoteInvalidationCalls += 1;
           }),
+        invalidateStatus: () =>
+          Effect.sync(() => {
+            state.localInvalidationCalls += 1;
+            state.remoteInvalidationCalls += 1;
+          }),
       }),
     ),
   );
@@ -257,6 +262,11 @@ describe("VcsStatusBroadcaster", () => {
             }),
           invalidateRemoteStatus: () =>
             Effect.sync(() => {
+              state.remoteInvalidationCalls += 1;
+            }),
+          invalidateStatus: () =>
+            Effect.sync(() => {
+              state.localInvalidationCalls += 1;
               state.remoteInvalidationCalls += 1;
             }),
         }),
