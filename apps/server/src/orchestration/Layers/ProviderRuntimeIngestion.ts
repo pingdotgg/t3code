@@ -1450,6 +1450,7 @@ const make = Effect.gen(function* () {
             yield* Cache.set(bufferedAssistantTextByMessageId, input.messageId, text);
           }
           if (input.isDeferred !== true) {
+            yield* rememberAssistantMessageIdForThread(input.threadId, input.messageId);
             yield* markDeferredAssistantDelta(input.messageId);
           }
           yield* scheduleAssistantFinalizationRetry({
