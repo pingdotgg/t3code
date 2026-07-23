@@ -31,6 +31,12 @@ export interface SidebarProjectSnapshot extends Project {
   remoteEnvironmentLabels: readonly string[];
 }
 
+export interface SidebarProjectPickerEntry {
+  group: SidebarProjectSnapshot;
+  targetProject: SidebarProjectGroupMember;
+  isPreferred: boolean;
+}
+
 interface SidebarProjectGroupCandidate {
   readonly logicalKey: string;
   readonly project: Project;
@@ -133,6 +139,26 @@ export function buildSidebarProjectSnapshots(input: {
     }
   }
 
+  const projectRefsByLogicalKey = new Map<string, ScopedProjectRef[]>();
+  const seenProjectRefs = new Set<string>();
+  for (const project of input.projects) {
+    const physicalProjectKey = derivePhysicalProjectKey(project);
+    const logicalKey =
+      winnersByPhysicalKey.get(physicalProjectKey)?.logicalKey ??
+      deriveLogicalProjectKeyFromSettings(project, input.settings);
+    const projectRefKey = `${project.environmentId}:${project.id}`;
+    if (seenProjectRefs.has(projectRefKey)) continue;
+    seenProjectRefs.add(projectRefKey);
+
+    const projectRef = scopeProjectRef(project.environmentId, project.id);
+    const existingRefs = projectRefsByLogicalKey.get(logicalKey);
+    if (existingRefs) {
+      existingRefs.push(projectRef);
+    } else {
+      projectRefsByLogicalKey.set(logicalKey, [projectRef]);
+    }
+  }
+
   const result: SidebarProjectSnapshot[] = [];
   const seen = new Set<string>();
   for (const project of input.projects) {
@@ -185,10 +211,52 @@ export function buildSidebarProjectSnapshots(input: {
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
       allRemoteMembersAreDesktopLocal,
       memberProjects: members,
-      memberProjectRefs: members.map((member) => scopeProjectRef(member.environmentId, member.id)),
+      memberProjectRefs: projectRefsByLogicalKey.get(logicalKey) ?? [],
       remoteEnvironmentLabels,
     });
   }
 
   return result;
+}
+
+export function buildSidebarProjectPickerEntries(input: {
+  groups: ReadonlyArray<SidebarProjectSnapshot>;
+  preferredProjectRef: ScopedProjectRef | null;
+}) {
+  const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
+    const isPreferred = input.preferredProjectRef
+      ? group.memberProjectRefs.some(
+          (projectRef) =>
+            projectRef.environmentId === input.preferredProjectRef?.environmentId &&
+            projectRef.projectId === input.preferredProjectRef.projectId,
+        )
+      : false;
+    const preferredProject = isPreferred
+      ? (group.memberProjects.find(
+          (project) =>
+            project.environmentId === input.preferredProjectRef?.environmentId &&
+            project.id === input.preferredProjectRef?.projectId,
+        ) ??
+        group.memberProjects.find(
+          (project) => project.environmentId === input.preferredProjectRef?.environmentId,
+        ))
+      : null;
+    const targetProject =
+      preferredProject ??
+      group.memberProjects.find(
+        (project) => project.environmentId === group.environmentId && project.id === group.id,
+      ) ??
+      group.memberProjects[0];
+    if (!targetProject) return [];
+
+    return [{ group, targetProject, isPreferred }];
+  });
+  const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
+  if (preferredIndex <= 0) return entries;
+
+  return [
+    entries[preferredIndex]!,
+    ...entries.slice(0, preferredIndex),
+    ...entries.slice(preferredIndex + 1),
+  ];
 }

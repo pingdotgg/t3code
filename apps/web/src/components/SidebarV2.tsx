@@ -1,10 +1,7 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
@@ -61,7 +58,12 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
-import { useUiStateStore } from "../uiStateStore";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import {
+  buildSidebarProjectSnapshots,
+  type SidebarProjectSnapshot,
+} from "../sidebarProjectGrouping";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -84,9 +86,11 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
+  orderItemsByPreferredIds,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
   shouldNavigateAfterProjectRemoval,
+  sortLogicalProjectsForSidebar,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -716,12 +720,15 @@ function latestTurnDiff(
 
 export default function SidebarV2() {
   const projects = useProjects();
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+  const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, deleteThread } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -761,6 +768,40 @@ export default function SidebarV2() {
         environments.map((environment) => [environment.environmentId, environment.label] as const),
       ),
     [environments],
+  );
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
+  const unsortedProjectGroups = useMemo(
+    () =>
+      buildSidebarProjectSnapshots({
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+      }),
+    [
+      environmentLabelById,
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+      sidebarProjectSortOrder,
+    ],
+  );
+  const projectGroups = useMemo(
+    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
+    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
@@ -823,23 +864,29 @@ export default function SidebarV2() {
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
-  const scopedProject = useMemo(
+  const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
         ? null
-        : (projects.find(
-            (project) => `${project.environmentId}:${project.id}` === projectScopeKey,
-          ) ?? null),
-    [projectScopeKey, projects],
+        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [projectGroups, projectScopeKey],
+  );
+  const scopedProjectKeys = useMemo(
+    () =>
+      scopedProjectGroup === null
+        ? null
+        : new Set(
+            scopedProjectGroup.memberProjectRefs.map(
+              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+            ),
+          ),
+    [scopedProjectGroup],
   );
   useEffect(() => {
-    if (
-      projectScopeKey !== null &&
-      !projects.some((project) => `${project.environmentId}:${project.id}` === projectScopeKey)
-    ) {
+    if (projectScopeKey !== null && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
-  }, [projectScopeKey, projects]);
+  }, [projectScopeKey, scopedProjectGroup]);
   // Scope flips drop the selection: rows selected under the old scope may be
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
@@ -847,66 +894,90 @@ export default function SidebarV2() {
   }, [clearSelection, projectScopeKey]);
 
   const handleRemoveProject = useCallback(
-    async (project: EnvironmentProject) => {
+    async (projectGroup: SidebarProjectSnapshot) => {
       const api = readLocalApi();
       if (!api) return;
 
-      const projectThreads = threads.filter(
-        (thread) =>
-          thread.environmentId === project.environmentId && thread.projectId === project.id,
+      const memberKeys = new Set(
+        projectGroup.memberProjectRefs.map(
+          (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+        ),
+      );
+      const projectThreads = threads.filter((thread) =>
+        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           projectThreads.length > 0
             ? [
-                `Remove project "${project.title}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
-                `Path: ${project.workspaceRoot}`,
+                `Remove project "${projectGroup.displayName}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
+                ...(projectGroup.memberProjects.length === 1
+                  ? [`Path: ${projectGroup.workspaceRoot}`]
+                  : [
+                      `This removes ${projectGroup.memberProjects.length} grouped project entries.`,
+                    ]),
                 "This permanently clears conversation history for those threads.",
-                "This removes only the project entry, not the files on disk.",
+                "This removes only the project entries, not the files on disk.",
                 "This action cannot be undone.",
               ].join("\n")
             : [
-                `Remove project "${project.title}"?`,
-                `Path: ${project.workspaceRoot}`,
-                "This removes only the project entry, not the files on disk.",
+                `Remove project "${projectGroup.displayName}"?`,
+                ...(projectGroup.memberProjects.length === 1
+                  ? [`Path: ${projectGroup.workspaceRoot}`]
+                  : [
+                      `This removes ${projectGroup.memberProjects.length} grouped project entries.`,
+                    ]),
+                "This removes only the project entries, not the files on disk.",
               ].join("\n"),
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
 
-      const projectRef = scopeProjectRef(project.environmentId, project.id);
-      const result = await deleteProject({
-        environmentId: project.environmentId,
-        input: {
-          projectId: project.id,
-          ...(projectThreads.length > 0 ? { force: true } : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `Failed to remove "${project.title}"`,
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-
       const draftStore = useComposerDraftStore.getState();
-      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-      const shouldNavigate = shouldNavigateAfterProjectRemoval({
-        routeTarget: routeTargetRef.current,
-        projectThreads,
-        projectDraftId: projectDraftThread?.draftId ?? null,
-      });
-      if (projectDraftThread) {
-        draftStore.clearDraftThread(projectDraftThread.draftId);
+      let shouldNavigate = false;
+      for (const project of projectGroup.memberProjects) {
+        const memberThreads = projectThreads.filter(
+          (thread) =>
+            thread.environmentId === project.environmentId && thread.projectId === project.id,
+        );
+        const projectRef = scopeProjectRef(project.environmentId, project.id);
+        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+        const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
+          routeTarget: routeTargetRef.current,
+          projectThreads: memberThreads,
+          projectDraftId: projectDraftThread?.draftId ?? null,
+        });
+
+        const result = await deleteProject({
+          environmentId: project.environmentId,
+          input: {
+            projectId: project.id,
+            ...(memberThreads.length > 0 ? { force: true } : {}),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: `Failed to remove "${project.title}"`,
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          if (shouldNavigate) {
+            void router.navigate({ to: "/" });
+          }
+          return;
+        }
+
+        shouldNavigate ||= memberRemovalNeedsNavigation;
+        if (projectDraftThread) {
+          draftStore.clearDraftThread(projectDraftThread.draftId);
+        }
+        draftStore.clearProjectDraftThreadId(projectRef);
       }
-      draftStore.clearProjectDraftThreadId(projectRef);
 
       if (shouldNavigate) {
         void router.navigate({ to: "/" });
@@ -925,9 +996,8 @@ export default function SidebarV2() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
-        (scopedProject === null ||
-          (thread.environmentId === scopedProject.environmentId &&
-            thread.projectId === scopedProject.id)),
+        (scopedProjectKeys === null ||
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
     const active: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
@@ -961,7 +1031,7 @@ export default function SidebarV2() {
     autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
-    scopedProject,
+    scopedProjectKeys,
     serverConfigs,
     threads,
   ]);
@@ -1479,7 +1549,7 @@ export default function SidebarV2() {
   // for multi-project setups.
   const handleNewThreadClick = useCallback(() => {
     // One project: nothing to pick, create immediately.
-    if (projects.length <= 1) {
+    if (projectGroups.length <= 1) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -1491,7 +1561,7 @@ export default function SidebarV2() {
     }
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projects.length, setOpenMobile]);
+  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
@@ -1553,7 +1623,7 @@ export default function SidebarV2() {
             </div>
           </div>
         </SidebarGroup>
-        {projects.length > 0 ? (
+        {projectGroups.length > 0 ? (
           <SidebarGroup className="px-2 pb-2 pt-0">
             <div className="flex items-center gap-1">
               <Menu>
@@ -1561,17 +1631,17 @@ export default function SidebarV2() {
                   aria-label="Filter threads by project"
                   className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                 >
-                  {scopedProject ? (
+                  {scopedProjectGroup ? (
                     <ProjectFavicon
-                      environmentId={scopedProject.environmentId}
-                      cwd={scopedProject.workspaceRoot}
+                      environmentId={scopedProjectGroup.environmentId}
+                      cwd={scopedProjectGroup.workspaceRoot}
                       className="size-4 shrink-0"
                     />
                   ) : (
                     <FolderIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
                   )}
                   <span className="min-w-0 flex-1 truncate">
-                    {scopedProject?.title ?? "All projects"}
+                    {scopedProjectGroup?.displayName ?? "All projects"}
                   </span>
                   <ChevronDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/70" />
                 </MenuTrigger>
@@ -1590,8 +1660,8 @@ export default function SidebarV2() {
                       <FolderIcon className="size-4 shrink-0" />
                       <span className="min-w-0 truncate text-sm">All projects</span>
                     </MenuRadioItem>
-                    {projects.map((project) => {
-                      const scopeKey = `${project.environmentId}:${project.id}`;
+                    {projectGroups.map((project) => {
+                      const scopeKey = project.projectKey;
                       return (
                         <MenuRadioItem
                           key={scopeKey}
@@ -1604,11 +1674,11 @@ export default function SidebarV2() {
                             cwd={project.workspaceRoot}
                             className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate text-sm">{project.title}</span>
+                          <span className="min-w-0 truncate text-sm">{project.displayName}</span>
                           <button
                             type="button"
-                            aria-label={`Remove project ${project.title}`}
-                            title={`Remove ${project.title}`}
+                            aria-label={`Remove project ${project.displayName}`}
+                            title={`Remove ${project.displayName}`}
                             className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
@@ -1766,8 +1836,8 @@ export default function SidebarV2() {
                     Add project
                   </button>
                 </>
-              ) : scopedProject ? (
-                `No threads in ${scopedProject.title} yet`
+              ) : scopedProjectGroup ? (
+                `No threads in ${scopedProjectGroup.displayName} yet`
               ) : (
                 "No threads yet"
               )}
