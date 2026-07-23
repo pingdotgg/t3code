@@ -285,5 +285,25 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(Option.getOrUndefined(event)).toEqual({ relativePath: "t3.json" });
       }),
     );
+
+    it.effect("emits when an in-workspace symlink target changes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/target.txt", "initial");
+        yield* fileSystem.symlink(path.join(cwd, "src/target.txt"), path.join(cwd, "linked.txt"));
+        const eventFiber = yield* workspaceFileSystem
+          .watchFile({ cwd, relativePath: "linked.txt" })
+          .pipe(Stream.runHead, Effect.timeout("5 seconds"), Effect.forkChild);
+
+        yield* Effect.sleep("100 millis");
+        yield* writeTextFile(cwd, "src/target.txt", "updated");
+
+        const event = yield* Fiber.join(eventFiber);
+        expect(Option.getOrUndefined(event)).toEqual({ relativePath: "linked.txt" });
+      }),
+    );
   });
 });

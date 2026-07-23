@@ -317,29 +317,76 @@ export const make = Effect.gen(function* () {
           });
         }
 
-        const targetFileName = path.basename(target.absolutePath);
-        const watchedAbsolutePath = path.join(realWatchDirectory, targetFileName);
-        return fileSystem.watch(realWatchDirectory).pipe(
-          Stream.filter((event) => {
-            return (
-              event.path === targetFileName ||
-              event.path === watchedAbsolutePath ||
-              path.resolve(realWatchDirectory, event.path) === watchedAbsolutePath
-            );
-          }),
+        const realTargetPath = yield* Effect.tryPromise({
+          try: async () => {
+            try {
+              return await NodeFSP.realpath(target.absolutePath);
+            } catch (cause) {
+              if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+                return null;
+              }
+              throw cause;
+            }
+          },
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: target.absolutePath,
+              operationPath: target.absolutePath,
+              operation: "realpath-target",
+              cause,
+            }),
+        });
+        if (realTargetPath !== null) {
+          const relativeRealTarget = path.relative(realWorkspaceRoot, realTargetPath);
+          if (
+            relativeRealTarget.startsWith(`..${path.sep}`) ||
+            relativeRealTarget === ".." ||
+            path.isAbsolute(relativeRealTarget)
+          ) {
+            return yield* new WorkspaceFilePathEscapeError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedWorkspaceRoot: realWorkspaceRoot,
+              resolvedPath: realTargetPath,
+            });
+          }
+        }
+
+        const watchEntry = (watchPath: string, fileName: string) => {
+          const watchedAbsolutePath = path.join(watchPath, fileName);
+          return fileSystem.watch(watchPath).pipe(
+            Stream.filter((event) => {
+              return (
+                event.path === fileName ||
+                event.path === watchedAbsolutePath ||
+                path.resolve(watchPath, event.path) === watchedAbsolutePath
+              );
+            }),
+            Stream.mapError(
+              (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: target.absolutePath,
+                  operationPath: watchPath,
+                  operation: "watch",
+                  cause,
+                }),
+            ),
+          );
+        };
+
+        const lexicalTargetPath = path.join(realWatchDirectory, path.basename(target.absolutePath));
+        const lexicalEvents = watchEntry(realWatchDirectory, path.basename(target.absolutePath));
+        const resolvedTargetEvents =
+          realTargetPath !== null && realTargetPath !== lexicalTargetPath
+            ? watchEntry(path.dirname(realTargetPath), path.basename(realTargetPath))
+            : Stream.empty;
+        return Stream.merge(lexicalEvents, resolvedTargetEvents).pipe(
           Stream.debounce(Duration.millis(100)),
           Stream.map(() => ({ relativePath: target.relativePath })),
-          Stream.mapError(
-            (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: target.absolutePath,
-                operationPath: realWatchDirectory,
-                operation: "watch",
-                cause,
-              }),
-          ),
         );
       }),
     );
