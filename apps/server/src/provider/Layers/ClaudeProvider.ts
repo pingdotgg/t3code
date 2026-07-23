@@ -690,9 +690,16 @@ const probeClaudeCapabilities = (
     const environmentConfigDir = claudeEnvironment.CLAUDE_CONFIG_DIR?.trim();
     // Derive this from the exact environment passed to the CLI. In particular,
     // an inherited CLAUDE_CONFIG_DIR remains effective when homePath is empty.
-    const claudeConfigDir = environmentConfigDir
-      ? path.resolve(cwd ?? process.cwd(), environmentConfigDir)
-      : path.join(resolveClaudeEnvironmentHomePath(claudeEnvironment), ".claude");
+    const environmentHomePath = resolveClaudeEnvironmentHomePath(claudeEnvironment);
+    const expandedEnvironmentConfigDir =
+      environmentConfigDir === "~"
+        ? environmentHomePath
+        : environmentConfigDir?.startsWith(`~${path.sep}`)
+          ? path.join(environmentHomePath, environmentConfigDir.slice(2))
+          : environmentConfigDir;
+    const claudeConfigDir = expandedEnvironmentConfigDir
+      ? path.resolve(cwd ?? process.cwd(), expandedEnvironmentConfigDir)
+      : path.join(environmentHomePath, ".claude");
     const q = claudeQuery({
       // Never yield — we only need initialization data, not a conversation.
       // This prevents any prompt from reaching the Anthropic API.

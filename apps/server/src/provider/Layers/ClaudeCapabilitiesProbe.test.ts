@@ -184,6 +184,21 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         path.join(childHome, ".claude", "skills", "probe-fake-skill"),
       );
 
+      const capabilitiesFromTildeConfigDir = yield* probeClaudeCapabilities(
+        decodeClaudeSettings({ binaryPath: executablePath }),
+        {
+          ...process.env,
+          CLAUDE_CONFIG_DIR: "~/custom-claude",
+          HOME: childHome,
+          T3_PROBE_INVOCATION_PATH: invocationPath,
+        },
+        workspaceCwd,
+      );
+      assert.equal(
+        capabilitiesFromTildeConfigDir?.skills[0]?.path,
+        path.join(childHome, "custom-claude", "skills", "probe-fake-skill"),
+      );
+
       const capabilitiesWithoutSkills = yield* probeClaudeCapabilities(
         decodeClaudeSettings({ binaryPath: executablePath }),
         {
