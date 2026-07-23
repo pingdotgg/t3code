@@ -1,6 +1,13 @@
 import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import {
+  SIDEBAR_THREAD_FILTER_STATUSES,
+  type SidebarProjectSortOrder,
+  type SidebarThreadFilters,
+  type SidebarThreadFilterStatus,
+  type SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
+import type { ProviderDriverKind } from "@t3tools/contracts";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -233,6 +240,84 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+type SidebarThreadFilterInput = Pick<
+  SidebarThreadSummary,
+  | "archivedAt"
+  | "environmentId"
+  | "hasActionableProposedPlan"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "interactionMode"
+  | "latestTurn"
+  | "session"
+>;
+
+export function classifySidebarThreadFilterStatus(
+  thread: SidebarThreadFilterInput & { readonly lastVisitedAt?: string | undefined },
+): SidebarThreadFilterStatus {
+  const needsAttention =
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.session?.status === "error" ||
+    (thread.interactionMode === "plan" &&
+      isLatestTurnSettled(thread.latestTurn, thread.session) &&
+      thread.hasActionableProposedPlan);
+  if (needsAttention) {
+    return "needs_attention";
+  }
+
+  if (thread.session?.status === "running" || thread.session?.status === "starting") {
+    return "working";
+  }
+
+  if (hasUnseenCompletion(thread)) {
+    return "unread";
+  }
+
+  return "done";
+}
+
+export function matchesSidebarThreadFilters(input: {
+  readonly thread: SidebarThreadFilterInput;
+  readonly lastVisitedAt?: string | null | undefined;
+  readonly providerDriverKind: ProviderDriverKind | null;
+  readonly filters: SidebarThreadFilters;
+}): boolean {
+  const { filters, thread } = input;
+  if (thread.archivedAt !== null && !filters.includeArchived) {
+    return false;
+  }
+  if (filters.environmentIds.length > 0 && !filters.environmentIds.includes(thread.environmentId)) {
+    return false;
+  }
+  if (
+    filters.sources.length > 0 &&
+    (input.providerDriverKind === null || !filters.sources.includes(input.providerDriverKind))
+  ) {
+    return false;
+  }
+
+  const status = classifySidebarThreadFilterStatus({
+    ...thread,
+    ...(input.lastVisitedAt ? { lastVisitedAt: input.lastVisitedAt } : {}),
+  });
+  return filters.statuses.includes(status);
+}
+
+export function hasActiveSidebarThreadFilters(filters: SidebarThreadFilters): boolean {
+  const selectedStatuses = new Set(filters.statuses);
+  const includesEveryStatus = SIDEBAR_THREAD_FILTER_STATUSES.every((status) =>
+    selectedStatuses.has(status),
+  );
+  return (
+    filters.includeArchived ||
+    filters.environmentIds.length > 0 ||
+    filters.sources.length > 0 ||
+    selectedStatuses.size !== SIDEBAR_THREAD_FILTER_STATUSES.length ||
+    !includesEveryStatus
+  );
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
