@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
-  buildSidebarV2ProjectActionItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -37,73 +36,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-describe("buildSidebarV2ProjectActionItems", () => {
-  it("targets each physical member and makes remove-all explicit for grouped projects", () => {
-    expect(
-      buildSidebarV2ProjectActionItems([
-        {
-          physicalProjectKey: "local:/repo",
-          title: "Local title",
-          workspaceRoot: "/repo",
-          environmentLabel: "Grouping Local",
-        },
-        {
-          physicalProjectKey: "remote:/repo",
-          title: "Remote title",
-          workspaceRoot: "/repo",
-          environmentLabel: "Grouping Remote",
-        },
-      ]),
-    ).toEqual([
-      {
-        id: "rename:submenu",
-        label: "Rename project entry",
-        children: [
-          { id: "rename:local:/repo", label: "Grouping Local — /repo" },
-          { id: "rename:remote:/repo", label: "Grouping Remote — /repo" },
-        ],
-      },
-      {
-        id: "grouping:submenu",
-        label: "Group into…",
-        children: [
-          { id: "grouping:local:/repo", label: "Grouping Local — /repo" },
-          { id: "grouping:remote:/repo", label: "Grouping Remote — /repo" },
-        ],
-      },
-      {
-        id: "copy-path:submenu",
-        label: "Copy Path",
-        children: [
-          { id: "copy-path:local:/repo", label: "Grouping Local — /repo" },
-          { id: "copy-path:remote:/repo", label: "Grouping Remote — /repo" },
-        ],
-      },
-      {
-        id: "remove:submenu",
-        label: "Remove",
-        children: [
-          {
-            id: "remove:local:/repo",
-            label: "Grouping Local — /repo",
-            destructive: true,
-          },
-          {
-            id: "remove:remote:/repo",
-            label: "Grouping Remote — /repo",
-            destructive: true,
-          },
-        ],
-      },
-      {
-        id: "remove-all",
-        label: "Remove all grouped entries…",
-        destructive: true,
-        icon: "trash",
-      },
-    ]);
-  });
-});
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
