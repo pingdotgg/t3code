@@ -154,6 +154,12 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
     readonly detail?: string;
+    /**
+     * True for terminal detaches (thread archived or deleted): the thread's
+     * MCP credentials are revoked immediately instead of surviving for a
+     * potential re-attach.
+     */
+    readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
 }
 
@@ -165,6 +171,14 @@ export class ProviderSessionManagerV2 extends Context.Service<
 interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
+  /**
+   * MCP credential session id issued for each attached thread. Revocation on
+   * detach/release is scoped to these ids so tearing down a superseded
+   * session cannot revoke a replacement session's credential for the same
+   * thread (the workspace-handoff sequence opens the replacement before the
+   * outbox executes the old session's detach).
+   */
+  readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapterV2SessionRuntime;
@@ -259,23 +273,116 @@ export const layerWithOptions = (
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
-      const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+      interface PreparedMcpCredential {
+        readonly mcpCredentialId: string | undefined;
+        /** True when this call minted the credential (vs reusing a live one). */
+        readonly issued: boolean;
+      }
+      /**
+       * Reservations protect a credential between prepareMcpSession handing it
+       * out and the owning session entry becoming visible in `sessions`.
+       * Adapters like ACP and OpenCode consume the credential eagerly during
+       * openSession, so a racing release must not revoke it in that window
+       * (rotating afterwards cannot repair an already-configured process).
+       * The holder MUST drop the reservation once the entry is recorded or the
+       * open fails.
+       */
+      const mcpCredentialReservations = new Map<string, number>();
+      const mcpReservationKey = (threadId: ThreadId, mcpCredentialId: string) =>
+        `${threadId} ${mcpCredentialId}`;
+      const reserveMcpCredential = (threadId: ThreadId, mcpCredentialId: string) => {
+        const key = mcpReservationKey(threadId, mcpCredentialId);
+        mcpCredentialReservations.set(key, (mcpCredentialReservations.get(key) ?? 0) + 1);
+      };
+      const dropMcpCredentialReservation = (threadId: ThreadId, mcpCredentialId: string) => {
+        const key = mcpReservationKey(threadId, mcpCredentialId);
+        const count = mcpCredentialReservations.get(key) ?? 0;
+        if (count <= 1) {
+          mcpCredentialReservations.delete(key);
+        } else {
+          mcpCredentialReservations.set(key, count - 1);
+        }
+      };
+      const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
+        (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
+      const mcpPrepareLock = yield* makeKeyedSerialExecutor<ThreadId>();
+      /**
+       * Resolves (or mints) the thread's MCP credential and returns it with a
+       * reservation held; the caller must drop the reservation exactly once.
+       * Serialized per thread so two concurrent prepares cannot interleave
+       * their rotate steps and revoke each other's freshly minted credential.
+       */
+      const prepareMcpSession = (
+        threadId: ThreadId,
+        providerInstanceId: ProviderInstanceId,
+      ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
-          ? Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))
-          : mcpSessionRegistry.revokeThread(threadId).pipe(
-              Effect.andThen(mcpSessionRegistry.issue({ threadId, providerInstanceId })),
-              Effect.tap((credential) =>
-                Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config)),
+          ? Effect.sync((): PreparedMcpCredential => {
+              McpProviderSession.clearMcpProviderSession(threadId);
+              return { mcpCredentialId: undefined, issued: false };
+            })
+          : mcpPrepareLock.withLock(
+              threadId,
+              Effect.gen(function* () {
+                // Reuse a still-valid credential for this thread instead of
+                // rotating: long-lived provider processes (codex app-server)
+                // build their MCP client once per conversation and keep using
+                // the credential it started with, so a thread that detaches and
+                // re-attaches across a workspace handoff must come back to the
+                // same token or the process's tool calls fail auth.
+                const existing = McpProviderSession.readMcpProviderSession(threadId);
+                if (existing !== undefined) {
+                  // Reserve before the async resolve so a release cannot
+                  // revoke the credential between validation and reservation.
+                  reserveMcpCredential(threadId, existing.providerSessionId);
+                  const rawToken = existing.authorizationHeader.replace(/^Bearer\s+/, "");
+                  const resolved = yield* mcpSessionRegistry.resolve(rawToken);
+                  if (
+                    resolved !== undefined &&
+                    resolved.threadId === threadId &&
+                    resolved.providerInstanceId === providerInstanceId
+                  ) {
+                    return { mcpCredentialId: existing.providerSessionId, issued: false };
+                  }
+                  dropMcpCredentialReservation(threadId, existing.providerSessionId);
+                }
+                yield* mcpSessionRegistry.revokeThread(threadId);
+                const credential = yield* mcpSessionRegistry.issue({
+                  threadId,
+                  providerInstanceId,
+                });
+                McpProviderSession.setMcpProviderSession(credential.config);
+                reserveMcpCredential(threadId, credential.config.providerSessionId);
+                return { mcpCredentialId: credential.config.providerSessionId, issued: true };
+              }),
+            );
+      /**
+       * With a credential id, revocation is scoped to that credential and the
+       * config slot is cleared only while it still holds it; a replacement
+       * session's newer credential survives. Without one (attach failed before
+       * a credential was recorded), fall back to thread-wide revocation.
+       */
+      const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
+        mcpCredentialId === undefined
+          ? mcpSessionRegistry
+              .revokeThread(threadId)
+              .pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+                ),
+              )
+          : mcpSessionRegistry.revokeProviderSession(mcpCredentialId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  if (
+                    McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId ===
+                    mcpCredentialId
+                  ) {
+                    McpProviderSession.clearMcpProviderSession(threadId);
+                  }
+                }),
               ),
             );
-      const clearMcpSession = (threadId: ThreadId) =>
-        mcpSessionRegistry
-          .revokeThread(threadId)
-          .pipe(
-            Effect.tap(() =>
-              Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-            ),
-          );
 
       const publishToSubscribers = (
         subscribers: Ref.Ref<
@@ -574,7 +681,40 @@ export const layerWithOptions = (
             Option.match(entry, {
               onNone: () => Effect.void,
               onSome: (entry) =>
-                Effect.forEach(entry.attachedThreadIds, clearMcpSession, { discard: true }),
+                // Revoke every credential this session recorded, including for
+                // threads that detached without re-attaching: the provider
+                // process is gone, so nothing holds them anymore. Skip threads
+                // a live replacement session took over, since credential reuse
+                // means the replacement may hold this very credential.
+                Ref.get(sessions).pipe(
+                  Effect.flatMap((current) =>
+                    Effect.forEach(
+                      entry.mcpCredentialIdByThread,
+                      ([threadId, mcpCredentialId]) => {
+                        // Id-sensitive: a stale record for the same thread but
+                        // a DIFFERENT credential (left behind by an old session
+                        // the thread rotated away from) must not veto revoking
+                        // this session's own credential, or it leaks forever.
+                        // A reservation means an in-flight open is configuring
+                        // a provider process with this credential right now;
+                        // revoking it here would strand that process (eager
+                        // adapters cannot pick up a rotated token).
+                        const heldElsewhere =
+                          isMcpCredentialReserved(threadId, mcpCredentialId) ||
+                          Array.from(current.values()).some(
+                            (other) =>
+                              other !== entry &&
+                              (other.attachedThreadIds.has(threadId) ||
+                                other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId),
+                          );
+                        return heldElsewhere
+                          ? Effect.void
+                          : clearMcpSession(threadId, mcpCredentialId);
+                      },
+                      { discard: true },
+                    ),
+                  ),
+                ),
             }),
         ).pipe(
           Effect.catchCause((cause) =>
@@ -822,28 +962,69 @@ export const layerWithOptions = (
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
       }) =>
-        Effect.gen(function* () {
-          const attached = yield* attachThread(input);
-          if (attached) {
-            yield* prepareMcpSession(input.threadId, input.providerInstanceId);
-            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
-            if (entry !== undefined) {
-              yield* withActivityError(
-                input.providerSessionId,
-                writeProviderSessionEvents({
-                  runtime: entry.runtime,
-                  threadIds: [input.threadId],
-                  type: "provider-session.attached",
-                  payload: entry.runtime.providerSession,
-                }),
-              );
+        Effect.suspend(() => {
+          let preparedForCleanup: PreparedMcpCredential | undefined;
+          let reservationDropped = false;
+          const dropReservation = () => {
+            if (!reservationDropped && preparedForCleanup?.mcpCredentialId !== undefined) {
+              reservationDropped = true;
+              dropMcpCredentialReservation(input.threadId, preparedForCleanup.mcpCredentialId);
             }
-          }
-        }).pipe(
-          Effect.tapError(() =>
-            removeThreadAttachment(input).pipe(Effect.andThen(clearMcpSession(input.threadId))),
-          ),
-        );
+          };
+          return Effect.gen(function* () {
+            const attached = yield* attachThread(input);
+            if (attached) {
+              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              preparedForCleanup = prepared;
+              if (prepared.mcpCredentialId !== undefined) {
+                const mcpCredentialId = prepared.mcpCredentialId;
+                yield* Ref.update(sessions, (current) => {
+                  const key = sessionKey(input.providerSessionId);
+                  const entry = current.get(key);
+                  if (entry === undefined) return current;
+                  const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
+                  mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                  const updated = new Map(current);
+                  updated.set(key, { ...entry, mcpCredentialIdByThread });
+                  return updated;
+                });
+              }
+              const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+              if (entry !== undefined) {
+                yield* withActivityError(
+                  input.providerSessionId,
+                  writeProviderSessionEvents({
+                    runtime: entry.runtime,
+                    threadIds: [input.threadId],
+                    type: "provider-session.attached",
+                    payload: entry.runtime.providerSession,
+                  }),
+                );
+              }
+            }
+          }).pipe(
+            Effect.tapError(() =>
+              removeThreadAttachment(input).pipe(
+                // Revoke only a credential this attach freshly minted: a REUSED
+                // credential is by definition held by another live provider
+                // process, and revoking it thread-wide would break that
+                // process's MCP client mid-conversation.
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    dropReservation();
+                    return preparedForCleanup?.issued === true
+                      ? clearMcpSession(input.threadId, preparedForCleanup.mcpCredentialId)
+                      : Effect.void;
+                  }),
+                ),
+              ),
+            ),
+            // The entry's own record (written above while the thread is
+            // attached) guards the credential from here on; the reservation
+            // is only needed until then. Ensuring covers defects/interrupts.
+            Effect.ensuring(Effect.sync(dropReservation)),
+          );
+        });
 
       const markBusy = (providerSessionId: ProviderSessionId) =>
         withActivityError(
@@ -1218,7 +1399,22 @@ export const layerWithOptions = (
                     }),
                 ),
               );
-              yield* prepareMcpSession(input.threadId, input.modelSelection.instanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.modelSelection.instanceId,
+              );
+              const mcpCredentialId = prepared.mcpCredentialId;
+              // The reservation from prepare protects the credential (which
+              // eager adapters bake into the provider process during
+              // openSession) from racing releases until this session's entry
+              // is recorded below. Dropped exactly once on every path.
+              let reservationDropped = mcpCredentialId === undefined;
+              const dropReservation = Effect.sync(() => {
+                if (!reservationDropped && mcpCredentialId !== undefined) {
+                  reservationDropped = true;
+                  dropMcpCredentialReservation(input.threadId, mcpCredentialId);
+                }
+              });
               const sessionScope = yield* Scope.make();
               const runtime = yield* adapter
                 .openSession({
@@ -1235,9 +1431,18 @@ export const layerWithOptions = (
                   Effect.tapError(() =>
                     Scope.close(sessionScope, Exit.void).pipe(
                       Effect.ignore,
-                      Effect.andThen(clearMcpSession(input.threadId)),
+                      Effect.andThen(dropReservation),
+                      // Revoke only a credential this open freshly minted: a
+                      // reused credential is held by another live provider
+                      // process and must survive this open's failure.
+                      Effect.andThen(
+                        prepared.issued
+                          ? clearMcpSession(input.threadId, mcpCredentialId)
+                          : Effect.void,
+                      ),
                     ),
                   ),
+                  Effect.onInterrupt(() => dropReservation),
                   Effect.mapError(
                     (cause) =>
                       new ProviderSessionOpenError({
@@ -1255,6 +1460,10 @@ export const layerWithOptions = (
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
+                mcpCredentialIdByThread:
+                  mcpCredentialId === undefined
+                    ? new Map()
+                    : new Map([[input.threadId, mcpCredentialId]]),
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
@@ -1273,6 +1482,9 @@ export const layerWithOptions = (
                 updated.set(key, entry);
                 return updated;
               });
+              // The entry now guards the credential via its recorded id, so
+              // the pre-open reservation can be dropped.
+              yield* dropReservation;
               yield* withActivityError(
                 input.providerSessionId,
                 writeProviderSessionEvents({
@@ -1376,22 +1588,45 @@ export const layerWithOptions = (
                 entry.loadedProviderThreadKeyByThread,
               );
               loadedProviderThreadKeyByThread.delete(input.threadId);
+              // For a plain (workspace-change) detach, the credential id stays
+              // recorded: the thread may re-attach and reuse it, and
+              // releaseEntry revokes it when the provider process finally goes
+              // away. A terminal detach (archive/delete) prunes the record so
+              // nothing vetoes the revocation below.
+              const mcpCredentialIdByThread =
+                input.revokeMcpCredential === true
+                  ? (() => {
+                      const pruned = new Map(entry.mcpCredentialIdByThread);
+                      pruned.delete(input.threadId);
+                      return pruned;
+                    })()
+                  : entry.mcpCredentialIdByThread;
               const updatedEntry = {
                 ...entry,
                 attachedThreadIds,
                 loadedProviderThreadKeyByThread,
+                mcpCredentialIdByThread,
               };
               const updated = new Map(current);
               updated.set(key, updatedEntry);
               return [Option.some(updatedEntry), updated] as const;
             });
+            // Plain detaches deliberately do not revoke: a detached thread's
+            // provider process may still be alive (shared multi-thread codex
+            // session across a workspace handoff) and holds its MCP client's
+            // credential for the thread it will re-attach with. Credentials
+            // are revoked when the session entry is released (process gone)
+            // or rotated on the next attach if they stopped resolving.
+            // Terminal detaches (thread archived or deleted) revoke the
+            // thread's credentials immediately, even on a retry where the
+            // entry is already gone: there is no legitimate future re-attach,
+            // and the token must not outlive the thread.
+            if (input.revokeMcpCredential === true) {
+              yield* clearMcpSession(input.threadId);
+            }
             if (Option.isNone(detached)) {
               return;
             }
-            // Detach effects are retried. Once the old entry is gone, its
-            // retry must not revoke credentials issued by a replacement
-            // session for the same app thread.
-            yield* clearMcpSession(input.threadId);
             if (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
