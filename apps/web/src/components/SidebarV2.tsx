@@ -679,13 +679,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                 </span>
               ) : null}
-              <span className="ml-auto inline-flex shrink-0 items-center gap-1">
+              <span
+                aria-hidden
+                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+              >
                 {isRemote ? (
-                  <span
-                    aria-label={props.environmentLabel ?? "Remote environment"}
-                    className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
-                  >
-                    <ServerIcon aria-hidden className="size-4" />
+                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                    <ServerIcon aria-hidden className="size-3.5" />
                   </span>
                 ) : null}
                 {driverKind ? (
@@ -693,7 +693,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.session?.providerName ?? modelInstanceId}
-                      iconClassName="size-4"
+                      iconClassName="size-3.5"
                     />
                   </span>
                 ) : null}
