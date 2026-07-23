@@ -24,9 +24,12 @@ import {
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderThreadJson,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
 } from "./orchestrationV2.ts";
 
@@ -41,6 +44,11 @@ const LegacyShellStreamItem = Schema.Union([
 const decodeLegacyShellStreamItem = Schema.decodeUnknownSync(LegacyShellStreamItem);
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
+  OrchestrationV2ProviderThreadJson,
+);
+const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(OrchestrationV2ProviderThread);
+const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
 
 describe("orchestration V2 contracts", () => {
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
@@ -592,5 +600,93 @@ describe("orchestration V2 contracts", () => {
     expect(ProviderThreadId.make("provider-thread-1")).toBe("provider-thread-1");
     expect(CheckpointRef.make("git-ref-1")).toBe("git-ref-1");
     expect(ContextTransferId.make("context-transfer-1")).toBe("context-transfer-1");
+  });
+
+  it("decodes historical provider-thread JSON without pendingBackgroundTasks as empty roster", () => {
+    const providerThread = decodeOrchestrationV2ProviderThreadJson({
+      id: "provider-thread-1",
+      driver: "claude",
+      providerInstanceId: "claudeAgent",
+      providerSessionId: "provider-session-1",
+      appThreadId: "thread-1",
+      ownerNodeId: null,
+      nativeThreadRef: {
+        driver: "claude",
+        nativeId: "native-session-1",
+        strength: "strong",
+      },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+    });
+
+    expect(providerThread.pendingBackgroundTasks).toEqual([]);
+
+    const runtimeThread = decodeOrchestrationV2ProviderThread({
+      id: "provider-thread-2",
+      driver: "claude",
+      providerInstanceId: "claudeAgent",
+      providerSessionId: null,
+      appThreadId: "thread-2",
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(runtimeThread.pendingBackgroundTasks).toEqual([]);
+  });
+
+  it("decodes historical thread shell JSON without pendingBackgroundTasks as empty roster", () => {
+    const shell = decodeOrchestrationV2ThreadShell({
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      providerInstanceId: "claudeAgent",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: "thread-1",
+      },
+      forkedFrom: null,
+      activeProviderThreadId: "provider-thread-1",
+      latestRunId: "run-1",
+      activeRunId: null,
+      status: "completed",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+      itemCount: 0,
+      visibleItemCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      deletedAt: null,
+    });
+
+    expect(shell.pendingBackgroundTasks).toEqual([]);
   });
 });

@@ -13,6 +13,7 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
+import { formatPendingBackgroundWorkLabel } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   resolveT3McpToolPresentation,
   type T3McpToolPresentation,
@@ -191,7 +192,15 @@ export type MessagesTimelineRow =
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
-  | { kind: "working"; id: string; createdAt: string | null };
+  | { kind: "working"; id: string; createdAt: string | null }
+  | {
+      kind: "waiting-background";
+      id: string;
+      createdAt: string | null;
+      description: string | null;
+      taskCount: number;
+      label: string;
+    };
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -489,6 +498,10 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
+  pendingBackgroundTasks?: ReadonlyArray<{
+    readonly taskId: string;
+    readonly description?: string | undefined;
+  }> | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -655,6 +668,20 @@ export function deriveMessagesTimelineRows(input: {
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
     });
+  } else if (input.pendingBackgroundTasks && input.pendingBackgroundTasks.length > 0) {
+    // Root run settled but finite provider background work remains. Show Waiting
+    // instead of looking fully idle until the roster drains.
+    const firstTask = input.pendingBackgroundTasks[0];
+    nextRows.push({
+      kind: "waiting-background",
+      id: "waiting-background-row",
+      createdAt: input.activeTurnStartedAt,
+      description: firstTask?.description ?? null,
+      taskCount: input.pendingBackgroundTasks.length,
+      label:
+        formatPendingBackgroundWorkLabel(input.pendingBackgroundTasks) ??
+        "Waiting on a background task",
+    });
   }
 
   return nextRows;
@@ -687,6 +714,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   switch (a.kind) {
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
+
+    case "waiting-background": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.description === bw.description &&
+        a.taskCount === bw.taskCount &&
+        a.label === bw.label
+      );
+    }
 
     case "turn-fold": {
       const bf = b as typeof a;

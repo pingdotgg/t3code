@@ -1,18 +1,23 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "./models.ts";
 
 const ACTIVE_RUN_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
-export function deriveLatestThreadRun(
-  projection: OrchestrationV2ThreadProjection,
-): ThreadRunSummary | null {
-  const run = projection.runs.reduce<(typeof projection.runs)[number] | null>(
+function latestProjectionRun(projection: OrchestrationV2ThreadProjection) {
+  return projection.runs.reduce<(typeof projection.runs)[number] | null>(
     (latest, candidate) =>
       latest === null || candidate.ordinal > latest.ordinal ? candidate : latest,
     null,
   );
+}
+
+export function deriveLatestThreadRun(
+  projection: OrchestrationV2ThreadProjection,
+): ThreadRunSummary | null {
+  const run = latestProjectionRun(projection);
   if (run === null) return null;
   return {
     runId: run.id,
@@ -32,14 +37,23 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
+  const latestRunProjection = latestProjectionRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const hasPendingBackgroundTasks =
+    derivePendingBackgroundWork({
+      latestRun: latestRunProjection,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+    }).length > 0;
   return {
-    status: latestRun?.status ?? "idle",
+    status: hasPendingBackgroundTasks ? "idle" : (latestRun?.status ?? "idle"),
     activeRunId,
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,

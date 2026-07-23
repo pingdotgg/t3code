@@ -22,7 +22,11 @@ import {
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { canRouteRelatedSubagent, RunExecutionServiceV2 } from "./RunExecutionService.ts";
+import {
+  canRouteRelatedSubagent,
+  RunExecutionServiceV2,
+  selectInheritedBackgroundTurnItems,
+} from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedErrorClass<ProviderTurnStartError>()(
@@ -417,6 +421,18 @@ export const layer: Layer.Layer<
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
+        loadInheritedBackgroundTurnItems: () =>
+          projectionStore.getThreadProjection(projection.thread.id).pipe(
+            Effect.map((current) =>
+              selectInheritedBackgroundTurnItems({
+                threadId: current.thread.id,
+                currentProviderThreadId: runningProviderThread.id,
+                currentRunOrdinal: run.ordinal,
+                runs: current.runs,
+                turnItems: current.turnItems,
+              }),
+            ),
+          ),
         relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
         ),

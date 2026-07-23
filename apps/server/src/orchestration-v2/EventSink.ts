@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  ProviderThreadId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -91,6 +92,26 @@ export interface EventSinkV2Shape {
     readonly runId: RunId;
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
+  /**
+   * Atomically commit only when the provider thread is still owned by the
+   * expected run attempt and ordinal. Used for late post-terminal
+   * provider_thread updates so a completed or superseded attempt cannot clobber
+   * a newer attempt that already claimed the thread.
+   */
+  readonly writeIfProviderThreadOwner: (input: {
+    readonly commandId?: CommandId;
+    readonly providerThreadId: ProviderThreadId;
+    readonly runId: RunId;
+    readonly activeAttemptId: RunAttemptId;
+    readonly expectedLastRunOrdinal: number;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -299,6 +320,62 @@ const baseLayer: Layer.Layer<
       },
     );
 
+    const writeIfProviderThreadOwnerEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfProviderThreadOwner",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadOwner"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.command_id": input.commandId ?? null,
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.provider_thread_id": input.providerThreadId,
+        "orchestration_v2.run_id": input.runId,
+        "orchestration_v2.active_attempt_id": input.activeAttemptId,
+        "orchestration_v2.expected_last_run_ordinal": input.expectedLastRunOrdinal,
+      });
+
+      const result = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<{
+            readonly active_attempt_id: string | null;
+            readonly last_run_ordinal: number | null;
+          }>`
+            SELECT
+              json_extract(r.payload_json, '$.activeAttemptId') AS active_attempt_id,
+              p.last_run_ordinal
+            FROM orchestration_v2_projection_provider_threads p
+            JOIN orchestration_v2_projection_runs r
+              ON r.run_id = ${input.runId}
+             AND r.thread_id = p.thread_id
+            WHERE p.provider_thread_id = ${input.providerThreadId}
+            LIMIT 1
+          `;
+          const current = rows[0];
+          if (
+            current === undefined ||
+            current.active_attempt_id !== input.activeAttemptId ||
+            current.last_run_ordinal !== input.expectedLastRunOrdinal
+          ) {
+            return {
+              committed: false as const,
+              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+            };
+          }
+
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents = yield* eventStore.append({
+            ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+            events: normalized,
+          });
+          yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents };
+        }),
+      );
+      if (result.committed) {
+        yield* eventStore.publishCommitted(result.storedEvents);
+        yield* PubSub.publishAll(liveEvents, result.storedEvents);
+      }
+      return result;
+    });
+
     const existingCommandResult = (commandId: CommandId) =>
       Effect.gen(function* () {
         const existing = yield* commandReceipts.getByCommandId(commandId);
@@ -488,6 +565,17 @@ const baseLayer: Layer.Layer<
         ),
       writeIfRunCurrent: (input) =>
         writeIfRunCurrentEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({
+                eventCount: input.events.length,
+                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                cause,
+              }),
+          ),
+        ),
+      writeIfProviderThreadOwner: (input) =>
+        writeIfProviderThreadOwnerEffect(input).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({

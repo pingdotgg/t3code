@@ -482,6 +482,15 @@ export interface ProviderAdapterV2SessionRuntime {
    * here so the session manager defers idle release while it is pending.
    */
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  /**
+   * Per-provider-thread pending work for root-run ingestion stop gates. When
+   * present, RunExecutionService uses only this probe (never the session-wide
+   * hasPendingBackgroundWork) so sibling native threads cannot pin an
+   * unrelated root subscription open.
+   */
+  readonly hasPendingBackgroundWorkForThread?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
