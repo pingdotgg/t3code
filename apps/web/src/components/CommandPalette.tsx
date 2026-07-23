@@ -109,6 +109,7 @@ import {
   ITEM_ICON_CLASS,
   NEW_THREAD_PROJECT_VIEW_GROUP,
   RECENT_THREAD_LIMIT,
+  resolveCommandPaletteEmptyStateMessage,
   shouldClearAddProjectEnvironmentOnPop,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
@@ -1945,6 +1946,26 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
+  const contextualEmptyStateMessage =
+    addProjectCloneFlow?.step === "repository"
+      ? addProjectCloneFlow.source === "url"
+        ? "Enter a Git clone URL and press Enter to continue."
+        : "Enter a repository path and press Enter to look it up."
+      : addProjectCloneFlow?.step === "confirm"
+        ? "Choose a destination path and press Enter to clone."
+        : relativePathNeedsActiveProject
+          ? "Relative paths require an active project."
+          : willCreateProjectPath
+            ? "Press Enter to create this folder and add it as a project."
+            : undefined;
+  const emptyStateMessage = resolveCommandPaletteEmptyStateMessage({
+    ...(contextualEmptyStateMessage ? { contextualMessage: contextualEmptyStateMessage } : {}),
+    isNewThreadProjectPickerView,
+    projectCount: projects.length,
+    allEnvironmentShellsBootstrapped,
+    query,
+  });
+
   return (
     <CommandDialogPopup
       aria-label="Command palette"
@@ -2111,29 +2132,7 @@ function OpenCommandPaletteDialog(props: {
             query.trim().length === 0
               ? { leadingMessage: "No projects yet. Add a project to start a thread." }
               : {})}
-            {...(isNewThreadProjectPickerView && projects.length === 0
-              ? allEnvironmentShellsBootstrapped
-                ? query.trim().length === 0
-                  ? { emptyStateMessage: "No projects yet. Add a project to start a thread." }
-                  : {}
-                : { emptyStateMessage: "Loading projects…" }
-              : addProjectCloneFlow?.step === "repository"
-                ? {
-                    emptyStateMessage:
-                      addProjectCloneFlow.source === "url"
-                        ? "Enter a Git clone URL and press Enter to continue."
-                        : "Enter a repository path and press Enter to look it up.",
-                  }
-                : addProjectCloneFlow?.step === "confirm"
-                  ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
-                  : relativePathNeedsActiveProject
-                    ? { emptyStateMessage: "Relative paths require an active project." }
-                    : willCreateProjectPath
-                      ? {
-                          emptyStateMessage:
-                            "Press Enter to create this folder and add it as a project.",
-                        }
-                      : {})}
+            {...(emptyStateMessage ? { emptyStateMessage } : {})}
           />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">

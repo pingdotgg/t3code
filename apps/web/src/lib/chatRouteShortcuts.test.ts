@@ -72,5 +72,12 @@ describe("resolveChatNewShortcutBehavior", () => {
         commandPaletteOpen: true,
       }),
     ).toBe("dismiss-and-create");
+    expect(
+      resolveChatNewShortcutBehavior({
+        sidebarV2Enabled: true,
+        projectCount: 1,
+        commandPaletteOpen: true,
+      }),
+    ).toBe("dismiss-and-create");
   });
 });

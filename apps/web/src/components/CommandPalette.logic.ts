@@ -92,6 +92,27 @@ export function buildNewThreadPickerGroups(input: {
   return groups;
 }
 
+export function resolveCommandPaletteEmptyStateMessage(input: {
+  readonly contextualMessage?: string;
+  readonly isNewThreadProjectPickerView: boolean;
+  readonly projectCount: number;
+  readonly allEnvironmentShellsBootstrapped: boolean;
+  readonly query: string;
+}): string | undefined {
+  if (input.contextualMessage) {
+    return input.contextualMessage;
+  }
+  if (!input.isNewThreadProjectPickerView || input.projectCount > 0) {
+    return undefined;
+  }
+  if (!input.allEnvironmentShellsBootstrapped) {
+    return "Loading projects…";
+  }
+  return input.query.trim().length === 0
+    ? "No projects yet. Add a project to start a thread."
+    : undefined;
+}
+
 export function shouldClearAddProjectEnvironmentOnPop(input: {
   viewStackDepth: number;
   currentGroupValue: string | undefined;

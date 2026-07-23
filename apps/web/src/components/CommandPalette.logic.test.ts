@@ -6,6 +6,7 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  resolveCommandPaletteEmptyStateMessage,
   shouldClearAddProjectEnvironmentOnPop,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
@@ -94,6 +95,39 @@ describe("buildNewThreadPickerGroups", () => {
         items: [addProjectItem],
       },
     ]);
+  });
+});
+
+describe("resolveCommandPaletteEmptyStateMessage", () => {
+  it("keeps browse/create guidance when the new-thread picker has no projects", () => {
+    expect(
+      resolveCommandPaletteEmptyStateMessage({
+        contextualMessage: "Press Enter to create this folder and add it as a project.",
+        isNewThreadProjectPickerView: true,
+        projectCount: 0,
+        allEnvironmentShellsBootstrapped: true,
+        query: "/work/new-project",
+      }),
+    ).toBe("Press Enter to create this folder and add it as a project.");
+  });
+
+  it("uses zero-project guidance only when no more specific state applies", () => {
+    expect(
+      resolveCommandPaletteEmptyStateMessage({
+        isNewThreadProjectPickerView: true,
+        projectCount: 0,
+        allEnvironmentShellsBootstrapped: true,
+        query: "",
+      }),
+    ).toBe("No projects yet. Add a project to start a thread.");
+    expect(
+      resolveCommandPaletteEmptyStateMessage({
+        isNewThreadProjectPickerView: true,
+        projectCount: 0,
+        allEnvironmentShellsBootstrapped: false,
+        query: "",
+      }),
+    ).toBe("Loading projects…");
   });
 });
 

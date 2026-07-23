@@ -86,8 +86,13 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { openCommandPalette } from "../commandPaletteBus";
+import {
+  closeCommandPalette,
+  isCommandPaletteOpen,
+  openCommandPalette,
+} from "../commandPaletteBus";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveChatNewShortcutBehavior } from "../lib/chatRouteShortcuts";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -2186,9 +2191,16 @@ export default function SidebarV2() {
   // uses. The command palette already offers a "New thread in..." submenu
   // for multi-project setups.
   const handleNewThreadClick = useCallback(() => {
-    // One project: nothing to pick, create immediately.
-    if (projectGroups.length === 1) {
+    const behavior = resolveChatNewShortcutBehavior({
+      sidebarV2Enabled: true,
+      projectCount: projectGroups.length,
+      commandPaletteOpen: isCommandPaletteOpen(),
+    });
+    if (behavior !== "open-project-picker") {
       if (isMobile) setOpenMobile(false);
+      if (behavior === "dismiss-and-create") {
+        closeCommandPalette();
+      }
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
         activeThread: newThreadContext.activeThread ?? undefined,

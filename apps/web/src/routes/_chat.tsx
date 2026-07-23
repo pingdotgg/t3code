@@ -20,10 +20,7 @@ import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import {
-  resolveThreadActionProjectRef,
-  startNewThreadFromContext,
-} from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   resolveChatNewShortcutBehavior,
   shouldHandleChatRouteShortcut,
