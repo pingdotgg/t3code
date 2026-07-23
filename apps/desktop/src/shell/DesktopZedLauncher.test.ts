@@ -31,7 +31,7 @@ function makeDetachedHandle(onUnref: () => void): ChildProcessSpawner.ChildProce
 }
 
 describe("DesktopZedLauncher", () => {
-  it("builds Zed's encoded SSH URI from the connection alias", () => {
+  it("builds Zed's encoded SSH URI from the connection target", () => {
     assert.equal(
       DesktopZedLauncher.remoteZedSshUri({
         target: {
@@ -42,7 +42,19 @@ describe("DesktopZedLauncher", () => {
         },
         path: "~/code/project alpha",
       }),
-      "ssh://devbox/~/code/project%20alpha",
+      "ssh://declan@devbox:2222/~/code/project%20alpha",
+    );
+    assert.equal(
+      DesktopZedLauncher.remoteZedSshUri({
+        target: {
+          alias: "",
+          hostname: "devbox.example.com",
+          username: null,
+          port: null,
+        },
+        path: "/srv/project",
+      }),
+      "ssh://devbox.example.com/srv/project",
     );
   });
 
