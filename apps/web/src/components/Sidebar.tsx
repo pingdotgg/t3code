@@ -715,7 +715,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     },
     [attemptUnarchiveThread, threadRef],
   );
-  const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
+  const rowButtonRender = useMemo(
+    () => (isArchived ? <div /> : <div role="button" tabIndex={0} />),
+    [isArchived],
+  );
 
   return (
     <SidebarMenuSubItem
@@ -732,7 +735,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate ${isArchived ? "text-muted-foreground/65" : ""}`}
+        })} relative isolate ${
+          isArchived
+            ? "cursor-default text-muted-foreground/65 hover:bg-transparent active:bg-transparent"
+            : ""
+        }`}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
