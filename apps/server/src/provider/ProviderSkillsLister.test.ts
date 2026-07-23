@@ -75,4 +75,25 @@ describe("makeBoundedRequestCache", () => {
       expect(yield* Fiber.join(fibers)).toEqual(["one", "two", "three"]);
     }),
   );
+
+  it.effect("retries immediately after a failed lookup", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const requests = yield* makeBoundedRequestCache({
+        capacity: 8,
+        concurrency: 2,
+        timeToLive: "1 second",
+        lookup: (key: string) =>
+          Ref.getAndUpdate(calls, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0 ? Effect.fail("transient") : Effect.succeed(`value:${key}`),
+            ),
+          ),
+      });
+
+      expect(yield* Effect.flip(requests.get("repo"))).toBe("transient");
+      expect(yield* requests.get("repo")).toBe("value:repo");
+      expect(yield* Ref.get(calls)).toBe(2);
+    }),
+  );
 });

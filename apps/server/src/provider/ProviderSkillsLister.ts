@@ -9,6 +9,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -69,10 +70,9 @@ export const makeBoundedRequestCache = Effect.fn("makeBoundedRequestCache")(func
   readonly lookup: (key: Key) => Effect.Effect<A, E, R>;
 }): Effect.fn.Return<BoundedRequestCache<Key, A, E>, never, R> {
   const semaphore = yield* Semaphore.make(options.concurrency);
-  const cache = yield* Cache.make({
+  const cache = yield* Cache.makeWith((key: Key) => semaphore.withPermits(1)(options.lookup(key)), {
     capacity: options.capacity,
-    timeToLive: options.timeToLive,
-    lookup: (key: Key) => semaphore.withPermits(1)(options.lookup(key)),
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? options.timeToLive : Duration.zero),
   });
   return {
     get: (key) => Cache.get(cache, key),
