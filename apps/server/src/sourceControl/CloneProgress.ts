@@ -4,7 +4,7 @@ import type {
 } from "@t3tools/contracts";
 
 const PROGRESS_LINE =
-  /^(?:remote:\s*)?(Receiving objects|Resolving deltas|Updating files|Checking out files):\s+(\d+)%\s+\((\d+)\/(\d+)\)(?:,\s+(.+))?$/;
+  /^(Receiving objects|Resolving deltas|Updating files|Checking out files):\s+(\d+)%\s+\((\d+)\/(\d+)\)(?:,\s+(.+))?$/;
 const TRANSFER_METRICS =
   /^([\d.]+)\s+(B|KB|KiB|MB|MiB|GB|GiB)\s+\|\s+([\d.]+)\s+(B|KB|KiB|MB|MiB|GB|GiB)\/s$/;
 

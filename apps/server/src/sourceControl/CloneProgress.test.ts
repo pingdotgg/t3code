@@ -41,6 +41,7 @@ describe("parseGitCloneProgressLine", () => {
 
   it("ignores unrecognized and terminal-controlled output", () => {
     assert.isNull(parseGitCloneProgressLine("remote: repository supplied text"));
+    assert.isNull(parseGitCloneProgressLine("remote: Receiving objects: 100% (1/1)"));
     assert.isNull(parseGitCloneProgressLine("\u001B[2JReceiving objects: 50% (1/2)"));
     assert.isNull(parseGitCloneProgressLine("Receiving objects: 101% (101/100)"));
   });

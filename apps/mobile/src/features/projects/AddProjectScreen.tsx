@@ -21,13 +21,11 @@ import {
   inferProjectTitleFromPath,
   isFilesystemBrowseQuery,
 } from "@t3tools/client-runtime/state/projects";
-import { completeSourceControlCloneProgress } from "@t3tools/client-runtime/state/source-control";
 import {
-  CommandId,
-  type EnvironmentId,
-  ProjectId,
-  type SourceControlCloneProgress,
-} from "@t3tools/contracts";
+  completeSourceControlCloneProgress,
+  type SourceControlCloneProgressPresentation,
+} from "@t3tools/client-runtime/state/source-control";
+import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -196,11 +194,11 @@ function PrimaryActionButton(props: {
   readonly label: string;
   readonly disabled?: boolean;
   readonly loading?: boolean;
-  readonly progress?: SourceControlCloneProgress | null;
+  readonly progress?: SourceControlCloneProgressPresentation | null;
   readonly onPress: () => void;
 }) {
   const primaryForeground = useThemeColor("--color-primary-foreground");
-  const isComplete = props.progress?.percent === 100;
+  const isComplete = props.progress?.isComplete === true;
   const progressLabel = isComplete
     ? "Pull complete"
     : props.progress?.stage === "connecting"
@@ -217,6 +215,17 @@ function PrimaryActionButton(props: {
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
+      accessibilityRole={props.progress ? "progressbar" : "button"}
+      accessibilityLabel={props.progress ? progressLabel : props.label}
+      accessibilityValue={
+        props.progress
+          ? {
+              min: 0,
+              max: 100,
+              now: props.progress.overallPercent,
+            }
+          : undefined
+      }
       className={cn(
         "relative h-12 flex-row items-center justify-center gap-2 overflow-hidden rounded-full bg-primary active:opacity-70",
         props.loading ? "disabled:opacity-100" : "disabled:opacity-45",
@@ -236,25 +245,22 @@ function PrimaryActionButton(props: {
           )}
           {props.progress ? (
             <>
-              <Text className="text-base font-t3-bold text-primary-foreground">
+              <Text
+                className="text-base font-t3-bold text-primary-foreground"
+                accessibilityLiveRegion="polite"
+              >
                 {progressLabel}
               </Text>
-              {props.progress.percent === null || isComplete ? null : (
+              {isComplete ? null : (
                 <Text className="text-sm font-t3-medium text-primary-foreground/65">
-                  {Math.round(props.progress.percent)}%
+                  {Math.round(props.progress.overallPercent)}%
                 </Text>
               )}
               <View className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-primary-foreground/20">
                 <View
-                  className={cn(
-                    "h-full bg-primary-foreground",
-                    props.progress.percent === null && "animate-pulse",
-                  )}
+                  className="h-full bg-primary-foreground"
                   style={{
-                    width:
-                      props.progress.percent === null
-                        ? "34%"
-                        : `${Math.max(0, Math.min(100, props.progress.percent))}%`,
+                    width: `${Math.max(0, Math.min(100, props.progress.overallPercent))}%`,
                   }}
                 />
               </View>
@@ -823,7 +829,9 @@ export function AddProjectDestinationScreen(props: {
     getAddProjectInitialQuery(environment?.baseDirectory),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [cloneProgress, setCloneProgress] = useState<SourceControlCloneProgress | null>(null);
+  const [cloneProgress, setCloneProgress] = useState<SourceControlCloneProgressPresentation | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -846,33 +854,32 @@ export function AddProjectDestinationScreen(props: {
 
     setIsSubmitting(true);
     setCloneProgress({
-      type: "progress",
       stage: "connecting",
-      percent: 0,
-      completed: null,
-      total: null,
-      receivedBytes: null,
-      bytesPerSecond: null,
+      overallPercent: 0,
+      isComplete: false,
     });
-    const cloneResult = await cloneRepositoryWithProgress({
-      environmentId: environment.environmentId,
-      input: {
-        remoteUrl,
-        destinationPath: resolved.path,
-      },
-      onProgress: setCloneProgress,
-    });
-    if (AsyncResult.isFailure(cloneResult)) {
-      setError(errorMessage(Cause.squash(cloneResult.cause)));
-    } else {
-      setCloneProgress((progress) => completeSourceControlCloneProgress(progress));
-      const createResult = await createProject(cloneResult.value.cwd);
-      if (createResult && AsyncResult.isFailure(createResult)) {
-        setError(errorMessage(Cause.squash(createResult.cause)));
+    try {
+      const cloneResult = await cloneRepositoryWithProgress({
+        environmentId: environment.environmentId,
+        input: {
+          remoteUrl,
+          destinationPath: resolved.path,
+        },
+        onProgress: setCloneProgress,
+      });
+      if (AsyncResult.isFailure(cloneResult)) {
+        setError(errorMessage(Cause.squash(cloneResult.cause)));
+      } else {
+        setCloneProgress((progress) => completeSourceControlCloneProgress(progress));
+        const createResult = await createProject(cloneResult.value.cwd);
+        if (createResult && AsyncResult.isFailure(createResult)) {
+          setError(errorMessage(Cause.squash(createResult.cause)));
+        }
       }
+    } finally {
+      setCloneProgress(null);
+      setIsSubmitting(false);
     }
-    setCloneProgress(null);
-    setIsSubmitting(false);
   }, [cloneRepositoryWithProgress, createProject, environment, isSubmitting, pathInput, remoteUrl]);
 
   return (

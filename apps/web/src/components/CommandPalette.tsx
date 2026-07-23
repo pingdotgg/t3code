@@ -1,7 +1,10 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { completeSourceControlCloneProgress } from "@t3tools/client-runtime/state/source-control";
+import {
+  completeSourceControlCloneProgress,
+  type SourceControlCloneProgressPresentation,
+} from "@t3tools/client-runtime/state/source-control";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -15,7 +18,6 @@ import {
   type ProjectId,
   ProviderInstanceId,
   type SourceControlDiscoveryResult,
-  type SourceControlCloneProgress,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -494,7 +496,7 @@ function OpenCommandPaletteDialog(props: {
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const [remoteProjectCloneProgress, setRemoteProjectCloneProgress] =
-    useState<SourceControlCloneProgress | null>(null);
+    useState<SourceControlCloneProgressPresentation | null>(null);
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
 
   const addProjectEnvironmentOptions = useMemo(() => {
@@ -1336,40 +1338,37 @@ function OpenCommandPaletteDialog(props: {
 
     setIsRemoteProjectCloning(true);
     setRemoteProjectCloneProgress({
-      type: "progress",
       stage: "connecting",
-      percent: 0,
-      completed: null,
-      total: null,
-      receivedBytes: null,
-      bytesPerSecond: null,
+      overallPercent: 0,
+      isComplete: false,
     });
-    const cloneResult = await cloneRepositoryWithProgress({
-      environmentId: addProjectCloneFlow.environmentId,
-      input: {
-        remoteUrl: addProjectCloneFlow.remoteUrl,
-        destinationPath,
-      },
-      onProgress: setRemoteProjectCloneProgress,
-    });
-    if (cloneResult._tag === "Failure") {
+    try {
+      const cloneResult = await cloneRepositoryWithProgress({
+        environmentId: addProjectCloneFlow.environmentId,
+        input: {
+          remoteUrl: addProjectCloneFlow.remoteUrl,
+          destinationPath,
+        },
+        onProgress: setRemoteProjectCloneProgress,
+      });
+      if (cloneResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(cloneResult)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Clone failed",
+              description: errorMessage(squashAtomCommandFailure(cloneResult)),
+            }),
+          );
+        }
+        return;
+      }
+      setRemoteProjectCloneProgress((progress) => completeSourceControlCloneProgress(progress));
+      await handleAddProject(cloneResult.value.cwd);
+    } finally {
       setIsRemoteProjectCloning(false);
       setRemoteProjectCloneProgress(null);
-      if (!isAtomCommandInterrupted(cloneResult)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Clone failed",
-            description: errorMessage(squashAtomCommandFailure(cloneResult)),
-          }),
-        );
-      }
-      return;
     }
-    setRemoteProjectCloneProgress((progress) => completeSourceControlCloneProgress(progress));
-    await handleAddProject(cloneResult.value.cwd);
-    setIsRemoteProjectCloning(false);
-    setRemoteProjectCloneProgress(null);
   }
 
   function browseTo(name: string): void {
@@ -1864,30 +1863,33 @@ function OpenCommandPaletteDialog(props: {
         >
           {isRemoteProjectCloning && remoteProjectCloneProgress !== null ? (
             <>
-              <div
-                className="flex min-w-0 flex-1 items-center gap-2 text-foreground"
-                aria-live="polite"
-              >
-                {remoteProjectCloneProgress.percent === 100 ? (
-                  <CheckIcon className="size-3.5 shrink-0 text-primary" />
-                ) : (
-                  <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin text-primary" />
-                )}
-                <span className="truncate font-medium">
-                  {remoteProjectCloneProgress.percent === 100
-                    ? "Pull complete"
-                    : remoteProjectCloneProgress.stage === "connecting"
-                      ? "Connecting to remote"
-                      : remoteProjectCloneProgress.stage === "receiving"
-                        ? "Receiving objects"
-                        : remoteProjectCloneProgress.stage === "resolving"
-                          ? "Resolving deltas"
-                          : "Checking out files"}
-                </span>
-                {remoteProjectCloneProgress.percent === null ||
-                remoteProjectCloneProgress.percent === 100 ? null : (
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-foreground">
+                <div
+                  className="flex min-w-0 items-center gap-2"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {remoteProjectCloneProgress.isComplete ? (
+                    <CheckIcon className="size-3.5 shrink-0 text-primary" />
+                  ) : (
+                    <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin text-primary" />
+                  )}
+                  <span className="truncate font-medium">
+                    {remoteProjectCloneProgress.isComplete
+                      ? "Pull complete"
+                      : remoteProjectCloneProgress.stage === "connecting"
+                        ? "Connecting to remote"
+                        : remoteProjectCloneProgress.stage === "receiving"
+                          ? "Receiving objects"
+                          : remoteProjectCloneProgress.stage === "resolving"
+                            ? "Resolving deltas"
+                            : "Checking out files"}
+                  </span>
+                </div>
+                {remoteProjectCloneProgress.isComplete ? null : (
                   <span className="ms-auto shrink-0 font-medium tabular-nums text-muted-foreground">
-                    {Math.round(remoteProjectCloneProgress.percent)}%
+                    {Math.round(remoteProjectCloneProgress.overallPercent)}%
                   </span>
                 )}
               </div>
@@ -1897,20 +1899,17 @@ function OpenCommandPaletteDialog(props: {
                 aria-label="Clone progress"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                {...(remoteProjectCloneProgress.percent === null
-                  ? {}
-                  : { "aria-valuenow": remoteProjectCloneProgress.percent })}
+                aria-valuenow={remoteProjectCloneProgress.overallPercent}
               >
-                {remoteProjectCloneProgress.percent === null ? (
-                  <div className="h-full w-1/3 animate-pulse bg-primary/70" />
-                ) : (
-                  <div
-                    className="h-full bg-primary transition-[width] duration-200"
-                    style={{
-                      width: `${Math.max(0, Math.min(100, remoteProjectCloneProgress.percent))}%`,
-                    }}
-                  />
-                )}
+                <div
+                  className="h-full bg-primary transition-[width] duration-200"
+                  style={{
+                    width: `${Math.max(
+                      0,
+                      Math.min(100, remoteProjectCloneProgress.overallPercent),
+                    )}%`,
+                  }}
+                />
               </div>
             </>
           ) : (
