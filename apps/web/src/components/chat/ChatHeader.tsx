@@ -6,6 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import * as Option from "effect/Option";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -15,7 +16,7 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
@@ -47,11 +48,13 @@ export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly remoteZedAvailable?: boolean;
 }): boolean {
   return (
     Boolean(input.activeProjectName) &&
-    input.primaryEnvironmentId !== null &&
-    input.activeThreadEnvironmentId === input.primaryEnvironmentId
+    ((input.primaryEnvironmentId !== null &&
+      input.activeThreadEnvironmentId === input.primaryEnvironmentId) ||
+      input.remoteZedAvailable === true)
   );
 }
 
@@ -79,11 +82,21 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     activeProjectScripts ? activeProjectCwd : null,
   );
+  const activeEnvironment = useEnvironment(activeThreadEnvironmentId);
+  const sshProfile =
+    activeEnvironment &&
+    Option.isSome(activeEnvironment.entry.profile) &&
+    activeEnvironment.entry.profile.value._tag === "SshConnectionProfile"
+      ? activeEnvironment.entry.profile.value
+      : null;
+  const remoteZedAvailable = sshProfile !== null && window.desktopBridge !== undefined;
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
     activeThreadEnvironmentId,
     primaryEnvironmentId,
+    remoteZedAvailable,
   });
+  const openInEditors = sshProfile ? (["zed"] as const) : availableEditors;
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -144,8 +157,9 @@ export const ChatHeader = memo(function ChatHeader({
           <OpenInPicker
             environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}
-            availableEditors={availableEditors}
+            availableEditors={openInEditors}
             openInCwd={openInCwd}
+            {...(sshProfile ? { remoteZedTarget: sshProfile.target } : {})}
           />
         )}
         {activeProjectName && (

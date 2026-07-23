@@ -1,4 +1,9 @@
-import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import {
+  EditorId,
+  type DesktopSshEnvironmentTarget,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
@@ -6,6 +11,7 @@ import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
+import { toastManager } from "../ui/toast";
 import {
   AntigravityIcon,
   CursorIcon,
@@ -188,6 +194,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  remoteZedTarget,
   compact = false,
   enableShortcut = true,
 }: {
@@ -195,6 +202,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  remoteZedTarget?: DesktopSshEnvironmentTarget;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
@@ -211,6 +219,23 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
+      if (remoteZedTarget) {
+        if (editor !== "zed" || !window.desktopBridge) return;
+        const result = window.desktopBridge
+          .openRemoteZed({
+            target: remoteZedTarget,
+            path: openInCwd,
+          })
+          .catch((error: unknown) => {
+            toastManager.add({
+              type: "error",
+              title: "Unable to open remote workspace in Zed",
+              description: error instanceof Error ? error.message : "Zed launch failed.",
+            });
+          });
+        setPreferredEditor(editor);
+        return result;
+      }
       const result = openInEditorMutation({
         environmentId,
         input: {
@@ -221,7 +246,14 @@ export const OpenInPicker = memo(function OpenInPicker({
       setPreferredEditor(editor);
       return result;
     },
-    [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
+    [
+      environmentId,
+      openInCwd,
+      openInEditorMutation,
+      preferredEditor,
+      remoteZedTarget,
+      setPreferredEditor,
+    ],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -237,24 +269,11 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!preferredEditor) return;
 
       e.preventDefault();
-      void openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor: preferredEditor,
-        },
-      });
+      void openInEditor(preferredEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [
-    enableShortcut,
-    environmentId,
-    keybindings,
-    openInCwd,
-    openInEditorMutation,
-    preferredEditor,
-  ]);
+  }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
 
   return (
     <Group aria-label="Open in editor">

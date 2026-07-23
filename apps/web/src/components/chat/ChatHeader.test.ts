@@ -36,6 +36,28 @@ describe("shouldShowOpenInPicker", () => {
     ).toBe(false);
   });
 
+  it("shows the picker for SSH environments with local Zed launch support", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId,
+        remoteZedAvailable: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the picker for SSH environments without local Zed launch support", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId,
+        remoteZedAvailable: false,
+      }),
+    ).toBe(false);
+  });
+
   it("hides the picker when there is no active project", () => {
     expect(
       shouldShowOpenInPicker({
