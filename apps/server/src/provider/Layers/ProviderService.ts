@@ -256,6 +256,46 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ),
         );
 
+  const rejectIncompatibleContinuation = Effect.fn("rejectIncompatibleContinuation")(
+    function* (input: {
+      readonly operation: string;
+      readonly persistedBinding: ProviderSessionDirectory.ProviderRuntimeBinding | undefined;
+      readonly target: ProviderAdapterRegistry.ProviderInstanceRoutingInfo;
+    }) {
+      const binding = input.persistedBinding;
+      // A request for another driver is a deliberate provider replacement,
+      // handled by the caller/orchestration policy. A request for the same
+      // driver must instead prove that its persisted native resume state is
+      // compatible. Bindings without a resume cursor have nothing to resume.
+      if (
+        !binding ||
+        binding.provider !== input.target.driverKind ||
+        binding.resumeCursor === null ||
+        binding.resumeCursor === undefined
+      ) {
+        return;
+      }
+
+      const boundInstanceId = yield* requireBindingInstanceId(input.operation, binding);
+      if (boundInstanceId === input.target.instanceId) {
+        return;
+      }
+
+      const boundInstance = yield* registry.getInstanceInfo(boundInstanceId);
+      if (
+        boundInstance.continuationIdentity.continuationKey ===
+        input.target.continuationIdentity.continuationKey
+      ) {
+        return;
+      }
+
+      return yield* toValidationError(
+        input.operation,
+        `Thread '${binding.threadId}' cannot switch from instance '${boundInstanceId}' to '${input.target.instanceId}' because their provider resume state is incompatible.`,
+      );
+    },
+  );
+
   const upsertSessionBinding = (
     session: ProviderSession,
     threadId: ThreadId,
@@ -560,6 +600,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        yield* rejectIncompatibleContinuation({
+          operation: "ProviderService.startSession",
+          persistedBinding,
+          target: instanceInfo,
+        });
         const effectiveResumeCursor =
           input.resumeCursor ??
           (persistedBinding?.providerInstanceId === resolvedInstanceId

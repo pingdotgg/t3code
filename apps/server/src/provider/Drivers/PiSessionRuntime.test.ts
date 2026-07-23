@@ -90,7 +90,7 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)}\n`,
   return binaryPath;
 }
 
-it.effect("starts a stable native session and drives Pi model RPC commands", () =>
+it.effect("starts Pi persistent mode with a stable native ID and drives model RPC", () =>
   Effect.gen(function* () {
     const binaryPath = makeMockPiBinary();
     const runtime = yield* makePiSessionRuntime({

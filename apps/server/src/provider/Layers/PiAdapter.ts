@@ -224,6 +224,9 @@ export function makePiAdapter<R>(
           const state = yield* runtime
             .start()
             .pipe(Effect.mapError((error) => runtimeProcessError(input.threadId, error)));
+          // Pi allocates the persistent native session identity/path at
+          // startup but flushes its session file lazily while persisting the
+          // first accepted prompt's turn. Prompt delivery owns that flow.
           const initialModel = state.model
             ? makePiModelSlug({ provider: state.model.provider, modelId: state.model.id })
             : undefined;

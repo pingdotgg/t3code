@@ -78,7 +78,7 @@ const sessionStart = (
 });
 
 describe("PiAdapter", () => {
-  it.effect("starts a native session with the T3 thread ID and applies Pi model capabilities", () =>
+  it.effect("starts Pi persistent mode with a stable T3 ID and applies model capabilities", () =>
     Effect.gen(function* () {
       const runtime = makeRuntimeFactory();
       const adapter = yield* makePiAdapter(

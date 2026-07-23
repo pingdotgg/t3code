@@ -11,7 +11,11 @@ import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntim
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
-import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";
+import {
+  ProviderUnsupportedError,
+  ProviderValidationError,
+  type ProviderAdapterError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterRegistryShape } from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
@@ -105,7 +109,7 @@ function makeInstanceRegistry(input: {
  * registry.
  */
 describe("Pi native continuation", () => {
-  it.effect("reopens the original runtime instance and native session ID", () =>
+  it.effect("rejects an incompatible instance and reopens the original native session", () =>
     Effect.gen(function* () {
       const personalRuntime = makePiRuntimeFactory();
       const workRuntime = makePiRuntimeFactory();
@@ -152,6 +156,25 @@ describe("Pi native continuation", () => {
           },
         });
         yield* provider.stopSession({ threadId: THREAD_ID });
+
+        const incompatibleInstanceError = yield* provider
+          .startSession(THREAD_ID, {
+            threadId: THREAD_ID,
+            provider: PI,
+            providerInstanceId: WORK,
+            cwd: "/workspace/pi-project",
+            runtimeMode: "full-access",
+            modelSelection: {
+              instanceId: WORK,
+              model: "pi-provider/model",
+            },
+          })
+          .pipe(Effect.flip);
+        expect(incompatibleInstanceError).toBeInstanceOf(ProviderValidationError);
+        expect(incompatibleInstanceError.message).toContain(
+          "provider resume state is incompatible",
+        );
+        expect(workRuntime.options).toEqual([]);
 
         // Prompt delivery is introduced by the following Pi slice. Reaching
         // this adapter error proves ProviderService first recovered the native

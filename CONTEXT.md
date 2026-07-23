@@ -19,7 +19,7 @@ _Avoid_: Pi integration, Pi wrapper
 The initial Pi capability set: normal session, streaming, attachment, interruption, model, and approval flows shared with existing providers. Pi-specific features remain deferred until the integration is stable.
 
 **Pi Session Directory**:
-The Pi-managed storage directory assigned to one T3 Code Pi provider instance. Threads started through that instance persist there as native Pi sessions.
+The Pi-managed storage directory assigned to one T3 Code Pi provider instance. T3 Code starts threads in persistent-session mode there with their stable native session IDs; Pi materializes the session file lazily while persisting the thread's first accepted prompt turn.
 
 **Pi Provider Configuration**:
 Pi's own configuration for credentials, built-in providers, custom providers, and model definitions. Pi remains the source of truth for this configuration; T3 Code may separately configure a Pi runtime instance and presentation preferences.
