@@ -14,6 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const REVIEW_SCOPE_LABELS = {
   uncommitted: "Review uncommitted changes",
   "against-base": "Review against base branch",
+  "pull-request": "Review pull request",
 } as const satisfies Record<ReviewChangesScope, string>;
 
 function ReviewScopeIcon({ scope, className }: { scope: ReviewChangesScope; className: string }) {
@@ -37,7 +38,8 @@ export function ReviewCodeControl({
   onReview,
 }: ReviewCodeControlProps) {
   const disabled = isRunning || disabledReason !== null;
-  const defaultLabel = REVIEW_SCOPE_LABELS[defaultScope];
+  const reviewScope = defaultScope === "pull-request" ? "uncommitted" : defaultScope;
+  const defaultLabel = REVIEW_SCOPE_LABELS[reviewScope];
   const tooltip = disabledReason ?? (isRunning ? "Starting review..." : defaultLabel);
 
   return (
@@ -49,14 +51,14 @@ export function ReviewCodeControl({
               size="icon-xs"
               variant="outline"
               className="border-transparent px-0 shadow-none hover:border-input hover:shadow-xs/5"
-              onClick={() => onReview(defaultScope)}
+              onClick={() => onReview(reviewScope)}
               disabled={disabled}
               aria-label={defaultLabel}
             >
               {isRunning ? (
                 <LoaderIcon className="size-3 animate-spin" />
               ) : (
-                <ReviewScopeIcon scope={defaultScope} className="size-3" />
+                <ReviewScopeIcon scope={reviewScope} className="size-3" />
               )}
               <span className="sr-only">{defaultLabel}</span>
             </Button>

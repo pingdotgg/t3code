@@ -16,6 +16,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function jsonObjectEnd(value: string, start: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return null;
+}
+
+function decodeReviewOutput(
+  value: string,
+):
+  | { readonly status: "decoded"; readonly value: unknown }
+  | { readonly status: "invalid"; readonly issue: string } {
+  try {
+    return { status: "decoded", value: JSON.parse(value) };
+  } catch {
+    const candidates: unknown[] = [];
+    for (let start = value.indexOf("{"); start !== -1; start = value.indexOf("{", start + 1)) {
+      const end = jsonObjectEnd(value, start);
+      if (end === null) continue;
+      try {
+        candidates.push(JSON.parse(value.slice(start, end + 1)));
+        start = end;
+      } catch {
+        // An invalid outer object can contain a valid embedded review object.
+      }
+    }
+    if (candidates.length === 1) {
+      return { status: "decoded", value: candidates[0] };
+    }
+    return {
+      status: "invalid",
+      issue:
+        candidates.length === 0
+          ? "Reviewer output was not valid JSON."
+          : "Reviewer output contained multiple JSON objects.",
+    };
+  }
+}
+
 function normalizeCodexOutput(decoded: unknown, changedLines: ChangedLines): unknown {
   if (
     !isRecord(decoded) ||
@@ -181,17 +242,15 @@ export function parseReviewResult(input: {
   readonly output: string;
   readonly snapshot: ReviewSnapshot;
 }): ReviewResult {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(input.output);
-  } catch {
-    return invalid(input.snapshot, ["Reviewer output was not valid JSON."]);
+  const decoded = decodeReviewOutput(input.output);
+  if (decoded.status === "invalid") {
+    return invalid(input.snapshot, [decoded.issue]);
   }
 
   let output: typeof ReviewModelOutput.Type;
   try {
     output = decodeReviewModelOutput(
-      normalizeCodexOutput(decoded, pathsFromDiff(input.snapshot.diff)),
+      normalizeCodexOutput(decoded.value, pathsFromDiff(input.snapshot.diff)),
     );
   } catch {
     return invalid(input.snapshot, ["Reviewer output did not match the required review schema."]);

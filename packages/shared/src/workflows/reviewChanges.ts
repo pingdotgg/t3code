@@ -6,7 +6,7 @@ import {
 
 export const REVIEW_CHANGES_WORKFLOW_ID = "review-changes";
 
-export const REVIEW_CHANGES_VARIANT_IDS = ["uncommitted", "against-base"] as const;
+export const REVIEW_CHANGES_VARIANT_IDS = ["uncommitted", "against-base", "pull-request"] as const;
 export type ReviewChangesVariantId = (typeof REVIEW_CHANGES_VARIANT_IDS)[number];
 
 export type ReviewChangesPromptContext =
@@ -17,6 +17,13 @@ export type ReviewChangesPromptContext =
       readonly scope: "against-base";
       readonly baseBranch: string;
       readonly mergeBaseSha: string;
+    }
+  | {
+      readonly scope: "pull-request";
+      readonly number: number;
+      readonly title: string;
+      readonly baseBranch: string;
+      readonly headBranch: string;
     };
 
 export interface AgentWorkflowVariantDefinition<VariantId extends string = string> {
@@ -49,6 +56,11 @@ export const REVIEW_CHANGES_WORKFLOW_DEFINITION = {
       label: "Against base branch",
       contextProviders: ["reviewBase", "uncommittedChanges"],
     },
+    {
+      id: "pull-request",
+      label: "Pull request",
+      contextProviders: ["pullRequest"],
+    },
   ],
 } as const satisfies AgentWorkflowDefinition<ReviewChangesVariantId>;
 
@@ -80,6 +92,14 @@ Use these commands to understand the scope:
 - git ls-files --others --exclude-standard
 
 Include committed branch changes, staged changes, unstaged changes, and untracked files.`;
+    case "pull-request":
+      return `Review scope: GitHub pull request #${context.number}.
+Title: ${context.title}
+Base branch: ${context.baseBranch}
+Head branch: ${context.headBranch}
+
+The immutable review snapshot contains this pull request's patch.
+Review only that patch; do not include local working tree changes.`;
     default: {
       const exhaustive: never = context;
       throw new Error(`Unhandled review changes scope: ${JSON.stringify(exhaustive)}`);

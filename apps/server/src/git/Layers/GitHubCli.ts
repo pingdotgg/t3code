@@ -135,21 +135,54 @@ const makeGitHubCli = Effect.sync(() => {
           raw.length === 0
             ? Effect.succeed([])
             : Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
-                Effect.flatMap((decoded) => {
-                  if (!Result.isSuccess(decoded)) {
-                    return Effect.fail(
-                      new GitHubCliError({
-                        operation: "listOpenPullRequests",
-                        detail: `GitHub CLI returned invalid PR list JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
-                        cause: decoded.failure,
-                      }),
-                    );
-                  }
-
-                  return Effect.succeed(
-                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
-                  );
-                }),
+                Effect.flatMap((decoded) =>
+                  Result.isSuccess(decoded)
+                    ? Effect.succeed(
+                        decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
+                      )
+                    : Effect.fail(
+                        new GitHubCliError({
+                          operation: "listOpenPullRequests",
+                          detail: `GitHub CLI returned invalid PR list JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
+                          cause: decoded.failure,
+                        }),
+                      ),
+                ),
+              ),
+        ),
+      ),
+    listRepositoryOpenPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--state",
+          "open",
+          "--limit",
+          String(input.limit ?? 100),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
+                Effect.flatMap((decoded) =>
+                  Result.isSuccess(decoded)
+                    ? Effect.succeed(
+                        decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
+                      )
+                    : Effect.fail(
+                        new GitHubCliError({
+                          operation: "listOpenPullRequests",
+                          detail: `GitHub CLI returned invalid PR list JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
+                          cause: decoded.failure,
+                        }),
+                      ),
+                ),
               ),
         ),
       ),
@@ -167,24 +200,27 @@ const makeGitHubCli = Effect.sync(() => {
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           Effect.sync(() => decodeGitHubPullRequestJson(raw)).pipe(
-            Effect.flatMap((decoded) => {
-              if (!Result.isSuccess(decoded)) {
-                return Effect.fail(
-                  new GitHubCliError({
-                    operation: "getPullRequest",
-                    detail: `GitHub CLI returned invalid pull request JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
-                    cause: decoded.failure,
-                  }),
-                );
-              }
-
-              return Effect.succeed(
-                (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
-              );
-            }),
+            Effect.flatMap((decoded) =>
+              Result.isSuccess(decoded)
+                ? Effect.succeed(
+                    (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
+                  )
+                : Effect.fail(
+                    new GitHubCliError({
+                      operation: "getPullRequest",
+                      detail: `GitHub CLI returned invalid PR JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
+                      cause: decoded.failure,
+                    }),
+                  ),
+            ),
           ),
         ),
       ),
+    getPullRequestPatch: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "diff", input.reference, "--patch"],
+      }).pipe(Effect.map((result) => result.stdout)),
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,

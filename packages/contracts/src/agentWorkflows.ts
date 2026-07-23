@@ -9,7 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-export const ReviewChangesScope = Schema.Literals(["uncommitted", "against-base"]);
+export const ReviewChangesScope = Schema.Literals(["uncommitted", "against-base", "pull-request"]);
 export type ReviewChangesScope = typeof ReviewChangesScope.Type;
 
 export const DEFAULT_REVIEW_CHANGES_SCOPE: ReviewChangesScope = "uncommitted";

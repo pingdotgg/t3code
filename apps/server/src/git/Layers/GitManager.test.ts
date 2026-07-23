@@ -550,6 +550,27 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
           ),
         ),
+      listRepositoryOpenPullRequests: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            String(input.limit ?? 100),
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+          Effect.map((raw) =>
+            raw
+              .map((entry) => normalizeFakePullRequestSummary(entry))
+              .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
+          ),
+        ),
       createPullRequest: (input) =>
         execute({
           cwd: input.cwd,
@@ -587,6 +608,11 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary)),
+      getPullRequestPatch: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "diff", input.reference, "--patch"],
+        }).pipe(Effect.map((result) => result.stdout)),
       getRepositoryCloneUrls: (input) =>
         execute({
           cwd: input.cwd,

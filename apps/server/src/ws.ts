@@ -10,6 +10,7 @@ import {
   DEFAULT_REVIEW_CHANGES_SCOPE,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  GitHubCliError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -70,6 +71,7 @@ import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuer
 import { DiffStateQuery } from "./diffState/Services/DiffStateQuery.ts";
 import { ServerConfig } from "./config.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
+import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings } from "./keybindings.ts";
@@ -192,6 +194,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const open = yield* Open;
       const gitManager = yield* GitManager;
       const git = yield* GitCore;
+      const gitHubCli = yield* Effect.serviceOption(GitHubCli);
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
@@ -419,6 +422,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           const reviewContext = yield* git.resolveReviewChangesContext({
             cwd,
             scope: requestedScope,
+            ...(requestedScope === "pull-request" &&
+            typeof input.input?.pullRequestNumber === "number" &&
+            Number.isSafeInteger(input.input.pullRequestNumber) &&
+            input.input.pullRequestNumber > 0
+              ? { pullRequestNumber: input.input.pullRequestNumber }
+              : {}),
           });
 
           if (!reviewContext.hasReviewableChanges) {
@@ -427,7 +436,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "no-reviewable-changes",
               reviewContext.scope === "against-base"
                 ? "No changes against base branch."
-                : "No uncommitted changes.",
+                : reviewContext.scope === "pull-request"
+                  ? "This pull request has no changes."
+                  : "No uncommitted changes.",
             );
           }
           if (reviewContext.snapshot === undefined) {
@@ -440,7 +451,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             input.title ??
             (reviewContext.scope === "against-base"
               ? `Review changes against ${reviewContext.baseBranch}`
-              : "Review uncommitted changes");
+              : reviewContext.scope === "pull-request"
+                ? `Review PR #${reviewContext.pullRequest.number}: ${reviewContext.pullRequest.title}`
+                : "Review uncommitted changes");
           const prompt = buildReviewChangesPrompt({
             context:
               reviewContext.scope === "against-base"
@@ -449,7 +462,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     baseBranch: reviewContext.baseBranch,
                     mergeBaseSha: reviewContext.mergeBaseSha,
                   }
-                : { scope: "uncommitted" },
+                : reviewContext.scope === "pull-request"
+                  ? {
+                      scope: "pull-request",
+                      number: reviewContext.pullRequest.number,
+                      title: reviewContext.pullRequest.title,
+                      baseBranch: reviewContext.pullRequest.baseBranch,
+                      headBranch: reviewContext.pullRequest.headBranch,
+                    }
+                  : { scope: "uncommitted" },
             settings: {
               promptTemplate: override?.promptTemplate ?? reviewSettings.promptTemplate,
             },
@@ -1137,6 +1158,33 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             WS_METHODS.gitResolveReviewChangesContext,
             git.resolveReviewChangesContext(input),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.gitListOpenPullRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitListOpenPullRequests,
+            Option.match(gitHubCli, {
+              onNone: () =>
+                Effect.fail(
+                  new GitHubCliError({
+                    operation: "listOpenPullRequests",
+                    detail: "GitHub CLI integration is unavailable.",
+                  }),
+                ),
+              onSome: (service) =>
+                service.listRepositoryOpenPullRequests({ cwd: input.cwd }).pipe(
+                  Effect.map((pullRequests) => ({
+                    pullRequests: pullRequests.map((pullRequest) => ({
+                      number: pullRequest.number,
+                      title: pullRequest.title,
+                      url: pullRequest.url,
+                      baseBranch: pullRequest.baseRefName,
+                      headBranch: pullRequest.headRefName,
+                      state: pullRequest.state ?? "open",
+                    })),
+                  })),
+                ),
+            }),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitListBranches]: (input) =>

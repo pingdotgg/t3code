@@ -1,4 +1,8 @@
-import type { AgentWorkflowDestinationMode, ReviewChangesScope } from "@t3tools/contracts";
+import type {
+  AgentWorkflowDestinationMode,
+  GitResolvedPullRequest,
+  ReviewChangesScope,
+} from "@t3tools/contracts";
 import {
   BotIcon,
   ChevronDownIcon,
@@ -6,6 +10,7 @@ import {
   GitCompareArrowsIcon,
   LoaderIcon,
 } from "lucide-react";
+import { useCallback, useState } from "react";
 
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
@@ -15,6 +20,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const REVIEW_SCOPE_LABELS = {
   uncommitted: "Review uncommitted changes",
   "against-base": "Review against base branch",
+  "pull-request": "Review pull request",
 } as const satisfies Record<ReviewChangesScope, string>;
 
 export type AgentWorkflowHeaderAction =
@@ -52,18 +58,42 @@ function ReviewScopeIcon({ scope, className }: { scope: ReviewChangesScope; clas
 function AgentWorkflowActionButton({
   action,
   onRun,
+  onListOpenPullRequests,
 }: {
   readonly action: AgentWorkflowHeaderAction;
   readonly onRun: (request: AgentWorkflowRunRequest) => void;
+  readonly onListOpenPullRequests: () => Promise<ReadonlyArray<GitResolvedPullRequest>>;
 }) {
+  const [pullRequests, setPullRequests] = useState<ReadonlyArray<GitResolvedPullRequest> | null>(
+    null,
+  );
+  const [isLoadingPullRequests, setIsLoadingPullRequests] = useState(false);
+  const [pullRequestError, setPullRequestError] = useState(false);
+  const defaultReviewScope =
+    action.kind === "review-code" && action.defaultScope === "pull-request"
+      ? "uncommitted"
+      : action.kind === "review-code"
+        ? action.defaultScope
+        : null;
   const disabled = action.isRunning || action.disabledReason !== null;
   const tooltip =
     action.disabledReason ??
     (action.isRunning
       ? `Starting ${action.label}...`
       : action.kind === "review-code"
-        ? REVIEW_SCOPE_LABELS[action.defaultScope]
+        ? REVIEW_SCOPE_LABELS[defaultReviewScope!]
         : action.name);
+  const loadPullRequests = useCallback(() => {
+    if (pullRequests !== null || isLoadingPullRequests) return;
+    setIsLoadingPullRequests(true);
+    void onListOpenPullRequests()
+      .then((result) => {
+        setPullRequests(result);
+        setPullRequestError(false);
+      })
+      .catch(() => setPullRequestError(true))
+      .finally(() => setIsLoadingPullRequests(false));
+  }, [isLoadingPullRequests, onListOpenPullRequests, pullRequests]);
 
   if (action.kind === "review-code") {
     const runReview = (scope: ReviewChangesScope) =>
@@ -82,19 +112,22 @@ function AgentWorkflowActionButton({
                 size="icon-xs"
                 variant="outline"
                 className="border-transparent px-0 shadow-none hover:border-input hover:shadow-xs/5"
-                onClick={() => runReview(action.defaultScope)}
+                onClick={() => runReview(defaultReviewScope!)}
                 disabled={disabled}
-                aria-label={REVIEW_SCOPE_LABELS[action.defaultScope]}
+                aria-label={REVIEW_SCOPE_LABELS[defaultReviewScope!]}
               >
                 {action.isRunning ? (
                   <LoaderIcon className="size-3 animate-spin" />
                 ) : (
-                  <ReviewScopeIcon scope={action.defaultScope} className="size-3" />
+                  <ReviewScopeIcon scope={defaultReviewScope!} className="size-3" />
                 )}
-                <span className="sr-only">{REVIEW_SCOPE_LABELS[action.defaultScope]}</span>
+                <span className="sr-only">{REVIEW_SCOPE_LABELS[defaultReviewScope!]}</span>
               </Button>
               <GroupSeparator />
-              <Menu highlightItemOnHover={false}>
+              <Menu
+                highlightItemOnHover={false}
+                onOpenChange={(open) => open && loadPullRequests()}
+              >
                 <MenuTrigger
                   render={
                     <Button
@@ -117,6 +150,35 @@ function AgentWorkflowActionButton({
                     <GitCompareArrowsIcon className="size-4" />
                     Review against base branch
                   </MenuItem>
+                  {isLoadingPullRequests ? (
+                    <MenuItem disabled>
+                      <LoaderIcon className="size-4 animate-spin" />
+                      Loading pull requests...
+                    </MenuItem>
+                  ) : pullRequestError ? (
+                    <MenuItem disabled>Could not load pull requests</MenuItem>
+                  ) : pullRequests?.length ? (
+                    pullRequests.map((pullRequest) => (
+                      <MenuItem
+                        key={pullRequest.number}
+                        onClick={() =>
+                          onRun({
+                            workflowId: action.id,
+                            input: {
+                              scope: "pull-request",
+                              pullRequestNumber: pullRequest.number,
+                            },
+                            destinationMode: "child-chat",
+                          })
+                        }
+                      >
+                        <GitCompareArrowsIcon className="size-4" />#{pullRequest.number}{" "}
+                        {pullRequest.title}
+                      </MenuItem>
+                    ))
+                  ) : pullRequests !== null ? (
+                    <MenuItem disabled>No open pull requests</MenuItem>
+                  ) : null}
                 </MenuPopup>
               </Menu>
             </Group>
@@ -164,11 +226,18 @@ function AgentWorkflowActionButton({
 export function AgentWorkflowHeaderActions({
   actions,
   onRun,
+  onListOpenPullRequests,
 }: {
   readonly actions: ReadonlyArray<AgentWorkflowHeaderAction>;
   readonly onRun: (request: AgentWorkflowRunRequest) => void;
+  readonly onListOpenPullRequests: () => Promise<ReadonlyArray<GitResolvedPullRequest>>;
 }) {
   return actions.map((action) => (
-    <AgentWorkflowActionButton key={action.id} action={action} onRun={onRun} />
+    <AgentWorkflowActionButton
+      key={action.id}
+      action={action}
+      onRun={onRun}
+      onListOpenPullRequests={onListOpenPullRequests}
+    />
   ));
 }

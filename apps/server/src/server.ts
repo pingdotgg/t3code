@@ -189,6 +189,7 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitManagerLayerLive),
   Layer.provideMerge(GitStatusBroadcasterLive.pipe(Layer.provide(GitManagerLayerLive))),
   Layer.provideMerge(GitCoreLive),
+  Layer.provideMerge(GitHubCliLive),
 );
 
 const TerminalLayerLive = Layer.mergeAll(

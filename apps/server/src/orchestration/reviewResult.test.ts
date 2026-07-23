@@ -46,6 +46,39 @@ describe("parseReviewResult", () => {
     });
   });
 
+  it("accepts one JSON review object surrounded by provider prose", () => {
+    expect(
+      parseReviewResult({
+        snapshot,
+        output: `The change is well-structured and typecheck passes.
+
+${JSON.stringify({
+  findings: [],
+  overall_correctness: "patch is correct",
+  overall_explanation: "No actionable issues found.",
+  overall_confidence_score: 0.9,
+})}`,
+      }),
+    ).toMatchObject({
+      status: "parsed",
+      verdict: "approve",
+      summary: "No actionable issues found.",
+    });
+  });
+
+  it("rejects provider output containing multiple JSON objects", () => {
+    const output = JSON.stringify({
+      findings: [],
+      overall_correctness: "patch is correct",
+      overall_explanation: "No actionable issues found.",
+      overall_confidence_score: 0.9,
+    });
+    expect(parseReviewResult({ snapshot, output: `${output}\n${output}` })).toMatchObject({
+      status: "invalid-output",
+      issues: ["Reviewer output contained multiple JSON objects."],
+    });
+  });
+
   it("rejects findings outside changed lines, non-Codex, and non-JSON output", () => {
     expect(
       parseReviewResult({

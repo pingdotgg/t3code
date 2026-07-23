@@ -44,6 +44,24 @@ describe("buildReviewChangesPrompt", () => {
     expect(prompt).toContain("Include committed branch changes");
   });
 
+  it("builds a pull request review scope from its immutable snapshot", () => {
+    const prompt = buildReviewChangesPrompt({
+      context: {
+        scope: "pull-request",
+        number: 42,
+        title: "Add pull request reviews",
+        baseBranch: "main",
+        headBranch: "feature/pr-reviews",
+      },
+      settings: { promptTemplate: "Custom reviewer instructions." },
+    });
+
+    expect(prompt).toContain("GitHub pull request #42");
+    expect(prompt).toContain("Base branch: main");
+    expect(prompt).toContain("Head branch: feature/pr-reviews");
+    expect(prompt).toContain("Review only that patch");
+  });
+
   it("falls back to the default instructions when the configured prompt is blank", () => {
     const prompt = buildReviewChangesPrompt({
       context: { scope: "uncommitted" },
@@ -58,5 +76,6 @@ describe("reviewChangesVariantIdForScope", () => {
   it("uses the scope value as the variant id", () => {
     expect(reviewChangesVariantIdForScope("uncommitted")).toBe("uncommitted");
     expect(reviewChangesVariantIdForScope("against-base")).toBe("against-base");
+    expect(reviewChangesVariantIdForScope("pull-request")).toBe("pull-request");
   });
 });

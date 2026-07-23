@@ -50,6 +50,10 @@ export interface GitHubCliShape {
     readonly headSelector: string;
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+  readonly listRepositoryOpenPullRequests: (input: {
+    readonly cwd: string;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
   /**
    * Resolve a pull request by URL, number, or branch-ish identifier.
@@ -58,6 +62,10 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly reference: string;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+  readonly getPullRequestPatch: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<string, GitHubCliError>;
 
   /**
    * Resolve clone URLs for a GitHub repository.

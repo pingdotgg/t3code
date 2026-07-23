@@ -3941,6 +3941,14 @@ function ChatViewBody(
     ],
   );
 
+  const listOpenPullRequests = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !gitCwd) {
+      throw new Error("No active Git repository.");
+    }
+    return (await api.git.listOpenPullRequests({ cwd: gitCwd })).pullRequests;
+  }, [environmentId, gitCwd]);
+
   const workflowHeaderActions = useMemo((): AgentWorkflowHeaderAction[] => {
     const projectUnavailableReason =
       activeProject === undefined
@@ -4099,6 +4107,7 @@ function ChatViewBody(
           workflowRuns={workflowRuns}
           onRunProjectScript={runProjectScript}
           onRunWorkflow={onRunWorkflow}
+          onListOpenPullRequests={listOpenPullRequests}
           onNavigateThread={navigateToThread}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}

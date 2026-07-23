@@ -15,7 +15,9 @@ export const ReviewSnapshotVerifierLive = Layer.effect(
             scope: input.snapshot.scope.kind,
             ...(input.snapshot.scope.kind === "against-base"
               ? { baseBranch: input.snapshot.scope.baseBranch }
-              : {}),
+              : input.snapshot.scope.kind === "pull-request"
+                ? { pullRequestNumber: input.snapshot.scope.number }
+                : {}),
           })
           .pipe(
             Effect.map(

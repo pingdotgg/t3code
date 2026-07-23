@@ -13,8 +13,7 @@ export const DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE = `Act as a code reviewer, f
 Prioritize correctness, performance, security, reliability, and maintainability.
 Avoid speculative, stylistic, or low-signal feedback.
 Verify concerns using surrounding code and tests where useful.
-Report findings concisely in normal Markdown.
-State briefly if no actionable issues are found.
+Return findings only in the required JSON response; do not add Markdown, a summary, or any other surrounding text.
 Follow repository rules, including using bun run test rather than bun test; code changes would additionally require bun fmt, bun lint, and bun typecheck.
 Use the code-review skill's systematic review workflow.`;
 

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type GitResolvedPullRequest,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -58,6 +59,7 @@ interface ChatHeaderProps {
   workflowRuns: ReadonlyArray<WorkflowRunPresentation>;
   onRunProjectScript: (script: ProjectScript) => void;
   onRunWorkflow: (request: AgentWorkflowRunRequest) => void;
+  onListOpenPullRequests: () => Promise<ReadonlyArray<GitResolvedPullRequest>>;
   onNavigateThread: (threadId: ThreadId) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -96,6 +98,7 @@ export const ChatHeader = memo(function ChatHeader({
   workflowRuns,
   onRunProjectScript,
   onRunWorkflow,
+  onListOpenPullRequests,
   onNavigateThread,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -154,7 +157,11 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
-        <AgentWorkflowHeaderActions actions={workflowActions} onRun={onRunWorkflow} />
+        <AgentWorkflowHeaderActions
+          actions={workflowActions}
+          onRun={onRunWorkflow}
+          onListOpenPullRequests={onListOpenPullRequests}
+        />
         <WorkflowRunsButton runs={workflowRuns} onNavigateThread={onNavigateThread} />
         <Tooltip>
           <TooltipTrigger

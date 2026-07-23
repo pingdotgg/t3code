@@ -15,6 +15,14 @@ export const ReviewSnapshotScope = Schema.Union([
     mergeBaseSha: TrimmedNonEmptyString,
     untrackedFiles: Schema.Array(TrimmedNonEmptyString),
   }),
+  Schema.Struct({
+    kind: Schema.Literal("pull-request"),
+    number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    title: TrimmedNonEmptyString,
+    url: TrimmedNonEmptyString,
+    baseBranch: TrimmedNonEmptyString,
+    headBranch: TrimmedNonEmptyString,
+  }),
 ]);
 export type ReviewSnapshotScope = typeof ReviewSnapshotScope.Type;
 

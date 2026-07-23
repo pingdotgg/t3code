@@ -128,6 +128,10 @@
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
     },
+    "./orchestrationActivity": {
+      "types": "./src/orchestrationActivity.ts",
+      "import": "./src/orchestrationActivity.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"

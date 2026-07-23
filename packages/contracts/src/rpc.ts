@@ -22,7 +22,10 @@ import {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitManagerServiceError,
+  GitHubCliError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullInput,
@@ -214,6 +217,7 @@ export const WS_METHODS = {
   gitCheckout: "git.checkout",
   gitInit: "git.init",
   gitResolvePullRequest: "git.resolvePullRequest",
+  gitListOpenPullRequests: "git.listOpenPullRequests",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
   gitResolveReviewChangesContext: "git.resolveReviewChangesContext",
 
@@ -468,6 +472,12 @@ export const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequ
   payload: GitPullRequestRefInput,
   success: GitResolvePullRequestResult,
   error: GitManagerServiceError,
+});
+
+export const WsGitListOpenPullRequestsRpc = Rpc.make(WS_METHODS.gitListOpenPullRequests, {
+  payload: GitListOpenPullRequestsInput,
+  success: GitListOpenPullRequestsResult,
+  error: GitHubCliError,
 });
 
 export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
@@ -861,6 +871,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
+  WsGitListOpenPullRequestsRpc,
   WsGitPreparePullRequestThreadRpc,
   WsGitResolveReviewChangesContextRpc,
   WsGitListBranchesRpc,

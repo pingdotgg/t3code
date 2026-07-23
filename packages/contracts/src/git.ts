@@ -153,6 +153,11 @@ export const GitPullRequestRefInput = Schema.Struct({
 });
 export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
 
+export const GitListOpenPullRequestsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitListOpenPullRequestsInput = typeof GitListOpenPullRequestsInput.Type;
+
 export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
@@ -194,6 +199,7 @@ export type GitInitInput = typeof GitInitInput.Type;
 export const GitResolveReviewChangesContextInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   scope: ReviewChangesScope,
+  pullRequestNumber: Schema.optional(PositiveInt),
 });
 export type GitResolveReviewChangesContextInput = typeof GitResolveReviewChangesContextInput.Type;
 
@@ -422,8 +428,18 @@ export const GitResolveReviewChangesContextResult = Schema.Union([
     baseBranch: TrimmedNonEmptyStringSchema,
     mergeBaseSha: TrimmedNonEmptyStringSchema,
   }),
+  Schema.Struct({
+    scope: Schema.Literal("pull-request"),
+    ...GitReviewChangesContextBase,
+    pullRequest: GitResolvedPullRequest,
+  }),
 ]);
 export type GitResolveReviewChangesContextResult = typeof GitResolveReviewChangesContextResult.Type;
+
+export const GitListOpenPullRequestsResult = Schema.Struct({
+  pullRequests: Schema.Array(GitResolvedPullRequest),
+});
+export type GitListOpenPullRequestsResult = typeof GitListOpenPullRequestsResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,

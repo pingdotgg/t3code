@@ -32,6 +32,7 @@ import {
   type ExecuteGitInput,
   type ExecuteGitResult,
 } from "../Services/GitCore.ts";
+import { GitHubCli } from "../Services/GitHubCli.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -1565,6 +1566,75 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
           },
           trackedDiff,
           untrackedDiff,
+        }),
+      };
+    }
+
+    if (input.scope === "pull-request") {
+      if (
+        input.pullRequestNumber === undefined ||
+        !Number.isSafeInteger(input.pullRequestNumber) ||
+        input.pullRequestNumber < 1
+      ) {
+        return yield* createGitCommandError(
+          "GitCore.resolveReviewChangesContext",
+          input.cwd,
+          ["gh", "pr", "diff"],
+          "A pull request number is required.",
+        );
+      }
+      const gitHubCli = yield* Effect.serviceOption(GitHubCli);
+      if (Option.isNone(gitHubCli)) {
+        return yield* createGitCommandError(
+          "GitCore.resolveReviewChangesContext",
+          input.cwd,
+          ["gh", "pr", "diff", String(input.pullRequestNumber)],
+          "GitHub CLI integration is unavailable.",
+        );
+      }
+      const reference = String(input.pullRequestNumber);
+      const [pullRequest, trackedDiff] = yield* Effect.all([
+        gitHubCli.value.getPullRequest({ cwd: input.cwd, reference }),
+        gitHubCli.value.getPullRequestPatch({ cwd: input.cwd, reference }),
+      ]).pipe(
+        Effect.mapError(
+          (error) =>
+            new GitCommandError({
+              operation: "GitCore.resolveReviewChangesContext",
+              command: `gh pr ${reference}`,
+              cwd: input.cwd,
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      );
+      const resolvedPullRequest = {
+        number: pullRequest.number,
+        title: pullRequest.title,
+        url: pullRequest.url,
+        baseBranch: pullRequest.baseRefName,
+        headBranch: pullRequest.headRefName,
+        state: pullRequest.state ?? "open",
+      } as const;
+      return {
+        scope: "pull-request" as const,
+        branch: details.branch,
+        statusShort: "",
+        untrackedFiles: [],
+        hasReviewableChanges: trackedDiff.trim().length > 0,
+        pullRequest: resolvedPullRequest,
+        snapshot: yield* toReviewSnapshot({
+          cwd: input.cwd,
+          scope: {
+            kind: "pull-request",
+            number: resolvedPullRequest.number,
+            title: resolvedPullRequest.title,
+            url: resolvedPullRequest.url,
+            baseBranch: resolvedPullRequest.baseBranch,
+            headBranch: resolvedPullRequest.headBranch,
+          },
+          trackedDiff,
+          untrackedDiff: "",
         }),
       };
     }
