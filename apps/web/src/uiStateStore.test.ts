@@ -2,6 +2,7 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  addThreadLabel,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -13,6 +14,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setThreadLabelAssigned,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -23,6 +25,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadLabels: [],
+    threadLabelIdsByThreadKey: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -140,6 +144,55 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("creates reusable labels and assigns them to multiple scoped threads", () => {
+    const label = { id: "label-research", name: "  Research  ", color: "#2563EB" };
+    const withLabel = addThreadLabel(makeUiState(), label);
+    const assigned = setThreadLabelAssigned(
+      withLabel,
+      ["environment-a:thread-1", "environment-b:thread-1"],
+      "label-research",
+      true,
+    );
+
+    expect(assigned.threadLabels).toEqual([
+      { id: "label-research", name: "Research", color: "#2563eb" },
+    ]);
+    expect(assigned.threadLabelIdsByThreadKey).toEqual({
+      "environment-a:thread-1": ["label-research"],
+      "environment-b:thread-1": ["label-research"],
+    });
+    expect(
+      setThreadLabelAssigned(assigned, "environment-a:thread-1", "label-research", false)
+        .threadLabelIdsByThreadKey,
+    ).toEqual({
+      "environment-b:thread-1": ["label-research"],
+    });
+  });
+
+  it("rejects invalid or duplicate labels and unknown assignments", () => {
+    const state = addThreadLabel(makeUiState(), {
+      id: "label-research",
+      name: "Research",
+      color: "#2563eb",
+    });
+
+    expect(
+      addThreadLabel(state, {
+        id: "label-duplicate",
+        name: "research",
+        color: "#16a34a",
+      }),
+    ).toBe(state);
+    expect(
+      addThreadLabel(state, {
+        id: "label-invalid",
+        name: "Invalid",
+        color: "blue",
+      }),
+    ).toBe(state);
+    expect(setThreadLabelAssigned(state, "environment:thread-1", "missing", true)).toBe(state);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -161,6 +214,13 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      threadLabels: [
+        { id: "label-research", name: "Research", color: "#2563EB" },
+        { id: "label-invalid", name: "Invalid", color: "blue" },
+      ],
+      threadLabelIdsByThreadKey: {
+        "environment:thread-1": ["label-research", "label-research", "label-invalid"],
+      },
     });
 
     expect(parsed).toEqual({
@@ -176,6 +236,10 @@ describe("parsePersistedState", () => {
         "environment:thread-1": {
           "turn-1": false,
         },
+      },
+      threadLabels: [{ id: "label-research", name: "Research", color: "#2563eb" }],
+      threadLabelIdsByThreadKey: {
+        "environment:thread-1": ["label-research"],
       },
     });
   });
@@ -261,6 +325,10 @@ describe("uiStateStore persistence", () => {
           "turn-2": true,
         },
       },
+      threadLabels: [{ id: "label-research", name: "Research", color: "#2563eb" }],
+      threadLabelIdsByThreadKey: {
+        "environment:thread-1": ["label-research"],
+      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
     });
 
@@ -282,6 +350,10 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": {
           "turn-1": false,
         },
+      },
+      threadLabels: [{ id: "label-research", name: "Research", color: "#2563eb" }],
+      threadLabelIdsByThreadKey: {
+        "environment:thread-1": ["label-research"],
       },
     });
     expect(parsePersistedState(persisted)).toEqual({

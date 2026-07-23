@@ -152,6 +152,12 @@ describe("archiveSelectedThreadEntries", () => {
 });
 
 describe("buildMultiSelectThreadContextMenuItems", () => {
+  it("offers bulk labels with the selected count", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+    ).toContainEqual({ id: "add-label", label: "Add label (3)" });
+  });
+
   it("offers bulk archive with the selected count", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),

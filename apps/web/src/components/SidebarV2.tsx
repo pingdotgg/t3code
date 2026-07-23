@@ -107,6 +107,7 @@ import {
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ThreadLabelBadgesForThread, ThreadLabelPickerDialog } from "./ThreadLabels";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -633,6 +634,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               />
             </span>
             {title}
+            {isRenaming ? null : (
+              <ThreadLabelBadgesForThread threadKey={threadKey} compact maxVisible={1} />
+            )}
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
@@ -755,7 +759,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">{title}</div>
+            <div className="mt-1 flex min-w-0 items-center gap-1">
+              {title}
+              {isRenaming ? null : (
+                <ThreadLabelBadgesForThread threadKey={threadKey} maxVisible={2} />
+              )}
+            </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
               {thread.branch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
@@ -863,6 +872,10 @@ export default function SidebarV2() {
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
+  const [threadLabelPickerTarget, setThreadLabelPickerTarget] = useState<{
+    threadKeys: readonly string[];
+    targetLabel: string;
+  } | null>(null);
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -1474,6 +1487,7 @@ export default function SidebarV2() {
         api.contextMenu.show(
           [
             { id: "settle", label: `Settle (${count})` },
+            { id: "add-label", label: `Add label (${count})` },
             { id: "mark-unread", label: `Mark unread (${count})` },
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
@@ -1481,6 +1495,13 @@ export default function SidebarV2() {
         ),
       );
       if (clicked._tag === "Failure") return;
+      if (clicked.value === "add-label") {
+        setThreadLabelPickerTarget({
+          threadKeys,
+          targetLabel: `${count} selected chats`,
+        });
+        return;
+      }
       if (clicked.value === "settle") {
         // Post-settle navigation must skip threads settling in this same
         // batch — they are all leaving the card block together. Rows that
@@ -1585,6 +1606,7 @@ export default function SidebarV2() {
                   ]
                 : []),
               { id: "rename", label: "Rename thread" },
+              { id: "add-label", label: "Add label" },
               { id: "mark-unread", label: "Mark unread" },
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
             ],
@@ -1601,6 +1623,12 @@ export default function SidebarV2() {
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);
+            return;
+          case "add-label":
+            setThreadLabelPickerTarget({
+              threadKeys: [threadKey],
+              targetLabel: `“${thread.title}”`,
+            });
             return;
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
@@ -2192,6 +2220,16 @@ export default function SidebarV2() {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+      <ThreadLabelPickerDialog
+        open={threadLabelPickerTarget !== null}
+        threadKeys={threadLabelPickerTarget?.threadKeys ?? []}
+        targetLabel={threadLabelPickerTarget?.targetLabel ?? "this chat"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setThreadLabelPickerTarget(null);
+          }
+        }}
+      />
       <SidebarChromeFooter />
     </>
   );
