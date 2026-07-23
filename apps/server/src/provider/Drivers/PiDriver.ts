@@ -1,13 +1,22 @@
-import { PiSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import {
+  PiSettings,
+  ProviderDriverKind,
+  type ProviderInstanceId,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import { ServerConfig } from "../../config.ts";
 import { ProcessRunner } from "../../processRunner.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
-import { ProviderAdapterRequestError, ProviderDriverError } from "../Errors.ts";
+import { ProviderDriverError } from "../Errors.ts";
+import { makePiAdapter } from "../Layers/PiAdapter.ts";
+import { makePiSessionRuntime } from "./PiSessionRuntime.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -17,103 +26,67 @@ import {
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { checkPiProviderStatus, makePendingPiProvider } from "./PiProvider.ts";
+import {
+  checkPiProviderStatus,
+  discoverPiModelCatalog,
+  makePendingPiProvider,
+} from "./PiProvider.ts";
 
 const decodePiSettings = Schema.decodeSync(PiSettings);
 const DRIVER_KIND = ProviderDriverKind.make("pi");
-const SETUP_MESSAGE =
-  "Pi session runtime is not available until Pi native session support is enabled.";
-
-const unavailableAdapter: ProviderAdapterShape<ProviderAdapterRequestError> = {
-  provider: DRIVER_KIND,
-  capabilities: { sessionModelSwitch: "unsupported" },
-  startSession: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "startSession",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  sendTurn: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "sendTurn",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  interruptTurn: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "interruptTurn",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  respondToRequest: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "respondToRequest",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  respondToUserInput: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "respondToUserInput",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  stopSession: () => Effect.void,
-  listSessions: () => Effect.succeed([]),
-  hasSession: () => Effect.succeed(false),
-  readThread: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "readThread",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  rollbackThread: () =>
-    Effect.fail(
-      new ProviderAdapterRequestError({
-        provider: DRIVER_KIND,
-        method: "rollbackThread",
-        detail: SETUP_MESSAGE,
-      }),
-    ),
-  stopAll: () => Effect.void,
-  streamEvents: Stream.empty,
-};
+const TEXT_GENERATION_UNAVAILABLE_MESSAGE =
+  "Pi text generation is not available until the Pi conversation runtime is enabled.";
 
 const unavailableTextGeneration = TextGeneration.TextGeneration.of({
   generateCommitMessage: () =>
     Effect.fail(
-      new TextGenerationError({ operation: "generateCommitMessage", detail: SETUP_MESSAGE }),
+      new TextGenerationError({
+        operation: "generateCommitMessage",
+        detail: TEXT_GENERATION_UNAVAILABLE_MESSAGE,
+      }),
     ),
   generatePrContent: () =>
-    Effect.fail(new TextGenerationError({ operation: "generatePrContent", detail: SETUP_MESSAGE })),
+    Effect.fail(
+      new TextGenerationError({
+        operation: "generatePrContent",
+        detail: TEXT_GENERATION_UNAVAILABLE_MESSAGE,
+      }),
+    ),
   generateBranchName: () =>
     Effect.fail(
-      new TextGenerationError({ operation: "generateBranchName", detail: SETUP_MESSAGE }),
+      new TextGenerationError({
+        operation: "generateBranchName",
+        detail: TEXT_GENERATION_UNAVAILABLE_MESSAGE,
+      }),
     ),
   generateThreadTitle: () =>
     Effect.fail(
-      new TextGenerationError({ operation: "generateThreadTitle", detail: SETUP_MESSAGE }),
+      new TextGenerationError({
+        operation: "generateThreadTitle",
+        detail: TEXT_GENERATION_UNAVAILABLE_MESSAGE,
+      }),
     ),
 });
 
-export type PiDriverEnv = ProcessRunner | ServerSettingsService;
+export type PiDriverEnv =
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Path.Path
+  | ProcessRunner
+  | ServerConfig
+  | ServerSettingsService;
+
+export function resolvePiSessionDirectory(input: {
+  readonly stateDir: string;
+  readonly instanceId: ProviderInstanceId;
+  readonly join: (...paths: ReadonlyArray<string>) => string;
+}): string {
+  return input.join(input.stateDir, "pi-sessions", input.instanceId);
+}
 
 const withInstanceIdentity =
   (input: {
@@ -138,8 +111,11 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
   defaultConfig: () => decodePiSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const processRunner = yield* ProcessRunner;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -152,7 +128,28 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies PiSettings;
+      const sessionDirectory = resolvePiSessionDirectory({
+        stateDir: serverConfig.stateDir,
+        instanceId,
+        join: path.join,
+      });
+      const adapter = yield* makePiAdapter(effectiveConfig, {
+        instanceId,
+        sessionDirectory,
+        environment: processEnv,
+        makeRuntime: makePiSessionRuntime,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const checkProvider = checkPiProviderStatus(
+        effectiveConfig,
+        processEnv,
+        discoverPiModelCatalog,
+        serverConfig.cwd,
+      ).pipe(
+        Effect.provideService(ProcessRunner, processRunner),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.map(stampIdentity),
+      );
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
         maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
           provider: DRIVER_KIND,
@@ -163,10 +160,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           makePendingPiProvider(settings.provider).pipe(Effect.map(stampIdentity)),
-        checkProvider: checkPiProviderStatus(effectiveConfig, processEnv).pipe(
-          Effect.provideService(ProcessRunner, processRunner),
-          Effect.map(stampIdentity),
-        ),
+        checkProvider,
         refreshInterval: Duration.minutes(5),
       }).pipe(
         Effect.mapError(
@@ -188,7 +182,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
-        adapter: unavailableAdapter,
+        adapter,
         textGeneration: unavailableTextGeneration,
       } satisfies ProviderInstance;
     }),

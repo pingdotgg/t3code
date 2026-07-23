@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildPiLaunchPlan,
+  buildPiModelProbeLaunchPlan,
   parsePiVersion,
   PI_MINIMUM_VERSION,
   validatePiLaunchArgs,
@@ -24,7 +25,7 @@ describe("Pi runtime launch plan", () => {
         "rpc",
         "--session-dir",
         "/tmp/t3/pi/work",
-        "--session",
+        "--session-id",
         "thread_123",
       ],
       environment: { PI_AGENT_DIR: "/Users/example/.pi-work" },
@@ -41,30 +42,56 @@ describe("Pi runtime launch plan", () => {
 
     expect(plan).toEqual({
       _tag: "Success",
-      args: ["--mode", "rpc", "--session-dir", "/tmp/t3/pi/work", "--session", "thread_123"],
+      args: ["--mode", "rpc", "--session-dir", "/tmp/t3/pi/work", "--session-id", "thread_123"],
       environment: {},
     });
   });
 
-  it.each(["--mode json", "--session-dir /tmp/other", "--session=other"]) (
-    "rejects user launch arguments that override managed Pi parameters: %s",
-    (launchArgs) => {
-      expect(
-        buildPiLaunchPlan({
-          configDirectory: "",
-          launchArgs,
-          sessionDirectory: "/tmp/t3/pi/work",
-          sessionId: "thread_123",
-        }),
-      ).toEqual({ _tag: "Failure", message: expect.stringContaining("managed by T3 Code") });
-    },
-  );
+  it.each([
+    "--mode json",
+    "--session-dir /tmp/other",
+    "--session other",
+    "--session=other",
+    "--session-id=other",
+    "--no-session",
+    "--continue",
+    "-c",
+    "--resume",
+    "-r",
+    "--fork prior-session",
+  ])("rejects user launch arguments that override managed Pi parameters: %s", (launchArgs) => {
+    expect(
+      buildPiLaunchPlan({
+        configDirectory: "",
+        launchArgs,
+        sessionDirectory: "/tmp/t3/pi/work",
+        sessionId: "thread_123",
+      }),
+    ).toEqual({ _tag: "Failure", message: expect.stringContaining("managed by T3 Code") });
+  });
+});
+
+describe("Pi model probe launch plan", () => {
+  it("uses Pi RPC without creating a probe session", () => {
+    expect(
+      buildPiModelProbeLaunchPlan({
+        configDirectory: "/Users/example/.pi-work",
+        launchArgs: "--verbose",
+      }),
+    ).toEqual({
+      _tag: "Success",
+      args: ["--verbose", "--mode", "rpc", "--no-session"],
+      environment: { PI_AGENT_DIR: "/Users/example/.pi-work" },
+    });
+  });
 });
 
 describe("validatePiLaunchArgs", () => {
   it("rejects T3 Code managed flags before launching Pi", () => {
     expect(validatePiLaunchArgs("--mode json")).toContain("managed by T3 Code");
     expect(validatePiLaunchArgs("--session-dir=/tmp/other")).toContain("managed by T3 Code");
+    expect(validatePiLaunchArgs("--session-id=other")).toContain("managed by T3 Code");
+    expect(validatePiLaunchArgs("--no-session")).toContain("managed by T3 Code");
     expect(validatePiLaunchArgs("--verbose")).toBeUndefined();
   });
 });

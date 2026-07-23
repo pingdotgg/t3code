@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { PiSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import { ProcessRunner } from "../../processRunner.ts";
 import { checkPiProviderStatus } from "./PiProvider.ts";
@@ -37,6 +36,59 @@ describe("checkPiProviderStatus", () => {
           expect(snapshot.installed).toBe(true);
           expect(snapshot.status).toBe("ready");
           expect(snapshot.version).toBe("0.81.1");
+        }),
+      ),
+    ),
+  );
+
+  it.effect("discovers Pi provider/model groups and their valid thinking levels", () =>
+    checkPiProviderStatus(settings(), process.env, () =>
+      Effect.succeed([
+        {
+          model: {
+            provider: "custom-gateway",
+            id: "team/coder",
+            name: "Team Coder",
+          },
+          thinkingLevels: ["off", "high", "max"],
+          currentThinkingLevel: "high",
+        },
+      ]),
+    ).pipe(
+      Effect.provideService(
+        ProcessRunner,
+        ProcessRunner.of({
+          run: () =>
+            Effect.succeed({
+              stdout: "pi 0.81.1\\n",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        }),
+      ),
+      Effect.tap((snapshot) =>
+        Effect.sync(() => {
+          expect(snapshot.models).toEqual([
+            expect.objectContaining({
+              slug: "custom-gateway/team%2Fcoder",
+              name: "Team Coder",
+              subProvider: "custom-gateway",
+            }),
+          ]);
+          expect(snapshot.models[0]?.capabilities?.optionDescriptors).toEqual([
+            expect.objectContaining({
+              id: "reasoningEffort",
+              currentValue: "high",
+              options: [
+                { id: "off", label: "Off" },
+                { id: "high", label: "High", isDefault: true },
+                { id: "max", label: "Max" },
+              ],
+            }),
+          ]);
         }),
       ),
     ),

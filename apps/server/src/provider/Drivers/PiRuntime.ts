@@ -2,7 +2,17 @@ import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
 export const PI_MINIMUM_VERSION = "0.81.1";
 
-const MANAGED_FLAGS = new Set(["mode", "session", "session-dir"]);
+const MANAGED_FLAGS = new Set([
+  "continue",
+  "fork",
+  "mode",
+  "no-session",
+  "resume",
+  "session",
+  "session-dir",
+  "session-id",
+]);
+const MANAGED_SHORT_FLAGS = new Set(["-c", "-r"]);
 
 export type PiLaunchPlan =
   | {
@@ -14,6 +24,7 @@ export type PiLaunchPlan =
 
 export function validatePiLaunchArgs(launchArgs: string): string | undefined {
   const managedFlag = tokenizeCliArgs(launchArgs).find((arg) => {
+    if (MANAGED_SHORT_FLAGS.has(arg)) return true;
     if (!arg.startsWith("--")) return false;
     return MANAGED_FLAGS.has(arg.slice(2).split("=", 1)[0]!);
   });
@@ -45,9 +56,28 @@ export function buildPiLaunchPlan(input: {
       "rpc",
       "--session-dir",
       input.sessionDirectory,
-      "--session",
+      "--session-id",
       input.sessionId,
     ],
+    environment: input.configDirectory ? { PI_AGENT_DIR: input.configDirectory } : {},
+  };
+}
+
+export function buildPiModelProbeLaunchPlan(input: {
+  readonly configDirectory: string;
+  readonly launchArgs: string;
+}): PiLaunchPlan {
+  const validationError = validatePiLaunchArgs(input.launchArgs);
+  if (validationError) {
+    return {
+      _tag: "Failure",
+      message: validationError,
+    };
+  }
+
+  return {
+    _tag: "Success",
+    args: [...tokenizeCliArgs(input.launchArgs), "--mode", "rpc", "--no-session"],
     environment: input.configDirectory ? { PI_AGENT_DIR: input.configDirectory } : {},
   };
 }
