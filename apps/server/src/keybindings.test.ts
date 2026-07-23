@@ -204,7 +204,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("preserves explicit user intent when a rule is identical to a default", () =>
+  it.effect("classifies a legacy sourceless default as a default", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       const sidebarDefault = Keybindings.DEFAULT_KEYBINDINGS.find(
@@ -221,7 +221,30 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         (binding) => binding.command === "sidebar.toggle",
       );
 
+      assert.equal(sidebarBinding?.source, "default");
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("preserves explicit user intent when a rule is identical to a default", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const sidebarDefault = Keybindings.DEFAULT_KEYBINDINGS.find(
+        (rule) => rule.command === "sidebar.toggle",
+      );
+      assert.isDefined(sidebarDefault);
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { ...sidebarDefault, source: "default" },
+      ]);
+
+      const snapshot = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.upsertKeybindingRule(sidebarDefault);
+      });
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const sidebarBinding = snapshot.find((binding) => binding.command === "sidebar.toggle");
+
       assert.equal(sidebarBinding?.source, "user");
+      assert.equal(persisted.find((rule) => rule.command === "sidebar.toggle")?.source, "user");
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 

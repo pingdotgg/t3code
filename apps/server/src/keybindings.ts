@@ -119,7 +119,15 @@ function compileRuntimeKeybindingsConfig(
 ): ResolvedKeybindingsConfig {
   const compiled: ResolvedKeybindingRule[] = [];
   for (const rule of config) {
-    const resolved = compileResolvedKeybindingRule(rule, rule.source ?? "user");
+    // Files written before source metadata was introduced contain generated
+    // defaults without a source. Preserve that legacy meaning, while an
+    // explicit source written by newer upserts remains authoritative.
+    const source =
+      rule.source ??
+      (DEFAULT_KEYBINDINGS.some((defaultRule) => isSameKeybindingRule(rule, defaultRule))
+        ? "default"
+        : "user");
+    const resolved = compileResolvedKeybindingRule(rule, source);
     if (resolved) compiled.push(resolved);
   }
   return compiled.slice(-MAX_KEYBINDINGS_COUNT);
