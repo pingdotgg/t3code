@@ -463,6 +463,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const isHighlighted = isActive || isSelected;
   const handleOpenDiscoveredPort = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (isArchived) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const port = discoveredPorts[0];
       if (!port) return;
       event.preventDefault();
@@ -484,7 +489,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         );
       })();
     },
-    [discoveredPorts, navigateToThread, openPreview, threadRef],
+    [discoveredPorts, isArchived, navigateToThread, openPreview, threadRef],
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
@@ -798,7 +803,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {discoveredPorts.length > 0 && (
+          {!isArchived && discoveredPorts.length > 0 && (
             <Tooltip>
               <TooltipTrigger
                 render={
