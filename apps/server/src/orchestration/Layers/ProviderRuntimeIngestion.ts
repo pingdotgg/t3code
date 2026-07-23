@@ -911,6 +911,13 @@ const make = Effect.gen(function* () {
       Effect.map((count) => Option.getOrElse(count, () => 0) > 0),
     );
 
+  const hasDeferredAssistantDeltaAheadOfFinalization = (messageId: MessageId) =>
+    Cache.getOption(deferredAssistantDeltaCountByMessageId, messageId).pipe(
+      // One deferred entry belongs to the finalization retry itself. Any
+      // additional entries are delta retries that must drain first.
+      Effect.map((count) => Option.getOrElse(count, () => 0) > 1),
+    );
+
   const forgetAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
     Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
       Effect.flatMap((existingIds) =>
@@ -1644,19 +1651,27 @@ const make = Effect.gen(function* () {
 
             yield* Effect.forEach(
               messageIds.value,
-              (messageId) => {
-                finalizedMessageIds.add(messageId);
-                return finalizeAssistantMessage({
-                  event: input.event,
-                  threadId: input.threadId,
-                  messageId,
-                  turnId,
-                  createdAt: input.createdAt,
-                  commandTag: "assistant-complete-on-session-exit",
-                  finalDeltaCommandTag: "assistant-delta-finalize-on-session-exit",
-                  hasProjectedMessage: findMessageById(messages, messageId) !== undefined,
-                });
-              },
+              (messageId) =>
+                Effect.gen(function* () {
+                  finalizedMessageIds.add(messageId);
+                  const finalized = yield* finalizeAssistantMessage({
+                    event: input.event,
+                    threadId: input.threadId,
+                    messageId,
+                    turnId,
+                    createdAt: input.createdAt,
+                    commandTag: "assistant-complete-on-session-exit",
+                    finalDeltaCommandTag: "assistant-delta-finalize-on-session-exit",
+                    hasProjectedMessage: findMessageById(messages, messageId) !== undefined,
+                  });
+                  if (finalized) {
+                    yield* releaseFinalizedAssistantMessageForTurn(
+                      input.threadId,
+                      turnId,
+                      messageId,
+                    );
+                  }
+                }),
               { concurrency: 1 },
             ).pipe(Effect.asVoid);
           }),
@@ -2579,6 +2594,10 @@ const make = Effect.gen(function* () {
       case "assistant-finalize":
         return Effect.gen(function* () {
           yield* Cache.invalidate(assistantFinalizationRetryScheduledByMessageId, input.messageId);
+          if (yield* hasDeferredAssistantDeltaAheadOfFinalization(input.messageId)) {
+            yield* scheduleAssistantFinalizationRetry(input);
+            return;
+          }
           const finalized = yield* finalizeAssistantMessage(input);
           if (finalized && input.turnId) {
             yield* releaseFinalizedAssistantMessageForTurn(

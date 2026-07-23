@@ -3299,6 +3299,28 @@ describe("ProviderRuntimeIngestion", () => {
         ),
       5000,
     );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-runtime-error-after"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(3),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-streaming-runtime-error-after"),
+      payload: { streamKind: "assistant_text", delta: "after error" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-streaming-runtime-error-after" &&
+            message.streaming &&
+            message.text === "after error",
+        ),
+      5000,
+    );
   });
 
   it("preserves a whitespace-only buffered tail when finalizing", async () => {
@@ -3589,6 +3611,71 @@ describe("ProviderRuntimeIngestion", () => {
     expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
     expect(turnReadyIndex).toBeGreaterThan(assistantCompletionIndex);
     expect(completionEvents).toHaveLength(1);
+  });
+
+  it("keeps deferred assistant deltas ahead of finalization retries", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-deferred-delta-before-finalization");
+    const itemId = asItemId("item-deferred-delta-before-finalization");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-deferred-delta-before-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    const getCompleteFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.complete",
+    );
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-item-completed-deferred-delta-before-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "before",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-deferred-delta-before-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: " after" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-deferred-delta-before-finalization" &&
+            !message.streaming &&
+            message.text === "before after",
+        ),
+      5000,
+    );
+    expect(getCompleteFailureCount()).toBe(3);
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-deferred-delta-before-finalization",
+      )?.text,
+    ).toBe("before after");
   });
 
   it("maps canonical request events into approval activities with requestKind", async () => {
