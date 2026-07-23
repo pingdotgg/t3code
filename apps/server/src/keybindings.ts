@@ -32,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -40,7 +41,7 @@ import * as Context from "effect/Context";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
-import { ServerConfig } from "./config.ts";
+import * as ServerConfig from "./config.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -225,73 +226,69 @@ function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): Resolve
 }
 
 /**
- * KeybindingsShape - Service API for keybinding configuration operations.
- */
-export interface KeybindingsShape {
-  /**
-   * Start the keybindings runtime and attach file watching.
-   *
-   * Safe to call multiple times. The first successful call establishes the
-   * runtime; later calls await the same startup.
-   */
-  readonly start: Effect.Effect<void, KeybindingsConfigError>;
-
-  /**
-   * Await keybindings runtime readiness.
-   *
-   * Readiness means the config directory exists, the watcher is attached, the
-   * startup sync has completed, and the current snapshot has been loaded.
-   */
-  readonly ready: Effect.Effect<void, KeybindingsConfigError>;
-
-  /**
-   * Ensure the on-disk keybindings file exists and includes all default
-   * commands so newly-added defaults are backfilled on startup.
-   */
-  readonly syncDefaultKeybindingsOnStartup: Effect.Effect<void, KeybindingsConfigError>;
-
-  /**
-   * Load runtime keybindings state along with non-fatal configuration issues.
-   */
-  readonly loadConfigState: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
-
-  /**
-   * Read the latest keybindings snapshot from cache/disk.
-   */
-  readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
-
-  /**
-   * Stream of keybindings config change events.
-   */
-  readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
-
-  /**
-   * Upsert a keybinding rule and persist the resulting configuration.
-   *
-   * Writes config atomically and enforces the max rule count by truncating
-   * oldest entries when needed.
-   */
-  readonly upsertKeybindingRule: (
-    input: ServerUpsertKeybindingInput,
-  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
-
-  /**
-   * Remove a single persisted keybinding rule by exact key/command/when match.
-   */
-  readonly removeKeybindingRule: (
-    input: ServerRemoveKeybindingInput,
-  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
-}
-
-/**
  * Keybindings - Service tag for keybinding configuration operations.
  */
-export class Keybindings extends Context.Service<Keybindings, KeybindingsShape>()(
-  "t3/keybindings",
-) {}
+export class Keybindings extends Context.Service<
+  Keybindings,
+  {
+    /**
+     * Start the keybindings runtime and attach file watching.
+     *
+     * Safe to call multiple times. The first successful call establishes the
+     * runtime; later calls await the same startup.
+     */
+    readonly start: Effect.Effect<void, KeybindingsConfigError>;
 
-const makeKeybindings = Effect.gen(function* () {
-  const { keybindingsConfigPath } = yield* ServerConfig;
+    /**
+     * Await keybindings runtime readiness.
+     *
+     * Readiness means the config directory exists, the watcher is attached, the
+     * startup sync has completed, and the current snapshot has been loaded.
+     */
+    readonly ready: Effect.Effect<void, KeybindingsConfigError>;
+
+    /**
+     * Ensure the on-disk keybindings file exists and includes all default
+     * commands so newly-added defaults are backfilled on startup.
+     */
+    readonly syncDefaultKeybindingsOnStartup: Effect.Effect<void, KeybindingsConfigError>;
+
+    /**
+     * Load runtime keybindings state along with non-fatal configuration issues.
+     */
+    readonly loadConfigState: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
+
+    /**
+     * Read the latest keybindings snapshot from cache/disk.
+     */
+    readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
+
+    /**
+     * Stream of keybindings config change events.
+     */
+    readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
+
+    /**
+     * Upsert a keybinding rule and persist the resulting configuration.
+     *
+     * Writes config atomically and enforces the max rule count by truncating
+     * oldest entries when needed.
+     */
+    readonly upsertKeybindingRule: (
+      input: ServerUpsertKeybindingInput,
+    ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+
+    /**
+     * Remove a single persisted keybinding rule by exact key/command/when match.
+     */
+    readonly removeKeybindingRule: (
+      input: ServerRemoveKeybindingInput,
+    ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+  }
+>()("t3/keybindings") {}
+
+const make = Effect.gen(function* () {
+  const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const upsertSemaphore = yield* Semaphore.make(1);
@@ -538,9 +535,11 @@ const makeKeybindings = Effect.gen(function* () {
         return;
       }
 
-      const matchingDefaults = DEFAULT_KEYBINDINGS.filter((defaultRule) =>
-        customConfig.some((entry) => isSameKeybindingRule(entry, defaultRule)),
-      ).map((rule) => rule.command);
+      const matchingDefaults = Array.filterMap(DEFAULT_KEYBINDINGS, (defaultRule) =>
+        customConfig.some((entry) => isSameKeybindingRule(entry, defaultRule))
+          ? Result.succeed(defaultRule.command)
+          : Result.failVoid,
+      );
       if (matchingDefaults.length > 0) {
         yield* Effect.logWarning("default keybinding rule already defined in user config", {
           path: keybindingsConfigPath,
@@ -645,7 +644,9 @@ const makeKeybindings = Effect.gen(function* () {
           const nextConfig = [
             ...customConfig.filter((entry) => {
               if (replaceTarget) {
-                return !isSameKeybindingRule(entry, replaceTarget);
+                return (
+                  !isSameKeybindingRule(entry, replaceTarget) && !isSameKeybindingRule(entry, rule)
+                );
               }
               return !isSameKeybindingRule(entry, rule);
             }),
@@ -697,7 +698,7 @@ const makeKeybindings = Effect.gen(function* () {
           return nextResolved;
         }),
       ),
-  } satisfies KeybindingsShape;
+  } satisfies Keybindings["Service"];
 });
 
-export const KeybindingsLive = Layer.effect(Keybindings, makeKeybindings);
+export const layer = Layer.effect(Keybindings, make);

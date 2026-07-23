@@ -1,10 +1,16 @@
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
+  type EnvironmentId,
+  type ExecutionEnvironmentPlatformOs,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import {
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 
 export type ProviderUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
@@ -22,6 +28,17 @@ export interface ProviderUpdateToastView {
   readonly title: string;
   readonly description: string;
   readonly dismissAfterVisibleMs?: number;
+}
+
+/**
+ * Terminal update phases — outcomes that are safe to persist as a one-shot row
+ * result. A non-terminal ("initial"/"running") snapshot never re-polls itself,
+ * so storing one pins an update row's spinner indefinitely once its pending flag
+ * expires; such phases must be dropped in favor of the live per-environment
+ * provider state instead of being persisted.
+ */
+export function isTerminalProviderUpdatePhase(phase: ProviderUpdateToastPhase): boolean {
+  return phase === "succeeded" || phase === "failed" || phase === "unchanged";
 }
 
 export type ProviderUpdateSidebarPillTone = "loading" | "warning" | "error" | "success";
@@ -328,14 +345,14 @@ export function getSingleProviderUpdateProgressToastView(
 
 export function collectUpdatedProviderSnapshots(input: {
   readonly results: ReadonlyArray<
-    PromiseSettledResult<{ readonly providers: ReadonlyArray<ServerProvider> }>
+    AtomCommandResult<{ readonly providers: ReadonlyArray<ServerProvider> }, unknown>
   >;
   readonly providerInstanceIds: ReadonlySet<ProviderInstanceId>;
 }): ServerProvider[] {
   const matchedProviders: ServerProvider[] = [];
 
   for (const result of input.results) {
-    if (result.status !== "fulfilled") {
+    if (result._tag === "Failure") {
       continue;
     }
     for (const provider of result.value.providers) {
@@ -348,14 +365,15 @@ export function collectUpdatedProviderSnapshots(input: {
   return dedupeProvidersByInstanceId(matchedProviders);
 }
 
-export function firstRejectedProviderUpdateMessage(
-  results: ReadonlyArray<PromiseSettledResult<unknown>>,
+export function firstFailedProviderUpdateMessage(
+  results: ReadonlyArray<AtomCommandResult<unknown, unknown>>,
 ): string | null {
-  const rejected = results.find((result) => result.status === "rejected");
-  if (!rejected) {
+  const failed = results.find((result) => result._tag === "Failure");
+  if (!failed || failed._tag !== "Failure") {
     return null;
   }
-  return rejected.reason instanceof Error ? rejected.reason.message : "Provider update failed.";
+  const error = squashAtomCommandFailure(failed);
+  return error instanceof Error ? error.message : "Provider update failed.";
 }
 
 function getUpdateFinishedAt(provider: ServerProvider): string | null {
@@ -534,4 +552,284 @@ function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvi
     }
   }
   return `${formatProviderList(providers)} failed to update. Check provider settings for details.`;
+}
+
+// ===========================================================================
+// Multi-environment provider updates
+//
+// With a desktop-local secondary backend present (the WSL backend alongside the
+// Windows primary), a provider update is applied across every local backend.
+// Each environment owns its own provider instances, so candidates and progress
+// are computed per environment and the dispatch targets that environment's
+// connection. These helpers are pure; the dispatch itself runs through the
+// `serverEnvironment.updateProvider` atom command in the components.
+// ===========================================================================
+
+/**
+ * The settled result of dispatching a provider update to one local backend.
+ * `provider` is the post-update snapshot of the targeted instance returned by
+ * that backend (null when the backend did not report the targeted instance,
+ * e.g. it does not have it installed).
+ */
+export interface LocalProviderUpdateOutcome {
+  readonly environmentId: EnvironmentId;
+  readonly isPrimary: boolean;
+  readonly driver: ProviderDriverKind;
+  readonly instanceId: ProviderInstanceId;
+  readonly provider: ServerProvider | null;
+}
+
+// Worst-case ordering across backends: a failed copy outranks an unchanged one,
+// which outranks a still-running one, which outranks a succeeded one.
+const PROVIDER_UPDATE_STATUS_SEVERITY: Record<string, number> = {
+  succeeded: 1,
+  queued: 2,
+  running: 2,
+  unchanged: 3,
+  failed: 4,
+};
+
+function providerUpdateOutcomeSeverity(provider: ServerProvider): number {
+  return PROVIDER_UPDATE_STATUS_SEVERITY[provider.updateState?.status ?? ""] ?? 0;
+}
+
+export function firstRejectedProviderUpdateMessage(
+  results: ReadonlyArray<PromiseSettledResult<unknown>>,
+): string | null {
+  const rejected = results.find((result) => result.status === "rejected");
+  if (!rejected) {
+    return null;
+  }
+  return rejected.reason instanceof Error ? rejected.reason.message : "Provider update failed.";
+}
+
+/**
+ * Reduce per-backend update outcomes to one representative snapshot per driver,
+ * keeping the worst-case status across every local backend. Because the same
+ * driver has a distinct instance id per environment, a secondary backend (e.g.
+ * WSL) that *resolved* with a failed or unchanged provider would otherwise be
+ * filtered out (its instance id is not the primary's) or collapsed behind the
+ * primary's success — this surfaces it instead.
+ */
+export function collectProviderUpdateOutcomeSnapshots(
+  results: ReadonlyArray<PromiseSettledResult<LocalProviderUpdateOutcome>>,
+): ServerProvider[] {
+  const worstByDriver = new Map<ProviderDriverKind, ServerProvider>();
+  for (const result of results) {
+    if (result.status !== "fulfilled" || result.value.provider === null) {
+      continue;
+    }
+    const provider = result.value.provider;
+    const current = worstByDriver.get(provider.driver);
+    if (
+      !current ||
+      providerUpdateOutcomeSeverity(provider) > providerUpdateOutcomeSeverity(current)
+    ) {
+      worstByDriver.set(provider.driver, provider);
+    }
+  }
+  return [...worstByDriver.values()];
+}
+
+/**
+ * The first secondary (non-primary) backend whose update resolved without
+ * succeeding. The primary's own failed/unchanged state is already surfaced
+ * inline in settings, so only secondaries (which have no inline row) need an
+ * explicit callout.
+ */
+export function firstUnsuccessfulSecondaryProviderOutcome(
+  results: ReadonlyArray<PromiseSettledResult<LocalProviderUpdateOutcome>>,
+): { readonly provider: ServerProvider; readonly status: "failed" | "unchanged" } | null {
+  for (const result of results) {
+    if (result.status !== "fulfilled") {
+      continue;
+    }
+    const outcome = result.value;
+    if (outcome.isPrimary || outcome.provider === null) {
+      continue;
+    }
+    const status = outcome.provider.updateState?.status;
+    if (status === "failed" || status === "unchanged") {
+      return { provider: outcome.provider, status };
+    }
+  }
+  return null;
+}
+
+const WSL_INSTANCE_ID_PREFIX = "wsl:";
+
+/** The distro name from a WSL backend instance id ("wsl:ubuntu" -> "ubuntu"), or null for the default. */
+export function parseWslDistroFromInstanceId(instanceId: string | undefined): string | null {
+  if (!instanceId || !instanceId.startsWith(WSL_INSTANCE_ID_PREFIX)) {
+    return null;
+  }
+  const distro = instanceId.slice(WSL_INSTANCE_ID_PREFIX.length).trim();
+  return distro.length === 0 || distro === "default" ? null : distro;
+}
+
+/**
+ * A human label that distinguishes local environments by platform (so the
+ * popover shows "Windows" / "WSL" rather than the account name twice). WSL is
+ * identified by its backend instance id; everything else falls back to the
+ * reported OS, then the environment's own label.
+ */
+export function deriveEnvironmentDisplayLabel(input: {
+  readonly isWsl: boolean;
+  readonly wslDistro: string | null;
+  readonly platformOs: ExecutionEnvironmentPlatformOs | undefined;
+  readonly fallbackLabel: string;
+}): string {
+  if (input.isWsl) {
+    return input.wslDistro ? `WSL · ${input.wslDistro}` : "WSL";
+  }
+  switch (input.platformOs) {
+    case "windows":
+      return "Windows";
+    case "darwin":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    default:
+      return input.fallbackLabel;
+  }
+}
+
+/** Connection state of a local environment, normalized across primary/secondary sources. */
+export type EnvironmentUpdateConnectionState = "connecting" | "ready" | "disconnected" | "error";
+
+export interface LocalEnvironmentProvidersInput {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+  readonly connectionState: EnvironmentUpdateConnectionState;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+export interface LocalEnvironmentUpdateGroup {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+  /** True while this environment's backend is still connecting (e.g. WSL booting). */
+  readonly isSettling: boolean;
+  /** Outdated, one-click-updatable providers in this environment. */
+  readonly candidates: ProviderUpdateCandidate[];
+  /** Full provider list for this environment, used to derive live update progress. */
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+/**
+ * Build one update group per local environment, pairing each environment's
+ * outdated one-click candidates with its own provider list, and report whether
+ * any environment is still settling (so the caller can defer the popover).
+ */
+export function buildLocalEnvironmentUpdateGroups(
+  environments: ReadonlyArray<LocalEnvironmentProvidersInput>,
+): { groups: LocalEnvironmentUpdateGroup[]; isAnySettling: boolean } {
+  const groups = environments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+    isPrimary: environment.isPrimary,
+    isSettling: environment.connectionState === "connecting",
+    candidates: collectProviderUpdateCandidates(environment.providers).filter((candidate) =>
+      canOneClickUpdateProviderCandidate(candidate, environment.providers),
+    ),
+    providers: environment.providers,
+  }));
+  const isAnySettling = environments.some(
+    (environment) => environment.connectionState === "connecting",
+  );
+  return { groups, isAnySettling };
+}
+
+/** Groups that actually have a one-click update available, in display order (primary first). */
+export function environmentGroupsWithUpdates(
+  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+): LocalEnvironmentUpdateGroup[] {
+  return groups.filter((group) => group.candidates.length > 0);
+}
+
+/**
+ * Stable key over the set of (environment, driver, latest version) updates on
+ * offer, so the popover is shown once per distinct set and re-shown when it
+ * changes.
+ */
+export function localEnvironmentUpdateNotificationKey(
+  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+): string | null {
+  const parts = environmentGroupsWithUpdates(groups)
+    .map((group) => {
+      const providerParts = group.candidates
+        .map((candidate) => `${candidate.driver}:${candidate.versionAdvisory.latestVersion}`)
+        .toSorted()
+        .join(",");
+      return `${group.environmentId}=${providerParts}`;
+    })
+    .toSorted();
+  return parts.length > 0 ? parts.join("|") : null;
+}
+
+export type ProviderUpdateRowStatusKind = "idle" | "loading" | "success" | "failed" | "unchanged";
+
+export interface ProviderUpdateRowStatus {
+  readonly kind: ProviderUpdateRowStatusKind;
+  readonly text: string;
+}
+
+function environmentProviderNames(group: LocalEnvironmentUpdateGroup): string {
+  return group.candidates
+    .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
+    .join(", ");
+}
+
+/**
+ * Resolve one environment row's display from every available signal, in
+ * priority order: a transport rejection, then the dispatch's own *terminal*
+ * result payload (reliable even when a secondary backend's config does not
+ * re-sync), then live server state (reliable even when the dispatch RPC is lost
+ * to a reconnect), then the optimistic pending spinner, then the idle state.
+ *
+ * A non-terminal result snapshot ("running") is intentionally skipped rather
+ * than treated as authoritative, so live server state can still drive the row
+ * to its terminal status instead of pinning it on "Updating…".
+ */
+export function resolveEnvironmentUpdateRowStatus(input: {
+  readonly group: LocalEnvironmentUpdateGroup;
+  readonly error: string | undefined;
+  readonly result: ProviderUpdateToastView | undefined;
+  readonly pill: ProviderUpdateSidebarPillView | null;
+  readonly isPending: boolean;
+}): ProviderUpdateRowStatus {
+  if (input.error) {
+    return { kind: "failed", text: input.error };
+  }
+  if (input.result) {
+    switch (input.result.phase) {
+      case "succeeded":
+        return { kind: "success", text: "Updated" };
+      case "failed":
+        return { kind: "failed", text: input.result.description };
+      case "unchanged":
+        return { kind: "unchanged", text: input.result.description };
+      // "running" / "initial": non-terminal snapshot — fall through to live state.
+    }
+  }
+  if (input.pill) {
+    switch (input.pill.tone) {
+      case "success":
+        return { kind: "success", text: "Updated" };
+      case "error":
+        return { kind: "failed", text: input.pill.description };
+      case "warning":
+        return { kind: "unchanged", text: input.pill.description };
+      default:
+        return { kind: "loading", text: "Updating…" };
+    }
+  }
+  // A non-terminal result snapshot or the optimistic pending flag means an
+  // update is still in flight — keep showing the spinner rather than reverting
+  // to the Update button as if nothing happened.
+  if (input.result || input.isPending) {
+    return { kind: "loading", text: "Updating…" };
+  }
+  return { kind: "idle", text: environmentProviderNames(input.group) };
 }

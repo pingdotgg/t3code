@@ -1,5 +1,5 @@
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -11,7 +11,9 @@ import {
   resolveEnvModeLabel,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
+  resolveLocalCheckoutBranchMismatch,
   shouldIncludeBranchPickerItem,
+  shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -84,6 +86,55 @@ describe("resolveBranchToolbarValue", () => {
   });
 });
 
+describe("resolveLocalCheckoutBranchMismatch", () => {
+  it("detects when a local thread is associated with a different branch than the checkout", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/thread",
+        currentGitBranch: "feature/current",
+      }),
+    ).toEqual({
+      threadBranch: "feature/thread",
+      currentBranch: "feature/current",
+    });
+  });
+
+  it("ignores matching local checkout state", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/thread",
+        currentGitBranch: "feature/thread",
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores dedicated worktrees because their checkout is already thread-scoped", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-thread",
+        activeThreadBranch: "feature/thread",
+        currentGitBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores new-worktree base selection before a worktree exists", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentGitBranch: "main",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("resolveEnvironmentOptionLabel", () => {
   it("prefers the primary environment's machine label", () => {
     expect(
@@ -116,6 +167,44 @@ describe("resolveEnvironmentOptionLabel", () => {
         savedLabel: "Build box",
       }),
     ).toBe("Build box");
+  });
+});
+
+describe("shouldShowEnvironmentIndicator", () => {
+  it("shows the indicator whenever multiple environments are pickable", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("shows a sole remote environment so the user knows where the project runs", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: false },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides a sole primary (this-device) environment", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the indicator when the active environment is unknown", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: null,
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
   });
 });
 

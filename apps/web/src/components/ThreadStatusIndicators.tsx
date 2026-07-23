@@ -1,25 +1,29 @@
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { VcsStatusResult } from "@t3tools/contracts";
-import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
-import { useMemo } from "react";
-import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
-  useSavedEnvironmentRegistryStore,
-  useSavedEnvironmentRuntimeStore,
-} from "../environments/runtime";
-import { useGitStatus } from "../lib/gitStatusState";
-import { type AppState, selectProjectByRef, useStore } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import type { VcsStatusResult } from "@t3tools/contracts";
+import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import { useMemo } from "react";
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import { useProject } from "../state/entities";
+import { useEnvironmentQuery } from "../state/query";
+import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
+import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface PrStatusIndicator {
   label: string;
   colorClass: string;
   tooltip: string;
+  tooltipLead: string;
+  tooltipTitle: string;
   url: string;
 }
 
@@ -35,14 +39,26 @@ export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
+  function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
+    return state.charAt(0).toUpperCase() + state.slice(1);
+  }
+
+  function formatPrStatusLead(pr: NonNullable<ThreadPr>, changeRequestShortName: string): string {
+    return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
+  }
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
+
+  const tooltipLead = formatPrStatusLead(pr, presentation.shortName);
+  const tooltip = `${tooltipLead}: ${pr.title}`;
 
   if (pr.state === "open") {
     return {
       label: `${presentation.shortName} open`,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} ${presentation.shortName} open: ${pr.title}`,
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
@@ -50,7 +66,9 @@ export function prStatusIndicator(
     return {
       label: `${presentation.shortName} closed`,
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} ${presentation.shortName} closed: ${pr.title}`,
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
@@ -58,7 +76,9 @@ export function prStatusIndicator(
     return {
       label: `${presentation.shortName} merged`,
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} ${presentation.shortName} merged: ${pr.title}`,
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
@@ -69,11 +89,31 @@ export function ChangeRequestStatusIcon({ className }: { className?: string }) {
   return <GitPullRequestIcon className={className} />;
 }
 
-export function resolveThreadPr(
-  threadBranch: string | null,
-  gitStatus: VcsStatusResult | null,
-): ThreadPr | null {
-  if (threadBranch === null || gitStatus === null || gitStatus.refName !== threadBranch) {
+export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+  return (
+    <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
+      <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
+      <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
+      <span className="min-w-0 truncate pl-2">{status.tooltipTitle}</span>
+    </span>
+  );
+}
+
+export function resolveThreadPr(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  hasDedicatedWorktree: boolean;
+}): ThreadPr | null {
+  const { threadBranch, gitStatus, hasDedicatedWorktree } = input;
+  if (gitStatus === null) {
+    return null;
+  }
+
+  if (hasDedicatedWorktree) {
+    return gitStatus.pr ?? null;
+  }
+
+  if (threadBranch === null || gitStatus.refName !== threadBranch) {
     return null;
   }
 
@@ -81,7 +121,7 @@ export function resolveThreadPr(
 }
 
 export function terminalStatusFromRunningIds(
-  runningTerminalIds: string[],
+  runningTerminalIds: ReadonlyArray<string>,
 ): TerminalStatusIndicator | null {
   if (runningTerminalIds.length === 0) {
     return null;
@@ -93,6 +133,40 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+export function ThreadWorktreeIndicator({
+  thread,
+}: {
+  thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
+}) {
+  const worktreePath = thread.worktreePath?.trim();
+  if (!worktreePath) {
+    return null;
+  }
+
+  const displayPath = formatWorktreePathForDisplay(worktreePath);
+  const tooltip = thread.branch
+    ? `Worktree: ${displayPath} (${thread.branch})`
+    : `Worktree: ${displayPath}`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={tooltip}
+            data-testid={`thread-worktree-${thread.id}`}
+            className="inline-flex items-center justify-center"
+          />
+        }
+      >
+        <FolderGit2Icon className="size-3 text-muted-foreground/40" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function ThreadStatusLabel({
   status,
   compact = false,
@@ -102,32 +176,45 @@ export function ThreadStatusLabel({
 }) {
   if (compact) {
     return (
-      <span
-        title={status.label}
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
-      >
-        <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
-        <span className="sr-only">{status.label}</span>
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              aria-label={status.label}
+              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+            />
+          }
+        >
+          <span
+            className={`size-[9px] rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-status-pulse" : ""
+            }`}
+          />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{status.label}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
-    <span
-      title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
-    >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
-        }`}
-      />
-      <span className="hidden md:inline">{status.label}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={status.label}
+            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+          />
+        }
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+            status.pulse ? "animate-status-pulse" : ""
+          }`}
+        />
+        <span className="hidden md:inline">{status.label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{status.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -141,20 +228,27 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const threadProjectCwd = useStore(
+  const threadProject = useProject(
     useMemo(
-      () => (state: AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
+      () => scopeProjectRef(thread.environmentId, thread.projectId),
       [thread.environmentId, thread.projectId],
     ),
   );
+  const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
-  const gitStatus = useGitStatus({
-    environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
+  const gitStatus = useEnvironmentQuery(
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const pr = resolveThreadPr({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    hasDedicatedWorktree: thread.worktreePath !== null,
   });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
     thread: {
@@ -181,7 +275,9 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
           >
             <ChangeRequestStatusIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+          <TooltipPopup side="top">
+            <PrStatusTooltipContent status={prStatus} />
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
@@ -195,23 +291,16 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
  * environment indicator, matching the sidebar's trailing indicators.
  */
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const runningTerminalIds = useTerminalStateStore(
-    (state) =>
-      selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).runningTerminalIds,
-  );
+  const runningTerminalIds = useThreadRunningTerminalIds({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
-  const remoteEnvLabel = useSavedEnvironmentRuntimeStore(
-    (state) => state.byId[thread.environmentId]?.descriptor?.label ?? null,
-  );
-  const remoteEnvSavedLabel = useSavedEnvironmentRegistryStore(
-    (state) => state.byId[thread.environmentId]?.label ?? null,
-  );
-  const threadEnvironmentLabel = isRemoteThread
-    ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? "Remote")
-    : null;
+  const remoteEnvLabel = environment?.label ?? null;
+  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
   if (!terminalStatus && !isRemoteThread) {
@@ -221,14 +310,22 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       {terminalStatus ? (
-        <span
-          role="img"
-          aria-label={terminalStatus.label}
-          title={terminalStatus.label}
-          className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-        >
-          <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="img"
+                aria-label={terminalStatus.label}
+                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              />
+            }
+          >
+            <TerminalIcon
+              className={`size-3 ${terminalStatus.pulse ? "animate-status-pulse" : ""}`}
+            />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
+        </Tooltip>
       ) : null}
       {isRemoteThread ? (
         <Tooltip>

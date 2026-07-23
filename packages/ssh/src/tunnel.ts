@@ -2,24 +2,24 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import {
+  describeReadinessCause,
+  waitForHttpReady as waitForHttpReadyShared,
+} from "@t3tools/shared/httpReadiness";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -34,6 +34,7 @@ import {
   collectProcessOutput,
   getLastNonEmptyOutputLine,
   remoteStateKey,
+  resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
   targetConnectionKey,
@@ -160,13 +161,8 @@ const RemotePairingResult = Schema.Struct({
   credential: Schema.String,
 });
 
-const RemoteHttpError = Schema.Struct({
-  error: Schema.optional(Schema.String),
-});
-
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
 const decodeRemotePairingResult = Schema.decodeEffect(fromLenientJson(RemotePairingResult));
-const decodeRemoteHttpError = Schema.decodeEffect(Schema.fromJsonString(RemoteHttpError));
 
 const decodeRemoteJsonOutput = <A, E>(
   stdout: string,
@@ -236,33 +232,9 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export function describeReadinessCause(cause: unknown): unknown {
-  if (cause instanceof SshReadinessError) {
-    return {
-      _tag: cause._tag,
-      message: cause.message,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
-    };
-  }
-  if (cause instanceof Error) {
-    return {
-      name: cause.name,
-      message: cause.message,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
-    };
-  }
-  if (typeof cause !== "object" || cause === null) {
-    return cause;
-  }
-
-  const record = cause as Readonly<Record<string, unknown>>;
-  return {
-    ...(typeof record._tag === "string" ? { _tag: record._tag } : {}),
-    ...(typeof record.message === "string" ? { message: record.message } : {}),
-    ...(record.reason === undefined ? {} : { reason: describeReadinessCause(record.reason) }),
-    ...(record.cause === undefined ? {} : { cause: describeReadinessCause(record.cause) }),
-  };
-}
+// Re-exported from the shared HTTP readiness module so existing importers
+// (notably tunnel.test.ts) keep resolving it from here.
+export { describeReadinessCause };
 
 export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
@@ -402,7 +374,8 @@ ensure_remote_node_path() {
   prepend_path_if_dir "$FNM_DIR"
   prepend_path_if_dir "$HOME/.fnm"
   if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
-    eval "$(fnm env --use-on-cd --shell sh)" >/dev/null 2>&1 || eval "$(fnm env --shell sh)" >/dev/null 2>&1 || true
+    eval "$(fnm env --shell bash)" >/dev/null 2>&1 || true
+    fnm use --silent-if-unchanged >/dev/null 2>&1 || fnm use default >/dev/null 2>&1 || true
   fi
 
   prepend_path_if_dir "$HOME/.nodenv/bin"
@@ -669,7 +642,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
   );
 }
 
-function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string {
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_NODE_ENV_SCRIPT, {
       T3_NODE_ENGINE_RANGE: shellSingleQuote(input?.nodeEngineRange?.trim() || ""),
@@ -868,120 +841,46 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
   return result.stdout.trim();
 });
 
-export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(function* (input: {
+export const waitForHttpReady = (input: {
   readonly baseUrl: string;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly probeTimeoutMs?: number;
   readonly path?: string;
-}): Effect.fn.Return<void, SshReadinessError, HttpClient.HttpClient> {
-  const timeoutMs = input.timeoutMs ?? 30_000;
-  const intervalMs = input.intervalMs ?? 100;
-  const probeTimeoutMs = input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS;
-  const retryPolicy = Schedule.spaced(Duration.millis(intervalMs)).pipe(
-    Schedule.take(Math.max(0, Math.ceil(timeoutMs / intervalMs))),
-  );
-  const requestUrl = new URL(input.path ?? "/", input.baseUrl).toString();
-  const client = yield* HttpClient.HttpClient;
-  const lastProbeFailure = yield* Ref.make<unknown>(null);
-  let attempt = 0;
-
-  yield* Effect.logDebug("ssh.tunnel.httpReady.start", {
+}): Effect.Effect<void, SshReadinessError, HttpClient.HttpClient> =>
+  waitForHttpReadyShared({
     baseUrl: input.baseUrl,
-    requestUrl,
-    timeoutMs,
-    intervalMs,
-    probeTimeoutMs,
-  });
-
-  const readinessClient = client.pipe(
-    HttpClient.filterStatusOk,
-    HttpClient.transform((effect) =>
-      Effect.gen(function* () {
-        attempt += 1;
-        const responseOption = yield* effect.pipe(
-          Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
-          Effect.mapError(
-            (cause) =>
-              new SshReadinessError({
-                message: `Backend readiness probe failed at ${requestUrl}.`,
-                cause,
-              }),
-          ),
-        );
-        return yield* Option.match(responseOption, {
-          onSome: Effect.succeed,
-          onNone: () =>
-            Effect.fail(
-              new SshReadinessError({
-                message: `Backend readiness probe exceeded ${probeTimeoutMs}ms at ${requestUrl}.`,
-                cause: {
-                  kind: "probe-timeout",
-                  attempt,
-                  probeTimeoutMs,
-                },
-              }),
-            ),
-        });
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof SshReadinessError
-            ? cause
-            : new SshReadinessError({
-                message: `Backend readiness probe failed at ${requestUrl}.`,
-                cause,
-              }),
-        ),
-        Effect.tapError((cause) =>
-          Ref.set(lastProbeFailure, {
-            attempt,
-            cause: describeReadinessCause(cause),
-          }),
-        ),
-      ),
-    ),
-    HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
-    HttpClient.retry(retryPolicy),
-  );
-
-  const result = yield* readinessClient.execute(HttpClientRequest.get(requestUrl)).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof SshReadinessError
-        ? cause
-        : new SshReadinessError({
-            message: `Backend readiness probe failed at ${requestUrl}.`,
+    ...(input.path === undefined ? {} : { path: input.path }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+    ...(input.intervalMs === undefined ? {} : { intervalMs: input.intervalMs }),
+    probeTimeoutMs: input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS,
+    makeError: ({ requestUrl, probeTimeoutMs, cause }) => {
+      if (typeof cause === "object" && cause !== null && "kind" in cause) {
+        const kind = (cause as { readonly kind?: unknown }).kind;
+        if (kind === "probe-timeout") {
+          return new SshReadinessError({
+            message: `Backend readiness probe exceeded ${probeTimeoutMs}ms at ${requestUrl}.`,
             cause,
-          }),
-    ),
-    Effect.timeoutOption(Duration.millis(timeoutMs)),
-  );
-
-  return yield* Option.match(result, {
-    onSome: () =>
-      Effect.logDebug("ssh.tunnel.httpReady.succeeded", {
-        baseUrl: input.baseUrl,
-        requestUrl,
-        attempts: attempt,
-      }),
-    onNone: () =>
-      Effect.gen(function* () {
-        const lastFailure = yield* Ref.get(lastProbeFailure);
-        yield* Effect.logWarning("ssh.tunnel.httpReady.timedOut", {
-          baseUrl: input.baseUrl,
-          requestUrl,
-          timeoutMs,
-          intervalMs,
-          probeTimeoutMs,
-          attempts: attempt,
-          lastFailure,
-        });
-        return yield* new SshReadinessError({
-          message: `Timed out waiting ${timeoutMs}ms for backend readiness at ${input.baseUrl}.`,
-          cause: lastFailure,
-        });
-      }),
+          });
+        }
+        if (kind === "overall-timeout") {
+          const overall = cause as unknown as {
+            readonly baseUrl: string;
+            readonly timeoutMs: number;
+            readonly lastFailure: unknown;
+          };
+          return new SshReadinessError({
+            message: `Timed out waiting ${overall.timeoutMs}ms for backend readiness at ${overall.baseUrl}.`,
+            cause: overall.lastFailure,
+          });
+        }
+      }
+      return new SshReadinessError({
+        message: `Backend readiness probe failed at ${requestUrl}.`,
+        cause,
+      });
+    },
   });
-});
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname
@@ -991,92 +890,27 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
-function resolveLoopbackSshHttpUrl(
-  rawHttpBaseUrl: unknown,
-  pathname: string,
-): Effect.Effect<URL, SshHttpBridgeError> {
-  return Effect.try({
-    try: () => {
-      if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
-        throw new Error("Invalid SSH forwarded http base URL.");
-      }
-      const baseUrl = new URL(rawHttpBaseUrl);
-      if (!isLoopbackHostname(baseUrl.hostname)) {
-        throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
-      }
-      const url = new URL(baseUrl.toString());
-      url.pathname = pathname;
-      url.search = "";
-      url.hash = "";
-      return url;
-    },
-    catch: (cause) =>
-      new SshHttpBridgeError({
-        message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
-        cause,
-      }),
-  });
-}
-
-export const fetchLoopbackSshJson = Effect.fn("ssh/tunnel.fetchLoopbackSshJson")(function* <
-  T,
->(input: {
-  readonly httpBaseUrl: unknown;
-  readonly pathname: string;
-  readonly method?: "GET" | "POST";
-  readonly bearerToken?: unknown;
-  readonly body?: unknown;
-}): Effect.fn.Return<T, SshHttpBridgeError, HttpClient.HttpClient> {
-  const requestUrl = yield* resolveLoopbackSshHttpUrl(input.httpBaseUrl, input.pathname);
-  const bearerToken =
-    typeof input.bearerToken === "string" && input.bearerToken.trim().length > 0
-      ? input.bearerToken
-      : null;
-
-  const request = (
-    input.method === "POST"
-      ? HttpClientRequest.post(requestUrl.toString())
-      : HttpClientRequest.get(requestUrl.toString())
-  ).pipe(
-    input.body === undefined ? (req) => req : HttpClientRequest.bodyJsonUnsafe(input.body),
-    bearerToken
-      ? HttpClientRequest.setHeader("authorization", `Bearer ${bearerToken}`)
-      : (req) => req,
-  );
-  const client = yield* HttpClient.HttpClient;
-  const response = yield* client.execute(request).pipe(
-    Effect.mapError(
-      (cause) =>
+export const resolveLoopbackSshHttpBaseUrl = Effect.fn("ssh/tunnel.resolveLoopbackSshHttpBaseUrl")(
+  function* (rawHttpBaseUrl: unknown): Effect.fn.Return<string, SshHttpBridgeError> {
+    return yield* Effect.try({
+      try: () => {
+        if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
+          throw new Error("Invalid SSH forwarded http base URL.");
+        }
+        const baseUrl = new URL(rawHttpBaseUrl);
+        if (!isLoopbackHostname(baseUrl.hostname)) {
+          throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
+        }
+        return baseUrl.toString();
+      },
+      catch: (cause) =>
         new SshHttpBridgeError({
-          message: `Failed to reach SSH forwarded endpoint ${requestUrl.toString()}.`,
+          message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
           cause,
         }),
-    ),
-  );
-  if (response.status < 200 || response.status >= 300) {
-    const text = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")));
-    const parsedError = yield* decodeRemoteHttpError(text).pipe(
-      Effect.catch(() => Effect.succeed(null)),
-    );
-    const message =
-      parsedError?.error && parsedError.error.trim().length > 0
-        ? parsedError.error
-        : text || `SSH forwarded request failed (${response.status}).`;
-    return yield* new SshHttpBridgeError({
-      status: response.status,
-      message: `[ssh_http:${response.status}] ${message} (${input.method ?? "GET"} ${requestUrl.toString()})`,
     });
-  }
-  return (yield* response.json.pipe(
-    Effect.mapError(
-      (cause) =>
-        new SshHttpBridgeError({
-          message: `SSH forwarded endpoint ${requestUrl.toString()} returned invalid JSON.`,
-          cause,
-        }),
-    ),
-  )) as T;
-});
+  },
+);
 
 const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(function* () {
   const net = yield* NetService.NetService;
@@ -1138,7 +972,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
-  const tunnelCommand = ["ssh", ...args];
+  const sshCommand = yield* resolveSshCommand;
+  const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
@@ -1151,9 +986,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make("ssh", args, {
+      ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
-        shell: process.platform === "win32",
+        extendEnv: true,
         stdin: {
           stream: Stream.empty,
           endOnDone: true,
@@ -1753,10 +1588,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
 });
 
+/**
+ * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,
   SshEnvironmentManagerShape
->()("@t3tools/ssh/SshEnvironmentManager") {
+>()("@t3tools/ssh/tunnel/SshEnvironmentManager") {
   static readonly layer = (options: SshEnvironmentManagerOptions = {}) =>
     Layer.effect(SshEnvironmentManager, makeSshEnvironmentManager(options));
 }

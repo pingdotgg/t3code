@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildBranchNamePrompt,
@@ -189,5 +189,17 @@ describe("normalizeCliError", () => {
 
     expect(result).toBeInstanceOf(TextGenerationError);
     expect(result.detail).toBe("fallback");
+  });
+
+  it("does not expose CLI failure details in the public error message", () => {
+    const result = normalizeCliError(
+      "codex",
+      "generateCommitMessage",
+      new Error("request failed with access_token=secret-token"),
+      "Failed to generate a commit message",
+    );
+
+    expect(result.detail).toBe("Failed to generate a commit message");
+    expect(result.message).not.toContain("secret-token");
   });
 });

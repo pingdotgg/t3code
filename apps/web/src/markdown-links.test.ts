@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveMarkdownFileLinkMeta,
@@ -83,6 +83,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
       ),
     ).toMatchObject({
       displayPath: "t3code/apps/web/src/session-logic.ts:501",
+      workspaceRelativePath: "apps/web/src/session-logic.ts",
     });
   });
 
@@ -95,6 +96,14 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toMatchObject({
       displayPath:
         "t3code/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+      workspaceRelativePath:
+        "apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+    });
+  });
+
+  it("does not create a preview path for files outside the workspace", () => {
+    expect(resolveMarkdownFileLinkMeta("/tmp/report.ts", "/repo/project")).toMatchObject({
+      workspaceRelativePath: null,
     });
   });
 

@@ -1,170 +1,57 @@
 import type {
-  EnvironmentId,
-  ModelSelection,
+  ChatImageAttachment as ContractChatImageAttachment,
+  OrchestrationCheckpointFile,
+  OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
-  OrchestrationProposedPlanId,
-  RepositoryIdentity,
-  OrchestrationSessionStatus,
-  OrchestrationThreadActivity,
+  OrchestrationMessage,
+  OrchestrationProposedPlan,
+  OrchestrationSession,
   ProjectScript as ContractProjectScript,
-  ThreadId,
-  ProjectId,
-  TurnId,
-  MessageId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
+import type {
+  EnvironmentProject,
+  EnvironmentThread,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
-export const DEFAULT_THREAD_TERMINAL_ID = "default";
+export const DEFAULT_THREAD_TERMINAL_ID = "term-1";
 export const MAX_TERMINALS_PER_GROUP = 4;
 export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
   id: string;
   terminalIds: string[];
+  splitDirection?: "horizontal" | "vertical";
 }
 
-export interface ChatImageAttachment {
-  type: "image";
-  id: string;
-  name: string;
-  mimeType: string;
-  sizeBytes: number;
-  previewUrl?: string;
+export interface ChatImageAttachment extends ContractChatImageAttachment {
+  readonly previewUrl?: string;
 }
 
 export type ChatAttachment = ChatImageAttachment;
 
-export interface ChatMessage {
-  id: MessageId;
-  role: "user" | "assistant" | "system";
-  text: string;
-  attachments?: ChatAttachment[];
-  turnId?: TurnId | null;
-  createdAt: string;
-  completedAt?: string | undefined;
-  streaming: boolean;
+export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
-export interface ProposedPlan {
-  id: OrchestrationProposedPlanId;
-  turnId: TurnId | null;
-  planMarkdown: string;
-  implementedAt: string | null;
-  implementationThreadId: ThreadId | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export type ProposedPlan = OrchestrationProposedPlan;
+export type TurnDiffFileChange = OrchestrationCheckpointFile;
+export type TurnDiffSummary = OrchestrationCheckpointSummary;
 
-export interface TurnDiffFileChange {
-  path: string;
-  kind?: string | undefined;
-  additions?: number | undefined;
-  deletions?: number | undefined;
-}
-
-export interface TurnDiffSummary {
-  turnId: TurnId;
-  completedAt: string;
-  status?: string | undefined;
-  files: TurnDiffFileChange[];
-  checkpointRef?: CheckpointRef | undefined;
-  assistantMessageId?: MessageId | undefined;
-  checkpointTurnCount?: number | undefined;
-}
-
-export interface Project {
-  id: ProjectId;
-  environmentId: EnvironmentId;
-  name: string;
-  cwd: string;
-  repositoryIdentity?: RepositoryIdentity | null;
-  defaultModelSelection: ModelSelection | null;
-  createdAt?: string | undefined;
-  updatedAt?: string | undefined;
-  scripts: ProjectScript[];
-}
-
-export interface Thread {
-  id: ThreadId;
-  environmentId: EnvironmentId;
-  codexThreadId: string | null;
-  projectId: ProjectId;
-  title: string;
-  modelSelection: ModelSelection;
-  runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
-  session: ThreadSession | null;
-  messages: ChatMessage[];
-  proposedPlans: ProposedPlan[];
-  error: string | null;
-  createdAt: string;
-  archivedAt: string | null;
-  updatedAt?: string | undefined;
-  latestTurn: OrchestrationLatestTurn | null;
-  pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
-  branch: string | null;
-  worktreePath: string | null;
-  turnDiffSummaries: TurnDiffSummary[];
-  activities: OrchestrationThreadActivity[];
-}
-
-export interface ThreadShell {
-  id: ThreadId;
-  environmentId: EnvironmentId;
-  codexThreadId: string | null;
-  projectId: ProjectId;
-  title: string;
-  modelSelection: ModelSelection;
-  runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
-  error: string | null;
-  createdAt: string;
-  archivedAt: string | null;
-  updatedAt?: string | undefined;
-  branch: string | null;
-  worktreePath: string | null;
-}
+export type Project = EnvironmentProject;
+export type Thread = EnvironmentThread;
+export type ThreadShell = EnvironmentThreadShell;
 
 export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
-  pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
 }
 
-export interface SidebarThreadSummary {
-  id: ThreadId;
-  environmentId: EnvironmentId;
-  projectId: ProjectId;
-  title: string;
-  interactionMode: ProviderInteractionMode;
-  session: ThreadSession | null;
-  createdAt: string;
-  archivedAt: string | null;
-  updatedAt?: string | undefined;
-  latestTurn: OrchestrationLatestTurn | null;
-  branch: string | null;
-  worktreePath: string | null;
-  latestUserMessageAt: string | null;
-  hasPendingApprovals: boolean;
-  hasPendingUserInput: boolean;
-  hasActionableProposedPlan: boolean;
-}
-
-export interface ThreadSession {
-  provider: ProviderDriverKind;
-  providerInstanceId?: ProviderInstanceId | undefined;
-  status: SessionPhase | "error" | "closed";
-  activeTurnId?: TurnId | undefined;
-  createdAt: string;
-  updatedAt: string;
-  lastError?: string;
-  orchestrationStatus: OrchestrationSessionStatus;
-}
+export type SidebarThreadSummary = EnvironmentThreadShell;
+export type ThreadSession = OrchestrationSession;

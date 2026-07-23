@@ -44,14 +44,20 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
   };
 });
 
+type ChildProcessTerminationHandle = Pick<
+  ChildProcessSpawner.ChildProcessHandle,
+  "exitCode" | "pid"
+>;
+
 export const makeTerminationError = (
-  handle: ChildProcessSpawner.ChildProcessHandle,
+  handle: ChildProcessTerminationHandle,
 ): Effect.Effect<CodexError.CodexAppServerError> =>
   Effect.match(handle.exitCode, {
     onFailure: (cause) =>
       new CodexError.CodexAppServerTransportError({
-        detail: "Failed to determine Codex App Server process exit status",
+        operation: "read-process-exit-status",
+        pid: handle.pid,
         cause,
       }),
-    onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code }),
+    onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code, pid: handle.pid }),
   });

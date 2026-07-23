@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
@@ -17,8 +16,17 @@ import {
 } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-import rootPackageJson from "../../../package.json" with { type: "json" };
+import { fromYaml } from "@t3tools/shared/schemaYaml";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import serverPackageJson from "../package.json" with { type: "json" };
+import {
+  ServerCliBuildAssetMissingError,
+  ServerCliCommandExitError,
+  ServerCliDevelopmentIconSourceMissingError,
+  ServerCliDevelopmentIconTargetMissingError,
+  ServerCliPublishIconSourceMissingError,
+  ServerCliPublishIconTargetMissingError,
+} from "./cliErrors.ts";
 
 interface PackageJson {
   name: string;
@@ -39,23 +47,36 @@ interface PackageJson {
 const PackageJsonPrettyJson = fromJsonStringPretty(Schema.Unknown);
 const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
-class CliError extends Data.TaggedError("CliError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+const WorkspaceConfig = Schema.Struct({
+  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+type WorkspaceConfig = typeof WorkspaceConfig.Type;
+const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
 );
 
-const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {
+const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const repoRoot = yield* RepoRoot;
+  const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
+  return yield* decodeWorkspaceConfig(workspaceYaml);
+});
+
+const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.StandardCommand) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(command);
   const exitCode = yield* child.exitCode;
 
   if (exitCode !== 0) {
-    return yield* new CliError({
-      message: `Command exited with non-zero exit code (${exitCode})`,
+    return yield* new ServerCliCommandExitError({
+      command: command.command,
+      args: command.args,
+      cwd: command.options.cwd,
+      exitCode,
     });
   }
 });
@@ -79,14 +100,10 @@ const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(functio
     const backupPath = `${targetPath}.publish-bak`;
 
     if (!(yield* fs.exists(sourcePath))) {
-      return yield* new CliError({
-        message: `Missing publish icon source: ${sourcePath}`,
-      });
+      return yield* new ServerCliPublishIconSourceMissingError({ sourcePath });
     }
     if (!(yield* fs.exists(targetPath))) {
-      return yield* new CliError({
-        message: `Missing publish icon target: ${targetPath}. Run the build subcommand first.`,
-      });
+      return yield* new ServerCliPublishIconTargetMissingError({ targetPath });
     }
 
     yield* fs.copyFile(targetPath, backupPath);
@@ -122,14 +139,10 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
     const targetPath = path.join(serverDir, override.targetRelativePath);
 
     if (!(yield* fs.exists(sourcePath))) {
-      return yield* new CliError({
-        message: `Missing development icon source: ${sourcePath}`,
-      });
+      return yield* new ServerCliDevelopmentIconSourceMissingError({ sourcePath });
     }
     if (!(yield* fs.exists(targetPath))) {
-      return yield* new CliError({
-        message: `Missing development icon target: ${targetPath}. Build web first.`,
-      });
+      return yield* new ServerCliDevelopmentIconTargetMissingError({ targetPath });
     }
 
     yield* fs.copyFile(sourcePath, targetPath);
@@ -160,8 +173,7 @@ const buildCmd = Command.make(
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve `.cmd` shims on PATH.
-          shell: process.platform === "win32",
+          shell: false,
         }),
       );
 
@@ -181,6 +193,31 @@ const buildCmd = Command.make(
 // ---------------------------------------------------------------------------
 // publish subcommand
 // ---------------------------------------------------------------------------
+
+interface PublishCommandConfig {
+  readonly access: string;
+  readonly tag: string;
+  readonly provenance: boolean;
+  readonly dryRun: boolean;
+}
+
+const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
+  const args = [
+    "publish",
+    "--filter",
+    "t3",
+    "--access",
+    config.access,
+    "--tag",
+    config.tag,
+    "--no-git-checks",
+  ];
+
+  if (config.provenance) args.push("--provenance");
+  if (config.dryRun) args.push("--dry-run");
+
+  return args;
+};
 
 const publishCmd = Command.make(
   "publish",
@@ -205,9 +242,7 @@ const publishCmd = Command.make(
       for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {
-          return yield* new CliError({
-            message: `Missing build asset: ${abs}. Run the build subcommand first.`,
-          });
+          return yield* new ServerCliBuildAssetMissingError({ assetPath: abs });
         }
       }
 
@@ -215,6 +250,9 @@ const publishCmd = Command.make(
         // Acquire: backup package.json, resolve catalog dependencies, and strip devDependencies/scripts
         Effect.gen(function* () {
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+          const workspaceConfig = yield* readWorkspaceConfig();
+          const workspaceCatalog = workspaceConfig.catalog ?? {};
+          const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
             name: serverPackageJson.name,
             repository: serverPackageJson.repository,
@@ -225,12 +263,12 @@ const publishCmd = Command.make(
             files: serverPackageJson.files,
             dependencies: resolveCatalogDependencies(
               serverPackageJson.dependencies,
-              rootPackageJson.workspaces.catalog,
+              workspaceCatalog,
               "apps/server",
             ),
             overrides: resolveCatalogDependencies(
-              rootPackageJson.overrides,
-              rootPackageJson.workspaces.catalog,
+              workspaceOverrides,
+              workspaceCatalog,
               "apps/server",
             ),
           };
@@ -244,21 +282,20 @@ const publishCmd = Command.make(
           const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
           return { iconBackups };
         }),
-        // Use: npm publish
+        // Use: pnpm publish from the workspace root so pnpm-only workspace
+        // config, including override selectors, is interpreted correctly.
         () =>
           Effect.gen(function* () {
-            const args = ["publish", "--access", config.access, "--tag", config.tag];
-            if (config.provenance) args.push("--provenance");
-            if (config.dryRun) args.push("--dry-run");
+            const args = createVpPmPublishArgs(config);
+            const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
 
-            yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+            yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
             yield* runCommand(
-              ChildProcess.make("npm", [...args], {
-                cwd: serverDir,
+              ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+                cwd: repoRoot,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
-                // Windows needs shell mode to resolve .cmd shims.
-                shell: process.platform === "win32",
+                shell: spawnCommand.shell,
               }),
             );
           }),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   selectionTouchesMentionBoundary,
@@ -10,7 +10,7 @@ describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md please")).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "mention", path: "AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
@@ -22,10 +22,93 @@ describe("splitPromptIntoComposerSegments", () => {
   });
 
   it("keeps newlines around mention tokens", () => {
-    expect(splitPromptIntoComposerSegments("one\n@src/index.ts \ntwo")).toEqual([
+    expect(splitPromptIntoComposerSegments("one\n@AGENTS.md \ntwo")).toEqual([
       { type: "text", text: "one\n" },
-      { type: "mention", path: "src/index.ts" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " \ntwo" },
+    ]);
+  });
+
+  it("splits quoted mention tokens containing whitespace", () => {
+    expect(splitPromptIntoComposerSegments('Inspect @"My File.md" please')).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "mention", path: "My File.md", source: '@"My File.md"' },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("unescapes quoted mention token content", () => {
+    expect(splitPromptIntoComposerSegments('Inspect @"docs/My \\"File\\".md" please')).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: 'docs/My "File".md',
+        source: '@"docs/My \\"File\\".md"',
+      },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("splits generated markdown file links into mention segments", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "Inspect [package.json](path/to/package.json) before continuing",
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: "path/to/package.json",
+        source: "[package.json](path/to/package.json)",
+      },
+      { type: "text", text: " before continuing" },
+    ]);
+  });
+
+  it("does not turn normal web links into file mention segments", () => {
+    expect(
+      splitPromptIntoComposerSegments("Read [the docs](https://example.com/docs) first"),
+    ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
+  });
+
+  it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
+    "does not turn scoped package reference %s into file mention segments",
+    (reference) => {
+      const prompt = `Install ${reference} next`;
+      expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+    },
+  );
+
+  it("keeps IME-composed text containing a scoped package reference as text", () => {
+    const prompt = "入力 @expo/ui　を追加";
+    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+  });
+
+  it("turns canonical scoped folder links into file mention segments", () => {
+    expect(splitPromptIntoComposerSegments("Inspect [sub](@scope/pkg/sub) next")).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: "@scope/pkg/sub",
+        source: "[sub](@scope/pkg/sub)",
+      },
+      { type: "text", text: " next" },
+    ]);
+  });
+
+  it("decodes reserved path characters from generated links", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "Inspect [config#draft?.json](config%23draft%3F.json) before continuing",
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: "config#draft?.json",
+        source: "[config#draft?.json](config%23draft%3F.json)",
+      },
+      { type: "text", text: " before continuing" },
     ]);
   });
 
@@ -51,7 +134,7 @@ describe("splitPromptIntoComposerSegments", () => {
     ).toEqual([
       { type: "text", text: "Inspect " },
       { type: "terminal-context", context: null },
-      { type: "mention", path: "AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
@@ -78,7 +161,7 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "terminal-context", context: null },
       { type: "skill", name: "review-follow-up" },
       { type: "text", text: " after " },
-      { type: "mention", path: "AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " " },
     ]);
   });
@@ -121,6 +204,27 @@ describe("selectionTouchesMentionBoundary", () => {
       selectionTouchesMentionBoundary(
         prompt,
         `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md`.length,
+        prompt.length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when selection includes whitespace after a quoted mention", () => {
+    expect(
+      selectionTouchesMentionBoundary(
+        'hi @"My File.md" there',
+        'hi @"My File.md"'.length,
+        'hi @"My File.md" there'.length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when selection includes whitespace after a markdown file link", () => {
+    const prompt = "hi [package.json](path/to/package.json) there";
+    expect(
+      selectionTouchesMentionBoundary(
+        prompt,
+        "hi [package.json](path/to/package.json)".length,
         prompt.length,
       ),
     ).toBe(true);

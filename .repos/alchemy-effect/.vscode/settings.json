@@ -1,0 +1,65 @@
+{
+  "diffEditor.renderSideBySide": false,
+  "js/ts.experimental.useTsgo": true,
+  "typescript.experimental.useTsgo": true,
+  "typescript.tsdk": "node_modules/@typescript/native-preview/lib",
+  "typescript.native-preview.tsdk": "node_modules/@typescript/native-preview/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.preferences.importModuleSpecifierEnding": "js",
+  "oxc.enable": true,
+  "oxc.lint.run": "onSave",
+  "json.schemaDownload.enable": true,
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.codeLens": false,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+  "editor.inlayHints.enabled": "offUnlessPressed",
+  "editor.tabSize": 2,
+  "editor.indentSize": 2,
+  "editor.insertSpaces": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[markdown]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "[mdx]": {
+    "editor.defaultFormatter": null,
+    "editor.formatOnSave": false
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "packages/alchemy/bin/**/*.js*": true,
+    "packages/alchemy/bin/**/*.d*": true
+  },
+  "[typescript]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[javascript]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[javascriptreact]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "oxc.enable.oxfmt": true
+}

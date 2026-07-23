@@ -1,5 +1,11 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type KeybindingCommand,
+  type FilesystemBrowseEntry,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -50,6 +56,18 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
+export function enumerateCommandPaletteItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+): CommandPaletteActionItem[] {
+  return items.map((item, index) => {
+    const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[index];
+    if (shortcutCommand) return { ...item, shortcutCommand };
+
+    const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
+    return itemWithoutShortcut;
+  });
+}
+
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 export function filterBrowseEntries(input: {
@@ -93,14 +111,16 @@ export function buildProjectActionItems(input: {
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
   runProject: (project: Project) => Promise<void>;
+  shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.name, project.cwd],
-    title: project.name,
-    description: project.cwd,
+    searchTerms: [project.title, project.workspaceRoot],
+    title: project.title,
+    description: project.workspaceRoot,
     icon: input.icon(project),
+    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
       await input.runProject(project);
     },
@@ -111,7 +131,7 @@ export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
   "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
 > & {
-  updatedAt?: string | undefined;
+  updatedAt: string;
   latestUserMessageAt?: string | null;
 };
 
@@ -252,23 +272,18 @@ export function filterCommandPaletteGroups(input: {
   }
 
   return searchableGroups.flatMap((group) => {
-    const items = group.items
-      .map((item, index) => {
-        const haystack = normalizeSearchText(item.searchTerms.join(" "));
-        if (!haystack.includes(normalizedQuery)) {
-          return null;
-        }
+    const items = Arr.filterMap(group.items, (item, index) => {
+      const haystack = normalizeSearchText(item.searchTerms.join(" "));
+      if (!haystack.includes(normalizedQuery)) {
+        return Result.failVoid;
+      }
 
-        return {
-          item,
-          index,
-          rank: rankCommandPaletteItemMatch(item, normalizedQuery),
-        };
-      })
-      .filter(
-        (entry): entry is { item: (typeof group.items)[number]; index: number; rank: number } =>
-          entry !== null,
-      )
+      return Result.succeed({
+        item,
+        index,
+        rank: rankCommandPaletteItemMatch(item, normalizedQuery),
+      });
+    })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
       .map((entry) => entry.item);
 

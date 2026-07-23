@@ -4,7 +4,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -17,7 +19,7 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-const mockRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
+const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
 const supportLayer = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
@@ -64,6 +66,7 @@ describe("AzureDevOpsCli.layer", () => {
 
       assert.strictEqual(result.number, 42);
       assert.strictEqual(result.title, "Add Azure provider");
+      assert.strictEqual(result.url, "https://dev.azure.com/acme/project/_git/repo/pullrequest/42");
       assert.strictEqual(result.baseRefName, "main");
       assert.strictEqual(result.headRefName, "feature/source-control");
       assert.strictEqual(result.state, "open");
@@ -86,6 +89,43 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("builds a web URL when Azure returns only the pull request REST URL", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              pullRequestId: 863,
+              title: "Fix Azure link",
+              url: "https://dev.azure.com/saplyai/a8fe4088-ad76-4eda-aaaa-e3329713a097/_apis/git/repositories/16108a25-93a3-4eff-b77d-85e894ee0fe4/pullRequests/863",
+              repository: {
+                name: "CV-engine",
+                project: {
+                  name: "CV-engine",
+                },
+              },
+              sourceRefName: "refs/heads/feature/azure-pr-link",
+              targetRefName: "refs/heads/main",
+              status: "active",
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getPullRequest({
+        cwd: "/repo",
+        reference: "863",
+      });
+
+      assert.strictEqual(
+        result.url,
+        "https://dev.azure.com/saplyai/CV-engine/_git/CV-engine/pullrequest/863",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -289,6 +329,80 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("preserves VCS causes without copying upstream details into messages", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "AzureDevOpsCli.execute",
+        command: "az repos list --organization sensitive-upstream-detail",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "sensitive-upstream-detail",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["repos", "list"] }).pipe(Effect.flip);
+
+      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCommandFailedError);
+      assert.strictEqual(error.operation, "execute");
+      assert.strictEqual(error.command, "az");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.argumentCount, 2);
+      assert.strictEqual(error.detail, "Azure DevOps CLI command failed.");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes("sensitive-upstream-detail"), false);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("does not report a missing working directory as a missing Azure CLI", () =>
+    Effect.gen(function* () {
+      const cwd = "/missing/repo";
+      const platformCause = PlatformError.systemError({
+        _tag: "NotFound",
+        module: "ChildProcess",
+        method: "spawn",
+        syscall: "chdir",
+        pathOrDescriptor: cwd,
+      });
+      const cause = new VcsProcessSpawnError({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        cwd,
+        argumentCount: 2,
+        cause: platformCause,
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd, args: ["repos", "list"] }).pipe(Effect.flip);
+
+      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCommandFailedError);
+      assert.strictEqual(error.cwd, cwd);
+      assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps invalid pull request output diagnostics structured", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not-json")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.getPullRequest({ cwd: "/repo", reference: "42" }).pipe(Effect.flip);
+
+      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsPullRequestDecodeError);
+      assert.strictEqual(error.operation, "getPullRequest");
+      assert.strictEqual(error.command, "az");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.outputLength, 8);
+      assert.strictEqual(error.detail, "Azure DevOps CLI returned invalid pull request JSON.");
+      assert.exists(error.cause);
+      assert.strictEqual(
+        error.message,
+        "Azure DevOps CLI failed in getPullRequest: Azure DevOps CLI returned invalid pull request JSON.",
+      );
     }).pipe(Effect.provide(layer)),
   );
 });

@@ -1,0 +1,43 @@
+---
+const cf = "#F38020";
+const aws = "#FF9900";
+const ps = "#56C7B7";
+---
+
+<svg viewBox="0 0 280 130" width="100%" height="100%" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+  <!-- Cloudflare tile -->
+  <g transform="translate(28 28)">
+    <rect width="64" height="64" rx="12" fill="rgba(243, 128, 32, 0.10)" stroke={cf} stroke-width="1.4" />
+    <!-- minimal cloud -->
+    <path d="M16 42 C12 42, 12 36, 16 36 C18 28, 32 28, 34 36 C42 36, 44 44, 36 44 L18 44 Z" fill={cf} opacity="0.85" />
+    <text x="32" y="58" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-2)">Cloudflare</text>
+  </g>
+
+  <!-- AWS tile -->
+  <g transform="translate(108 28)">
+    <rect width="64" height="64" rx="12" fill="rgba(255, 153, 0, 0.10)" stroke={aws} stroke-width="1.4" />
+    <!-- minimal AWS cube glyph -->
+    <path d="M22 28 L42 28 L42 44 L32 50 L22 44 Z" fill="none" stroke={aws} stroke-width="1.6" stroke-linejoin="round" />
+    <path d="M22 28 L32 34 L42 28 M32 34 L32 50" stroke={aws} stroke-width="1.6" fill="none" />
+    <text x="32" y="58" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-2)">AWS</text>
+  </g>
+
+  <!-- Planetscale tile (faded — coming soon) -->
+  <g transform="translate(188 28)" opacity="0.55">
+    <rect width="64" height="64" rx="12" fill="rgba(86, 199, 183, 0.10)" stroke={ps} stroke-width="1.4" stroke-dasharray="3 3" />
+    <circle cx="32" cy="32" r="14" fill="none" stroke={ps} stroke-width="1.4" />
+    <path d="M32 18 A14 14 0 0 1 46 32 L32 32 Z" fill={ps} opacity="0.8" />
+    <text x="32" y="58" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-2)">Planetscale</text>
+  </g>
+
+  <!-- coming soon badge -->
+  <g transform="translate(188 12)">
+    <rect width="64" height="14" rx="7" fill="var(--alc-bg-elev-1)" stroke={ps} stroke-width="1" />
+    <text x="32" y="10" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="8" fill={ps} font-weight="700" letter-spacing="1.2">SOON</text>
+  </g>
+
+  <!-- caption -->
+  <text x="140" y="118" text-anchor="middle" font-family="var(--alc-font-hand)" font-size="13" fill="var(--alc-accent-deep)" font-style="italic">
+    deploy any cloud
+  </text>
+</svg>

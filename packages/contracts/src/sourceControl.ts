@@ -155,8 +155,12 @@ export class SourceControlProviderError extends Schema.TaggedErrorClass<SourceCo
   {
     provider: SourceControlProviderKind,
     operation: Schema.String,
+    cwd: Schema.String,
+    command: Schema.optional(Schema.String),
+    repository: Schema.optional(Schema.String),
+    reference: Schema.optional(Schema.String),
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -170,7 +174,7 @@ export class SourceControlRepositoryError extends Schema.TaggedErrorClass<Source
     provider: SourceControlProviderKind,
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

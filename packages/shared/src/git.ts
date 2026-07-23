@@ -6,12 +6,18 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+// Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
+// via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
+// that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
+// eligible for branch regeneration without loosening beyond what was ever generated.
+const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
+);
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
@@ -86,8 +92,15 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  const token = Effect.runSync(Random.nextUUIDv4).replace(/-/g, "").slice(0, 8).toLowerCase();
+export function buildTemporaryWorktreeBranchName(
+  randomHex: (byteLength: number) => string,
+): string {
+  // Normalize to exactly 8 lowercase hex chars so a UUID-shaped callback
+  // still produces the canonical temporary branch form.
+  const token = randomHex(4)
+    .toLowerCase()
+    .replace(/[^0-9a-f]/g, "")
+    .slice(0, 8);
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
@@ -172,7 +185,9 @@ export function dedupeRemoteBranchesWithLocalMatches(
   refs: ReadonlyArray<VcsRef>,
 ): ReadonlyArray<VcsRef> {
   const localBranchNames = new Set(
-    refs.filter((refName) => !refName.isRemote).map((refName) => refName.name),
+    Arr.filterMap(refs, (refName) =>
+      refName.isRemote ? Result.failVoid : Result.succeed(refName.name),
+    ),
   );
 
   return refs.filter((refName) => {

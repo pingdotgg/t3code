@@ -7,12 +7,12 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
-import { expect } from "vitest";
+import { expect } from "vite-plus/test";
 
 import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -21,7 +21,7 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
   "gpt-5.4-mini",
 );
 
-const CodexTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const CodexTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-codex-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -32,9 +32,11 @@ function makeFakeCodexBinary(
     exitCode?: number;
     stderr?: string;
     requireImage?: boolean;
-    requireFastServiceTier?: boolean;
+    requireServiceTier?: string;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
+    requireArg?: string;
+    forbidArg?: string;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
   },
@@ -50,9 +52,10 @@ function makeFakeCodexBinary(
       codexPath,
       [
         "#!/bin/sh",
+        'original_args="$*"',
         'output_path=""',
         'seen_image="0"',
-        'seen_fast_service_tier="0"',
+        'seen_service_tier=""',
         'seen_reasoning_effort=""',
         "while [ $# -gt 0 ]; do",
         '  if [ "$1" = "--image" ]; then',
@@ -65,9 +68,11 @@ function makeFakeCodexBinary(
         "  fi",
         '  if [ "$1" = "--config" ]; then',
         "    shift",
-        '    if [ "$1" = "service_tier=\\"fast\\"" ]; then',
-        '      seen_fast_service_tier="1"',
-        "    fi",
+        '    case "$1" in',
+        "      service_tier=*)",
+        '        seen_service_tier="$1"',
+        "        ;;",
+        "    esac",
         '    case "$1" in',
         "      model_reasoning_effort=*)",
         '        seen_reasoning_effort="$1"',
@@ -85,6 +90,22 @@ function makeFakeCodexBinary(
         "  shift",
         "done",
         'stdin_content="$(cat)"',
+        ...(input.requireArg !== undefined
+          ? [
+              `case " $original_args " in *" ${input.requireArg} "*) ;; *)`,
+              `  printf "%s\\n" "missing arg: ${input.requireArg}" >&2`,
+              `  exit 8`,
+              "esac",
+            ]
+          : []),
+        ...(input.forbidArg !== undefined
+          ? [
+              `case " $original_args " in *" ${input.forbidArg} "*)`,
+              `  printf "%s\\n" "forbidden arg: ${input.forbidArg}" >&2`,
+              `  exit 9`,
+              "esac",
+            ]
+          : []),
         ...(input.requireImage
           ? [
               'if [ "$seen_image" != "1" ]; then',
@@ -93,10 +114,10 @@ function makeFakeCodexBinary(
               "fi",
             ]
           : []),
-        ...(input.requireFastServiceTier
+        ...(input.requireServiceTier
           ? [
-              'if [ "$seen_fast_service_tier" != "1" ]; then',
-              '  printf "%s\\n" "missing fast service tier config" >&2',
+              `if [ "$seen_service_tier" != "service_tier=\\"${input.requireServiceTier}\\"" ]; then`,
+              '  printf "%s\\n" "unexpected service tier config: $seen_service_tier" >&2',
               `  exit 5`,
               "fi",
             ]
@@ -161,20 +182,24 @@ function withFakeCodexEnv<A, E, R>(
     exitCode?: number;
     stderr?: string;
     requireImage?: boolean;
-    requireFastServiceTier?: boolean;
+    requireServiceTier?: string;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
+    requireArg?: string;
+    forbidArg?: string;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    launchArgs?: string;
+    environment?: NodeJS.ProcessEnv;
   },
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
-    const config = decodeCodexSettings({ binaryPath: codexPath });
-    const textGeneration = yield* makeCodexTextGeneration(config);
+    const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
+    const textGeneration = yield* makeCodexTextGeneration(config, input.environment);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -209,7 +234,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
   );
 
   it.effect(
-    "forwards codex fast mode and non-default reasoning effort into codex exec config",
+    "forwards codex service tier and non-default reasoning effort into codex exec config",
     () =>
       withFakeCodexEnv(
         {
@@ -217,7 +242,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             subject: "Add important change",
             body: "",
           }),
-          requireFastServiceTier: true,
+          requireServiceTier: "priority",
           requireReasoningEffort: "xhigh",
           stdinMustNotContain: "branch must be a short semantic git branch fragment",
         },
@@ -229,10 +254,55 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             stagedPatch: "diff --git a/README.md b/README.md",
             modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
               { id: "reasoningEffort", value: "xhigh" },
-              { id: "fastMode", value: true },
+              { id: "serviceTier", value: "priority" },
             ]),
           }),
       ),
+  );
+
+  it.effect("passes exec-safe launch args into codex exec", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+        }),
+        launchArgs: "--strict-config --listen off",
+        requireArg: "--strict-config",
+        forbidArg: "--listen",
+      },
+      (textGeneration) =>
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+    ),
+  );
+
+  it.effect("uses T3CODE_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+        }),
+        launchArgs: "--enable settings-feature",
+        environment: { T3CODE_CODEX_LAUNCH_ARGS: " --strict-config --listen off " },
+        requireArg: "--strict-config",
+        forbidArg: "settings-feature",
+      },
+      (textGeneration) =>
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+    ),
   );
 
   it.effect("defaults git text generation codex effort to low", () =>
@@ -425,7 +495,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const attachmentId = "thread-branch-image-attachment";
           const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
@@ -463,7 +533,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const attachmentId = "thread-1-attachment";
           const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
@@ -512,7 +582,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const missingAttachmentId = "thread-missing-attachment";
           const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
           yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));

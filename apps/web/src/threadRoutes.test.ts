@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { describe, expect, it } from "vite-plus/test";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { DraftId } from "./composerDraftStore";
 
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
+  resolveActiveThreadRouteRef,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "./threadRoutes";
@@ -63,5 +64,32 @@ describe("threadRoutes", () => {
       kind: "draft",
       draftId: "draft-1",
     });
+  });
+
+  it("resolves the backing thread while a draft route is being promoted", () => {
+    const target = resolveThreadRouteTarget({ draftId: "draft-1" });
+
+    expect(
+      resolveActiveThreadRouteRef(target, {
+        environmentId: "env-1" as never,
+        threadId: ThreadId.make("draft-thread"),
+        promotedTo: scopeThreadRef("env-2" as never, ThreadId.make("server-thread")),
+      }),
+    ).toEqual({
+      environmentId: "env-2",
+      threadId: "server-thread",
+    });
+  });
+
+  it("does not treat a draft's reserved thread ref as an active sidebar thread", () => {
+    const target = resolveThreadRouteTarget({ draftId: "draft-1" });
+
+    expect(
+      resolveActiveThreadRouteRef(target, {
+        environmentId: "env-1" as never,
+        threadId: ThreadId.make("draft-thread"),
+        promotedTo: null,
+      }),
+    ).toBeNull();
   });
 });

@@ -5,19 +5,17 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
-import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
-
-function providerError(
-  operation: string,
-  cause: GitLabCli.GitLabCliError,
-): SourceControlProviderError {
-  return new SourceControlProviderError({
-    provider: "gitlab",
-    operation,
-    detail: cause.detail,
-    cause,
-  });
-}
+import {
+  combinedAuthOutput,
+  firstSafeAuthLine,
+  matchFirst,
+  parseCliHost,
+  providerAuth,
+  type SourceControlAuthProbeInput,
+  type SourceControlCliDiscoverySpec,
+  type SourceControlUnknownRemoteRefinementInput,
+} from "./SourceControlProviderDiscovery.ts";
+import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
 function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRequest {
   return {
@@ -41,36 +39,52 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
   };
 }
 
-function parseGitLabAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
-  const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
-  const account = SourceControlProviderDiscovery.matchFirst(output, [
-    /Logged in to .* as\s+([^\s(]+)/iu,
-    /Logged in to .* account\s+([^\s(]+)/iu,
-    /account:\s*([^\s(]+)/iu,
-  ]);
-  const host = SourceControlProviderDiscovery.parseCliHost(output);
+function parseGitLabAuth(input: SourceControlAuthProbeInput) {
+  const output = combinedAuthOutput(input);
+  const authenticatedHost = findAuthenticatedGitLabHost(parseGitLabAuthStatusHosts(output));
+  const account =
+    authenticatedHost?.account ??
+    matchFirst(output, [
+      /Logged in to .* as\s+([^\s(]+)/iu,
+      /Logged in to .* account\s+([^\s(]+)/iu,
+      /account:\s*([^\s(]+)/iu,
+    ]);
+  const host = authenticatedHost?.host ?? parseCliHost(output);
+
+  if (account) {
+    return providerAuth({ status: "authenticated", account, host });
+  }
 
   if (input.exitCode !== 0) {
-    return SourceControlProviderDiscovery.providerAuth({
+    return providerAuth({
       status: "unauthenticated",
       host,
-      detail:
-        SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
-        "Run `glab auth login` to authenticate GitLab CLI.",
+      detail: firstSafeAuthLine(output) ?? "Run `glab auth login` to authenticate GitLab CLI.",
     });
   }
 
-  if (account) {
-    return SourceControlProviderDiscovery.providerAuth({ status: "authenticated", account, host });
-  }
-
-  return SourceControlProviderDiscovery.providerAuth({
+  return providerAuth({
     status: "unknown",
     host,
-    detail:
-      SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
-      "GitLab CLI auth status could not be parsed.",
+    detail: firstSafeAuthLine(output) ?? "GitLab CLI auth status could not be parsed.",
   });
+}
+
+function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
+  const host = input.context.provider.name.toLowerCase();
+  const authenticated = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).some(
+    (entry) => entry.account !== null && entry.host === host,
+  );
+
+  if (!authenticated) {
+    return null;
+  }
+
+  return {
+    kind: "gitlab",
+    name: "GitLab Self-Hosted",
+    baseUrl: input.context.provider.baseUrl,
+  } as const;
 }
 
 export const discovery = {
@@ -81,11 +95,12 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: parseGitLabAuth,
+  refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
-} satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
+} satisfies SourceControlCliDiscoverySpec;
 
-export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
+export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 
   return SourceControlProvider.SourceControlProvider.of({
@@ -102,13 +117,39 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError((error) => providerError("listChangeRequests", error)),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "gitlab",
+                operation: "listChangeRequests",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.headSelector,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         );
     },
     getChangeRequest: (input) =>
       gitlab.getMergeRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError((error) => providerError("getChangeRequest", error)),
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "getChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
       ),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -122,25 +163,89 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
           title: input.title,
           bodyFile: input.bodyFile,
         })
-        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error)));
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "gitlab",
+                operation: "createChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.headSelector,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
     },
     getRepositoryCloneUrls: (input) =>
-      gitlab
-        .getRepositoryCloneUrls(input)
-        .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+      gitlab.getRepositoryCloneUrls(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "getRepositoryCloneUrls",
+              command: error.command,
+              cwd: input.cwd,
+              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.repository,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     createRepository: (input) =>
-      gitlab
-        .createRepository(input)
-        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
+      gitlab.createRepository(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "createRepository",
+              command: error.command,
+              cwd: input.cwd,
+              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.repository,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     getDefaultBranch: (input) =>
-      gitlab
-        .getDefaultBranch(input)
-        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error))),
+      gitlab.getDefaultBranch(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "getDefaultBranch",
+              command: error.command,
+              cwd: input.cwd,
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     checkoutChangeRequest: (input) =>
-      gitlab
-        .checkoutMergeRequest(input)
-        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
+      gitlab.checkoutMergeRequest(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "checkoutChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
   });
 });
 
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make());
+export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);

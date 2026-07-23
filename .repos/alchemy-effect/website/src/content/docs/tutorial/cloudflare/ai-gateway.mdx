@@ -1,0 +1,275 @@
+---
+title: Add an AI Gateway
+description: Wire an AI Gateway into your Worker, turn it into a typed Effect LanguageModel, and run generations and streams through Workers AI with caching, rate limiting, and logs.
+sidebar:
+  order: 6
+---
+
+You've now wired Durable Objects, hibernatable WebSockets, a
+container, and a Workflow into your Worker. The last piece in the
+Cloudflare track is an **AI Gateway** — a stable account-scoped
+endpoint that fronts every model provider (Workers AI, OpenAI,
+Anthropic, Bedrock, …) and gives you caching, rate limiting, retries,
+DLP, and a single dashboard of every request, token, and cost.
+
+In Alchemy the gateway is a single resource. Once you've declared and
+bound it, `.model({...})` returns an Effect `LanguageModel.LanguageModel`
+Layer — and from there you're using the same `generateText` /
+`streamText` APIs you'd use against any other provider.
+
+## Declare the gateway
+
+Create `src/AiGateway.ts` with a single resource definition. The
+two flags below enable response caching (60-second TTL) and request
+logging — every prompt, completion, latency, and token count will
+show up in the AI Gateway dashboard.
+
+```typescript
+// src/AiGateway.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Gateway = Cloudflare.AiGateway("Gateway", {
+  cacheTtl: 60,
+  collectLogs: true,
+});
+```
+
+Every prop is optional, but explicit defaults make the intent
+visible. We'll tune more knobs at the end of the tutorial.
+
+## Add it to the stack
+
+```diff lang="typescript"
+// alchemy.run.ts
++import { Gateway } from "./src/AiGateway.ts";
+ import Api from "./src/Api.ts";
+
+ export default Alchemy.Stack(
+   "CloudflareWorkerExample",
+   { providers: Cloudflare.providers(), state: Cloudflare.state() },
+   Effect.gen(function* () {
+     const api = yield* Api;
++    const gateway = yield* Gateway;
+
+     return {
+       url: api.url.as<string>(),
++      gatewayId: gateway.gatewayId,
+     };
+   }),
+ );
+```
+
+`yield* Gateway` registers the resource so it gets created/updated on
+the next deploy. `gateway.gatewayId` is exposed as a stack output so
+you can find it in the dashboard.
+
+## Bind the gateway into the Worker
+
+`Cloudflare.AiGateway.bind(Gateway)` returns a typed client whose
+methods are wrapped in Effect — `run` for raw inference, `getUrl` for
+the gateway endpoint, `getLog`/`patchLog` for the request log, and
+`model({...})` for building a `LanguageModel` layer.
+
+```diff lang="typescript"
+// src/Api.ts
+ import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Effect from "effect/Effect";
++import { Gateway } from "./AiGateway.ts";
+
+ export default class Api extends Cloudflare.Worker<Api>()(
+   "Api",
+   { main: import.meta.path },
+   Effect.gen(function* () {
++    const aiGateway = yield* Cloudflare.AiGateway.bind(Gateway);
+
+     return {
+       fetch: Effect.gen(function* () {
+         // …existing routes
+       }),
+     };
+-  }),
++  }).pipe(Effect.provide(Cloudflare.AiGatewayBindingLive)),
+ ) {}
+```
+
+`Cloudflare.AiGatewayBindingLive` is the runtime side of the
+binding. Provide it once at the bottom of the Init layer chain and
+every `bind(...)` further up will resolve.
+
+## Build a `LanguageModel` layer
+
+Call `aiGateway.model({...})` with a Workers AI model id and
+parameters. The result is a `Layer<LanguageModel.LanguageModel, …>`
+that satisfies Effect's standard AI service.
+
+```diff lang="typescript"
+   Effect.gen(function* () {
+     const aiGateway = yield* Cloudflare.AiGateway.bind(Gateway);
++
++    const languageModel = aiGateway.model({
++      client: aiGateway,
++      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
++      parameters: { temperature: 0.7, maxTokens: 1024 },
++    });
+
+     return {
+       fetch: Effect.gen(function* () {
+         // …
+       }),
+     };
+   })
+```
+
+`parameters` is the per-call default; any individual call can still
+override it. The Init phase is the right place to build this layer —
+construction is pure and the binding factory only exists here.
+
+## Generate text on `/generate`
+
+`LanguageModel.generateText` returns a typed response with `text`,
+`finishReason`, structured token `usage`, and any `toolCalls`. Provide
+the `languageModel` layer to the handler and call it like any other
+Effect.
+
+```diff lang="typescript"
++import { LanguageModel } from "effect/unstable/ai";
+ import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+   return {
+     fetch: Effect.gen(function* () {
+       const request = yield* HttpServerRequest;
++      const url = new URL(request.url, "http://api");
+
++      if (url.pathname === "/generate" && request.method === "POST") {
++        const body = (yield* request.json) as { prompt?: string };
++        const prompt = body.prompt?.trim() ?? "Say hello in one sentence.";
++
++        const response = yield* LanguageModel.generateText({ prompt }).pipe(
++          Effect.orDie,
++        );
++
++        return yield* HttpServerResponse.json({
++          text: response.text,
++          usage: {
++            inputTokens: response.usage.inputTokens.total,
++            outputTokens: response.usage.outputTokens.total,
++          },
++        });
++      }
+
+       return HttpServerResponse.text("Not Found", { status: 404 });
+-    }),
++    }).pipe(Effect.provide(languageModel)),
+   };
+```
+
+`Effect.provide(languageModel)` makes `LanguageModel.LanguageModel`
+available to every handler in `fetch`. `Effect.orDie` collapses
+`AiError` to a defect so a model failure surfaces as a 500 — if you
+need typed handling instead, `Effect.catchTag("AiError", …)` works.
+
+## Try it
+
+```sh
+bun alchemy deploy
+curl -X POST "$(bun alchemy stack output url)/generate" \
+  -H "content-type: application/json" \
+  -d '{"prompt":"Write a haiku about Effect"}'
+```
+
+The first call takes ~1–2 seconds. Send the **exact same** prompt
+again and it returns in milliseconds — that's the `cacheTtl: 60`
+config doing its job. Open the Cloudflare dashboard → **AI** →
+**AI Gateway** → your gateway and you'll see both requests, with the
+second flagged as a cache hit, plus latency and token usage on every
+entry.
+
+## Stream tokens on `/stream`
+
+For chat-style UIs you want tokens to arrive as the model produces
+them, not in one big response. `LanguageModel.streamText` returns an
+`Effect.Stream` of typed response parts — `text-delta`, `tool-call`,
+`finish`, and so on. Pipe it through `Sse.encode` and
+`HttpServerResponse.stream` to get a server-sent-event stream that
+flushes through the Worker → edge → client without buffering.
+
+```diff lang="typescript"
++import * as Stream from "effect/Stream";
++import * as Sse from "effect/unstable/encoding/Sse";
+
++      if (url.pathname === "/stream" && request.method === "POST") {
++        const body = (yield* request.json) as { prompt?: string };
++        const prompt = body.prompt?.trim() ?? "Tell me a haiku about Effect.";
++
++        const stream = LanguageModel.streamText({ prompt }).pipe(
++          Stream.provide(languageModel),
++          Sse.encode,
++        );
++
++        return HttpServerResponse.stream(stream, {
++          headers: {
++            "content-type": "text/event-stream",
++            "cache-control": "no-cache",
++            "x-accel-buffering": "no",
++          },
++        });
++      }
+```
+
+`Stream.provide(languageModel)` is the stream-aware equivalent of
+`Effect.provide` — the `LanguageModel` needs to be available for the
+entire lifetime of the stream, not just the initial setup.
+
+```sh
+curl -N -X POST "$(bun alchemy stack output url)/stream" \
+  -H "content-type: application/json" \
+  -d '{"prompt":"Write a haiku about Effect, slowly."}'
+```
+
+`-N` disables curl's response buffering so you see each SSE event as
+soon as the Worker flushes it.
+
+## Tune caching, rate limits, and DLP
+
+Every prop on `Cloudflare.AiGateway` maps to an update API call — no
+replacement, no downtime. A production-grade config might look like:
+
+```typescript
+export const Gateway = Cloudflare.AiGateway("Gateway", {
+  id: "prod-gateway",
+  cacheTtl: 300,
+  cacheInvalidateOnUpdate: true,
+  rateLimitingInterval: 60,
+  rateLimitingLimit: 100,
+  rateLimitingTechnique: "sliding",
+  collectLogs: true,
+  logManagement: 100_000,
+  logManagementStrategy: "DELETE_OLDEST",
+  authentication: true,
+});
+```
+
+Bumping `cacheTtl`, `rateLimitingLimit`, or toggling `authentication`
+is a single `bun alchemy deploy` away — the diff updates the gateway
+in place.
+
+## What you have now
+
+- A `Cloudflare.AiGateway` resource with caching, logging, and (when
+  you want them) rate limiting and auth.
+- An Effect `LanguageModel.LanguageModel` Layer that proxies Workers
+  AI through that gateway.
+- `/generate` and `/stream` routes that use the standard
+  `LanguageModel.generateText` and `streamText` APIs — provider-
+  agnostic, so swapping Workers AI for OpenAI or Anthropic later is
+  a layer-level change, not a code-level one.
+
+The natural next step is to give the model **memory** — wrapping the
+same `LanguageModel` with `Chat.Service` and storing the conversation
+in a Durable Object's `state.storage`, so every session is resumable
+across requests, restarts, and hibernation.
+
+For the wider API surface — `generateObject`, `Toolkit`, structured
+outputs, and how the same `LanguageModel` composes inside an HTTP
+API or RPC handler — see the [Effect AI guide](/guides/effect-ai).

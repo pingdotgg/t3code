@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+# Load secrets from ./.env if the file exists
+if [[ -f .env ]]; then
+  set -o allexport
+  source .env
+  set +o allexport
+fi
+
+# Installs system dependencies required for this project
+
+UPDATE=0
+for arg in "$@"; do
+  if [[ "$arg" == "--update" ]]; then
+    UPDATE=1
+  fi
+done
+
+# Install or update OpenCode (AI-powered development)
+if ! command -v opencode >/dev/null 2>&1 || [[ "$UPDATE" -eq 1 ]]; then
+  curl -fsSL https://opencode.ai/install | bash
+fi
+
+install_brew() {
+  # $1: executable name
+  # $2: brew install argument
+  local exe="$1"
+  local formula="$2"
+  if ! command -v "$exe" >/dev/null 2>&1; then
+    brew install "$formula"
+  elif [[ "$UPDATE" -eq 1 ]]; then
+    brew upgrade "$formula"
+  fi
+}
+
+install_brew rg ripgrep
+install_brew localstack localstack/tap/localstack-cli
+localstack auth set-token $LOCALSTACK_TOKEN 2>&1 > /dev/null

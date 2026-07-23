@@ -2,6 +2,10 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "./lib/terminalContext";
+import {
+  collectComposerInlineTokens,
+  type ComposerInlineToken,
+} from "@t3tools/shared/composerInlineTokens";
 
 export type ComposerPromptSegment =
   | {
@@ -11,6 +15,7 @@ export type ComposerPromptSegment =
   | {
       type: "mention";
       path: string;
+      source: string;
     }
   | {
       type: "skill";
@@ -20,9 +25,6 @@ export type ComposerPromptSegment =
       type: "terminal-context";
       context: TerminalContextDraft | null;
     };
-
-const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
 
 function rangeIncludesIndex(start: number, end: number, index: number): boolean {
   return start <= index && index < end;
@@ -36,50 +38,6 @@ function pushTextSegment(segments: ComposerPromptSegment[], text: string): void 
     return;
   }
   segments.push({ type: "text", text });
-}
-
-type InlineTokenMatch =
-  | {
-      type: "mention";
-      value: string;
-      start: number;
-      end: number;
-    }
-  | {
-      type: "skill";
-      value: string;
-      start: number;
-      end: number;
-    };
-
-function collectInlineTokenMatches(text: string): InlineTokenMatch[] {
-  const matches: InlineTokenMatch[] = [];
-
-  for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const path = match[2] ?? "";
-    const matchIndex = match.index ?? 0;
-    const start = matchIndex + prefix.length;
-    const end = start + fullMatch.length - prefix.length;
-    if (path.length > 0) {
-      matches.push({ type: "mention", value: path, start, end });
-    }
-  }
-
-  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const skillName = match[2] ?? "";
-    const matchIndex = match.index ?? 0;
-    const start = matchIndex + prefix.length;
-    const end = start + fullMatch.length - prefix.length;
-    if (skillName.length > 0) {
-      matches.push({ type: "skill", value: skillName, start, end });
-    }
-  }
-
-  return matches.toSorted((left, right) => left.start - right.start);
 }
 
 function forEachPromptSegmentSlice(
@@ -148,10 +106,16 @@ function forEachPromptTextSlice(
 
 function forEachMentionMatch(
   prompt: string,
-  visitor: (match: RegExpMatchArray, promptOffset: number) => boolean | void,
+  visitor: (
+    match: Extract<ComposerInlineToken, { type: "mention" }>,
+    promptOffset: number,
+  ) => boolean | void,
 ): boolean {
   return forEachPromptTextSlice(prompt, (text, promptOffset) => {
-    for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
+    for (const match of collectComposerInlineTokens(text)) {
+      if (match.type !== "mention") {
+        continue;
+      }
       if (visitor(match, promptOffset) === true) {
         return true;
       }
@@ -166,7 +130,7 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
     return segments;
   }
 
-  const tokenMatches = collectInlineTokenMatches(text);
+  const tokenMatches = collectComposerInlineTokens(text);
   let cursor = 0;
   for (const match of tokenMatches) {
     if (match.start < cursor) {
@@ -178,7 +142,11 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
     }
 
     if (match.type === "mention") {
-      segments.push({ type: "mention", path: match.value });
+      segments.push({
+        type: "mention",
+        path: match.value,
+        source: match.source,
+      });
     } else {
       segments.push({ type: "skill", name: match.value });
     }
@@ -203,11 +171,8 @@ export function selectionTouchesMentionBoundary(
   }
 
   return forEachMentionMatch(prompt, (match, promptOffset) => {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const matchIndex = match.index ?? 0;
-    const mentionStart = promptOffset + matchIndex + prefix.length;
-    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
+    const mentionStart = promptOffset + match.start;
+    const mentionEnd = promptOffset + match.end;
     const beforeMentionIndex = mentionStart - 1;
     const afterMentionIndex = mentionEnd;
 

@@ -14,6 +14,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 interface TraceRecordLike {
   readonly name?: unknown;
@@ -39,13 +41,27 @@ export interface TraceDiagnosticsOptions {
   readonly readAt?: DateTime.Utc;
 }
 
-export interface TraceDiagnosticsShape {
-  readonly read: (options: TraceDiagnosticsOptions) => Effect.Effect<ServerTraceDiagnosticsResult>;
+export class TraceFileReadError extends Schema.TaggedErrorClass<TraceFileReadError>()(
+  "TraceFileReadError",
+  {
+    traceFilePath: Schema.String,
+    causeTag: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read local trace file '${this.traceFilePath}'.`;
+  }
 }
 
-export class TraceDiagnostics extends Context.Service<TraceDiagnostics, TraceDiagnosticsShape>()(
-  "t3/diagnostics/TraceDiagnostics",
-) {}
+export class TraceDiagnostics extends Context.Service<
+  TraceDiagnostics,
+  {
+    readonly read: (
+      options: TraceDiagnosticsOptions,
+    ) => Effect.Effect<ServerTraceDiagnosticsResult>;
+  }
+>()("t3/diagnostics/TraceDiagnostics") {}
 
 interface TraceDiagnosticsInput {
   readonly traceFilePath: string;
@@ -150,10 +166,6 @@ function makeEmptyDiagnostics(input: {
 
 function isNotFoundError(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "NotFound";
-}
-
-function platformErrorMessage(error: PlatformError.PlatformError): string {
-  return error.message || String(error);
 }
 
 function insertBoundedSlowestSpan(
@@ -376,47 +388,66 @@ export function aggregateTraceDiagnostics(
 
 type TraceFileReadResult =
   | { readonly _tag: "Loaded"; readonly path: string; readonly text: string }
-  | { readonly _tag: "Missing"; readonly path: string }
-  | { readonly _tag: "Failed"; readonly path: string; readonly message: string };
+  | { readonly _tag: "Missing"; readonly path: string };
 
 function readTraceFile(
   fileSystem: FileSystem.FileSystem,
   path: string,
-): Effect.Effect<TraceFileReadResult> {
+): Effect.Effect<TraceFileReadResult, TraceFileReadError> {
   return fileSystem.readFileString(path).pipe(
-    Effect.map((text) => ({ _tag: "Loaded" as const, path, text })),
-    Effect.catch((error: PlatformError.PlatformError) =>
-      Effect.succeed(
-        isNotFoundError(error)
-          ? { _tag: "Missing" as const, path }
-          : { _tag: "Failed" as const, path, message: platformErrorMessage(error) },
-      ),
-    ),
+    Effect.map((text): TraceFileReadResult => ({ _tag: "Loaded", path, text })),
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        isNotFoundError(cause)
+          ? Effect.succeed<TraceFileReadResult>({ _tag: "Missing", path })
+          : Effect.fail(
+              new TraceFileReadError({
+                traceFilePath: path,
+                causeTag: cause.reason._tag,
+                cause,
+              }),
+            ),
+    }),
   );
 }
 
-export const make = Effect.fn("makeTraceDiagnostics")(function* () {
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
-  const read: TraceDiagnosticsShape["read"] = Effect.fn("TraceDiagnostics.read")(
+  const read: TraceDiagnostics["Service"]["read"] = Effect.fn("TraceDiagnostics.read")(
     function* (options) {
       const readAt = options.readAt ?? (yield* DateTime.now);
       const slowSpanThresholdMs = options.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
       const paths = toRotatedTracePaths(options.traceFilePath, options.maxFiles);
       const results = yield* Effect.all(
-        paths.map((path) => readTraceFile(fileSystem, path)),
+        paths.map((path) =>
+          readTraceFile(fileSystem, path).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("Failed to read local trace file.").pipe(
+                Effect.annotateLogs({
+                  traceFilePath: cause.traceFilePath,
+                  errorTag: cause._tag,
+                  causeTag: cause.causeTag,
+                }),
+              ),
+            ),
+            Effect.result,
+          ),
+        ),
         {
           concurrency: 1,
         },
       );
       const files = results.flatMap((result) =>
-        result._tag === "Loaded" ? [{ path: result.path, text: result.text }] : [],
+        Result.isSuccess(result) && result.success._tag === "Loaded"
+          ? [{ path: result.success.path, text: result.success.text }]
+          : [],
       );
-      const readFailure = results.find((result) => result._tag === "Failed");
+      const readFailure = results.find(Result.isFailure);
       const readFailureError = readFailure
         ? ({
             kind: "trace-file-read-failed",
-            message: readFailure.message.trim() || `Failed to read ${readFailure.path}.`,
+            message: readFailure.failure.message,
           } satisfies TraceDiagnosticsErrorSummary)
         : undefined;
 
@@ -449,7 +480,7 @@ export const make = Effect.fn("makeTraceDiagnostics")(function* () {
   return TraceDiagnostics.of({ read });
 });
 
-export const layer = Layer.effect(TraceDiagnostics, make());
+export const layer = Layer.effect(TraceDiagnostics, make);
 
 export function readTraceDiagnostics(
   options: TraceDiagnosticsOptions,

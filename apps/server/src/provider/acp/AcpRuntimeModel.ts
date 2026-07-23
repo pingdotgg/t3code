@@ -1,9 +1,48 @@
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
 import type { ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSessionModelState(value: unknown): value is EffectAcpSchema.SessionModelState {
+  if (!isRecord(value) || typeof value.currentModelId !== "string") {
+    return false;
+  }
+  if (!Array.isArray(value.availableModels)) {
+    return false;
+  }
+  return value.availableModels.every(
+    (model) =>
+      isRecord(model) &&
+      typeof model.modelId === "string" &&
+      typeof model.name === "string" &&
+      (model.description === undefined ||
+        model.description === null ||
+        typeof model.description === "string"),
+  );
+}
+
+function isSessionModeState(value: unknown): value is EffectAcpSchema.SessionModeState {
+  if (!isRecord(value) || typeof value.currentModeId !== "string") {
+    return false;
+  }
+  if (!Array.isArray(value.availableModes)) {
+    return false;
+  }
+  return value.availableModes.every(
+    (mode) =>
+      isRecord(mode) &&
+      typeof mode.id === "string" &&
+      typeof mode.name === "string" &&
+      (mode.description === undefined || typeof mode.description === "string"),
+  );
 }
 
 export interface AcpSessionMode {
@@ -126,19 +165,20 @@ export function parseSessionModeState(
   if (!currentModeId) {
     return undefined;
   }
-  const availableModes = modes.availableModes
-    .map((mode) => {
-      const id = mode.id.trim();
-      const name = mode.name.trim();
-      if (!id || !name) {
-        return undefined;
-      }
-      const description = mode.description?.trim() || undefined;
-      return description !== undefined
+  const availableModes: Array<AcpSessionMode> = [];
+  for (const mode of modes.availableModes) {
+    const id = mode.id.trim();
+    const name = mode.name.trim();
+    if (!id || !name) {
+      continue;
+    }
+    const description = mode.description?.trim() || undefined;
+    availableModes.push(
+      description !== undefined
         ? ({ id, name, description } satisfies AcpSessionMode)
-        : ({ id, name } satisfies AcpSessionMode);
-    })
-    .filter((mode): mode is AcpSessionMode => mode !== undefined);
+        : ({ id, name } satisfies AcpSessionMode),
+    );
+  }
   if (availableModes.length === 0) {
     return undefined;
   }
@@ -186,9 +226,15 @@ function normalizeCommandValue(value: unknown): string | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
-  const parts = value
-    .map((entry) => (typeof entry === "string" && entry.trim().length > 0 ? entry.trim() : null))
-    .filter((entry): entry is string => entry !== null);
+  const parts: Array<string> = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const part = entry.trim();
+      if (part.length > 0) {
+        parts.push(part);
+      }
+    }
+  }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
@@ -222,18 +268,20 @@ function extractTextContentFromToolCallContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined,
 ): string | undefined {
   if (!content) return undefined;
-  const chunks = content
-    .map((entry) => {
-      if (entry.type !== "content") {
-        return undefined;
-      }
-      const nestedContent = entry.content;
-      if (nestedContent.type !== "text") {
-        return undefined;
-      }
-      return nestedContent.text.trim().length > 0 ? nestedContent.text.trim() : undefined;
-    })
-    .filter((entry): entry is string => entry !== undefined);
+  const chunks: Array<string> = [];
+  for (const entry of content) {
+    if (entry.type !== "content") {
+      continue;
+    }
+    const nestedContent = entry.content;
+    if (nestedContent.type !== "text") {
+      continue;
+    }
+    const text = nestedContent.text.trim();
+    if (text.length > 0) {
+      chunks.push(text);
+    }
+  }
   return chunks.length > 0 ? chunks.join("\n") : undefined;
 }
 
@@ -402,6 +450,58 @@ export function parsePermissionRequest(
     kind,
     ...(detail ? { detail } : {}),
     ...(toolCall ? { toolCall } : {}),
+  };
+}
+
+export function sessionUpdateIsReplay(params: EffectAcpSchema.SessionNotification): boolean {
+  const meta = params._meta;
+  return isRecord(meta) && meta.isReplay === true;
+}
+
+export interface SessionLoadGate {
+  readonly active: boolean;
+  readonly lastActivityAtMillis: number | undefined;
+  readonly idleGap: Duration.Duration;
+  readonly initializeResult: EffectAcpSchema.InitializeResponse;
+}
+
+export const waitForSessionLoadReplayIdle = (input: {
+  readonly gateRef: Ref.Ref<Option.Option<SessionLoadGate>>;
+}): Effect.Effect<EffectAcpSchema.LoadSessionResponse, never> =>
+  Effect.gen(function* () {
+    const pollInterval = Duration.millis(25);
+    while (true) {
+      const gate = yield* Ref.get(input.gateRef);
+      if (
+        Option.isSome(gate) &&
+        gate.value.active &&
+        gate.value.lastActivityAtMillis !== undefined
+      ) {
+        const idleGapMillis = Duration.toMillis(gate.value.idleGap);
+        const nowMillis = yield* Clock.currentTimeMillis;
+        if (nowMillis - gate.value.lastActivityAtMillis >= idleGapMillis) {
+          return syntheticLoadSessionResponseFromInitialize(gate.value.initializeResult);
+        }
+      }
+      yield* Effect.sleep(pollInterval);
+    }
+  });
+
+export function syntheticLoadSessionResponseFromInitialize(
+  initializeResult: EffectAcpSchema.InitializeResponse,
+): EffectAcpSchema.LoadSessionResponse {
+  const meta = initializeResult._meta;
+  const modelState = isRecord(meta) ? meta.modelState : undefined;
+  const modeState = isRecord(meta) ? meta.modeState : undefined;
+  const models = isSessionModelState(modelState) ? modelState : undefined;
+  const modes = isSessionModeState(modeState) ? modeState : undefined;
+
+  return {
+    ...(models ? { models } : {}),
+    ...(modes ? { modes } : {}),
+    _meta: {
+      t3SessionLoadReady: "replay_idle",
+    },
   };
 }
 

@@ -1,11 +1,39 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
   buildThreadActionItems,
+  enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("enumerateCommandPaletteItems", () => {
+  it("assigns positional jump shortcuts to the first nine displayed items", () => {
+    const items = Array.from({ length: 10 }, (_, index) => ({
+      kind: "action" as const,
+      value: `project-${index + 1}`,
+      searchTerms: [],
+      title: `Project ${index + 1}`,
+      icon: null,
+      shortcutCommand: "chat.new" as const,
+      run: async () => undefined,
+    }));
+
+    expect(enumerateCommandPaletteItems(items).map((item) => item.shortcutCommand)).toEqual([
+      "thread.jump.1",
+      "thread.jump.2",
+      "thread.jump.3",
+      "thread.jump.4",
+      "thread.jump.5",
+      "thread.jump.6",
+      "thread.jump.7",
+      "thread.jump.8",
+      "thread.jump.9",
+      undefined,
+    ]);
+  });
+});
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -14,7 +42,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.make("thread-1"),
     environmentId: LOCAL_ENVIRONMENT_ID,
-    codexThreadId: null,
     projectId: PROJECT_ID,
     title: "Thread",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
@@ -23,14 +50,16 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     session: null,
     messages: [],
     proposedPlans: [],
-    error: null,
     createdAt: "2026-03-01T00:00:00.000Z",
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
     updatedAt: "2026-03-01T00:00:00.000Z",
     latestTurn: null,
     branch: null,
     worktreePath: null,
-    turnDiffSummaries: [],
+    checkpoints: [],
     activities: [],
     ...overrides,
   };

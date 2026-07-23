@@ -1,27 +1,27 @@
 /**
- * Optional integration check against a real `agent acp` install.
+ * Optional integration check against a real `cursor-agent acp` install.
  * Enable with: T3_CURSOR_ACP_PROBE=1 bun run test --filter CursorAcpCliProbe
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import { describe, expect } from "vitest";
+import { describe, expect } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", () => {
-  it.effect("initialize and authenticate against real agent acp", () =>
+  it.effect("initialize and authenticate against real cursor-agent acp", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       expect(started.initializeResult).toBeDefined();
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
           spawn: {
-            command: "agent",
+            command: "cursor-agent",
             args: ["acp"],
             cwd: process.cwd(),
           },
@@ -42,7 +42,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
 
   it.effect("session/new returns configOptions with a model selector", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       const result = started.sessionSetupResult;
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -77,7 +77,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         AcpSessionRuntime.layer({
           authMethodId: "cursor_login",
           spawn: {
-            command: "agent",
+            command: "cursor-agent",
             args: ["acp"],
             cwd: process.cwd(),
           },
@@ -97,7 +97,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
 
   it.effect("session/set_config_option switches the model in-session", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       const newResult = started.sessionSetupResult;
 
@@ -133,7 +133,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         AcpSessionRuntime.layer({
           authMethodId: "cursor_login",
           spawn: {
-            command: "agent",
+            command: "cursor-agent",
             args: ["acp"],
             cwd: process.cwd(),
           },

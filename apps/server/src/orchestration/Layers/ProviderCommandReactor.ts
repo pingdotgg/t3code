@@ -15,6 +15,7 @@ import {
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -30,6 +31,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -80,9 +82,6 @@ function mapProviderSessionStatusToOrchestrationStatus(
 
 const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
   event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
-
-const serverCommandId = (tag: string): CommandId =>
-  CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
@@ -142,9 +141,19 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
 function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = findProviderAdapterRequestError(cause);
   if (error) {
-    return error.detail.toLowerCase().includes("unknown pending user-input request");
+    const detail = error.detail.toLowerCase();
+    return (
+      detail.includes("unknown pending user-input request") ||
+      detail.includes("unknown pending user input request") ||
+      detail.includes("unknown pending codex user input request")
+    );
   }
-  return Cause.pretty(cause).toLowerCase().includes("unknown pending user-input request");
+  const message = Cause.pretty(cause).toLowerCase();
+  return (
+    message.includes("unknown pending user-input request") ||
+    message.includes("unknown pending user input request") ||
+    message.includes("unknown pending codex user input request")
+  );
 }
 
 function stalePendingRequestDetail(
@@ -178,13 +187,18 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 }
 
 const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const serverCommandId = (tag: string) =>
+    crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
+  const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -214,24 +228,31 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
     readonly requestId?: string;
   }) =>
-    orchestrationEngine.dispatch({
-      type: "thread.activity.append",
+    Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
-      threadId: input.threadId,
-      activity: {
-        id: EventId.make(crypto.randomUUID()),
-        tone: "error",
-        kind: input.kind,
-        summary: input.summary,
-        payload: {
-          detail: input.detail,
-          ...(input.requestId ? { requestId: input.requestId } : {}),
-        },
-        turnId: input.turnId,
-        createdAt: input.createdAt,
-      },
-      createdAt: input.createdAt,
-    });
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "error",
+            kind: input.kind,
+            summary: input.summary,
+            payload: {
+              detail: input.detail,
+              ...(input.requestId ? { requestId: input.requestId } : {}),
+            },
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
@@ -249,13 +270,17 @@ const make = Effect.gen(function* () {
     readonly session: OrchestrationSession;
     readonly createdAt: string;
   }) =>
-    orchestrationEngine.dispatch({
-      type: "thread.session.set",
-      commandId: serverCommandId("provider-session-set"),
-      threadId: input.threadId,
-      session: input.session,
-      createdAt: input.createdAt,
-    });
+    serverCommandId("provider-session-set").pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId,
+          threadId: input.threadId,
+          session: input.session,
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -263,15 +288,20 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
-    const session = thread?.session;
-    if (!session) {
+    if (!thread) {
       return;
     }
+    const session = thread.session;
     yield* setThreadSession({
       threadId: input.threadId,
       session: {
-        ...session,
-        status: session.status === "stopped" ? "stopped" : "ready",
+        ...(session ?? {
+          threadId: input.threadId,
+          providerName: null,
+          providerInstanceId: thread.modelSelection.instanceId,
+          runtimeMode: thread.runtimeMode,
+        }),
+        status: session?.status === "stopped" ? "stopped" : "error",
         activeTurnId: null,
         lastError: input.detail,
         updatedAt: input.createdAt,
@@ -292,11 +322,44 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly currentModelSelection: ModelSelection;
+    readonly requestedModelSelection: ModelSelection | undefined;
+  }) {
+    const requestedModelSelection = input.requestedModelSelection;
+    if (
+      requestedModelSelection === undefined ||
+      (input.currentModelSelection.instanceId === requestedModelSelection.instanceId &&
+        input.currentModelSelection.model === requestedModelSelection.model)
+    ) {
+      return;
+    }
+    const providers = yield* providerRegistry.getProviders;
+    const requiresNewThread =
+      providers.find((snapshot) => snapshot.instanceId === input.currentModelSelection.instanceId)
+        ?.requiresNewThreadForModelChange === true ||
+      providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
+        ?.requiresNewThreadForModelChange === true;
+    if (!requiresNewThread) {
+      return;
+    }
+    return yield* new ProviderAdapterRequestError({
+      provider: providerErrorLabelFromInstanceHint({
+        instanceId: String(requestedModelSelection.instanceId),
+        modelSelectionInstanceId: String(input.currentModelSelection.instanceId),
+      }),
+      method: "thread.turn.start",
+      detail: `Thread '${input.threadId}' cannot switch models after the conversation has started. Start a new thread to use '${requestedModelSelection.model}'.`,
+    });
+  });
+
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly pendingTurnStart?: boolean;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -371,6 +434,36 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
+    if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+      yield* setThreadSession({
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: activeSession?.provider ?? preferredProvider,
+          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+          runtimeMode: desiredRuntimeMode,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+    }
+    if (thread.session !== null) {
+      yield* rejectStartedThreadModelChangeIfRequired({
+        threadId,
+        currentModelSelection:
+          activeSession?.model !== undefined
+            ? {
+                ...thread.modelSelection,
+                instanceId: currentInstanceId,
+                model: activeSession.model,
+              }
+            : thread.modelSelection,
+        requestedModelSelection,
+      });
+    }
     if (
       thread.session !== null &&
       requestedModelSelection !== undefined &&
@@ -427,7 +520,10 @@ const make = Effect.gen(function* () {
           threadId,
           session: {
             threadId,
-            status: mapProviderSessionStatusToOrchestrationStatus(session.status),
+            status:
+              options?.pendingTurnStart === true && session.status === "ready"
+                ? "starting"
+                : mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
             runtimeMode: desiredRuntimeMode,
@@ -526,11 +622,10 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(
-      input.threadId,
-      input.createdAt,
-      input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
-    );
+    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      pendingTurnStart: true,
+    });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
@@ -610,7 +705,7 @@ const make = Effect.gen(function* () {
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
       yield* orchestrationEngine.dispatch({
         type: "thread.meta.update",
-        commandId: serverCommandId("worktree-branch-rename"),
+        commandId: yield* serverCommandId("worktree-branch-rename"),
         threadId: input.threadId,
         branch: renamed.branch,
         worktreePath: cwd,
@@ -657,7 +752,7 @@ const make = Effect.gen(function* () {
 
         yield* orchestrationEngine.dispatch({
           type: "thread.meta.update",
-          commandId: serverCommandId("thread-title-rename"),
+          commandId: yield* serverCommandId("thread-title-rename"),
           threadId: input.threadId,
           title: generated.title,
         });

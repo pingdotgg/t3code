@@ -1,11 +1,11 @@
-import { networkInterfaces } from "node:os";
+import * as NodeOS from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
 import { ServerConfig } from "./config.ts";
-import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
 export interface HeadlessServeAccessInfo {
   readonly connectionString: string;
@@ -13,7 +13,7 @@ export interface HeadlessServeAccessInfo {
   readonly pairingUrl: string;
 }
 
-type NetworkInterfacesMap = ReturnType<typeof networkInterfaces>;
+type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
 export const isLoopbackHost = (host: string | undefined): boolean => {
   if (!host || host.length === 0) {
@@ -44,7 +44,7 @@ const isIpv6Family = (family: string | number): boolean => family === "IPv6" || 
 
 export const resolveHeadlessConnectionHost = (
   host: string | undefined,
-  interfaces: NetworkInterfacesMap = networkInterfaces(),
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
 ): string => {
   if (!host) {
     return "localhost";
@@ -71,7 +71,7 @@ export const resolveHeadlessConnectionHost = (
 export const resolveHeadlessConnectionString = (
   host: string | undefined,
   port: number,
-  interfaces: NetworkInterfacesMap = networkInterfaces(),
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
 ): string => {
   const connectionHost = resolveHeadlessConnectionHost(host, interfaces);
   return `http://${formatHostForUrl(connectionHost)}:${port}`;
@@ -133,12 +133,12 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
 export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
-  const serverAuth = yield* ServerAuth;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
-  const issued = yield* serverAuth.issuePairingCredential({ role: "owner" });
+  const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
     connectionString,

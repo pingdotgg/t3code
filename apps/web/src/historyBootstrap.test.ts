@@ -1,5 +1,5 @@
 import { MessageId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { buildBootstrapInput } from "./historyBootstrap";
 
@@ -14,6 +14,8 @@ describe("buildBootstrapInput", () => {
           role: "user",
           text: "hello",
           createdAt: "2026-02-09T00:00:00.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:00.000Z",
           streaming: false,
         },
         {
@@ -21,6 +23,8 @@ describe("buildBootstrapInput", () => {
           role: "assistant",
           text: "world",
           createdAt: "2026-02-09T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:01.000Z",
           streaming: false,
         },
       ],
@@ -45,6 +49,8 @@ describe("buildBootstrapInput", () => {
           role: "user",
           text: "first question with details",
           createdAt: "2026-02-09T00:00:00.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:00.000Z",
           streaming: false,
         },
         {
@@ -52,6 +58,8 @@ describe("buildBootstrapInput", () => {
           role: "assistant",
           text: "first answer with details",
           createdAt: "2026-02-09T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:01.000Z",
           streaming: false,
         },
         {
@@ -59,6 +67,8 @@ describe("buildBootstrapInput", () => {
           role: "user",
           text: "second question with details",
           createdAt: "2026-02-09T00:00:02.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:02.000Z",
           streaming: false,
         },
       ],
@@ -82,6 +92,8 @@ describe("buildBootstrapInput", () => {
           role: "user",
           text: "old context",
           createdAt: "2026-02-09T00:00:00.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:00.000Z",
           streaming: false,
         },
       ],
@@ -112,6 +124,8 @@ describe("buildBootstrapInput", () => {
             },
           ],
           createdAt: "2026-02-09T00:00:00.000Z",
+          turnId: null,
+          updatedAt: "2026-02-09T00:00:00.000Z",
           streaming: false,
         },
       ],

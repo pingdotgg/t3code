@@ -1,35 +1,126 @@
 import type {
-  AuthBootstrapInput,
-  AuthBootstrapResult,
+  AuthBrowserSessionResult,
   AuthClientMetadata,
-  AuthCreatePairingCredentialInput,
+  AuthEnvironmentScope,
   AuthPairingCredentialResult,
-  AuthRevokeClientSessionInput,
-  AuthRevokePairingLinkInput,
+  ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
 } from "@t3tools/contracts";
+import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { HttpClientError } from "effect/unstable/http";
 
 import {
   getPairingTokenFromUrl,
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "../../pairingUrl";
 
-import { resolvePrimaryEnvironmentHttpUrl } from "./target";
-import * as Data from "effect/Data";
-import * as Predicate from "effect/Predicate";
+import { PrimaryEnvironmentHttpClient } from "./httpClient";
+import { runPrimaryHttp } from "../../lib/runtime";
 
-export class BootstrapHttpError extends Data.TaggedError("BootstrapHttpError")<{
-  readonly message: string;
-  readonly status: number;
-}> {}
-const isBootstrapHttpError = (u: unknown): u is BootstrapHttpError =>
-  Predicate.isTagged(u, "BootstrapHttpError");
+const PrimaryEnvironmentRequestOperation = Schema.Literals([
+  "fetch-session-state",
+  "exchange-bootstrap-credential",
+  "fetch-environment-descriptor",
+  "create-pairing-credential",
+  "list-pairing-links",
+  "revoke-pairing-link",
+  "list-client-sessions",
+  "revoke-client-session",
+  "revoke-other-client-sessions",
+]);
+type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
+
+export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<PrimaryEnvironmentRequestError>()(
+  "PrimaryEnvironmentRequestError",
+  {
+    operation: PrimaryEnvironmentRequestOperation,
+    status: Schema.Number,
+    pairingLinkId: Schema.optional(Schema.String),
+    sessionId: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  static fromCause(input: {
+    readonly operation: PrimaryEnvironmentRequestOperation;
+    readonly cause: unknown;
+    readonly pairingLinkId?: string;
+    readonly sessionId?: string;
+  }): PrimaryEnvironmentRequestError {
+    const status = readHttpApiStatus(input.cause) ?? 500;
+    return new PrimaryEnvironmentRequestError({
+      operation: input.operation,
+      status,
+      ...(input.pairingLinkId !== undefined ? { pairingLinkId: input.pairingLinkId } : {}),
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      cause: input.cause,
+    });
+  }
+
+  override get message(): string {
+    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+  }
+}
+
+export const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
+
+export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRejectedError>()(
+  "PrimaryEnvironmentPairingCredentialRejectedError",
+  {
+    providedLength: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Invalid pairing token. Check the token and try again.";
+  }
+}
+
+export const isPrimaryEnvironmentPairingCredentialRejectedError = Schema.is(
+  PrimaryEnvironmentPairingCredentialRejectedError,
+);
+
+export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErrorClass<PrimaryEnvironmentAuthSessionTimeoutError>()(
+  "PrimaryEnvironmentAuthSessionTimeoutError",
+  {
+    timeoutMs: Schema.Number,
+    elapsedMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "Timed out waiting for authenticated session after bootstrap.";
+  }
+}
+
+export const isPrimaryEnvironmentAuthSessionTimeoutError = Schema.is(
+  PrimaryEnvironmentAuthSessionTimeoutError,
+);
+
+export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRequiredError>()(
+  "PrimaryEnvironmentPairingCredentialRequiredError",
+  {
+    providedLength: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "Enter a pairing token to continue.";
+  }
+}
+
+export const isPrimaryEnvironmentPairingCredentialRequiredError = Schema.is(
+  PrimaryEnvironmentPairingCredentialRequiredError,
+);
+
+const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
 export interface ServerPairingLinkRecord {
   readonly id: string;
   readonly credential: string;
-  readonly role: "owner" | "client";
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: string;
@@ -39,8 +130,8 @@ export interface ServerPairingLinkRecord {
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
-  readonly role: "owner" | "client";
-  readonly method: "browser-session-cookie" | "bearer-session-token";
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
   readonly issuedAt: string;
   readonly expiresAt: string;
@@ -85,87 +176,82 @@ export function takePairingTokenFromUrl(): string | null {
 }
 
 function getDesktopBootstrapCredential(): string | null {
-  const bootstrap = window.desktopBridge?.getLocalEnvironmentBootstrap();
-  return typeof bootstrap?.bootstrapToken === "string" && bootstrap.bootstrapToken.length > 0
-    ? bootstrap.bootstrapToken
+  // Both backends share the same bootstrap token (DesktopBackendConfiguration
+  // mints one tokenRef and feeds it to both resolvers), so picking the
+  // primary entry is fine even when the WSL backend is also registered.
+  const bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
+  const primary = bootstraps.find((entry) => entry.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
+  return typeof primary?.bootstrapToken === "string" && primary.bootstrapToken.length > 0
+    ? primary.bootstrapToken
     : null;
 }
 
 export async function fetchSessionState(): Promise<AuthSessionState> {
   return retryTransientBootstrap(async () => {
-    const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/session"), {
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new BootstrapHttpError({
-        message: `Failed to load server auth session state (${response.status}).`,
-        status: response.status,
+    try {
+      return await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) => client.auth.session({ headers: {} })),
+        ),
+      );
+    } catch (error) {
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "fetch-session-state",
+        cause: error,
       });
     }
-    return (await response.json()) as AuthSessionState;
   });
 }
 
-async function readErrorMessage(response: Response, fallbackMessage: string): Promise<string> {
-  const text = await response.text();
-  return text || fallbackMessage;
+function readHttpApiStatus(error: unknown): number | null {
+  if (isEnvironmentHttpCommonError(error)) {
+    return readEnvironmentHttpErrorStatus(error);
+  }
+  return HttpClientError.isHttpClientError(error) && error.response !== undefined
+    ? error.response.status
+    : null;
 }
 
-const INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES = new Set([
-  "Invalid bootstrap credential.",
-  "Unknown bootstrap credential.",
-]);
-
-function parseBootstrapErrorMessage(message: string): string {
-  const trimmed = message.trim();
-  if (trimmed.length === 0) {
-    return "";
+function readEnvironmentHttpErrorStatus(error: EnvironmentHttpCommonErrorType): number {
+  switch (error._tag) {
+    case "EnvironmentRequestInvalidError":
+      return 400;
+    case "EnvironmentAuthInvalidError":
+      return 401;
+    case "EnvironmentScopeRequiredError":
+    case "EnvironmentOperationForbiddenError":
+      return 403;
+    case "EnvironmentResourceNotFoundError":
+      return 404;
+    case "EnvironmentInternalError":
+      return 500;
   }
-
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      error?: unknown;
-    };
-    if (typeof parsed.error === "string" && parsed.error.trim().length > 0) {
-      return parsed.error.trim();
-    }
-  } catch {
-    // Not JSON; fall back to plain text.
-  }
-
-  return trimmed;
 }
 
-function toFriendlyBootstrapErrorMessage(status: number, message: string): string {
-  const parsedMessage = parseBootstrapErrorMessage(message);
-  if (status === 401 && INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES.has(parsedMessage)) {
-    return "Invalid pairing token. Check the token and try again.";
-  }
-
-  return parsedMessage;
-}
-
-async function exchangeBootstrapCredential(credential: string): Promise<AuthBootstrapResult> {
+async function exchangeBootstrapCredential(credential: string): Promise<AuthBrowserSessionResult> {
   return retryTransientBootstrap(async () => {
-    const payload: AuthBootstrapInput = { credential };
-    const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/bootstrap"), {
-      body: JSON.stringify(payload),
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
-    });
-
-    if (!response.ok) {
-      const message = toFriendlyBootstrapErrorMessage(response.status, await response.text());
-      throw new BootstrapHttpError({
-        message: message || `Failed to bootstrap auth session (${response.status}).`,
-        status: response.status,
+    try {
+      return await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) => client.auth.browserSession({ payload: { credential } })),
+        ),
+      );
+    } catch (error) {
+      if (
+        isEnvironmentHttpCommonError(error) &&
+        error._tag === "EnvironmentAuthInvalidError" &&
+        error.reason === "invalid_credential"
+      ) {
+        throw new PrimaryEnvironmentPairingCredentialRejectedError({
+          providedLength: credential.length,
+          cause: error,
+        });
+      }
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "exchange-bootstrap-credential",
+        cause: error,
       });
     }
-
-    return (await response.json()) as AuthBootstrapResult;
   });
 }
 
@@ -178,8 +264,12 @@ async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionS
       return session;
     }
 
-    if (Date.now() - startedAt >= AUTH_SESSION_ESTABLISH_TIMEOUT_MS) {
-      throw new Error("Timed out waiting for authenticated session after bootstrap.");
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= AUTH_SESSION_ESTABLISH_TIMEOUT_MS) {
+      throw new PrimaryEnvironmentAuthSessionTimeoutError({
+        timeoutMs: AUTH_SESSION_ESTABLISH_TIMEOUT_MS,
+        elapsedMs,
+      });
     }
 
     await waitForBootstrapRetry(AUTH_SESSION_ESTABLISH_STEP_MS);
@@ -216,7 +306,7 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 }
 
 function isTransientBootstrapError(error: unknown): boolean {
-  if (isBootstrapHttpError(error)) {
+  if (isPrimaryEnvironmentRequestError(error)) {
     return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
   }
 
@@ -257,7 +347,9 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
 export async function submitServerAuthCredential(credential: string): Promise<void> {
   const trimmedCredential = credential.trim();
   if (!trimmedCredential) {
-    throw new Error("Enter a pairing token to continue.");
+    throw new PrimaryEnvironmentPairingCredentialRequiredError({
+      providedLength: credential.length,
+    });
   }
 
   resolvedAuthenticatedGateState = null;
@@ -266,115 +358,153 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   stripPairingTokenFromUrl();
 }
 
-export async function createServerPairingCredential(
-  label?: string,
-): Promise<AuthPairingCredentialResult> {
-  const trimmedLabel = label?.trim();
-  const payload: AuthCreatePairingCredentialInput = trimmedLabel ? { label: trimmedLabel } : {};
-  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/pairing-token"), {
-    body: JSON.stringify(payload),
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorMessage(response, `Failed to create pairing credential (${response.status}).`),
+export async function createServerPairingCredential(input?: {
+  readonly label?: string;
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+}): Promise<AuthPairingCredentialResult> {
+  const trimmedLabel = input?.label?.trim();
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.pairingCredential({
+            headers: {},
+            payload: {
+              ...(trimmedLabel ? { label: trimmedLabel } : {}),
+              ...(input?.scopes ? { scopes: input.scopes } : {}),
+            },
+          }),
+        ),
+      ),
     );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "create-pairing-credential",
+      cause: error,
+    });
   }
-
-  return (await response.json()) as AuthPairingCredentialResult;
 }
 
 export async function listServerPairingLinks(): Promise<ReadonlyArray<ServerPairingLinkRecord>> {
-  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/pairing-links"), {
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorMessage(response, `Failed to load pairing links (${response.status}).`),
+  try {
+    const pairingLinks = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.pairingLinks({ headers: {} })),
+      ),
     );
+    return pairingLinks.map((pairingLink) => {
+      const timestamps = {
+        createdAt: DateTime.formatIso(pairingLink.createdAt),
+        expiresAt: DateTime.formatIso(pairingLink.expiresAt),
+      };
+      if (pairingLink.label === undefined) {
+        return {
+          id: pairingLink.id,
+          credential: pairingLink.credential,
+          scopes: pairingLink.scopes,
+          subject: pairingLink.subject,
+          createdAt: timestamps.createdAt,
+          expiresAt: timestamps.expiresAt,
+        };
+      }
+      return {
+        id: pairingLink.id,
+        credential: pairingLink.credential,
+        scopes: pairingLink.scopes,
+        subject: pairingLink.subject,
+        label: pairingLink.label,
+        createdAt: timestamps.createdAt,
+        expiresAt: timestamps.expiresAt,
+      };
+    });
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "list-pairing-links",
+      cause: error,
+    });
   }
-
-  return (await response.json()) as ReadonlyArray<ServerPairingLinkRecord>;
 }
 
 export async function revokeServerPairingLink(id: string): Promise<void> {
-  const payload: AuthRevokePairingLinkInput = { id };
-  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/pairing-links/revoke"), {
-    body: JSON.stringify(payload),
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorMessage(response, `Failed to revoke pairing link (${response.status}).`),
+  try {
+    await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.revokePairingLink({ headers: {}, payload: { id } })),
+      ),
     );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-pairing-link",
+      pairingLinkId: id,
+      cause: error,
+    });
   }
 }
 
 export async function listServerClientSessions(): Promise<
   ReadonlyArray<ServerClientSessionRecord>
 > {
-  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/clients"), {
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorMessage(response, `Failed to load paired clients (${response.status}).`),
+  try {
+    const clientSessions = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.clients({ headers: {} })),
+      ),
     );
+    return clientSessions.map((clientSession) => ({
+      sessionId: clientSession.sessionId,
+      subject: clientSession.subject,
+      scopes: clientSession.scopes,
+      method: clientSession.method,
+      client: clientSession.client,
+      issuedAt: DateTime.formatIso(clientSession.issuedAt),
+      expiresAt: DateTime.formatIso(clientSession.expiresAt),
+      lastConnectedAt:
+        clientSession.lastConnectedAt === null
+          ? null
+          : DateTime.formatIso(clientSession.lastConnectedAt),
+      connected: clientSession.connected,
+      current: clientSession.current,
+    }));
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "list-client-sessions",
+      cause: error,
+    });
   }
-
-  return (await response.json()) as ReadonlyArray<ServerClientSessionRecord>;
 }
 
 export async function revokeServerClientSession(sessionId: AuthSessionId): Promise<void> {
-  const payload: AuthRevokeClientSessionInput = { sessionId };
-  const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/clients/revoke"), {
-    body: JSON.stringify(payload),
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorMessage(response, `Failed to revoke client session (${response.status}).`),
+  try {
+    await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.revokeClient({ headers: {}, payload: { sessionId } }),
+        ),
+      ),
     );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-client-session",
+      sessionId,
+      cause: error,
+    });
   }
 }
 
 export async function revokeOtherServerClientSessions(): Promise<number> {
-  const response = await fetch(
-    resolvePrimaryEnvironmentHttpUrl("/api/auth/clients/revoke-others"),
-    {
-      credentials: "include",
-      method: "POST",
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorMessage(
-        response,
-        `Failed to revoke other client sessions (${response.status}).`,
+  try {
+    const result = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.revokeOtherClients({ headers: {} })),
       ),
     );
+    return result.revokedCount;
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-other-client-sessions",
+      cause: error,
+    });
   }
-
-  const result = (await response.json()) as { revokedCount?: number };
-  return result.revokedCount ?? 0;
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
@@ -400,6 +530,16 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
         bootstrapPromise = null;
       }
     });
+}
+
+// Used by the WSL backend swap: invalidate the cached authenticated state
+// (the new backend signs sessions with a different key) and re-bootstrap
+// against the desktop bootstrap credential so the next WS reconnect doesn't
+// hit 401 and start a reauth loop in the renderer.
+export async function reauthenticatePrimaryEnvironment(): Promise<ServerAuthGateState> {
+  resolvedAuthenticatedGateState = null;
+  bootstrapPromise = null;
+  return resolveInitialServerAuthGateState();
 }
 
 export function __resetServerAuthBootstrapForTests() {

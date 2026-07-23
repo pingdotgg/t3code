@@ -1,22 +1,5 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-const testEnvironmentId = EnvironmentId.make("environment-1");
-
-const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
-  environmentId: testEnvironmentId,
-  label: "Remote environment",
-  httpBaseUrl: "https://remote.example.com/",
-  wsBaseUrl: "wss://remote.example.com/",
-  createdAt: "2026-04-09T00:00:00.000Z",
-  lastConnectedAt: null,
-  desktopSsh: {
-    alias: "devbox",
-    hostname: "devbox.example.com",
-    username: "julius",
-    port: 22,
-  },
-};
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 function createLocalStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -55,32 +38,56 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
-  it("stores browser secrets inline with the saved environment record", async () => {
+  it("persists client settings in browser storage", async () => {
+    getTestWindow();
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+    const settings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      timestampFormat: "24-hour" as const,
+    };
+
+    writeBrowserClientSettings(settings);
+
+    expect(readBrowserClientSettings()).toEqual(settings);
+  });
+
+  it("reports structured decode failures while preserving the fallback", async () => {
     const testWindow = getTestWindow();
-    const {
-      SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY,
-      readBrowserSavedEnvironmentRegistry,
-      readBrowserSavedEnvironmentSecret,
-      writeBrowserSavedEnvironmentRegistry,
-      writeBrowserSavedEnvironmentSecret,
-    } = await import("./clientPersistenceStorage");
+    testWindow.localStorage.setItem("t3code:client-settings:v1", "not-json");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
 
-    writeBrowserSavedEnvironmentRegistry([savedRegistryRecord]);
-    expect(writeBrowserSavedEnvironmentSecret(testEnvironmentId, "bearer-token")).toBe(true);
-    writeBrowserSavedEnvironmentRegistry([savedRegistryRecord]);
+    expect(readBrowserClientSettings()).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Could not read persisted client settings.",
+      expect.objectContaining({
+        _tag: "LocalStorageOperationError",
+        operation: "decode",
+        storageKey: "t3code:client-settings:v1",
+        cause: expect.anything(),
+      }),
+    );
+  });
 
-    expect(readBrowserSavedEnvironmentRegistry()).toEqual([savedRegistryRecord]);
-    expect(readBrowserSavedEnvironmentSecret(testEnvironmentId)).toBe("bearer-token");
-    expect(
-      JSON.parse(testWindow.localStorage.getItem(SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY)!),
-    ).toEqual({
-      version: 1,
-      records: [
-        {
-          ...savedRegistryRecord,
-          bearerToken: "bearer-token",
-        },
-      ],
-    });
+  it("defaults word wrap on and discards obsolete wrapping preferences", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        chatWordWrap: false,
+        diffWordWrap: false,
+      }),
+    );
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+    const settings = readBrowserClientSettings();
+
+    expect(settings).toEqual(
+      expect.objectContaining({
+        wordWrap: true,
+      }),
+    );
+    expect(settings).not.toHaveProperty("chatWordWrap");
+    expect(settings).not.toHaveProperty("diffWordWrap");
   });
 });

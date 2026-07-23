@@ -1,0 +1,44 @@
+---
+const accent = "var(--alc-accent-deep)";
+const ok = "var(--alc-success)";
+---
+
+<svg viewBox="0 0 280 130" width="100%" height="100%" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+  <!-- editor pane -->
+  <g transform="translate(28 22)">
+    <rect width="100" height="74" rx="8" fill="var(--alc-bg-code)" stroke="var(--alc-hairline-2)" stroke-width="1" />
+    <circle cx="10" cy="9" r="2.4" fill="var(--alc-danger)" />
+    <circle cx="18" cy="9" r="2.4" fill="var(--alc-warn)" />
+    <circle cx="26" cy="9" r="2.4" fill="var(--alc-accent-bright)" />
+    <line x1="10" y1="22" x2="80" y2="22" stroke={accent} stroke-width="2" stroke-linecap="round" />
+    <line x1="10" y1="32" x2="60" y2="32" stroke="var(--alc-fg-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.7" />
+    <line x1="10" y1="42" x2="74" y2="42" stroke="var(--alc-fg-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.55" />
+    <line x1="10" y1="52" x2="50" y2="52" stroke={ok} stroke-width="2" stroke-linecap="round" />
+    <line x1="10" y1="62" x2="68" y2="62" stroke="var(--alc-fg-3)" stroke-width="1.5" stroke-linecap="round" opacity="0.55" />
+  </g>
+
+  <!-- hot-reload curved arrow -->
+  <g stroke={accent} stroke-width="1.6" fill="none" stroke-linecap="round">
+    <path d="M 138 60 C 154 40, 174 40, 188 60" />
+    <path d="M 184 56 L 188 60 L 184 64" stroke-linejoin="round" />
+    <path d="M 188 76 C 174 96, 154 96, 138 76" />
+    <path d="M 142 80 L 138 76 L 142 72" stroke-linejoin="round" />
+  </g>
+  <text x="163" y="70" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="9" fill={accent} font-weight="700">42ms</text>
+
+  <!-- test tube -->
+  <g transform="translate(208 22)">
+    <rect width="44" height="74" rx="8" fill="var(--alc-bg-elev-1)" stroke="var(--alc-hairline-2)" stroke-width="1" />
+    <!-- tube glyph -->
+    <path d="M22 18 L22 50 C22 56, 30 56, 30 50 L30 18 Z" fill="rgba(76, 137, 88, 0.15)" stroke={ok} stroke-width="1.4" stroke-linejoin="round" />
+    <line x1="20" y1="18" x2="32" y2="18" stroke={ok} stroke-width="1.4" stroke-linecap="round" />
+    <circle cx="26" cy="44" r="1.5" fill={ok} />
+    <circle cx="24" cy="48" r="1" fill={ok} />
+    <text x="22" y="68" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="8" fill={ok} font-weight="700">PASS</text>
+  </g>
+
+  <!-- caption -->
+  <text x="140" y="118" text-anchor="middle" font-family="var(--alc-font-hand)" font-size="13" fill={accent} font-style="italic">
+    edit · save · tested
+  </text>
+</svg>

@@ -6,14 +6,16 @@
  * single effect-style text line in a thread-scoped file. Failures are
  * downgraded to warnings so provider runtime behavior is unaffected.
  */
-import fs from "node:fs";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import { errorTag } from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -24,13 +26,14 @@ const DEFAULT_MAX_FILES = 10;
 const DEFAULT_BATCH_WINDOW_MS = 200;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
+const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
 export interface EventNdjsonLogger {
   readonly filePath: string;
-  write: (event: unknown, threadId: ThreadId | null) => Effect.Effect<void>;
-  close: () => Effect.Effect<void>;
+  write: (event: unknown, threadId: ThreadId | null) => Effect.Effect<void, never, never>;
+  close: () => Effect.Effect<void, never, never>;
 }
 
 export interface EventNdjsonLoggerOptions {
@@ -87,26 +90,13 @@ function resolveStreamLabel(stream: EventNdjsonStream): string {
 const toLogMessage = Effect.fn("toLogMessage")(function* (
   event: unknown,
 ): Effect.fn.Return<string | undefined> {
-  const serialized = yield* Effect.sync(() => {
-    try {
-      return { ok: true as const, value: JSON.stringify(event) };
-    } catch (error) {
-      return { ok: false as const, error };
-    }
-  });
-
-  if (!serialized.ok) {
-    yield* logWarning("failed to serialize provider event log record", {
-      error: serialized.error,
-    });
-    return undefined;
-  }
-
-  if (typeof serialized.value !== "string") {
-    return undefined;
-  }
-
-  return serialized.value;
+  return yield* encodeUnknownJsonString(event).pipe(
+    Effect.catch((error) =>
+      logWarning("failed to serialize provider event log record", {
+        errorTag: errorTag(error),
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
 });
 
 const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
@@ -135,7 +125,7 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
   if (!sinkResult.ok) {
     yield* logWarning("failed to initialize provider thread log file", {
       filePath: input.filePath,
-      error: sinkResult.error,
+      errorTag: errorTag(sinkResult.error),
     });
     return undefined;
   }
@@ -160,7 +150,7 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
       if (!flushResult.ok) {
         yield* logWarning("provider event log batch flush failed", {
           filePath: input.filePath,
-          error: flushResult.error,
+          errorTag: errorTag(flushResult.error),
         });
       }
     }),
@@ -189,7 +179,7 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
 
   const directoryReady = yield* Effect.sync(() => {
     try {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      NodeFS.mkdirSync(NodePath.dirname(filePath), { recursive: true });
       return true;
     } catch (error) {
       return { ok: false as const, error };
@@ -198,7 +188,7 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
   if (directoryReady !== true) {
     yield* logWarning("failed to create provider event log directory", {
       filePath,
-      error: directoryReady.error,
+      errorTag: errorTag(directoryReady.error),
     });
     return undefined;
   }
@@ -222,7 +212,7 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
       }
 
       return makeThreadWriter({
-        filePath: path.join(path.dirname(filePath), `${threadSegment}.log`),
+        filePath: NodePath.join(NodePath.dirname(filePath), `${threadSegment}.log`),
         maxBytes,
         maxFiles,
         batchWindowMs,

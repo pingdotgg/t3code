@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   MessageId,
   CommandId,
@@ -68,6 +68,8 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
       latestTurn: null,
       messages: [],
       session: null,
@@ -91,6 +93,8 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
       latestTurn: null,
       messages: [],
       session: null,

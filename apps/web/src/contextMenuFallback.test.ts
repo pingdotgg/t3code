@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
 
@@ -191,6 +191,23 @@ describe("showContextMenuFallback", () => {
 
     const renameButton = findButton("Rename");
     expect(renameButton).toBeTruthy();
+    renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await expect(selectionPromise).resolves.toBe("rename");
+  });
+
+  it("ignores a click from the gesture that opened the menu", async () => {
+    let enablePointerSelection: ((time: number) => void) | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
+      enablePointerSelection = callback;
+      return 0;
+    });
+
+    const selectionPromise = showContextMenuFallback([{ id: "rename", label: "Rename" }]);
+    const renameButton = findButton("Rename");
+
+    renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    enablePointerSelection?.(0);
     renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename");

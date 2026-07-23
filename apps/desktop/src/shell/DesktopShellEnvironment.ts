@@ -3,7 +3,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -19,14 +21,50 @@ interface WindowsProbeOptions {
   readonly loadProfile: boolean;
 }
 
-export interface DesktopShellEnvironmentShape {
-  readonly installIntoProcess: Effect.Effect<void, never>;
+const DesktopShellEnvironmentProbe = Schema.Literals([
+  "login-shell",
+  "launchctl-path",
+  "powershell-profile",
+  "powershell-no-profile",
+]);
+type DesktopShellEnvironmentProbe = typeof DesktopShellEnvironmentProbe.Type;
+
+const desktopShellEnvironmentCommandFields = {
+  probe: DesktopShellEnvironmentProbe,
+  executable: Schema.String,
+  argumentCount: Schema.Number,
+};
+
+export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandError>()(
+  "DesktopShellEnvironmentCommandError",
+  {
+    ...desktopShellEnvironmentCommandFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop shell environment ${this.probe} probe (${this.executable}) failed.`;
+  }
+}
+
+export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandTimeoutError>()(
+  "DesktopShellEnvironmentCommandTimeoutError",
+  {
+    ...desktopShellEnvironmentCommandFields,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Desktop shell environment ${this.probe} probe (${this.executable}) timed out after ${this.timeoutMs}ms.`;
+  }
 }
 
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
-  DesktopShellEnvironmentShape
->()("t3/desktop/ShellEnvironment") {}
+  {
+    readonly installIntoProcess: Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
@@ -128,6 +166,18 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
 const startMarker = (name: string) => `__T3CODE_ENV_${name}_START__`;
 const endMarker = (name: string) => `__T3CODE_ENV_${name}_END__`;
 
+const executableName = (command: string): string => command.split(/[\\/]/u).at(-1) ?? command;
+
+const logShellEnvironmentCommandError = (
+  error: DesktopShellEnvironmentCommandError | DesktopShellEnvironmentCommandTimeoutError,
+) =>
+  Effect.logWarning(error).pipe(
+    Effect.annotateLogs({
+      component: "desktop-shell-environment",
+      error,
+    }),
+  );
+
 const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
   names
     .map((name) => {
@@ -176,13 +226,14 @@ const extractEnvironment = (output: string, names: ReadonlyArray<string>): Envir
 };
 
 const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(function* (input: {
+  readonly probe: DesktopShellEnvironmentProbe;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* spawner
+  const output = yield* spawner
     .string(
       ChildProcess.make(input.command, input.args, {
         shell: input.shell ?? false,
@@ -194,10 +245,33 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
       }),
     )
     .pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopShellEnvironmentCommandError({
+            probe: input.probe,
+            executable: executableName(input.command),
+            argumentCount: input.args.length,
+            cause,
+          }),
+      ),
+      Effect.catchTags({
+        DesktopShellEnvironmentCommandError: (error) =>
+          logShellEnvironmentCommandError(error).pipe(Effect.as("")),
+      }),
       Effect.timeoutOption(input.timeout),
-      Effect.map(Option.getOrElse(() => "")),
-      Effect.catch(() => Effect.succeed("")),
     );
+  if (Option.isSome(output)) {
+    return output.value;
+  }
+
+  const error = new DesktopShellEnvironmentCommandTimeoutError({
+    probe: input.probe,
+    executable: executableName(input.command),
+    argumentCount: input.args.length,
+    timeoutMs: Duration.toMillis(input.timeout),
+  });
+  yield* logShellEnvironmentCommandError(error);
+  return "";
 });
 
 const readLoginShellEnvironment = (
@@ -207,16 +281,14 @@ const readLoginShellEnvironment = (
   names.length === 0
     ? Effect.succeed({})
     : runCommandOutput({
+        probe: "login-shell",
         command: shell,
         args: ["-ilc", capturePosixEnvironmentCommand(names)],
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
-const readLaunchctlPath: Effect.Effect<
-  Option.Option<string>,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = runCommandOutput({
+const readLaunchctlPath = runCommandOutput({
+  probe: "launchctl-path",
   command: "/bin/launchctl",
   args: ["getenv", "PATH"],
   timeout: LAUNCHCTL_TIMEOUT,
@@ -239,9 +311,9 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
 
     for (const command of WINDOWS_SHELL_CANDIDATES) {
       const output = yield* runCommandOutput({
+        probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
-        shell: true,
         timeout: LOGIN_SHELL_TIMEOUT,
       });
       const environment = extractEnvironment(output, names);
@@ -337,20 +409,20 @@ const installShellEnvironment = (
   return Effect.void;
 };
 
-export const layer = Layer.effect(
-  DesktopShellEnvironment,
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return DesktopShellEnvironment.of({
-      installIntoProcess: installShellEnvironment({
-        env: process.env,
-        platform: environment.platform,
-        userShell: Option.none(),
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
-      ),
-    });
-  }),
-);
+export const make = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
+    installShellEnvironment({
+      env: process.env,
+      platform: environment.platform,
+      userShell: Option.none(),
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+    );
+
+  return DesktopShellEnvironment.of({ installIntoProcess });
+});
+
+export const layer = Layer.effect(DesktopShellEnvironment, make);

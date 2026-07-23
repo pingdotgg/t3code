@@ -1,18 +1,21 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vite-plus/test";
 
 const {
   appendSwitchMock,
   exitMock,
   getAppPathMock,
   getVersionMock,
+  isDefaultProtocolClientMock,
   onMock,
   quitMock,
   relaunchMock,
   removeListenerMock,
+  requestSingleInstanceLockMock,
   setAboutPanelOptionsMock,
   setAppUserModelIdMock,
+  setAsDefaultProtocolClientMock,
   setDesktopNameMock,
   setDockIconMock,
   setNameMock,
@@ -23,12 +26,15 @@ const {
   exitMock: vi.fn(),
   getAppPathMock: vi.fn(() => "/app"),
   getVersionMock: vi.fn(() => "1.2.3"),
+  isDefaultProtocolClientMock: vi.fn(() => false),
   onMock: vi.fn(),
   quitMock: vi.fn(),
   relaunchMock: vi.fn(),
   removeListenerMock: vi.fn(),
+  requestSingleInstanceLockMock: vi.fn(() => true),
   setAboutPanelOptionsMock: vi.fn(),
   setAppUserModelIdMock: vi.fn(),
+  setAsDefaultProtocolClientMock: vi.fn(() => true),
   setDesktopNameMock: vi.fn(),
   setDockIconMock: vi.fn(),
   setNameMock: vi.fn(),
@@ -46,14 +52,17 @@ vi.mock("electron", () => ({
     },
     getAppPath: getAppPathMock,
     getVersion: getVersionMock,
+    isDefaultProtocolClient: isDefaultProtocolClientMock,
     isPackaged: true,
     name: "T3 Code",
     on: onMock,
     quit: quitMock,
     relaunch: relaunchMock,
     removeListener: removeListenerMock,
+    requestSingleInstanceLock: requestSingleInstanceLockMock,
     runningUnderARM64Translation: false,
     setAboutPanelOptions: setAboutPanelOptionsMock,
+    setAsDefaultProtocolClient: setAsDefaultProtocolClientMock,
     setAppUserModelId: setAppUserModelIdMock,
     setDesktopName: setDesktopNameMock,
     setName: setNameMock,
@@ -88,6 +97,44 @@ describe("ElectronApp", () => {
         resourcesPath: process.resourcesPath,
         runningUnderArm64Translation: false,
       });
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("reports which app metadata property failed", () =>
+    Effect.gen(function* () {
+      const cause = new Error("version unavailable");
+      getVersionMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.metadata.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppMetadataReadError);
+      assert.strictEqual(error.property, "app-version");
+      assert.strictEqual(error.cause, cause);
+      assert.strictEqual(
+        error.message,
+        'Failed to read Electron app metadata property "app-version".',
+      );
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("preserves Electron readiness failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("ready failed");
+      whenReadyMock.mockRejectedValueOnce(cause);
+
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.whenReady.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppWhenReadyError);
+      assert.strictEqual(error.isPackaged, true);
+      assert.strictEqual(error.cause, cause);
+      assert.strictEqual(
+        error.message,
+        "Failed to wait for the Electron app to become ready (packaged: true).",
+      );
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 

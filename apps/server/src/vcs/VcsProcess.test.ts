@@ -6,7 +6,12 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 
-import { VcsProcessExitError, VcsProcessTimeoutError } from "@t3tools/contracts";
+import {
+  VcsProcessExitError,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 const run = (input: VcsProcess.VcsProcessInput) =>
@@ -19,6 +24,25 @@ const liveLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
   effect.pipe(Effect.provide(liveLayer));
+
+const baseInput = {
+  operation: "test.process-boundary",
+  command: "git",
+  args: ["status", "--short"],
+  cwd: "/workspace",
+} satisfies VcsProcess.VcsProcessInput;
+
+const captureProcessResult = (
+  result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+) =>
+  VcsProcess.make.pipe(
+    Effect.provideService(
+      ProcessRunner.ProcessRunner,
+      ProcessRunner.ProcessRunner.of({ run: () => result }),
+    ),
+    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flip,
+  );
 
 describe("VcsProcess.run", () => {
   it.effect("collects stdout", () =>
@@ -61,15 +85,125 @@ describe("VcsProcess.run", () => {
 
   it.effect("fails with VcsProcessExitError for non-zero exits by default", () =>
     Effect.gen(function* () {
+      const secretArgument = "--token=super-secret-token";
+      const secretStderr = "remote rejected super-secret-token";
       const error = yield* run({
         operation: "test.exit",
         command: "node",
-        args: ["-e", "process.stderr.write('boom'); process.exit(2)"],
+        args: [
+          "-e",
+          "process.stderr.write(process.argv[1]); process.exit(2)",
+          secretStderr,
+          secretArgument,
+        ],
         cwd: process.cwd(),
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        operation: "test.exit",
+        command: "node",
+        argumentCount: 4,
+        exitCode: 2,
+        detail: "Process exited with a non-zero status.",
+        failureKind: "command-failed",
+        stderrLength: secretStderr.length,
+        stderrTruncated: false,
+      });
+      expect(error.message).not.toContain(secretArgument);
+      expect(error.message).not.toContain(secretStderr);
     }).pipe(provideLive),
+  );
+
+  it.effect("classifies authentication failures without retaining stderr", () =>
+    Effect.gen(function* () {
+      const secretStderr = "authentication failed for token super-secret-token";
+      const error = yield* run({
+        operation: "test.authentication",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", secretStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        operation: "test.authentication",
+        command: "node",
+        exitCode: 1,
+        detail: "Authentication failed.",
+        failureKind: "authentication",
+        stderrLength: secretStderr.length,
+        stderrTruncated: false,
+      });
+      expect(error.message).not.toContain(secretStderr);
+      expect(error.message).not.toContain("super-secret-token");
+    }).pipe(provideLive),
+  );
+
+  it.effect("retains spawn causes without exposing process arguments in the error message", () =>
+    Effect.gen(function* () {
+      const secretArgument = "--token=super-secret-token";
+      const error = yield* run({
+        operation: "test.spawn",
+        command: "definitely-not-a-t3code-executable",
+        args: [secretArgument],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessSpawnError);
+      expect(error).toMatchObject({
+        operation: "test.spawn",
+        command: "definitely-not-a-t3code-executable",
+        argumentCount: 1,
+      });
+      expect(error).toHaveProperty("cause");
+      expect(error.message).not.toContain(secretArgument);
+    }).pipe(provideLive),
+  );
+
+  it.effect("preserves real boundary causes without manufacturing structural ones", () =>
+    Effect.gen(function* () {
+      const cause = new Error("secret stdin failure");
+      const error = yield* captureProcessResult(
+        Effect.fail(
+          new ProcessRunner.ProcessStdinError({
+            command: baseInput.command,
+            argumentCount: baseInput.args.length,
+            cwd: baseInput.cwd,
+            stdinBytes: 47,
+            cause,
+          }),
+        ),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "VcsProcessStdinWriteError",
+        operation: baseInput.operation,
+        stdinBytes: 47,
+        cause,
+      });
+      expect(error.message).not.toContain(cause.message);
+
+      const missingExitCodeError = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr: "",
+          code: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      expect(missingExitCodeError).toMatchObject({
+        _tag: "VcsProcessMissingExitCodeError",
+        operation: baseInput.operation,
+        command: baseInput.command,
+        cwd: baseInput.cwd,
+        argumentCount: baseInput.args.length,
+      });
+      expect(missingExitCodeError).not.toHaveProperty("cause");
+    }),
   );
 
   it.effect("returns output when non-zero exits are allowed", () =>

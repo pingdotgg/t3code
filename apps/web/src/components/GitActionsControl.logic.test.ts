@@ -1,5 +1,5 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { assert, describe, it } from "vitest";
+import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
@@ -9,6 +9,7 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
+  resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -1099,6 +1100,27 @@ describe("resolveLiveThreadBranchUpdate", () => {
     });
 
     assert.equal(update, null);
+  });
+
+  it("allows a temporary worktree ref to reconcile to a semantic branch", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: "t3code/a9628676",
+      gitStatus: status({ refName: "feature/diff-panel-toggle" }),
+    });
+
+    assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
+  });
+});
+
+describe("resolveThreadBranchMetadataPatch", () => {
+  it("does not overwrite worktree metadata while reconciling a branch", () => {
+    assert.deepEqual(
+      resolveThreadBranchMetadataPatch("feature/current-ref", "feature/previous-ref"),
+      {
+        branch: "feature/current-ref",
+        expectedBranch: "feature/previous-ref",
+      },
+    );
   });
 });
 

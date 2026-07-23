@@ -1,27 +1,32 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { afterEach, describe, expect, it } from "@effect/vitest";
-import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { expect, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import os from "node:os";
-import path from "node:path";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
+import { HttpClient } from "effect/unstable/http";
 import {
-  clearLatestProviderVersionCacheForTests,
   createProviderVersionAdvisory,
+  enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
   normalizeCommandPath,
+  ProviderVersionCache,
+  resolveLatestProviderVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "./providerMaintenance.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
-const makeTempDir = Effect.fn("makeTempDir")(function* (name: string) {
-  const id = yield* Random.nextUUIDv4;
-  return path.join(os.tmpdir(), `${name}-${id}`);
-});
+const makeTempDir = (name: string) =>
+  Crypto.Crypto.pipe(
+    Effect.flatMap((crypto) => crypto.randomUUIDv4),
+    Effect.map((id) => NodePath.join(NodeOS.tmpdir(), `${name}-${id}`)),
+  );
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
   (commandPath: string): boolean =>
@@ -63,12 +68,73 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
+const installedPackageToolProvider: ServerProvider = {
+  instanceId: ProviderInstanceId.make("packageTool"),
+  driver: driver("packageTool"),
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-04-10T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
 
-afterEach(() => {
-  clearLatestProviderVersionCacheForTests();
-});
+it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+  it.effect("reads cached versions through the injectable cache reference", () =>
+    resolveLatestProviderVersion(packageToolUpdate.resolve()).pipe(
+      Effect.provideService(
+        ProviderVersionCache,
+        new Map([
+          [
+            "@example/package-tool",
+            {
+              expiresAt: Number.MAX_SAFE_INTEGER,
+              version: "9.9.9",
+            },
+          ],
+        ]),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() =>
+          Effect.die("cached provider version should not make an HTTP request"),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("9.9.9");
+      }),
+    ),
+  );
 
-describe("providerMaintenance", () => {
+  it.effect("does not fetch latest provider versions when update checks are disabled", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      installedPackageToolProvider,
+      packageToolUpdate.resolve(),
+      {
+        enableProviderUpdateChecks: false,
+      },
+    ).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() =>
+          Effect.die("disabled provider update checks should not make an HTTP request"),
+        ),
+      ),
+      Effect.map((provider) => {
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "unknown",
+          currentVersion: "1.0.0",
+          latestVersion: null,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+        });
+      }),
+    ),
+  );
+
   it("marks providers with unknown current versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
@@ -137,21 +203,23 @@ describe("providerMaintenance", () => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-vite-plus-capabilities");
-        const vitePlusBinDir = path.join(tempDir, ".vite-plus", "bin");
-        mkdirSync(vitePlusBinDir, { recursive: true });
-        const packageToolPath = path.join(vitePlusBinDir, "package-tool");
-        writeFileSync(packageToolPath, "#!/bin/sh\n");
-        chmodSync(packageToolPath, 0o755);
+        const vitePlusBinDir = NodePath.join(tempDir, ".vite-plus", "bin");
+        NodeFS.mkdirSync(vitePlusBinDir, { recursive: true });
+        const packageToolPath = NodePath.join(vitePlusBinDir, "package-tool");
+        NodeFS.writeFileSync(packageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(packageToolPath, 0o755);
 
-        expect(
-          packageToolUpdate.resolve({
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
             binaryPath: "package-tool",
-            platform: "darwin",
             env: {
               PATH: vitePlusBinDir,
             },
-          }),
-        ).toEqual({
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities).toEqual({
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
           update: {
@@ -172,20 +240,22 @@ describe("providerMaintenance", () => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-bun-capabilities");
-        const bunBinDir = path.join(tempDir, ".bun", "bin");
-        mkdirSync(bunBinDir, { recursive: true });
-        writeFileSync(path.join(bunBinDir, "native-package-tool.exe"), "MZ");
+        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+        NodeFS.mkdirSync(bunBinDir, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(bunBinDir, "native-package-tool.exe"), "MZ");
 
-        expect(
-          nativePackageToolUpdate.resolve({
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          {
             binaryPath: "native-package-tool",
-            platform: "win32",
             env: {
               PATH: bunBinDir,
               PATHEXT: ".COM;.EXE;.BAT;.CMD",
             },
-          }),
-        ).toEqual({
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+        expect(capabilities).toEqual({
           provider: driver("nativePackageTool"),
           packageName: "@example/native-package-tool",
           update: {
@@ -206,21 +276,23 @@ describe("providerMaintenance", () => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-pnpm-capabilities");
-        const pnpmHomeDir = path.join(tempDir, ".local", "share", "pnpm");
-        mkdirSync(pnpmHomeDir, { recursive: true });
-        const scopedPackageToolPath = path.join(pnpmHomeDir, "scoped-package-tool");
-        writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-        chmodSync(scopedPackageToolPath, 0o755);
+        const pnpmHomeDir = NodePath.join(tempDir, ".local", "share", "pnpm");
+        NodeFS.mkdirSync(pnpmHomeDir, { recursive: true });
+        const scopedPackageToolPath = NodePath.join(pnpmHomeDir, "scoped-package-tool");
+        NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(scopedPackageToolPath, 0o755);
 
-        expect(
-          scopedPackageToolUpdate.resolve({
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          scopedPackageToolUpdate,
+          {
             binaryPath: "scoped-package-tool",
-            platform: "darwin",
             env: {
               PATH: pnpmHomeDir,
             },
-          }),
-        ).toEqual({
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities).toEqual({
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
@@ -240,7 +312,6 @@ describe("providerMaintenance", () => {
     expect(
       packageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/package-tool",
-        platform: "darwin",
         env: {
           PATH: "",
         },
@@ -265,21 +336,23 @@ describe("providerMaintenance", () => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-native-package-tool-native-capabilities");
-        const nativeBinDir = path.join(tempDir, ".local", "bin");
-        mkdirSync(nativeBinDir, { recursive: true });
-        const nativePackageToolPath = path.join(nativeBinDir, "native-package-tool");
-        writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
-        chmodSync(nativePackageToolPath, 0o755);
+        const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        const nativePackageToolPath = NodePath.join(nativeBinDir, "native-package-tool");
+        NodeFS.writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(nativePackageToolPath, 0o755);
 
-        expect(
-          nativePackageToolUpdate.resolve({
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          {
             binaryPath: "native-package-tool",
-            platform: "darwin",
             env: {
               PATH: nativeBinDir,
             },
-          }),
-        ).toEqual({
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities).toEqual({
           provider: driver("nativePackageTool"),
           packageName: "@example/native-package-tool",
           update: {
@@ -300,21 +373,23 @@ describe("providerMaintenance", () => {
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-scoped-package-tool-native-capabilities");
-        const nativeBinDir = path.join(tempDir, ".scoped-package-tool", "bin");
-        mkdirSync(nativeBinDir, { recursive: true });
-        const scopedPackageToolPath = path.join(nativeBinDir, "scoped-package-tool");
-        writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-        chmodSync(scopedPackageToolPath, 0o755);
+        const nativeBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        const scopedPackageToolPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+        NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(scopedPackageToolPath, 0o755);
 
-        expect(
-          scopedPackageToolUpdate.resolve({
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          scopedPackageToolUpdate,
+          {
             binaryPath: "scoped-package-tool",
-            platform: "darwin",
             env: {
               PATH: nativeBinDir,
             },
-          }),
-        ).toEqual({
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities).toEqual({
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
@@ -334,7 +409,6 @@ describe("providerMaintenance", () => {
     expect(
       nativePackageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/native-package-tool",
-        platform: "darwin",
         env: {
           PATH: "",
         },
@@ -358,7 +432,6 @@ describe("providerMaintenance", () => {
     expect(
       scopedPackageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/scoped-package-tool",
-        platform: "darwin",
         env: {
           PATH: "",
         },
@@ -381,8 +454,8 @@ describe("providerMaintenance", () => {
   it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-capabilities");
-      const binDir = path.join(tempDir, "bin");
-      const packageBinDir = path.join(
+      const binDir = NodePath.join(tempDir, "bin");
+      const packageBinDir = NodePath.join(
         tempDir,
         "lib",
         "node_modules",
@@ -390,21 +463,20 @@ describe("providerMaintenance", () => {
         "package-tool",
         "bin",
       );
-      mkdirSync(binDir, { recursive: true });
-      mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = path.join(packageBinDir, "package-tool.js");
-      const symlinkPath = path.join(binDir, "package-tool");
-      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      chmodSync(packageBinPath, 0o755);
-      symlinkSync(packageBinPath, symlinkPath);
+      NodeFS.mkdirSync(binDir, { recursive: true });
+      NodeFS.mkdirSync(packageBinDir, { recursive: true });
+      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+      const symlinkPath = NodePath.join(binDir, "package-tool");
+      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+      NodeFS.chmodSync(packageBinPath, 0o755);
+      NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: symlinkPath,
-        platform: "darwin",
         env: {
           PATH: "",
         },
-      }).pipe(Effect.provide(NodeServices.layer));
+      });
 
       expect(capabilities).toEqual({
         provider: driver("packageTool"),
@@ -425,8 +497,8 @@ describe("providerMaintenance", () => {
   it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
-      const binDir = path.join(tempDir, "bin");
-      const packageBinDir = path.join(
+      const binDir = NodePath.join(tempDir, "bin");
+      const packageBinDir = NodePath.join(
         tempDir,
         ".local",
         "share",
@@ -438,21 +510,20 @@ describe("providerMaintenance", () => {
         "package-tool",
         "bin",
       );
-      mkdirSync(binDir, { recursive: true });
-      mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = path.join(packageBinDir, "package-tool.js");
-      const symlinkPath = path.join(binDir, "package-tool");
-      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      chmodSync(packageBinPath, 0o755);
-      symlinkSync(packageBinPath, symlinkPath);
+      NodeFS.mkdirSync(binDir, { recursive: true });
+      NodeFS.mkdirSync(packageBinDir, { recursive: true });
+      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+      const symlinkPath = NodePath.join(binDir, "package-tool");
+      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+      NodeFS.chmodSync(packageBinPath, 0o755);
+      NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: symlinkPath,
-        platform: "darwin",
         env: {
           PATH: "",
         },
-      }).pipe(Effect.provide(NodeServices.layer));
+      });
 
       expect(capabilities).toEqual({
         provider: driver("packageTool"),
@@ -474,7 +545,6 @@ describe("providerMaintenance", () => {
     expect(
       packageToolUpdate.resolve({
         binaryPath: "C:\\Tools\\package-tool\\package-tool.exe",
-        platform: "win32",
         env: {
           PATH: "",
           PATHEXT: ".COM;.EXE;.BAT;.CMD",

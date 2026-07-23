@@ -3,7 +3,6 @@ export {
   readPrimaryEnvironmentDescriptor,
   resetPrimaryEnvironmentDescriptorForTests,
   resolveInitialPrimaryEnvironmentDescriptor,
-  usePrimaryEnvironmentId,
   writePrimaryEnvironmentDescriptor,
   __resetPrimaryEnvironmentBootstrapForTests,
   __resetPrimaryEnvironmentDescriptorBootstrapForTests,
@@ -17,9 +16,14 @@ export {
 export {
   createServerPairingCredential,
   fetchSessionState,
+  isPrimaryEnvironmentPairingCredentialRejectedError,
+  isPrimaryEnvironmentRequestError,
   listServerClientSessions,
   listServerPairingLinks,
   peekPairingTokenFromUrl,
+  PrimaryEnvironmentPairingCredentialRejectedError,
+  PrimaryEnvironmentRequestError,
+  reauthenticatePrimaryEnvironment,
   resolveInitialServerAuthGateState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
@@ -32,4 +36,19 @@ export {
   __resetServerAuthBootstrapForTests,
 } from "./auth";
 
-export { resolvePrimaryEnvironmentHttpUrl, isLoopbackHostname } from "./target";
+export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";
+
+export { PrimaryEnvironmentHttpClient } from "./httpClient";
+
+export {
+  DesktopEnvironmentBootstrapIncompleteError,
+  isDesktopEnvironmentBootstrapIncompleteError,
+  isPrimaryEnvironmentProtocolUnsupportedError,
+  isPrimaryEnvironmentUrlInvalidError,
+  PrimaryEnvironmentProtocolUnsupportedError,
+  PrimaryEnvironmentUrlInvalidError,
+  readPrimaryEnvironmentTarget,
+  resolvePrimaryEnvironmentHttpUrl,
+  isLoopbackHostname,
+  type PrimaryEnvironmentTarget,
+} from "./target";

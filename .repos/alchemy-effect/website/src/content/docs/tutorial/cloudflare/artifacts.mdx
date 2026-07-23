@@ -1,0 +1,857 @@
+---
+title: Build a Git Repo API
+description: Build a mini-GitHub on Cloudflare — Artifacts for Git storage, a Durable Object per repo for metadata, fronted by a schema-typed HttpApi.
+sidebar:
+  order: 7
+---
+
+So far the Cloudflare track has added stateful primitives one at a
+time. This tutorial pulls two of them together into something
+recognizable: a tiny GitHub. **Cloudflare Artifacts** stores the
+actual Git history (clone, push, pull all work against it), and a
+**Durable Object per repo** holds the metadata you don't want
+inside the repo itself — description, topics, star count.
+
+We'll front the whole thing with Effect's
+[HttpApi](/guides/effect-http-api) so every route is
+schema-validated end-to-end and the integration test can call the
+worker through the same typed client a real consumer would use.
+
+By the end you'll have a Worker that lets a client create a repo,
+`git clone` against it, read combined info, star it, and update
+its description.
+
+## Declare the namespace
+
+A Cloudflare Artifacts namespace is the top-level container for
+Git-compatible repos. Namespaces are *implicit* — there's nothing
+to provision at deploy time, so the resource is a thin binding
+marker. Repos themselves are created at runtime through the
+binding.
+
+Create `src/Repos.ts`:
+
+```typescript twoslash
+// src/Repos.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Repos = Cloudflare.Artifacts("Repos");
+```
+
+That's the whole declaration. The Worker provider will see this
+the moment we `.bind(...)` it.
+
+## Define the API
+
+The schema and endpoint declarations live outside the Worker so
+the same file can be imported by clients and tests without
+pulling in any runtime code. Start with one endpoint —
+`POST /repos`:
+
+```typescript twoslash
+// src/Api.ts
+import * as Schema from "effect/Schema";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+
+export class CreateRepoResponse extends Schema.Class<CreateRepoResponse>(
+  "CreateRepoResponse",
+)({
+  name: Schema.String,
+  remote: Schema.String,
+  token: Schema.String,
+  defaultBranch: Schema.String,
+}) {}
+
+export class RepoConflict extends Schema.TaggedErrorClass<RepoConflict>()(
+  "RepoConflict",
+  { message: Schema.String },
+) {}
+
+export const createRepo = HttpApiEndpoint.post("createRepo", "/repos", {
+  payload: Schema.Struct({
+    name: Schema.String,
+    description: Schema.optional(Schema.String),
+  }),
+  success: CreateRepoResponse,
+  error: RepoConflict,
+});
+
+export class ReposGroup extends HttpApiGroup.make("repos").add(createRepo) {}
+
+export class RepoApi extends HttpApi.make("RepoApi").add(ReposGroup) {}
+```
+
+`Schema.Class` gives you a runtime-validated class with an inferred
+TypeScript type. `Schema.TaggedErrorClass` gives you a typed error
+that becomes a discriminated union member on the client.
+
+## Implement the Worker
+
+Create `src/Worker.ts`. The handler group is *constructed* with
+`HttpApiBuilder.group` (pure — safe inside the Worker's Init
+phase), and the `fetch` field is the result of layering the API
+into an `HttpEffect`:
+
+```typescript twoslash
+// @noErrors
+// src/Worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Etag from "effect/unstable/http/Etag";
+import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { CreateRepoResponse, RepoApi, RepoConflict } from "./Api.ts";
+import { Repos } from "./Repos.ts";
+
+// Workers don't have a FileSystem, so HttpPlatform's file-response
+// surface is stubbed. The repo API never serves files.
+const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
+  fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
+  fileWebResponse: () =>
+    Effect.die("HttpPlatform.fileWebResponse not supported"),
+});
+
+export default class Worker extends Cloudflare.Worker<Worker>()(
+  "Api",
+  {
+    main: import.meta.path,
+    compatibility: { flags: ["nodejs_compat"], date: "2026-03-17" },
+  },
+  Effect.gen(function* () {
+    const artifacts = yield* Cloudflare.Artifacts.bind(Repos);
+
+    const handlers = HttpApiBuilder.group(RepoApi, "repos", (h) =>
+      h.handle("createRepo", ({ payload }) =>
+        artifacts
+          .create(payload.name, {
+            description: payload.description,
+            setDefaultBranch: "main",
+          })
+          .pipe(
+            Effect.map(
+              (c) =>
+                new CreateRepoResponse({
+                  name: c.name,
+                  remote: c.remote,
+                  token: c.token,
+                  defaultBranch: c.defaultBranch,
+                }),
+            ),
+            Effect.catchTag("ArtifactsError", (err) =>
+              Effect.fail(new RepoConflict({ message: err.message })),
+            ),
+          ),
+      ),
+    );
+
+    return {
+      fetch: HttpApiBuilder.layer(RepoApi).pipe(
+        Layer.provide(handlers),
+        Layer.provide([Etag.layer, HttpPlatformStub, Path.layer]),
+        HttpRouter.toHttpEffect,
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.ArtifactsBindingLive)),
+) {}
+```
+
+The handler returns a `CreateRepoResponse` instance — `Schema.Class`
+expects an actual instance, not a plain object. Errors from
+`artifacts.create` (the only declared error path) are translated to
+`RepoConflict`; anything else dies and surfaces as a 500.
+
+## Set up the integration test
+
+Same `Test.make` shape as
+[Add a Durable Object](/tutorial/cloudflare/durable-objects), but
+this time the test calls the worker through `HttpApiClient.make` —
+the same `RepoApi` value drives the typed client:
+
+```typescript
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { RepoApi } from "../src/Api.ts";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
+
+const repoName = `tutorial-${Date.now().toString(36)}`;
+```
+
+Add the first assertion. `client.repos.createRepo` returns
+`Effect<CreateRepoResponse, RepoConflict | HttpClientError>` — fields
+are typed straight from the schema:
+
+```diff lang="typescript"
+const repoName = `tutorial-${Date.now().toString(36)}`;
+
++test(
++  "repo lifecycle",
++  Effect.gen(function* () {
++    const { url } = yield* stack;
++    const client = yield* HttpApiClient.make(RepoApi, { baseUrl: url });
++
++    const created = yield* client.repos.createRepo({
++      payload: { name: repoName, description: "tutorial repo" },
++    });
++    expect(created.name).toBe(repoName);
++    expect(created.remote).toBeString();
++    expect(created.token).toBeString();
++  }),
++  { timeout: 120_000 },
++);
+```
+
+```sh
+bun test
+```
+
+Alchemy deploys the Worker, the test posts to `/repos`, and you
+get back a `remote` and `token`. You could `git clone` against
+them right now.
+
+## Look up an existing repo
+
+`artifacts.get(name)` returns an opaque RPC stub — useful for
+`createToken` later, but its fields aren't enumerable. To return
+repo info as JSON, use `artifacts.list(...)` and find the entry by
+name; every record in the list is a plain object.
+
+Add a `RepoInfo` schema and a `getRepo` endpoint to the API:
+
+```diff lang="typescript"
+// src/Api.ts
+import * as Schema from "effect/Schema";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+
++export class RepoInfo extends Schema.Class<RepoInfo>("RepoInfo")({
++  id: Schema.String,
++  name: Schema.String,
++  description: Schema.NullOr(Schema.String),
++  defaultBranch: Schema.String,
++  remote: Schema.String,
++  status: Schema.String,
++  readOnly: Schema.Boolean,
++  createdAt: Schema.String,
++  updatedAt: Schema.String,
++  lastPushAt: Schema.NullOr(Schema.String),
++}) {}
+
+export class CreateRepoResponse extends Schema.Class<CreateRepoResponse>(
+  "CreateRepoResponse",
+)({ /* … */ }) {}
+
++export class RepoNotFound extends Schema.TaggedErrorClass<RepoNotFound>()(
++  "RepoNotFound",
++  { name: Schema.String },
++) {}
+
+export class RepoConflict extends Schema.TaggedErrorClass<RepoConflict>()(
+  "RepoConflict",
+  { message: Schema.String },
+) {}
+
+export const createRepo = HttpApiEndpoint.post("createRepo", "/repos", { /* … */ });
+
++export const getRepo = HttpApiEndpoint.get("getRepo", "/repos/:name", {
++  params: Schema.Struct({ name: Schema.String }),
++  success: RepoInfo,
++  error: RepoNotFound,
++});
+
+-export class ReposGroup extends HttpApiGroup.make("repos").add(createRepo) {}
++export class ReposGroup extends HttpApiGroup.make("repos")
++  .add(createRepo)
++  .add(getRepo) {}
+
+export class RepoApi extends HttpApi.make("RepoApi").add(ReposGroup) {}
+```
+
+Implement the handler in the Worker, and factor out a `findRepo`
+helper since several handlers will need to look up a repo:
+
+```diff lang="typescript"
+// src/Worker.ts — inside Effect.gen
+const artifacts = yield* Cloudflare.Artifacts.bind(Repos);
+
++const findRepo = (name: string) =>
++  artifacts.list({ limit: 100 }).pipe(
++    Effect.flatMap((res) => {
++      const found = res.repos.find((r: { name: string }) => r.name === name);
++      return found
++        ? Effect.succeed(found)
++        : Effect.fail(new RepoNotFound({ name }));
++    }),
++    Effect.catchTag("ArtifactsError", () =>
++      Effect.fail(new RepoNotFound({ name })),
++    ),
++  );
+
+const handlers = HttpApiBuilder.group(RepoApi, "repos", (h) =>
+  h
+    .handle("createRepo", ({ payload }) =>
+      // …existing
+    )
++   .handle("getRepo", ({ params }) =>
++     findRepo(params.name).pipe(
++       Effect.map(
++         (found) =>
++           new RepoInfo({
++             id: found.id,
++             name: found.name,
++             description: found.description ?? null,
++             defaultBranch: found.defaultBranch,
++             remote: found.remote,
++             status: found.status,
++             readOnly: found.readOnly,
++             createdAt: found.createdAt,
++             updatedAt: found.updatedAt,
++             lastPushAt: found.lastPushAt ?? null,
++           }),
++       ),
++     ),
++   ),
+);
+```
+
+Extend the test:
+
+```diff lang="typescript"
+test(
+  "repo lifecycle",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const client = yield* HttpApiClient.make(RepoApi, { baseUrl: url });
+
+    const created = yield* client.repos.createRepo({
+      payload: { name: repoName, description: "tutorial repo" },
+    });
+    expect(created.name).toBe(repoName);
+    expect(created.remote).toBeString();
+    expect(created.token).toBeString();
++
++   const info = yield* client.repos.getRepo({ params: { name: repoName } });
++   expect(info.name).toBe(repoName);
++   expect(info.defaultBranch).toBe("main");
++   expect(info.description).toBe("tutorial repo");
+  }),
+  { timeout: 120_000 },
+);
+```
+
+```sh
+bun test
+```
+
+## Mint a fresh clone token
+
+The token returned by `create` expires. Clients that already know
+a repo's name should be able to ask for a new one without
+recreating the repo. Add a `cloneToken` endpoint:
+
+```diff lang="typescript"
+// src/Api.ts
++export class CloneToken extends Schema.Class<CloneToken>("CloneToken")({
++  id: Schema.String,
++  plaintext: Schema.String,
++  scope: Schema.Literals(["read", "write"]),
++  expiresAt: Schema.String,
++}) {}
+
+export const getRepo = HttpApiEndpoint.get("getRepo", "/repos/:name", { /* … */ });
+
++export const cloneToken = HttpApiEndpoint.post(
++  "cloneToken",
++  "/repos/:name/clone-token",
++  {
++    params: Schema.Struct({ name: Schema.String }),
++    payload: Schema.Struct({
++      scope: Schema.optional(Schema.Literals(["read", "write"])),
++      ttl: Schema.optional(Schema.Number),
++    }),
++    success: CloneToken,
++    error: RepoNotFound,
++  },
++);
+
+export class ReposGroup extends HttpApiGroup.make("repos")
+  .add(createRepo)
+  .add(getRepo)
++ .add(cloneToken) {}
+```
+
+`repo.createToken(scope, ttl)` on the runtime stub returns
+`{ id, plaintext, scope, expiresAt }` — wrap it in a `CloneToken`
+instance:
+
+```diff lang="typescript"
+.handle("getRepo", ({ params }) => /* … */)
++.handle("cloneToken", ({ params, payload }) =>
++  artifacts.get(params.name).pipe(
++    Effect.flatMap((handle) =>
++      handle.createToken(payload.scope ?? "read", payload.ttl ?? 3600),
++    ),
++    Effect.map(
++      (t) =>
++        new CloneToken({
++          id: t.id,
++          plaintext: t.plaintext,
++          scope: t.scope as "read" | "write",
++          expiresAt: t.expiresAt,
++        }),
++    ),
++    Effect.catchTag("ArtifactsError", () =>
++      Effect.fail(new RepoNotFound({ name: params.name })),
++    ),
++  ),
++),
+```
+
+```diff lang="typescript"
+test(
+  "repo lifecycle",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const client = yield* HttpApiClient.make(RepoApi, { baseUrl: url });
+
+    const created = yield* client.repos.createRepo({
+      payload: { name: repoName, description: "tutorial repo" },
+    });
+    expect(created.name).toBe(repoName);
+    expect(created.remote).toBeString();
+    expect(created.token).toBeString();
+
+    const info = yield* client.repos.getRepo({ params: { name: repoName } });
+    expect(info.name).toBe(repoName);
+    expect(info.defaultBranch).toBe("main");
+    expect(info.description).toBe("tutorial repo");
++
++   const token = yield* client.repos.cloneToken({
++     params: { name: repoName },
++     payload: { scope: "read", ttl: 600 },
++   });
++   expect(token.plaintext).toBeString();
++   expect(token.scope).toBe("read");
+  }),
+  { timeout: 120_000 },
+);
+```
+
+That covers the Git half. Artifacts is now storing history and
+handing out tokens. Next we'll add the metadata that lives
+*around* the repo.
+
+## Add the `Repo` Durable Object
+
+Artifacts owns commits, refs, and the clone protocol. It does not
+store the things a GitHub-like API needs alongside that —
+descriptions you can rename, topics, stars. The `Repo` Durable
+Object represents one repository: a single addressable instance
+per repo name with its own transactional storage.
+
+Start with the smallest possible DO — empty public API, no state:
+
+```typescript twoslash
+// src/Repo.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class Repo extends Cloudflare.DurableObjectNamespace<Repo>()(
+  "Repo",
+  Effect.gen(function* () {
+    return Effect.gen(function* () {
+      return {};
+    });
+  }),
+) {}
+```
+
+## Persist the metadata
+
+Each DO instance has its own SQLite-backed key/value storage. Pull
+the current metadata out of storage in the inner init so it
+survives restarts and hibernation:
+
+```diff lang="typescript"
++export type Meta = {
++  description: string;
++  topics: string[];
++  stars: number;
++  createdAt: number;
++};
+
+export default class Repo extends Cloudflare.DurableObjectNamespace<Repo>()(
+  "Repo",
+  Effect.gen(function* () {
+    return Effect.gen(function* () {
++     const state = yield* Cloudflare.DurableObjectState;
++     let meta = (yield* state.storage.get<Meta>("meta")) ?? null;
+      return {};
+    });
+  }),
+) {}
+```
+
+`meta` is `null` until the repo is initialized.
+
+## Add `init` and `get`
+
+Any function returned from the inner Effect that produces an
+`Effect` becomes a typed RPC method. Add one to seed the metadata
+the first time a repo is created, and one to read it:
+
+```diff lang="typescript"
+return Effect.gen(function* () {
+  const state = yield* Cloudflare.DurableObjectState;
+  let meta = (yield* state.storage.get<Meta>("meta")) ?? null;
+
++ const ensure = Effect.gen(function* () {
++   if (meta === null) {
++     return yield* Effect.fail(new Error("repo not initialized"));
++   }
++   return meta;
++ });
+
+- return {};
++ return {
++   init: (description: string) =>
++     Effect.gen(function* () {
++       if (meta !== null) return meta;
++       meta = { description, topics: [], stars: 0, createdAt: Date.now() };
++       yield* state.storage.put("meta", meta);
++       return meta;
++     }),
++   get: () => ensure,
++ };
+});
+```
+
+## Wire the DO into the API
+
+Add a `Metadata` schema to `Api.ts` and extend `RepoInfo` with a
+nullable `metadata` field:
+
+```diff lang="typescript"
+// src/Api.ts
++export class Metadata extends Schema.Class<Metadata>("Metadata")({
++  description: Schema.String,
++  topics: Schema.Array(Schema.String),
++  stars: Schema.Number,
++  createdAt: Schema.Number,
++}) {}
+
+export class RepoInfo extends Schema.Class<RepoInfo>("RepoInfo")({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.NullOr(Schema.String),
+  defaultBranch: Schema.String,
+  remote: Schema.String,
+  status: Schema.String,
+  readOnly: Schema.Boolean,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  lastPushAt: Schema.NullOr(Schema.String),
++ metadata: Schema.NullOr(Metadata),
+}) {}
+```
+
+Yield the `Repo` class in the Worker's init phase. The handle is a
+DO namespace — `repos.getByName(name)` returns a typed RPC stub for
+that repo's instance:
+
+```diff lang="typescript"
+// src/Worker.ts
++import Repo from "./Repo.ts";
+import {
+  CloneToken,
+  CreateRepoResponse,
++ Metadata,
+  RepoApi,
+  RepoConflict,
+  RepoInfo,
+  RepoNotFound,
+} from "./Api.ts";
+
+  Effect.gen(function* () {
+    const artifacts = yield* Cloudflare.Artifacts.bind(Repos);
++   const repos = yield* Repo;
+    // …findRepo helper
+```
+
+Now extend the handlers — `createRepo` calls `init` after the repo
+is created, `getRepo` reads metadata and merges it:
+
+```diff lang="typescript"
+.handle("createRepo", ({ payload }) =>
+  artifacts
+    .create(payload.name, {
+      description: payload.description,
+      setDefaultBranch: "main",
+    })
+    .pipe(
++     Effect.tap(() =>
++       repos
++         .getByName(payload.name)
++         .init(payload.description ?? "")
++         .pipe(Effect.orDie),
++     ),
+      Effect.map(
+        (c) =>
+          new CreateRepoResponse({
+            name: c.name,
+            remote: c.remote,
+            token: c.token,
+            defaultBranch: c.defaultBranch,
+          }),
+      ),
+      Effect.catchTag("ArtifactsError", (err) =>
+        Effect.fail(new RepoConflict({ message: err.message })),
+      ),
+    ),
+)
+.handle("getRepo", ({ params }) =>
+  findRepo(params.name).pipe(
++   Effect.flatMap((found) =>
++     repos
++       .getByName(params.name)
++       .get()
++       .pipe(
++         Effect.catch(() => Effect.succeed(null)),
++         Effect.map((m) => ({ found, meta: m })),
++       ),
++   ),
+-   Effect.map(
+-     (found) =>
+-       new RepoInfo({
++   Effect.map(
++     ({ found, meta }) =>
++       new RepoInfo({
+          id: found.id,
+          name: found.name,
+          description: found.description ?? null,
+          defaultBranch: found.defaultBranch,
+          remote: found.remote,
+          status: found.status,
+          readOnly: found.readOnly,
+          createdAt: found.createdAt,
+          updatedAt: found.updatedAt,
+          lastPushAt: found.lastPushAt ?? null,
++         metadata: meta ? new Metadata(meta) : null,
+        }),
+    ),
+  ),
+),
+```
+
+The DO's `get()` fails with a plain `Error` when the repo wasn't
+initialised — recover with `Effect.catch` so the route still
+returns the Artifacts info even if the DO has no metadata yet.
+
+Update the test — `info.metadata` is now typed as
+`Metadata | null`:
+
+```diff lang="typescript"
+const info = yield* client.repos.getRepo({ params: { name: repoName } });
+expect(info.name).toBe(repoName);
+expect(info.defaultBranch).toBe("main");
+expect(info.description).toBe("tutorial repo");
++expect(info.metadata?.description).toBe("tutorial repo");
++expect(info.metadata?.stars).toBe(0);
+```
+
+```sh
+bun test
+```
+
+## Update description and topics
+
+Add an `update` method to the DO:
+
+```diff lang="typescript"
+return {
+  init: (description: string) =>
+    Effect.gen(function* () {
+      if (meta !== null) return meta;
+      meta = { description, topics: [], stars: 0, createdAt: Date.now() };
+      yield* state.storage.put("meta", meta);
+      return meta;
+    }),
+  get: () => ensure,
++ update: (patch: Partial<Pick<Meta, "description" | "topics">>) =>
++   Effect.gen(function* () {
++     const current = yield* ensure;
++     meta = { ...current, ...patch };
++     yield* state.storage.put("meta", meta);
++     return meta;
++   }),
+};
+```
+
+Add an `updateRepo` endpoint to the API:
+
+```diff lang="typescript"
+// src/Api.ts
++export const updateRepo = HttpApiEndpoint.patch(
++  "updateRepo",
++  "/repos/:name",
++  {
++    params: Schema.Struct({ name: Schema.String }),
++    payload: Schema.Struct({
++      description: Schema.optional(Schema.String),
++      topics: Schema.optional(Schema.Array(Schema.String)),
++    }),
++    success: Metadata,
++    error: RepoNotFound,
++  },
++);
+
+export class ReposGroup extends HttpApiGroup.make("repos")
+  .add(createRepo)
+  .add(getRepo)
+  .add(cloneToken)
++ .add(updateRepo) {}
+```
+
+And the handler:
+
+```diff lang="typescript"
+.handle("cloneToken", ({ params, payload }) => /* … */)
++.handle("updateRepo", ({ params, payload }) =>
++  findRepo(params.name).pipe(
++    Effect.flatMap(() =>
++      repos
++        .getByName(params.name)
++        .update({
++          description: payload.description,
++          topics: payload.topics ? [...payload.topics] : undefined,
++        })
++        .pipe(Effect.orDie),
++    ),
++    Effect.map((m) => new Metadata(m)),
++  ),
++),
+```
+
+Test it:
+
+```diff lang="typescript"
+expect(token.scope).toBe("read");
+
++const updated = yield* client.repos.updateRepo({
++  params: { name: repoName },
++  payload: { description: "now with stars", topics: ["demo", "alchemy"] },
++});
++expect(updated.description).toBe("now with stars");
++expect(updated.topics).toEqual(["demo", "alchemy"]);
+```
+
+## Star a repo
+
+Same pattern — add `star` to the DO, `starRepo` to the API, and
+the handler:
+
+```diff lang="typescript"
+// src/Repo.ts
+return {
+  // …
+  update: (patch) => /* … */,
++ star: () =>
++   Effect.gen(function* () {
++     const current = yield* ensure;
++     meta = { ...current, stars: current.stars + 1 };
++     yield* state.storage.put("meta", meta);
++     return meta;
++   }),
+};
+```
+
+```diff lang="typescript"
+// src/Api.ts
++export const starRepo = HttpApiEndpoint.post(
++  "starRepo",
++  "/repos/:name/star",
++  {
++    params: Schema.Struct({ name: Schema.String }),
++    success: Metadata,
++    error: RepoNotFound,
++  },
++);
+
+export class ReposGroup extends HttpApiGroup.make("repos")
+  .add(createRepo)
+  .add(getRepo)
+  .add(cloneToken)
+  .add(updateRepo)
++ .add(starRepo) {}
+```
+
+```diff lang="typescript"
+// src/Worker.ts
+.handle("updateRepo", ({ params, payload }) => /* … */)
++.handle("starRepo", ({ params }) =>
++  findRepo(params.name).pipe(
++    Effect.flatMap(() =>
++      repos.getByName(params.name).star().pipe(Effect.orDie),
++    ),
++    Effect.map((m) => new Metadata(m)),
++  ),
++),
+```
+
+```diff lang="typescript"
+expect(updated.topics).toEqual(["demo", "alchemy"]);
+
++const starred = yield* client.repos.starRepo({
++  params: { name: repoName },
++});
++expect(starred.stars).toBe(1);
+```
+
+## Run the full suite
+
+```sh
+bun test
+```
+
+Each call round-trips through Artifacts, the Durable Object, or
+both — created via `artifacts.create`, looked up via `artifacts.list`,
+mutated via the DO's `init`/`update`/`star` RPC methods. The whole
+flow is type-checked end-to-end through the same `RepoApi` schema,
+on both the server and the client.
+
+## Why this shape
+
+Artifacts and the per-repo DO each do one thing well:
+
+- **Artifacts** is the Git server — it owns commits, refs, and the
+  clone/push protocol. Tokens are scoped and short-lived, so you
+  mint them on demand instead of handing out long-lived secrets.
+- **The DO** is the source of truth for everything that lives
+  *around* the repo. Each repo gets its own instance, so a hot
+  repo's writes never contend with another's.
+- **HttpApi** ties the two together. The same `RepoApi` value
+  drives the Worker, the integration test, and any external
+  client — so contract drift between server and consumer is
+  caught at compile time, not in production.
+
+Combine more primitives the same way: a Workflow that runs CI on
+push, a Container that builds and publishes artifacts, an AI
+Gateway that summarizes diffs. The Worker stays a thin handler;
+each primitive owns its own state.

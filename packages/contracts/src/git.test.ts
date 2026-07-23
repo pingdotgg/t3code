@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
@@ -27,6 +27,18 @@ describe("VcsCreateWorktreeInput", () => {
 
     expect(parsed.newRefName).toBeUndefined();
     expect(parsed.refName).toBe("feature/existing");
+  });
+
+  it("accepts baseRefName metadata for a new worktree ref", () => {
+    const parsed = decodeCreateWorktreeInput({
+      cwd: "/repo",
+      refName: "0123456789abcdef",
+      newRefName: "feature/new",
+      baseRefName: "origin/main",
+      path: "/tmp/worktree",
+    });
+
+    expect(parsed.baseRefName).toBe("origin/main");
   });
 });
 

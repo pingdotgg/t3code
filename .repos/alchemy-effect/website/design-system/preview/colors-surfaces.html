@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--alc-hairline);
+      }
+      .layer {
+        padding: 14px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: var(--alc-font-mono);
+        font-size: 12px;
+      }
+      .layer.dark {
+        color: var(--alc-fg-invert);
+      }
+      .layer.light {
+        color: var(--alc-fg-1);
+      }
+      .n {
+        font-weight: 500;
+      }
+      .h {
+        opacity: 0.65;
+      }
+      .desc {
+        font-family: var(--alc-font-sans);
+        font-size: 12px;
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="stack">
+        <div class="layer light" style="background: #f5efe3">
+          <span class="n">--alc-bg</span
+          ><span class="desc">page / parchment</span
+          ><span class="h">#F5EFE3</span>
+        </div>
+        <div class="layer light" style="background: #efe7d6">
+          <span class="n">--alc-bg-nav</span
+          ><span class="desc">nav, sidebar</span><span class="h">#EFE7D6</span>
+        </div>
+        <div class="layer light" style="background: #fbf6ea">
+          <span class="n">--alc-bg-elev-1</span
+          ><span class="desc">cards, panels</span><span class="h">#FBF6EA</span>
+        </div>
+        <div class="layer light" style="background: #fffaf0">
+          <span class="n">--alc-bg-elev-2</span
+          ><span class="desc">hover / nested</span
+          ><span class="h">#FFFAF0</span>
+        </div>
+        <div class="layer light" style="background: #ebe3d0">
+          <span class="n">--alc-bg-sunk</span><span class="desc">insets</span
+          ><span class="h">#EBE3D0</span>
+        </div>
+        <div class="layer dark" style="background: #2a2620">
+          <span class="n">--alc-bg-code</span
+          ><span class="desc">terminal / code</span
+          ><span class="h">#2A2620</span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

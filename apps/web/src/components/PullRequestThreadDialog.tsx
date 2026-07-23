@@ -1,16 +1,18 @@
-import type { EnvironmentId, GitResolvePullRequestResult, ThreadId } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  gitPreparePullRequestThreadMutationOptions,
-  gitResolvePullRequestQueryOptions,
-} from "~/lib/gitReactQuery";
-import { useGitStatus } from "~/lib/gitStatusState";
+  readCachedPullRequestResolution,
+  usePreparePullRequestThreadAction,
+  usePullRequestResolution,
+} from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
+import { useEnvironmentQuery } from "~/state/query";
+import { vcsEnvironment } from "~/state/vcs";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -43,7 +45,6 @@ export function PullRequestThreadDialog({
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
-  const queryClient = useQueryClient();
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
@@ -53,20 +54,20 @@ export function PullRequestThreadDialog({
     { wait: 450 },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
-  const { data: gitStatus = null } = useGitStatus({ environmentId, cwd });
+  const { data: gitStatus } = useEnvironmentQuery(
+    cwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd },
+        }),
+  );
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),
     [gitStatus?.sourceControlProvider],
   );
   const terminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;
-
-  useEffect(() => {
-    if (!open) return;
-    setReference(initialReference ?? "");
-    setReferenceDirty(false);
-    setPreparingMode(null);
-  }, [initialReference, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -81,33 +82,30 @@ export function PullRequestThreadDialog({
 
   const parsedReference = parsePullRequestReference(reference);
   const parsedDebouncedReference = parsePullRequestReference(debouncedReference);
-  const resolvePullRequestQuery = useQuery(
-    gitResolvePullRequestQueryOptions({
+  const sourceControlScope = useMemo(
+    () => ({
       environmentId,
       cwd,
-      reference: open ? parsedDebouncedReference : null,
     }),
+    [cwd, environmentId],
   );
+  const pullRequestResolution = usePullRequestResolution({
+    ...sourceControlScope,
+    reference: open ? parsedDebouncedReference : null,
+  });
   const cachedPullRequest = useMemo(() => {
-    if (!cwd || !parsedReference) {
-      return null;
-    }
-    const cached = queryClient.getQueryData<GitResolvePullRequestResult>([
-      "git",
-      "pull-request",
-      environmentId,
-      cwd,
-      parsedReference,
-    ]);
-    return cached?.pullRequest ?? null;
-  }, [cwd, environmentId, parsedReference, queryClient]);
-  const preparePullRequestThreadMutation = useMutation(
-    gitPreparePullRequestThreadMutationOptions({ environmentId, cwd, queryClient }),
-  );
+    return (
+      readCachedPullRequestResolution({
+        ...sourceControlScope,
+        reference: parsedReference,
+      })?.pullRequest ?? null
+    );
+  }, [parsedReference, sourceControlScope]);
+  const preparePullRequestThreadAction = usePreparePullRequestThreadAction(sourceControlScope);
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
-      ? (resolvePullRequestQuery.data?.pullRequest ?? null)
+      ? (pullRequestResolution.data?.pullRequest ?? null)
       : null;
   const resolvedPullRequest = liveResolvedPullRequest ?? cachedPullRequest;
   const isResolving =
@@ -116,8 +114,8 @@ export function PullRequestThreadDialog({
     resolvedPullRequest === null &&
     (referenceDebouncer.state.isPending ||
       parsedReference !== parsedDebouncedReference ||
-      resolvePullRequestQuery.isPending ||
-      resolvePullRequestQuery.isFetching);
+      pullRequestResolution.isPending ||
+      pullRequestResolution.isFetching);
   const statusTone = useMemo(() => {
     switch (resolvedPullRequest?.state) {
       case "merged":
@@ -141,27 +139,30 @@ export function PullRequestThreadDialog({
         return;
       }
       setPreparingMode(mode);
-      try {
-        const result = await preparePullRequestThreadMutation.mutateAsync({
-          reference: parsedReference,
-          mode,
-          ...(mode === "worktree" ? { threadId } : {}),
-        });
-        await onPrepared({
-          branch: result.branch,
-          worktreePath: result.worktreePath,
-        });
-        onOpenChange(false);
-      } finally {
-        setPreparingMode(null);
+      const result = await preparePullRequestThreadAction.run({
+        reference: parsedReference,
+        mode,
+        ...(mode === "worktree" ? { threadId } : {}),
+      });
+      setPreparingMode(null);
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
+          preparePullRequestThreadAction.resetError();
+        }
+        return;
       }
+      await onPrepared({
+        branch: result.value.branch,
+        worktreePath: result.value.worktreePath,
+      });
+      onOpenChange(false);
     },
     [
       cwd,
       onOpenChange,
       onPrepared,
       parsedReference,
-      preparePullRequestThreadMutation,
+      preparePullRequestThreadAction,
       resolvedPullRequest,
       threadId,
     ],
@@ -176,13 +177,11 @@ export function PullRequestThreadDialog({
         : null;
   const errorMessage =
     validationMessage ??
-    (resolvedPullRequest === null && resolvePullRequestQuery.isError
-      ? resolvePullRequestQuery.error instanceof Error
-        ? resolvePullRequestQuery.error.message
-        : `Failed to resolve ${terminology.singular}.`
-      : preparePullRequestThreadMutation.error instanceof Error
-        ? preparePullRequestThreadMutation.error.message
-        : preparePullRequestThreadMutation.error
+    (resolvedPullRequest === null && pullRequestResolution.error
+      ? pullRequestResolution.error
+      : preparePullRequestThreadAction.error instanceof Error
+        ? preparePullRequestThreadAction.error.message
+        : preparePullRequestThreadAction.error
           ? `Failed to prepare ${terminology.singular} thread.`
           : null);
 
@@ -190,7 +189,7 @@ export function PullRequestThreadDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!preparePullRequestThreadMutation.isPending) {
+        if (!preparePullRequestThreadAction.isPending) {
           onOpenChange(nextOpen);
         }
       }}
@@ -224,7 +223,7 @@ export function PullRequestThreadDialog({
                   return;
                 }
                 event.preventDefault();
-                if (!isResolving && !preparePullRequestThreadMutation.isPending) {
+                if (!isResolving && !preparePullRequestThreadAction.isPending) {
                   void handleConfirm("local");
                 }
               }}
@@ -263,7 +262,7 @@ export function PullRequestThreadDialog({
             variant="outline"
             size="sm"
             onClick={() => onOpenChange(false)}
-            disabled={preparePullRequestThreadMutation.isPending}
+            disabled={preparePullRequestThreadAction.isPending}
           >
             Cancel
           </Button>
@@ -278,7 +277,7 @@ export function PullRequestThreadDialog({
               !cwd ||
               !resolvedPullRequest ||
               isResolving ||
-              preparePullRequestThreadMutation.isPending
+              preparePullRequestThreadAction.isPending
             }
           >
             {preparingMode === "local" ? "Preparing local..." : "Local"}
@@ -293,7 +292,7 @@ export function PullRequestThreadDialog({
               !cwd ||
               !resolvedPullRequest ||
               isResolving ||
-              preparePullRequestThreadMutation.isPending
+              preparePullRequestThreadAction.isPending
             }
           >
             {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}

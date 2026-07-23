@@ -1,6 +1,7 @@
-import * as Crypto from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import type { DesktopSshEnvironmentTarget, DesktopUpdateChannel } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +16,17 @@ import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 
 const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
+const MAX_SSH_ERROR_OUTPUT_LENGTH = 4_000;
+
+/**
+ * ssh is a real executable everywhere (`ssh.exe` on Windows), so it is always
+ * spawned directly — cmd.exe shell mode would re-tokenize arguments such as
+ * identity-file paths containing spaces.
+ */
+const sshCommandForPlatform = (platform: NodeJS.Platform): string =>
+  platform === "win32" ? "ssh.exe" : "ssh";
+
+export const resolveSshCommand = Effect.map(HostProcessPlatform, sshCommandForPlatform);
 
 const encoder = new TextEncoder();
 
@@ -62,7 +74,10 @@ export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string
 }
 
 export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
-  return Crypto.createHash("sha256").update(targetConnectionKey(target)).digest("hex").slice(0, 16);
+  return NodeCrypto.createHash("sha256")
+    .update(targetConnectionKey(target))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
@@ -118,9 +133,28 @@ export const collectProcessOutput = <E>(
     ),
   );
 
-function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): string {
-  const cleaned = stderr.trim();
-  return cleaned.length > 0 ? cleaned : fallbackMessage;
+function redactSshErrorOutput(output: string): string {
+  const redacted = output.replace(
+    /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
+    "$1[redacted]$2",
+  );
+  return redacted.length > MAX_SSH_ERROR_OUTPUT_LENGTH
+    ? `${redacted.slice(0, MAX_SSH_ERROR_OUTPUT_LENGTH)}\n[truncated]`
+    : redacted;
+}
+
+function normalizeSshErrorMessage(input: {
+  readonly stdout?: string;
+  readonly stderr: string;
+  readonly fallbackMessage: string;
+}): string {
+  const cleanedStderr = input.stderr.trim();
+  if (cleanedStderr.length > 0) {
+    return cleanedStderr;
+  }
+
+  const cleanedStdout = input.stdout?.trim() ?? "";
+  return cleanedStdout.length > 0 ? cleanedStdout : input.fallbackMessage;
 }
 
 function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
@@ -170,17 +204,18 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     ...(input.remoteCommandArgs ?? []),
   ];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const sshCommand = yield* resolveSshCommand;
   yield* Effect.logDebug("ssh.command.start", {
     ...sshTargetLogFields(target),
-    command: ["ssh", ...args],
+    command: [sshCommand, ...args],
     hasStdin: input.stdin !== undefined,
     timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make("ssh", args, {
+      ChildProcess.make(sshCommand, args, {
         env: environment,
-        shell: process.platform === "win32",
+        extendEnv: true,
         stdin: {
           stream: stdinStream(input.stdin),
           endOnDone: true,
@@ -192,7 +227,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       Effect.mapError(
         (cause) =>
           new SshCommandError({
-            command: ["ssh", ...args],
+            command: [sshCommand, ...args],
             exitCode: null,
             stderr: "",
             message:
@@ -226,20 +261,24 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   );
 
   if (exitCode !== 0) {
+    const diagnosticStdout = redactSshErrorOutput(stdout);
     yield* Effect.logWarning("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,
+      stdout: diagnosticStdout,
       stderr,
     });
     return yield* new SshCommandError({
       command: ["ssh", ...args],
       exitCode,
+      stdout: diagnosticStdout,
       stderr,
-      message: normalizeSshErrorMessage(
+      message: normalizeSshErrorMessage({
+        stdout: diagnosticStdout,
         stderr,
-        `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
-      ),
+        fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
+      }),
     });
   }
 

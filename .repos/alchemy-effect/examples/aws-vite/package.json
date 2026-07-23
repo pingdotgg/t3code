@@ -1,0 +1,31 @@
+{
+  "name": "aws-vite-example",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/aws-vite"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev:vite": "vite",
+    "preview": "vite preview",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "@cloudflare/vite-plugin": "catalog:",
+    "@distilled.cloud/aws": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

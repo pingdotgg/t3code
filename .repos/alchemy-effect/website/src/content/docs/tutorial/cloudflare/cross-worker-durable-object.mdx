@@ -1,0 +1,313 @@
+---
+title: Bind to another Worker's Durable Object
+description: Share a Durable Object across multiple Workers — one Worker hosts the runtime, others bind to it by scriptName for a typed RPC stub.
+sidebar:
+  order: 1.5
+---
+
+A Durable Object is _hosted_ by exactly one Worker, but any
+number of **other** Workers can bind to the same DO. This is how
+you share state across Workers: one Worker hosts the DO, every
+other Worker addresses it by `scriptName` and gets a typed RPC
+stub.
+
+By the end of this part you'll have two Workers, `WorkerA` and
+`WorkerB`, sharing a single `Counter` Durable Object. Writes
+through either Worker are visible from the other.
+
+## Move the DO into its own module
+
+The DO class lives in a separate file so both Workers can import
+it as a typed identifier without pulling in the runtime
+implementation.
+
+```typescript
+// src/object.ts
+import type { RuntimeContext } from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export class Counter extends Cloudflare.DurableObjectNamespace<
+  Counter,
+  {
+    increment: () => Effect.Effect<number, never, RuntimeContext>;
+    get: () => Effect.Effect<number, never, RuntimeContext>;
+  }
+>()("Counter") {}
+```
+
+The class is purely a tagged identifier. Both Workers can import
+it without dragging in the runtime — the bundler tree-shakes
+`.make()` (which we'll add next) out of any consumer that
+doesn't actually host the DO.
+
+## Add the runtime implementation
+
+`Counter.make(...)` provides the per-instance Effect that runs
+inside the DO. Export it as `default` so it can be tree-shaken
+when imported by name.
+
+```diff lang="typescript"
+// src/object.ts
+ export class Counter extends Cloudflare.DurableObjectNamespace<
+   Counter,
+   {
+     increment: () => Effect.Effect<number, never, RuntimeContext>;
+     get: () => Effect.Effect<number, never, RuntimeContext>;
+   }
+ >()("Counter") {}
+
++export default Counter.make(
++  Effect.gen(function* () {
++    return Effect.gen(function* () {
++      const state = yield* Cloudflare.DurableObjectState;
++      let count = (yield* state.storage.get<number>("count")) ?? 0;
++
++      return {
++        increment: () =>
++          Effect.gen(function* () {
++            count += 1;
++            yield* state.storage.put("count", count);
++            return count;
++          }),
++        get: () => Effect.succeed(count),
++      };
++    });
++  }),
++);
+```
+
+Only Workers that import this file as `import CounterLive from "./object.ts"`
+will pull in the runtime. Workers that only import the class
+(`import { Counter } from "./object.ts"`) get just the type.
+
+## Declare WorkerA as the host
+
+`WorkerA` _hosts_ `Counter` — its bundle contains the DO runtime
+and Cloudflare runs the DO class inside WorkerA's script.
+
+The key move is the **third type argument** on `Cloudflare.Worker`:
+
+```typescript
+// src/workerA.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import { Counter } from "./object.ts";
+
+export class WorkerA extends Cloudflare.Worker<WorkerA, {}, Counter>()(
+  "WorkerA",
+  { main: import.meta.filename },
+) {}
+```
+
+`Worker<Self, Bindings, Deps>` — the third slot `Deps` is what
+the script publishes as part of its public contract. By writing
+`, Counter`, we're saying "WorkerA hosts Counter; other scripts
+may bind to it."
+
+:::caution[The third type argument is what unlocks cross-script binding]
+You can omit `, Counter` and the runtime still works — but
+`Counter.from(WorkerA)` from another Worker will be a **TypeScript
+error** because `WorkerA` doesn't declare `Counter` as part of its
+contract. Always declare cross-script DOs in `Deps`.
+:::
+
+## Provide the DO runtime from WorkerA
+
+`WorkerA.make(...)` is where the runtime lives. Provide
+`CounterLive` (the default export from `object.ts`) so that
+WorkerA's bundle actually contains the DO class:
+
+```diff lang="typescript"
+// src/workerA.ts
+ import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Effect from "effect/Effect";
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
++import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+-import { Counter } from "./object.ts";
++import CounterLive, { Counter } from "./object.ts";
+
+ export class WorkerA extends Cloudflare.Worker<WorkerA, {}, Counter>()(
+   "WorkerA",
+   { main: import.meta.filename },
+ ) {}
+
++export default WorkerA.make(
++  Effect.gen(function* () {
++    const counters = yield* Counter;
++    return {
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        const name = new URL(request.url, "http://x").pathname.slice(1);
++        const next = yield* counters.getByName(name).increment();
++        return HttpServerResponse.json({ value: next });
++      }),
++    };
++  }).pipe(Effect.provide(CounterLive)),
++);
+```
+
+`yield* Counter` inside WorkerA's init binds the DO _locally_ —
+WorkerA's `env.Counter` is wired up at deploy time and the class
+ships in the bundle.
+
+## Bind WorkerA's Counter from WorkerB
+
+`WorkerB` does **not** host the DO. It imports `WorkerA` purely
+as a type and uses `Counter.from(WorkerA)` to declare a binding
+to the existing namespace running under WorkerA's script:
+
+```typescript
+// src/workerB.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Counter } from "./object.ts";
+import { WorkerA } from "./workerA.ts";
+
+export default class WorkerB extends Cloudflare.Worker<WorkerB>()(
+  "WorkerB",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+    const counters = yield* Counter.from(WorkerA);
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const name = new URL(request.url, "http://x").pathname.slice(1);
+        const value = yield* counters.getByName(name).get();
+        return HttpServerResponse.json({ value });
+      }),
+    };
+  }),
+) {}
+```
+
+`Counter.from(WorkerA)` reads `WorkerA`'s `Deps` to confirm that
+`Counter` is part of its public contract, then produces a typed
+namespace stub. Under the hood it emits a Cloudflare binding with
+`scriptName: "WorkerA"` so the runtime routes every call to
+WorkerA's hosted instance.
+
+:::tip[Only the host provides `CounterLive`]
+WorkerB imports `Counter` but **never** `CounterLive`. Rolldown
+tree-shakes the runtime out of WorkerB's bundle — only WorkerA
+ships the DO class. This keeps consumer bundles small and avoids
+duplicate runtime instances.
+:::
+
+## Deploy both Workers from one Stack
+
+The Stack composes both Workers. WorkerA's Layer is provided so
+its `Counter` runtime is hooked up; WorkerB consumes it via
+binding only:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import WorkerALive, { WorkerA } from "./src/workerA.ts";
+import WorkerB from "./src/workerB.ts";
+
+export default Alchemy.Stack(
+  "CrossWorkerDO",
+  { state: Cloudflare.state(), providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    const a = yield* WorkerA;
+    const b = yield* WorkerB;
+    return {
+      urlA: a.url.as<string>(),
+      urlB: b.url.as<string>(),
+    };
+  }).pipe(Effect.provide(WorkerALive)),
+);
+```
+
+`Effect.provide(WorkerALive)` is the only place the DO runtime
+enters the program. Without it, `yield* WorkerA` would fail to
+resolve.
+
+## Verify shared state
+
+Hit `urlA/foo` to increment, then `urlB/foo` to read — both
+Workers route to the same DO instance by name:
+
+```typescript
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Vitest";
+import { expect } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: Cloudflare.providers(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
+test(
+  "WorkerB reads counter written by WorkerA",
+  Effect.gen(function* () {
+    const { urlA, urlB } = yield* stack;
+    const client = yield* HttpClient.HttpClient;
+
+    yield* client.post(`${urlA}/`);
+    yield* client.post(`${urlA}/`);
+
+    const res = yield* client.get(`${urlB}/`);
+    expect((yield* res.json) as { value: number }).toEqual({ value: 2 });
+  }),
+);
+```
+
+## Prefer `Counter.from(Self)` inside Layers
+
+Inside `WorkerA.make` we wrote `yield* Counter` to bind the
+locally-hosted DO. That works, but it's not the form you want
+when the code might be extracted into a reusable Layer or shared
+between scripts.
+
+`Counter.from(WorkerA)` also works inside `WorkerA` itself —
+calling `.from(Self)` on the host resolves to the same local
+namespace as `yield* Counter`:
+
+```diff lang="typescript"
+// src/workerA.ts
+ export default WorkerA.make(
+   Effect.gen(function* () {
+-    const counters = yield* Counter;
++    const counters = yield* Counter.from(WorkerA);
+     return {
+       fetch: Effect.gen(function* () { ... }),
+     };
+   }).pipe(Effect.provide(CounterLive)),
+ );
+```
+
+This matters most when you extract `fetch` logic into a Layer
+(or any service) that wants a `Counter` namespace. With
+`Counter.from(Self)`, the service is explicit about _which_
+script's Counter it talks to. A Worker that hosts its own
+isolated namespace uses `.from(Self)`; a consumer Worker uses
+`.from(Host)`. The shape is identical, which keeps the Layer
+host-agnostic.
+
+:::tip[A Worker can host its own isolated namespace]
+If `WorkerC` declares `Counter` in its own contract
+(`Worker<WorkerC, {}, Counter>`) and provides `CounterLive`,
+then `Counter.from(WorkerC)` from inside `WorkerC` binds to a
+**separate** DO namespace — instances under WorkerC are
+isolated from WorkerA's. This is how you give each script its
+own private set of DO instances using the same class.
+:::
+
+## Closing
+
+Two Workers, one DO, type-safe end-to-end. The third type argument
+`, Counter` on `WorkerA` is the small but critical piece that
+makes `Counter.from(WorkerA)` type-check from `WorkerB` — and
+that same form (`Counter.from(Self)`) lets a host script bind to
+its own DO from inside a Layer without caring whether it's the
+host or a consumer.

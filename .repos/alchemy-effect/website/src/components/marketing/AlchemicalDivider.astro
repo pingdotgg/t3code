@@ -1,0 +1,142 @@
+---
+/**
+ * Section divider — hairlines tapering toward a centered geometric
+ * glyph, with small flanking dots for the 17th-c. engraved-rule feel.
+ *
+ * Glyphs are mathematically perfect regular polygons (or a line / a
+ * circle as the limit cases). The home page uses these to compose
+ * a "platonic descent" — line → triangle → square → pentagon →
+ * hexagon → heptagon → octagon → circle — down the page.
+ */
+
+type Variant =
+  | "line"
+  | "triangle"
+  | "square"
+  | "pentagon"
+  | "hexagon"
+  | "heptagon"
+  | "octagon"
+  | "circle";
+
+interface PolygonSpec {
+  /** number of sides; 0 means special-cased (line / circle) */
+  sides: number;
+  /** rotation of the first vertex in degrees (SVG: 0° = right, 90° = down) */
+  startDeg: number;
+}
+
+const POLYGON: Record<Variant, PolygonSpec> = {
+  line: { sides: 0, startDeg: 0 },
+  triangle: { sides: 3, startDeg: -90 }, // apex up
+  square: { sides: 4, startDeg: -45 }, // sides axis-aligned
+  pentagon: { sides: 5, startDeg: -90 }, // apex up
+  hexagon: { sides: 6, startDeg: 0 }, // flat-top
+  heptagon: { sides: 7, startDeg: -90 }, // apex up
+  octagon: { sides: 8, startDeg: -67.5 }, // flat-top
+  circle: { sides: 0, startDeg: 0 },
+};
+
+function polygonPoints(
+  sides: number,
+  startDeg: number,
+  cx = 12,
+  cy = 12,
+  r = 9.5,
+): string {
+  const pts: string[] = [];
+  for (let i = 0; i < sides; i++) {
+    const angle = ((startDeg + (360 / sides) * i) * Math.PI) / 180;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    pts.push(`${x.toFixed(3)},${y.toFixed(3)}`);
+  }
+  return pts.join(" ");
+}
+
+interface Props {
+  variant?: Variant;
+  size?: number;
+  width?: string;
+  class?: string;
+}
+
+const {
+  variant = "circle",
+  size = 22,
+  width = "320px",
+  class: className,
+}: Props = Astro.props;
+
+const spec = POLYGON[variant as Variant];
+const points = spec.sides >= 3 ? polygonPoints(spec.sides, spec.startDeg) : "";
+---
+
+<div
+  class:list={["alc-divider", className]}
+  style={`--alc-divider-width:${width};`}
+  aria-hidden="true"
+>
+  <span class="alc-divider__rule"></span>
+  <span class="alc-divider__bullet"></span>
+  <svg
+    class="alc-divider__shape"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.1"
+    stroke-linecap="round"
+    stroke-linejoin="miter"
+    stroke-miterlimit="6"
+  >
+    {variant === "line" && <line x1="2" y1="12" x2="22" y2="12" />}
+    {variant === "circle" && <circle cx="12" cy="12" r="9.5" />}
+    {points !== "" && <polygon points={points} />}
+  </svg>
+  <span class="alc-divider__bullet"></span>
+  <span class="alc-divider__rule"></span>
+</div>
+
+<style>
+  .alc-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 auto;
+    max-width: var(--alc-divider-width, 320px);
+    padding: 28px 0;
+    color: var(--alc-fg-3);
+    opacity: 0.7;
+  }
+  .alc-divider__rule {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      currentColor 70%,
+      currentColor
+    );
+  }
+  .alc-divider__rule:last-child {
+    background: linear-gradient(
+      to left,
+      transparent,
+      currentColor 70%,
+      currentColor
+    );
+  }
+  .alc-divider__bullet {
+    flex: none;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .alc-divider__shape {
+    flex: none;
+    display: block;
+  }
+</style>

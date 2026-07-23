@@ -48,11 +48,20 @@ export const MODEL_PICKER_KEYBINDING_COMMANDS = [
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
 const STATIC_KEYBINDING_COMMANDS = [
+  "sidebar.toggle",
   "terminal.toggle",
   "terminal.split",
+  "terminal.splitVertical",
   "terminal.new",
   "terminal.close",
+  "rightPanel.toggle",
   "diff.toggle",
+  "preview.toggle",
+  "preview.refresh",
+  "preview.focusUrl",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
   "commandPalette.toggle",
   "chat.new",
   "chat.newLocal",
@@ -153,7 +162,7 @@ export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsC
   {
     configPath: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

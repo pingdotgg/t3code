@@ -7,7 +7,7 @@ export class OrchestrationCommandJsonParseError extends Schema.TaggedErrorClass<
   "OrchestrationCommandJsonParseError",
   {
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -19,7 +19,7 @@ export class OrchestrationCommandDecodeError extends Schema.TaggedErrorClass<Orc
   "OrchestrationCommandDecodeError",
   {
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -32,7 +32,7 @@ export class OrchestrationCommandInvariantError extends Schema.TaggedErrorClass<
   {
     commandType: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -45,7 +45,7 @@ export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedEr
   {
     commandId: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -58,7 +58,7 @@ export class OrchestrationProjectorDecodeError extends Schema.TaggedErrorClass<O
   {
     eventType: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -71,7 +71,7 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
   {
     listener: Schema.Literals(["read-model", "domain-event"]),
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

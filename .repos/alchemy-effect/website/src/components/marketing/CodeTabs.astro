@@ -1,0 +1,53 @@
+---
+import CodeBlock from "./CodeBlock.astro";
+
+interface Tab {
+  key: string;
+  label: string;
+  filename: string;
+  code: string;
+  compact?: boolean;
+}
+interface Props {
+  tabs: Tab[];
+}
+const { tabs } = Astro.props;
+---
+
+<div class="code-tabs" data-code-tabs>
+  <div class="code-tabs__nav" role="tablist">
+    {tabs.map((t, i) => (
+      <button
+        type="button"
+        class="code-tabs__btn"
+        data-tab-key={t.key}
+        data-active={i === 0}
+      >
+        {t.label}
+      </button>
+    ))}
+  </div>
+  {tabs.map((t, i) => (
+    <div
+      class="code-tabs__panel"
+      data-tab-panel={t.key}
+      data-active={i === 0}
+    >
+      <CodeBlock filename={t.filename} code={t.code} compact={t.compact} />
+    </div>
+  ))}
+</div>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>("[data-code-tabs]")) {
+    const buttons = root.querySelectorAll<HTMLButtonElement>("[data-tab-key]");
+    const panels = root.querySelectorAll<HTMLElement>("[data-tab-panel]");
+    for (const btn of buttons) {
+      btn.addEventListener("click", () => {
+        const k = btn.dataset.tabKey;
+        for (const b of buttons) b.dataset.active = String(b.dataset.tabKey === k);
+        for (const p of panels) p.dataset.active = String(p.dataset.tabPanel === k);
+      });
+    }
+  }
+</script>

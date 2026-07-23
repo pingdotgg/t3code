@@ -1,13 +1,116 @@
 import { type TurnId } from "@t3tools/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
-import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
-import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
+import {
+  buildTurnDiffTree,
+  summarizeTurnDiffStats,
+  type TurnDiffTreeNode,
+} from "../../lib/turnDiffTree";
+import {
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  ChevronRightIcon,
+  FileDiffIcon,
+  FolderIcon,
+  FolderClosedIcon,
+} from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
-import { VscodeEntryIcon } from "./VscodeEntryIcon";
+import { PierreEntryIcon } from "./PierreEntryIcon";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
+
+export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
+  turnId: TurnId;
+  files: ReadonlyArray<TurnDiffFileChange>;
+  allDirectoriesExpanded: boolean;
+  resolvedTheme: "light" | "dark";
+  onToggleAllDirectories: () => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+}) {
+  const {
+    turnId,
+    files,
+    allDirectoriesExpanded,
+    resolvedTheme,
+    onToggleAllDirectories,
+    onOpenTurnDiff,
+  } = props;
+  const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
+
+  return (
+    <div className="mt-4 rounded-2xl bg-background p-2 pt-4 shadow-xs/5 not-dark:bg-clip-padding dark:bg-input/32">
+      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between gap-2 bg-background px-2 before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-background before:content-[''] dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))] dark:before:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]">
+        <p className="flex items-center gap-1 whitespace-nowrap font-medium text-foreground text-xs leading-4">
+          <span>
+            {files.length} changed file{files.length === 1 ? "" : "s"}
+          </span>
+          {hasNonZeroStat(summaryStat) && (
+            <DiffStatLabel
+              additions={summaryStat.additions}
+              className="text-xs leading-4"
+              deletions={summaryStat.deletions}
+              layout="inline"
+            />
+          )}
+        </p>
+        <div className="flex items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="!size-[22px]"
+                  aria-label={allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+                  data-scroll-anchor-ignore
+                  onClick={onToggleAllDirectories}
+                />
+              }
+            >
+              {allDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="!size-[22px]"
+                  aria-label="View diff"
+                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
+                />
+              }
+            >
+              <FileDiffIcon className="size-3" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">View diff</TooltipPopup>
+          </Tooltip>
+        </div>
+      </div>
+      <ChangedFilesTree
+        key={`changed-files-tree:${turnId}`}
+        turnId={turnId}
+        files={files}
+        allDirectoriesExpanded={allDirectoriesExpanded}
+        resolvedTheme={resolvedTheme}
+        onOpenTurnDiff={onOpenTurnDiff}
+      />
+    </div>
+  );
+});
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   turnId: TurnId;
@@ -22,6 +125,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
     [treeNodes],
   );
+  const hasDirectoryNodes = directoryPathsKey.length > 0;
   const expansionStateKey = `${allDirectoriesExpanded ? "expanded" : "collapsed"}\u0000${directoryPathsKey}`;
   const [directoryExpansionState, setDirectoryExpansionState] = useState<{
     key: string;
@@ -60,7 +164,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           <button
             type="button"
             data-scroll-anchor-ignore
-            className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+            className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
           >
@@ -98,12 +202,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+        className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path)}
       >
-        <span aria-hidden="true" className="size-3.5 shrink-0" />
-        <VscodeEntryIcon
+        {hasDirectoryNodes || depth > 0 ? (
+          <span aria-hidden="true" className="size-3.5 shrink-0" />
+        ) : null}
+        <PierreEntryIcon
           pathValue={node.path}
           kind="file"
           theme={resolvedTheme}

@@ -1,0 +1,156 @@
+---
+layout: ../layouts/Marketing.astro
+title: "Privacy & Telemetry — alchemy"
+description: What data the Alchemy CLI and Cloudflare State Store collect, where it goes, and how to opt out.
+---
+import "../styles/privacy.css";
+
+<div class="alc-privacy">
+
+# Privacy & Telemetry
+
+The Alchemy CLI and the Cloudflare State Store worker emit
+OpenTelemetry traces, metrics, and logs to a relay we operate at
+`otel.alchemy.run`, which forwards to our Axiom workspace. The data
+helps us prioritize providers, find bugs, and understand which
+features people actually use.
+
+This page documents exactly what is collected, what is not, where
+it goes, and how to opt out. Source of truth is the code:
+[`Telemetry/Attributes.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Telemetry/Attributes.ts)
+and [`Cloudflare/StateStore/Api.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Cloudflare/StateStore/Api.ts).
+
+## What we collect
+
+### From the CLI
+
+Resource attributes attached to every span/metric/log:
+
+| Attribute | Value |
+| --- | --- |
+| `alchemy.user.id` | Random UUID generated on first run, persisted at `~/.alchemy/id`. Not your shell user, email, or hostname. |
+| `alchemy.session.id` | Random UUID per CLI invocation. |
+| `alchemy.version` | The version of the `alchemy` package you're running. |
+| `alchemy.git.root_commit` | SHA of the first commit in your repo. Acts as a stable repo fingerprint. |
+| `alchemy.git.origin_hash` | SHA-256 of `git config remote.origin.url`. The raw URL is never sent. |
+| `alchemy.git.branch_hash` | SHA-256 of the current branch name. |
+| `alchemy.runtime.name` / `.version` | `bun` / `node` / `deno` and its version. |
+| `alchemy.ci` / `alchemy.ci.provider` | Whether this looks like a CI run, and which provider (GitHub Actions, GitLab, etc.). |
+| `host.arch`, `os.type`, `os.version`, `host.cpus`, `host.memory_mb` | Coarse machine info. |
+
+Per-operation span attributes:
+
+- `cli.<command>` spans carry the command name (`deploy`, `destroy`, `plan`, ...) and outcome (`success` / `error`).
+- `provider.<op>` spans carry the resource type (`AWS.S3.Bucket`, `Cloudflare.Workers.Worker`, ...), op (`create` / `update` / `delete` / `read`), and outcome.
+- `state_store.init` spans carry the state-store backend slug (`local`, `inmemory`, `http`, `cloudflare-http`, or any third-party slug).
+
+### From the Cloudflare State Store
+
+When you deploy the [Cloudflare State Store](/guides/custom-state-store) it runs as a Worker on **your** Cloudflare account. The worker emits OTLP traces/metrics/logs to the same `otel.alchemy.run` relay.
+
+Resource attributes (set on every signal from the worker):
+
+| Attribute | Value |
+| --- | --- |
+| `service.name` | `alchemy-state-store` |
+| `service.version` | The deployed worker contract version (currently `2`). |
+| `alchemy.state_store.script_name` | `alchemy-state-store`. |
+
+Per-request span attributes (one per state-store API call):
+
+| Attribute | Value |
+| --- | --- |
+| `alchemy.state_store.op` | `getState` / `setState` / `deleteState` / `listStacks` / `listStages` / `listResources` / `getReplacedResources` / `deleteStack` / `getVersion` |
+| `alchemy.state_store.stack` | The stack name from your `alchemy.run.ts` (e.g. `MyApp`). |
+| `alchemy.state_store.stage` | The stage name (e.g. `prod`, `dev_alice`). |
+| `alchemy.state_store.fqn` | The fully-qualified resource name within the stack (e.g. `bucket/uploads`). |
+| `duration` | Op latency. |
+
+CLI-side spans that touch the Cloudflare State Store
+(`state_store.bootstrap`, `state_store.deploy`, `state_store.init`)
+also carry `alchemy.cloudflare.account_hash` — a SHA-256 of your
+Cloudflare account ID. The raw account ID is never sent. We use the
+hash to count distinct deployments without identifying anyone.
+
+## What we don't collect
+
+- Secrets, API tokens, environment variables, `.env` contents.
+- Resource property values, source code, file contents.
+- Raw filesystem paths, hostnames, or shell user names.
+- Raw git URLs, raw branch names, raw Cloudflare account IDs (only SHA-256 hashes of these).
+- IP addresses (the relay strips them before forwarding).
+- Any tracking cookies, advertising IDs, or third-party identifiers.
+
+## Where it goes
+
+`otel.alchemy.run` is a Cloudflare Worker we operate. It accepts
+standard OTLP/HTTP at `/v1/traces`, `/v1/logs`, and `/v1/metrics`,
+attaches an Axiom ingest token server-side, and forwards to our
+Axiom workspace. Source for the relay lives at
+[`stacks/otel/Ingester.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/stacks/otel/Ingester.ts).
+
+We do not share or sell the data. Aggregated stats may appear in
+public talks, posts, or dashboards.
+
+## How to opt out
+
+### CLI — kill all telemetry
+
+Any one of these disables the OTLP exporter entirely. The CLI's
+default tracer becomes a no-op, so nothing leaves your machine:
+
+```sh
+DO_NOT_TRACK=1 alchemy deploy
+NO_TRACK=1 alchemy deploy
+ALCHEMY_TELEMETRY_DISABLED=1 alchemy deploy
+```
+
+To make the opt-out persistent without setting an env var on every
+run, create the marker file:
+
+```sh
+mkdir -p ~/.alchemy
+echo "true" > ~/.alchemy/telemetry-disabled
+```
+
+To re-enable, delete the file:
+
+```sh
+rm ~/.alchemy/telemetry-disabled
+```
+
+### Cloudflare State Store — opt out per-deployment
+
+The state-store worker exports its own OTLP signals — these go
+through the same relay but flow even if your CLI's telemetry is
+disabled (because the worker runs on your CF account, not your
+machine). Two mechanisms exist:
+
+**`noTrack` option.** Passes through to the CLI-side state-store
+spans, suppressing the `alchemy.cloudflare.account_hash` attribute:
+
+```ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+Cloudflare.state({ noTrack: true });
+```
+
+**`NO_TRACK` env var.** When `Cloudflare.state()` is called without
+an explicit `noTrack`, it falls back to `NO_TRACK` from the
+environment.
+
+```sh
+NO_TRACK=1 alchemy deploy
+```
+
+`noTrack` only suppresses the account-hash attribute on state-store
+spans. To stop the worker from emitting signals at all, you'd need
+to remove the OTLP layer in your own fork of `Api.ts`, or run a
+custom HTTP state store via [/guides/custom-state-store](/guides/custom-state-store).
+
+## Questions
+
+Email [sam@alchemy.run](mailto:sam@alchemy.run) or open an issue at
+[alchemy-run/alchemy-effect](https://github.com/alchemy-run/alchemy-effect/issues).
+
+</div>

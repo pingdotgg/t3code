@@ -18,15 +18,25 @@ const AppPackageMetadata = Schema.Struct({
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
-export interface DesktopAppIdentityShape {
-  readonly resolveUserDataPath: Effect.Effect<string>;
-  readonly configure: Effect.Effect<void>;
+export class DesktopUserDataPathResolutionError extends Schema.TaggedErrorClass<DesktopUserDataPathResolutionError>()(
+  "DesktopUserDataPathResolutionError",
+  {
+    legacyPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
+  }
 }
 
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
-  DesktopAppIdentityShape
->()("t3/desktop/AppIdentity") {}
+  {
+    readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
+    readonly configure: Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/app/DesktopAppIdentity") {}
 
 const normalizeCommitHash = (value: string): Option.Option<string> => {
   const trimmed = value.trim();
@@ -35,7 +45,7 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
     : Option.none();
 };
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronApp = yield* ElectronApp.ElectronApp;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -52,7 +62,7 @@ const make = Effect.gen(function* () {
           Effect.map((parsed) =>
             Option.fromNullishOr(parsed.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
           ),
-          Effect.catch(() => Effect.succeed(Option.none<string>())),
+          Effect.orElseSucceed(() => Option.none<string>()),
         ),
     });
   });
@@ -85,9 +95,15 @@ const make = Effect.gen(function* () {
       environment.appDataDirectory,
       environment.legacyUserDataDirName,
     );
-    const legacyPathExists = yield* fileSystem
-      .exists(legacyPath)
-      .pipe(Effect.orElseSucceed(() => false));
+    const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopUserDataPathResolutionError({
+            legacyPath,
+            cause,
+          }),
+      ),
+    );
     return legacyPathExists
       ? legacyPath
       : environment.path.join(environment.appDataDirectory, environment.userDataDirName);

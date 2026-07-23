@@ -73,6 +73,37 @@ export interface OtlpTraceRecord extends BaseTraceRecord {
 
 export type TraceRecord = EffectTraceRecord | OtlpTraceRecord;
 
+function isStructuralTag(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    /^[A-Za-z][A-Za-z0-9._:/-]*$/.test(value)
+  );
+}
+
+export function errorTag(error: unknown): string {
+  try {
+    if (typeof error === "object" && error !== null && "_tag" in error) {
+      return isStructuralTag(error._tag) ? error._tag : "TaggedError";
+    }
+    if (error instanceof Error) {
+      return isStructuralTag(error.name) ? error.name : "Error";
+    }
+  } catch {
+    return "UnknownError";
+  }
+  return typeof error;
+}
+
+export function causeErrorTag(cause: Cause.Cause<unknown>): string {
+  const failure = Cause.findErrorOption(cause);
+  if (Option.isSome(failure)) {
+    return errorTag(failure.value);
+  }
+  return cause.reasons[0]?._tag ?? "Empty";
+}
+
 export interface TraceSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;
@@ -184,11 +215,13 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
-  return Object.fromEntries(
-    Object.entries(attributes)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [key, normalizeJsonValue(value)]),
-  );
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value !== undefined) {
+      entries.push([key, normalizeJsonValue(value)]);
+    }
+  }
+  return Object.fromEntries(entries);
 }
 
 function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["exit"] {

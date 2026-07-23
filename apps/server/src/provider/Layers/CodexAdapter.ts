@@ -25,6 +25,7 @@ import {
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -36,10 +37,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -61,6 +61,7 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -235,7 +236,10 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
   return "unknown";
 }
 
-function itemTitle(itemType: CanonicalItemType): string | undefined {
+function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): string | undefined {
+  if (itemType === "mcp_tool_call" && item?.type === "mcpToolCall") {
+    return `${item.server} · ${item.tool}`;
+  }
   switch (itemType) {
     case "assistant_message":
       return "Assistant message";
@@ -264,8 +268,14 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
   }
 }
 
-function itemDetail(item: CodexLifecycleItem): string | undefined {
+function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
+  const itemRecord = item as Record<string, unknown>;
+  const action = itemRecord.action as Record<string, unknown> | undefined;
+  const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
+    ...(itemType === "web_search"
+      ? [itemRecord.query, action?.query, ...actionQueries, action?.pattern, action?.url]
+      : []),
     "command" in item ? item.command : undefined,
     "title" in item ? item.title : undefined,
     "summary" in item ? item.summary : undefined,
@@ -273,6 +283,7 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
     "path" in item ? item.path : undefined,
     "prompt" in item ? item.prompt : undefined,
   ];
+
   for (const candidate of candidates) {
     const trimmed = typeof candidate === "string" ? trimText(candidate) : undefined;
     if (!trimmed) continue;
@@ -462,7 +473,7 @@ function mapItemLifecycle(
     return undefined;
   }
 
-  const detail = itemDetail(item);
+  const detail = itemDetail(itemType, item);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -476,7 +487,7 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
@@ -836,7 +847,7 @@ function mapToRuntimeEvents(
     }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
-      const detail = itemDetail(item);
+      const detail = itemDetail(itemType, item);
       if (!detail) {
         return [];
       }
@@ -1349,6 +1360,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -1378,11 +1390,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const serviceTier =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? getCodexServiceTierOptionValue(input.modelSelection)
+            : undefined;
+        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
+          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
@@ -1392,9 +1410,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
-          ...(input.modelSelection?.instanceId === boundInstanceId &&
-          getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode") === true
-            ? { serviceTier: "fast" }
+          ...(serviceTier ? { serviceTier } : {}),
+          ...(mcpSession
+            ? {
+                environment: {
+                  ...(options?.environment ?? process.env),
+                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                },
+                appServerArgs: [
+                  "-c",
+                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                  "-c",
+                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                ],
+              }
             : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
@@ -1406,6 +1435,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtime = yield* createRuntime(runtimeInput).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError(
             (cause) =>
               new ProviderAdapterProcessError({
@@ -1510,9 +1540,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
         : undefined;
-    const fastMode =
+    const serviceTier =
       input.modelSelection?.instanceId === boundInstanceId
-        ? getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode")
+        ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
     return yield* session.runtime
       .sendTurn({
@@ -1525,7 +1555,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               effort: reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
             }
           : {}),
-        ...(fastMode === true ? { serviceTier: "fast" } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })

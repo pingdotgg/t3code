@@ -25,7 +25,7 @@ import {
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
-import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
+import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -63,7 +63,7 @@ const makeIntegrationFixture = Effect.gen(function* () {
   });
 
   const directoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    Layer.provide(ProviderSessionRuntime.layer),
   );
 
   const shared = Layer.mergeAll(

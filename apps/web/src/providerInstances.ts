@@ -13,16 +13,29 @@
  * @module providerInstances
  */
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
+  type ModelSelection,
   type ProviderDriverKind,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
+
+/**
+ * Local-only placeholder used while a draft has no provider it can safely
+ * target. It must never be persisted or dispatched; the composer disables
+ * send until a live provider replaces it.
+ */
+export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
+  instanceId: ProviderInstanceId.make("t3code_no_provider"),
+  model: "",
+};
 
 /**
  * UI-facing projection of one configured provider instance. Carries the
@@ -52,6 +65,21 @@ export interface ProviderInstanceEntry {
 }
 
 /**
+ * Whether an instance can currently contribute models to an interactive picker.
+ *
+ * Disabling an instance updates `enabled` independently, while its previous
+ * `ready` probe status can remain in the streamed snapshot until reconciliation.
+ */
+export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled && entry.isAvailable && entry.status === "ready";
+}
+
+/** Picker rails contain configured, enabled instances only. */
+export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled;
+}
+
+/**
  * Turn an instance id slug into a human-readable label. Splits on `_` / `-`
  * and camelCase boundaries and title-cases each token, so `codex_personal`
  * becomes "Codex Personal" and `myCustomInstance` becomes "My Custom
@@ -66,13 +94,15 @@ export interface ProviderInstanceEntry {
  * will take precedence over this fallback.
  */
 function humanizeInstanceId(instanceId: ProviderInstanceId): string {
-  return instanceId
+  const words: string[] = [];
+  for (const token of instanceId
     .replace(/[_-]+/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .split(" ")
-    .filter((token) => token.length > 0)
-    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
-    .join(" ");
+    .split(" ")) {
+    if (token.length === 0) continue;
+    words.push(token.charAt(0).toUpperCase() + token.slice(1));
+  }
+  return words.join(" ");
 }
 
 function driverKindLabel(driverKind: ProviderDriverKind): string {
@@ -153,6 +183,35 @@ export function deriveProviderInstanceEntries(
 }
 
 /**
+ * Overlay the current settings configuration onto streamed provider snapshots.
+ * Provider probes can briefly retain their previous `enabled` value after a
+ * settings write, so picker visibility must follow settings rather than waiting
+ * for probe reconciliation.
+ *
+ * Non-default instances only exist through `providerInstances`; if one is
+ * absent there, its streamed snapshot is stale (for example immediately after
+ * deletion) and is treated as disabled.
+ */
+export function applyProviderInstanceSettings(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+): ReadonlyArray<ProviderInstanceEntry> {
+  const legacyProviders = settings.providers as Readonly<
+    Record<string, { readonly enabled?: boolean } | undefined>
+  >;
+
+  return entries.map((entry) => {
+    const explicitInstance = settings.providerInstances?.[entry.instanceId];
+    const enabled = explicitInstance
+      ? (explicitInstance.enabled ?? true)
+      : entry.isDefault
+        ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
+        : false;
+    return enabled === entry.enabled ? entry : { ...entry, enabled };
+  });
+}
+
+/**
  * Sort instance entries so the default instance of each driver kind appears
  * before any custom instances of the same kind. Within a kind, custom
  * instances keep their settings-author order (which is how the server
@@ -207,26 +266,81 @@ export function getProviderInstanceModels(
 }
 
 /**
+ * Default model slug for a specific instance: its declared built-in default,
+ * then its first built-in model, then any model it reports, then the driver-level default. Custom
+ * instances can serve a different model list than the default instance of
+ * the same driver kind, so the lookup must be instance-scoped rather than
+ * kind-scoped.
+ */
+export function getDefaultProviderInstanceModel(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+): string | undefined {
+  const entry = getProviderInstanceEntry(providers, instanceId);
+  if (!entry) return undefined;
+  return (
+    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    entry.models.find((model) => !model.isCustom)?.slug ??
+    entry.models[0]?.slug ??
+    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+  );
+}
+
+const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
+  entry.enabled && entry.isAvailable;
+
+/**
+ * Resolve an exact stored instance when it remains enabled and available.
+ * Otherwise choose a deterministic fallback that can plausibly start now:
+ * ready first, then a non-error probe result. An errored provider is retained
+ * only when it was explicitly requested; it is never invented as a new-user
+ * default.
+ */
+export function resolveSelectableProviderInstanceEntry(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  instanceId: ProviderInstanceId | undefined,
+): ProviderInstanceEntry | undefined {
+  if (instanceId !== undefined) {
+    const requested = entries.find((entry) => entry.instanceId === instanceId);
+    if (requested && isSelectableProviderInstanceEntry(requested)) {
+      return requested;
+    }
+  }
+  return (
+    entries.find(isProviderInstancePickerReady) ??
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
+  );
+}
+
+/**
  * Resolve the routing key for a selection that may reference an instance
  * id that no longer exists (e.g. a persisted thread selection after the
- * user deleted the custom instance). Returns the first enabled instance
- * as a fallback so downstream code can still send a turn.
+ * user deleted the custom instance). Returns a ready or non-error fallback,
+ * or `undefined` when no provider can safely become a new selection.
  */
 export function resolveSelectableProviderInstance(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId | undefined,
 ): ProviderInstanceId | undefined {
-  if (instanceId === undefined) {
-    return deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.enabled && entry.isAvailable,
-    )?.instanceId;
-  }
   const entries = deriveProviderInstanceEntries(providers);
-  const requested = entries.find((entry) => entry.instanceId === instanceId);
-  if (requested && requested.enabled && requested.isAvailable) {
-    return instanceId;
-  }
-  return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
+  return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
+}
+
+/**
+ * Resolve the model selection persisted for a project or new thread. A valid
+ * stored selection is preserved byte-for-byte. Falling back to another
+ * instance also resets the model to that instance's own default, avoiding
+ * cross-provider instance/model pairs.
+ */
+export function resolveDefaultProviderModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection | null | undefined,
+): ModelSelection | null {
+  const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
+  if (instanceId === undefined) return null;
+  if (selection?.instanceId === instanceId) return selection;
+  const model = getDefaultProviderInstanceModel(providers, instanceId);
+  return model ? { instanceId, model } : null;
 }
 
 /**

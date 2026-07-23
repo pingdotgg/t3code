@@ -1,0 +1,110 @@
+---
+title: Local Development
+description: How alchemy dev provides hot reloading, local workerd execution, and cloud-backed resources for fast iteration.
+sidebar:
+  order: 12
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+`alchemy dev` gives you a fast local development loop without
+sacrificing access to real cloud services. Infrastructure is deployed
+to the cloud while your code runs locally with hot reloading.
+
+## How it works
+
+```sh
+alchemy dev
+```
+
+<Terminal content={`[g]✓[/g] [b]Bucket[/b] [d](Cloudflare.R2Bucket)[/d] [g]created[/g]
+[g]✓[/g] [b]DB[/b] [d](Cloudflare.D1Database)[/d] [g]created[/g]
+[g]✓[/g] [b]Worker[/b] [d](Cloudflare.Worker)[/d] [g]created[/g] [d](local → workerd)[/d]
+[s2][d]• http://localhost:1337[/d]
+
+[d]Watching for changes ...[/d]`} />
+
+Three things happen:
+
+1. **Infrastructure deploys to the cloud** — R2 Buckets, D1
+   Databases, KV Namespaces are created on the real provider. No
+   emulation, no fidelity gaps.
+2. **Workers run locally in workerd** — your code executes in
+   workerd, the same runtime used in production. A proxy routes
+   requests between the cloud and your local process.
+3. **File changes hot reload** — edit your code and the Worker
+   rebuilds instantly.
+
+## Hot module reloading
+
+<Terminal content={`[d]Watching for changes ...[/d]
+
+[y]↻[/y] [d]src/worker.ts changed[/d]
+[s2][d]• Rebuilding worker ...[/d]
+[g]✓[/g] [b]Worker[/b] [d]reloaded in 42ms[/d]
+
+[y]↻[/y] [d]src/api.ts changed[/d]
+[s2][d]• Rebuilding worker ...[/d]
+[g]✓[/g] [b]Worker[/b] [d]reloaded in 38ms[/d]`} />
+
+- Code changes take effect in **milliseconds**, not minutes
+- Cloud resources stay deployed across reloads — only your
+  application code is rebuilt
+- Edit, save, refresh
+
+## Why not emulate everything?
+
+Full local emulation (Miniflare, LocalStack) replicates cloud APIs
+on your machine. This leads to fidelity gaps, missing features, and
+false confidence — tests pass locally but fail in production.
+
+Alchemy avoids this. Your R2 Bucket is a real R2 Bucket. Your D1
+Database is a real D1 Database. The only thing running locally is
+your application code.
+
+## Debugging
+
+Because Workers run locally in workerd, you can attach a debugger:
+
+- Set breakpoints in your IDE
+- Inspect variables and call stacks
+- Profile performance
+
+No more `console.log` debugging against deployed Workers.
+
+## Resource adaptation
+
+Resources adapt their behavior in dev mode:
+
+- **Cloudflare Workers** — run locally in workerd with a cloud proxy
+  instead of deploying to the edge
+- **Vite dev servers** — integrate with Alchemy's dev server for
+  frontend hot reloading alongside your backend
+- **Databases** — connect to real cloud instances, eliminating schema
+  drift between dev and prod
+
+Each resource's provider checks `ALCHEMY_PHASE` (set to `dev`) and
+adjusts accordingly.
+
+## Custom port
+
+```typescript
+export default Cloudflare.Worker("Worker", {
+  main: import.meta.path,
+  dev: {
+    port: 3000,
+  },
+  // ...
+});
+```
+
+## Dev vs Deploy
+
+|                  | `alchemy dev`           | `alchemy deploy`     |
+| ---------------- | ----------------------- | -------------------- |
+| Infrastructure   | Deployed to cloud       | Deployed to cloud    |
+| Application code | Runs locally in workerd | Deployed to cloud    |
+| File watching    | Hot reload on change    | Manual redeploy      |
+| Debugging        | Attach local debugger   | Tail logs            |
+| Speed            | Milliseconds            | Seconds to minutes   |
+| Fidelity         | Real cloud resources    | Real cloud resources |

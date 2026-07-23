@@ -1,0 +1,46 @@
+---
+import Yantra from "../../brand/Yantra.astro";
+
+interface Props {
+  size?: number;
+}
+const { size = 22 } = Astro.props;
+// The yantra reads best when sized roughly to the cap-height of the
+// accompanying wordmark — slightly larger than the old solid dot so the
+// inner triangle stays legible.
+const markSize = Math.round(size * 0.95);
+---
+
+<span class="alc-logo">
+  <Yantra
+    class="alc-logo__mark"
+    size={markSize}
+    stroke="var(--alc-accent-deep)"
+    dot="var(--alc-accent-deep)"
+    useCurrentColor={false}
+  />
+  <span class="alc-logo__word" style={`font-size:${size}px;`}>Alchemy</span>
+</span>
+
+<style>
+  .alc-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .alc-logo__mark {
+    display: inline-flex;
+    align-items: center;
+    color: var(--alc-accent-deep);
+  }
+  .alc-logo__mark :global(svg) {
+    display: block;
+  }
+  .alc-logo__word {
+    font-family: var(--alc-font-serif);
+    font-style: italic;
+    font-weight: 500;
+    color: var(--alc-fg-1);
+    letter-spacing: -0.01em;
+  }
+</style>

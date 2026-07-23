@@ -1,5 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   appendTerminalContextsToPrompt,
@@ -122,6 +122,7 @@ describe("terminalContext", () => {
           body: "12 | git status\n13 | On branch main",
         },
       ],
+      elementContexts: [],
     });
   });
 

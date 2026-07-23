@@ -7,15 +7,15 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
-import { expect } from "vitest";
+import { expect } from "vite-plus/test";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
-const ClaudeTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -51,8 +51,8 @@ function makeFakeClaudeBinary(dir: string) {
         "    exit 4",
         "  }",
         "fi",
-        'if [ -n "$T3_FAKE_CLAUDE_HOME_MUST_BE" ] && [ "$HOME" != "$T3_FAKE_CLAUDE_HOME_MUST_BE" ]; then',
-        '  printf "%s\\n" "HOME was $HOME" >&2',
+        'if [ -n "$T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE" ] && [ "$CLAUDE_CONFIG_DIR" != "$T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE" ]; then',
+        '  printf "%s\\n" "CLAUDE_CONFIG_DIR was $CLAUDE_CONFIG_DIR" >&2',
         "  exit 5",
         "fi",
         'if [ -n "$T3_FAKE_CLAUDE_STDERR" ]; then',
@@ -76,10 +76,10 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustContain?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
-    homeMustBe?: string;
+    configDirMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -92,7 +92,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-    const previousHomeMustBe = process.env.T3_FAKE_CLAUDE_HOME_MUST_BE;
+    const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
@@ -129,10 +129,10 @@ function withFakeClaudeEnv<A, E, R>(
           delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
         }
 
-        if (input.homeMustBe !== undefined) {
-          process.env.T3_FAKE_CLAUDE_HOME_MUST_BE = input.homeMustBe;
+        if (input.configDirMustBe !== undefined) {
+          process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_HOME_MUST_BE;
+          delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
         }
       }),
       () =>
@@ -175,10 +175,10 @@ function withFakeClaudeEnv<A, E, R>(
             process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = previousStdinMustContain;
           }
 
-          if (previousHomeMustBe === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_HOME_MUST_BE;
+          if (previousConfigDirMustBe === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
           } else {
-            process.env.T3_FAKE_CLAUDE_HOME_MUST_BE = previousHomeMustBe;
+            process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
           }
         }),
     );
@@ -286,10 +286,10 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("runs Claude text generation with the configured Claude HOME", () =>
+  it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const claudeHome = path.join(process.cwd(), ".claude-work-test");
+      const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
       return yield* withFakeClaudeEnv(
         {
           // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -298,8 +298,8 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               title: "Use Claude home",
             },
           }),
-          homeMustBe: claudeHome,
-          claudeConfig: { homePath: claudeHome },
+          configDirMustBe: claudeConfigDir,
+          claudeConfig: { homePath: claudeConfigDir },
         },
         (textGeneration) =>
           Effect.gen(function* () {

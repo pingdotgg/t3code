@@ -12,12 +12,11 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
-import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import {
-  refreshSourceControlDiscovery,
-  useSourceControlDiscovery,
-} from "../../lib/sourceControlDiscoveryState";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
+import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -188,7 +187,7 @@ function itemSummary({
     }
 
     if (!item.executable) {
-      return <span>{item.installHint}</span>;
+      return <span>Available. {item.installHint}</span>;
     }
 
     if (auth.status === "unauthenticated") {
@@ -218,8 +217,9 @@ function DiscoveryItemRow({
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
-  const enabled =
-    item.status === "available" && (isProviderDiscoveryItem(item) || item.implemented);
+  const enabled = isProviderDiscoveryItem(item)
+    ? item.status === "available" && item.auth.status === "authenticated"
+    : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
@@ -229,16 +229,16 @@ function DiscoveryItemRow({
   return (
     <div
       className={cn(
-        "border-t border-border/60 first:border-t-0",
+        "rounded-xl transition-colors hover:bg-muted/20",
         isVcsNotReady(item) && "opacity-80",
       )}
     >
-      <div className="px-4 py-3.5 sm:px-5">
+      <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+              <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
                 {item.label}
               </span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
@@ -253,7 +253,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -282,7 +282,7 @@ function DiscoveryItemRow({
       {hasDetails ? (
         <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
           <CollapsibleContent>
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">{children}</div>
+            <div className="px-3 pb-4 pt-1 sm:px-4">{children}</div>
           </CollapsibleContent>
         </Collapsible>
       ) : null}
@@ -291,8 +291,10 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const automaticGitFetchInterval = useSettings((settings) => settings.automaticGitFetchInterval);
-  const { updateSettings } = useUpdateSettings();
+  const automaticGitFetchInterval = usePrimarySettings(
+    (settings) => settings.automaticGitFetchInterval,
+  );
+  const updateSettings = useUpdatePrimarySettings();
   const automaticGitFetchIntervalSeconds = durationToSeconds(automaticGitFetchInterval);
   const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
     DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -366,7 +368,7 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
+        <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
@@ -438,13 +440,21 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const discovery = useSourceControlDiscovery();
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const discovery = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId,
+          input: {},
+        }),
+  );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasDiscoveryItems =
     result.versionControlSystems.length > 0 || result.sourceControlProviders.length > 0;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
   const handleScan = () => {
-    void refreshSourceControlDiscovery();
+    discovery.refresh();
   };
   const scanButton = (
     <Tooltip>

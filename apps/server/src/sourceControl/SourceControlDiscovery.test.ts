@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -17,15 +17,15 @@ import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const sourceControlProviderRegistryTestLayer = (input: {
-  readonly bitbucket: Partial<BitbucketApi.BitbucketApiShape>;
-  readonly process: Partial<VcsProcess.VcsProcessShape>;
+  readonly bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>;
+  readonly process: Partial<VcsProcess.VcsProcess["Service"]>;
 }) =>
   SourceControlProviderRegistry.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-registry-test-" }).pipe(
-          Layer.provide(NodeServices.layer),
-        ),
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-source-control-registry-test-",
+        }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(GitHubCli.GitHubCli)({}),
@@ -59,15 +59,24 @@ it.effect("reports implemented tools separately from locally available executabl
       if (input.command === "gh" && input.args[0] === "--version") {
         return Effect.succeed(processOutput("gh version 2.83.0\n"));
       }
-      if (input.command === "gh" && input.args.join(" ") === "auth status") {
+      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
         return Effect.succeed(
-          processOutput(`github.com
-Logged in to github.com account juliusmarminge (keyring)
-- Active account: true
-- Git operations protocol: ssh
-- Token: gho_************************************
-- Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo'
-`),
+          processOutput(
+            JSON.stringify({
+              hosts: {
+                "github.com": [
+                  {
+                    state: "success",
+                    active: true,
+                    host: "github.com",
+                    login: "juliusmarminge",
+                    tokenSource: "keyring",
+                    gitProtocol: "ssh",
+                  },
+                ],
+              },
+            }),
+          ),
         );
       }
       return Effect.fail(
@@ -79,10 +88,12 @@ Logged in to github.com account juliusmarminge (keyring)
         }),
       );
     },
-  } satisfies Partial<VcsProcess.VcsProcessShape>;
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
   const testLayer = SourceControlDiscovery.layer.pipe(
     Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-source-control-discovery-",
+      }),
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
     Layer.provide(
@@ -164,13 +175,24 @@ it.effect("probes provider authentication without exposing token details", () =>
       if (input.args[0] === "--version") {
         return Effect.succeed(processOutput(`${input.command} version test\n`));
       }
-      if (input.command === "gh" && input.args.join(" ") === "auth status") {
+      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
         return Effect.succeed(
-          processOutput(`github.com
-Logged in to github.com account octocat (keyring)
-- Token: gho_************************************
-- Token scopes: 'repo'
-`),
+          processOutput(
+            JSON.stringify({
+              hosts: {
+                "github.com": [
+                  {
+                    state: "success",
+                    active: true,
+                    host: "github.com",
+                    login: "octocat",
+                    tokenSource: "keyring",
+                    gitProtocol: "ssh",
+                  },
+                ],
+              },
+            }),
+          ),
         );
       }
       if (input.command === "glab" && input.args.join(" ") === "auth status") {
@@ -195,10 +217,12 @@ Logged in to gitlab.com as gitlab-user
         }),
       );
     },
-  } satisfies Partial<VcsProcess.VcsProcessShape>;
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
   const testLayer = SourceControlDiscovery.layer.pipe(
     Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-auth-discovery-" }),
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-source-control-auth-discovery-",
+      }),
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
     Layer.provide(

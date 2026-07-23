@@ -14,18 +14,10 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
-import {
-  DEFAULT_PORT,
-  deriveServerPaths,
-  ensureServerDirectories,
-  resolveStaticDir,
-  RuntimeMode,
-  type ServerConfigShape,
-  type StartupPresentation,
-} from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
-export const modeFlag = Flag.choice("mode", RuntimeMode.literals).pipe(
+export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
 );
@@ -39,7 +31,9 @@ export const hostFlag = Flag.string("host").pipe(
   Flag.optional,
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
-  Flag.withDescription("Base directory path (equivalent to T3CODE_HOME)."),
+  Flag.withDescription(
+    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+  ),
   Flag.optional,
 );
 export const devUrlFlag = Flag.string("dev-url").pipe(
@@ -104,7 +98,7 @@ const EnvServerConfig = Config.all({
     Config.withDefault(10_000),
   ),
   otlpServiceName: Config.string("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
-  mode: Config.schema(RuntimeMode, "T3CODE_MODE").pipe(
+  mode: Config.schema(ServerConfig.RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -139,7 +133,7 @@ const EnvServerConfig = Config.all({
 });
 
 export interface CliServerFlags {
-  readonly mode: Option.Option<RuntimeMode>;
+  readonly mode: Option.Option<ServerConfig.RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
   readonly baseDir: Option.Option<string>;
@@ -208,7 +202,7 @@ export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
   options?: {
-    readonly startupPresentation?: StartupPresentation;
+    readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
   },
 ) =>
@@ -238,7 +232,7 @@ export const resolveServerConfig = (
         : Option.none();
     const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
 
-    const mode: RuntimeMode = Option.getOrElse(
+    const mode: ServerConfig.RuntimeMode = Option.getOrElse(
       resolveOptionPrecedence(
         normalizedFlags.mode,
         Option.fromUndefinedOr(env.mode),
@@ -257,9 +251,9 @@ export const resolveServerConfig = (
         onSome: (value) => Effect.succeed(value),
         onNone: () => {
           if (mode === "desktop") {
-            return Effect.succeed(DEFAULT_PORT);
+            return Effect.succeed(ServerConfig.DEFAULT_PORT);
           }
-          return findAvailablePort(DEFAULT_PORT);
+          return findAvailablePort(ServerConfig.DEFAULT_PORT);
         },
       },
     );
@@ -267,20 +261,22 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
       () => undefined,
     );
+    const explicitBaseDir = resolveOptionPrecedence(
+      normalizedFlags.baseDir,
+      Option.fromUndefinedOr(env.t3Home),
+    ).pipe(Option.filter((value) => value.trim().length > 0));
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(
-        resolveOptionPrecedence(
-          normalizedFlags.baseDir,
-          Option.fromUndefinedOr(env.t3Home),
-          Option.fromUndefinedOr(bootstrap?.t3Home),
-        ),
+        resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
       ),
     );
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-    yield* ensureServerDirectories(derivedPaths);
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
+      baseDirIsExplicit: Option.isSome(explicitBaseDir),
+    });
+    yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
     );
@@ -330,7 +326,7 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
-    const staticDir = devUrl ? undefined : yield* resolveStaticDir();
+    const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
         normalizedFlags.host,
@@ -341,7 +337,7 @@ export const resolveServerConfig = (
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
-    const config: ServerConfigShape = {
+    const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
       traceMinLevel: env.traceMinLevel,
       traceTimingEnabled: env.traceTimingEnabled,

@@ -17,25 +17,66 @@ import { it, assert } from "@effect/vitest";
 import * as AcpClient from "./client.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import * as AcpError from "./errors.ts";
-import { encodeJsonl, jsonRpcRequest, jsonRpcResponse } from "./_internal/shared.ts";
+import {
+  encodeJsonl,
+  jsonRpcNotification,
+  jsonRpcRequest,
+  jsonRpcResponse,
+} from "./_internal/shared.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
 
 const InitializeRequest = jsonRpcRequest("initialize", AcpSchema.InitializeRequest);
 const InitializeResponse = jsonRpcResponse(AcpSchema.InitializeResponse);
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
+const PromptRequest = jsonRpcRequest("session/prompt", AcpSchema.PromptRequest);
+const PromptResponse = jsonRpcResponse(AcpSchema.PromptResponse);
+const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
+const XAiPromptCompleteNotification = jsonRpcNotification(
+  "_x.ai/session/prompt_complete",
+  Schema.Struct({
+    sessionId: Schema.String,
+    promptId: Schema.String,
+    stopReason: Schema.String,
+    agentResult: Schema.NullOr(Schema.Unknown),
+  }),
+);
+const XAiQueueChangedNotification = jsonRpcNotification(
+  "_x.ai/queue/changed",
+  Schema.Struct({
+    sessionId: Schema.String,
+    entries: Schema.Array(Schema.Unknown),
+  }),
+);
+const XAiSessionsChangedNotification = jsonRpcNotification(
+  "_x.ai/sessions/changed",
+  Schema.Struct({
+    upserted: Schema.Array(Schema.Unknown),
+    removed: Schema.Array(Schema.Unknown),
+  }),
+);
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
+const mockPeerArgs = (path: string) => [path];
+
+function concatBytes(chunks: ReadonlyArray<Uint8Array>): Uint8Array {
+  const batch = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    batch.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return batch;
+}
 
 it.layer(NodeServices.layer)("effect-acp client", (it) => {
   const makeHandle = (env?: Record<string, string>) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const command = ChildProcess.make("bun", ["run", yield* mockPeerPath], {
+      const command = ChildProcess.make(process.execPath, mockPeerArgs(yield* mockPeerPath), {
         cwd: path.join(import.meta.dirname, ".."),
-        shell: process.platform === "win32",
         ...(env ? { env: { ...process.env, ...env } } : {}),
       });
       return yield* spawner.spawn(command);
@@ -147,7 +188,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
   );
 
   it.effect(
-    "returns formatted invalid params when a typed extension request payload is wrong",
+    "returns structured invalid params without exposing values from typed extension request payloads",
     () =>
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
@@ -213,8 +254,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           assert.fail("Expected prompt to fail for invalid typed extension payload");
         }
         const rendered = Cause.pretty(result.cause);
-        assert.include(rendered, "Invalid x/typed_request payload:");
-        assert.include(rendered, "Expected string, got 123");
+        assert.include(rendered, "Invalid payload for ACP extension method 'x/typed_request'.");
+        assert.notInclude(rendered, "Expected string, got 123");
       }),
   );
 
@@ -445,5 +486,91 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
       yield* Scope.close(scope, Exit.void);
     }),
+  );
+
+  it.effect(
+    "routes a standard prompt response after Grok extension notifications in the same batch",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const scope = yield* Scope.make();
+        const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+
+        const promptFiber = yield* acp.agent
+          .prompt({
+            sessionId: "grok-session-1",
+            prompt: [{ type: "text", text: "run the ls command" }],
+          })
+          .pipe(Effect.forkScoped);
+
+        const outbound = yield* Queue.take(output);
+        const decodedPrompt = yield* decodePromptRequestLine(outbound);
+
+        const responseBatch = concatBytes(
+          yield* Effect.all([
+            encodeJsonl(XAiQueueChangedNotification, {
+              jsonrpc: "2.0",
+              method: "_x.ai/queue/changed",
+              params: { sessionId: "grok-session-1", entries: [] },
+            }),
+            encodeJsonl(XAiPromptCompleteNotification, {
+              jsonrpc: "2.0",
+              method: "_x.ai/session/prompt_complete",
+              params: {
+                sessionId: "grok-session-1",
+                promptId: "prompt-1",
+                stopReason: "end_turn",
+                agentResult: null,
+              },
+            }),
+            encodeJsonl(XAiSessionsChangedNotification, {
+              jsonrpc: "2.0",
+              method: "_x.ai/sessions/changed",
+              params: {
+                upserted: [
+                  {
+                    sessionId: "grok-session-1",
+                    title: null,
+                    cwd: process.cwd(),
+                    isWorktree: false,
+                    modelId: "grok-composer-2.5-fast",
+                    yolo: false,
+                    activity: "idle",
+                    resident: true,
+                    lastChangeUnixMs: 1_710_000_000_000,
+                    origin: { kind: "local" },
+                  },
+                ],
+                removed: [],
+              },
+            }),
+            encodeJsonl(PromptResponse, {
+              jsonrpc: "2.0",
+              id: decodedPrompt.id,
+              result: {
+                stopReason: "end_turn",
+                _meta: {
+                  sessionId: "grok-session-1",
+                  requestId: "prompt-1",
+                  promptId: "prompt-1",
+                  modelId: "grok-composer-2.5-fast",
+                },
+              },
+            }),
+          ]),
+        );
+        yield* Queue.offer(input, responseBatch);
+
+        assert.deepEqual(yield* Fiber.join(promptFiber), {
+          stopReason: "end_turn",
+          _meta: {
+            sessionId: "grok-session-1",
+            requestId: "prompt-1",
+            promptId: "prompt-1",
+            modelId: "grok-composer-2.5-fast",
+          },
+        });
+        yield* Scope.close(scope, Exit.void);
+      }),
   );
 });

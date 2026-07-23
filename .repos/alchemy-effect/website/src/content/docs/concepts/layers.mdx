@@ -1,0 +1,281 @@
+---
+title: Layers
+description: A Layer encapsulates a slice of infrastructure (resources, bindings, runtime logic) behind a typed service interface. Code that depends on the interface stays cloud-agnostic; swapping the implementation swaps the underlying infrastructure.
+sidebar:
+  order: 9
+---
+
+A [Binding](/concepts/binding) connects one [Resource](/concepts/resource)
+to a [Platform](/concepts/platform). A **Layer** is the next abstraction
+up: a unit of *encapsulated infrastructure*. It owns whatever resources
+and bindings it needs, returns a typed implementation of a service
+interface, and hides everything behind that interface.
+
+Layers are the mechanism that makes Alchemy code portable. A Worker
+written against an abstract `JobService` doesn't know whether its
+underlying storage is a KV namespace, a DynamoDB table, or an
+in-memory map — it depends on the *service*, and a Layer wires up
+the rest.
+
+## The encapsulation problem
+
+Say you want a Worker that serves jobs from a KV namespace. The
+straightforward thing is to bind the KV in the Worker's init
+closure and call it from `fetch`:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+    const kv = yield* Cloudflare.KVNamespaceBinding.bind(MyKV);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const job = yield* kv.get<Job>("job-1", "json");
+        return HttpServerResponse.json(job);
+      }),
+    };
+  }),
+);
+```
+
+This works, but the handler is welded to KV. The `fetch` body
+mentions `kv.get`, knows the value shape comes back as `"json"`,
+and propagates `KVNamespaceError`. Moving the data to DynamoDB or
+swapping in an in-memory fake for tests means rewriting `fetch` —
+not just the storage wiring.
+
+A Layer is the answer.
+
+## A service is a contract
+
+A service is a `Context.Service` — a typed Tag that names a
+capability without saying how it's provided:
+
+```typescript
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Alchemy from "alchemy";
+
+export class JobService extends Context.Service<
+  JobService,
+  {
+    getJob(id: string): Effect.Effect<Job, JobError, Alchemy.RuntimeContext>;
+  }
+>()("JobService") {}
+```
+
+A consumer writes `yield* JobService` and gets the typed object —
+nothing else. The signature deliberately mentions
+`Alchemy.RuntimeContext` (more on this below) but says nothing about
+KV, DynamoDB, or any specific cloud primitive.
+
+## A Layer encapsulates the infrastructure
+
+A Layer is the implementation side of a service. It declares the
+resources it needs, wires up bindings, and returns the typed value:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export const JobServiceKV = Layer.effect(
+  JobService,
+  Effect.gen(function* () {
+    const MyKV = yield* Cloudflare.KVNamespace("MyKV");
+    const kv = yield* Cloudflare.KVNamespaceBinding.bind(MyKV);
+
+    return {
+      getJob: Effect.fn(function* (id: string) {
+        return yield* kv.get<Job>(id, "json");
+      }),
+    };
+  }),
+);
+```
+
+Three things happen in one expression:
+
+1. **The KV namespace is a real resource.** It joins the
+   [Stack](/concepts/stack), goes through plan/create/update like
+   anything else.
+2. **The binding is wired** — `KVNamespaceBinding.bind(MyKV)`
+   attaches the KV namespace to whichever Worker eventually consumes
+   this Layer.
+3. **A typed `JobService` is returned.** Callers see only `getJob`.
+
+## Cloud-agnostic consumers
+
+A Worker that wants jobs depends on `JobService` and provides a
+Layer to satisfy it:
+
+```typescript
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+    const jobs = yield* JobService;
+
+    return {
+      fetch: Effect.gen(function* () {
+        return yield* jobs.getJob("job-1");
+      }),
+    };
+  }).pipe(Effect.provide(JobServiceKV)),
+);
+```
+
+The handler never mentions KV. Swapping the implementation is a
+one-line change:
+
+```diff lang="typescript"
+-.pipe(Effect.provide(JobServiceKV))
++.pipe(Effect.provide(JobServiceDynamo))
+```
+
+The next deploy tears down the KV namespace and creates whatever
+`JobServiceDynamo` declares. The handler is untouched.
+
+## Where runtime requirements live
+
+The handler that called `kv.get` directly had a `fetch` body typed
+roughly:
+
+```typescript
+Effect.Effect<Response, KVNamespaceError, Alchemy.RuntimeContext>
+```
+
+The KV-specific error and the implicit dependence on a Cloudflare
+binding both leak into the handler's signature. The Layer-wrapped
+equivalent collapses to:
+
+```typescript
+Effect.Effect<Response, JobError, Alchemy.RuntimeContext>
+```
+
+The Cloudflare-specific surface is gone — absorbed by the Layer:
+
+```typescript
+export const KVNamespaceBindingLive = Layer.effect(
+  KVNamespaceBinding,
+  Effect.gen(function* () {
+    const env = yield* WorkerEnvironment; // ← required here, once
+    // ...returns a client that closes over env
+  }),
+);
+```
+
+The Worker that consumes `KVNamespaceBindingLive` satisfies
+`WorkerEnvironment` in one place; downstream callers see only
+`RuntimeContext`. Try the swap on a Cloudflare Worker:
+
+```diff lang="typescript"
+-.pipe(Effect.provide(JobServiceKV))         // requires WorkerEnvironment ✓
++.pipe(Effect.provide(JobServiceDynamo))     // requires AWS.FunctionEnvironment ✗
+```
+
+The Cloudflare Worker can't satisfy `AWS.FunctionEnvironment`, so
+the program won't type-check. Platforms and Layers fit together by
+type, not by convention.
+
+## Runtime as a colored function
+
+A Platform program has two [phases](/concepts/phases): the **init**
+closure (outer) runs at both plantime and cold start, and the
+**runtime** closure (inner) runs only inside the deployed handler.
+Bindings live in init; the actual cloud calls live in runtime:
+
+```typescript
+Cloudflare.Worker(
+  "Api",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+    // ─── Init: declare dependencies ───
+    const kv = yield* Cloudflare.KVNamespaceBinding.bind(MyKV);
+
+    return {
+      // ─── Runtime: use them ───
+      fetch: Effect.gen(function* () {
+        return yield* kv.get<Job>("job-1", "json");
+      }),
+    };
+  }),
+);
+```
+
+`Alchemy.RuntimeContext` is the Effect service that exists *only*
+inside the runtime closure. It is not provided at plantime, cold
+start init, or anywhere else. So an Effect like:
+
+```typescript
+kv.get(...): Effect.Effect<Job | null, KVNamespaceError, Alchemy.RuntimeContext>
+```
+
+is one the type system *guarantees* can only run in the runtime
+phase. Move that call up into the init closure and the type checker
+rejects it — `RuntimeContext` is not satisfied there.
+
+You can think of it as a "color" in the sense of
+[colored functions](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/):
+
+```ts
+runtime function getJob(id: string): Job
+```
+
+TypeScript doesn't have keyword-level coloring, so Alchemy encodes
+the color as an Effect requirement. The compiler enforces the
+init/runtime boundary for you.
+
+## What you compose with
+
+A typical app stack mixes several Layers, one per capability:
+
+```typescript
+.pipe(
+  Effect.provide(Layer.mergeAll(
+    JobServiceKV,         // provides JobService
+    BetterAuthD1,         // provides BetterAuth
+    RateLimiterDurable,   // provides RateLimiter
+  )),
+)
+```
+
+Each Layer brings its own resources into the Stack and its own
+typed service into scope. Consumers stay declarative and ignorant
+of the underlying primitives.
+
+| Combinator             | Use it for                                                |
+| ---------------------- | --------------------------------------------------------- |
+| `Layer.mergeAll(a, b)` | Provide multiple independent services                     |
+| `Layer.provideMerge`   | A Layer that supplies *and* exposes a service             |
+| `Layer.provide`        | Satisfy one Layer's dependencies privately from another   |
+
+For the deploy-time mechanics that make Layers possible — typed
+clients, IAM, env injection — see [Binding](/concepts/binding). For
+the step-by-step of building one yourself, see
+[Building Infrastructure Layers](/guides/infrastructure-layers).
+
+## Why this matters
+
+Because Layers are normal Effect Layers, the patterns scale all the
+way out:
+
+- **Distribute on npm.** A service is just a TypeScript module
+  exporting a `Context.Service` and one or more Layers. Publish
+  `@org/jobs`, `npm install` it, `Effect.provide` it.
+- **Substitute for tests.** Provide a `JobServiceMemory` Layer
+  backed by a `Map`; the Worker under test never knows.
+- **Migrate without rewrites.** Moving from KV to DynamoDB is a
+  Layer swap, not a Worker rewrite.
+- **Type-safe portability.** Cloud-specific requirements are
+  confined to Layer construction; the consumer-facing surface
+  speaks only `RuntimeContext`.
+
+Infrastructure becomes a value you can encapsulate, name, and
+substitute — like any other module.

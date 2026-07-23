@@ -1,0 +1,389 @@
+---
+import Search from "@astrojs/starlight/components/Search.astro";
+import Logo from "./Logo.astro";
+---
+
+<nav class="alc-nav">
+  <a href="/" class="alc-nav__brand">
+    <Logo />
+  </a>
+
+  <div class="alc-nav__spacer"></div>
+  <div class="alc-nav__search">
+    <Search />
+  </div>
+  <a href="/getting-started" class="alc-nav__link">Docs</a>
+  <a href="/blog" class="alc-nav__link">Blog</a>
+  <a
+    href="https://github.com/alchemy-run/alchemy-effect"
+    class="alc-nav__link alc-nav__link--icon"
+    aria-label="GitHub"
+  >
+    <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <path
+        d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.04 11.04 0 0 1 5.79 0c2.21-1.49 3.18-1.18 3.18-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.07.78 2.16 0 1.56-.01 2.81-.01 3.19 0 .31.21.67.8.56C20.71 21.39 24 17.08 24 12 24 5.73 18.27.5 12 .5z"
+      ></path>
+    </svg>
+    <span class="alc-nav__link-text">GitHub</span>
+  </a>
+  <a
+    href="https://discord.gg/jwKw8dBJdN"
+    class="alc-nav__link alc-nav__link--icon"
+    aria-label="Discord"
+  >
+    <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <path
+        d="M20.317 4.369A19.79 19.79 0 0 0 16.558 3.2a.075.075 0 0 0-.079.037c-.34.6-.717 1.384-.98 2-1.797-.27-3.583-.27-5.342 0-.263-.63-.654-1.4-.997-2A.077.077 0 0 0 9.08 3.2a19.736 19.736 0 0 0-3.76 1.169.07.07 0 0 0-.032.027C1.533 9.046.6 13.58 1.057 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.029.077.077 0 0 0 .084-.027c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.108 13.108 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.197.373.291a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.04.106c.36.699.772 1.364 1.225 1.994a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.029ZM8.02 15.331c-1.183 0-2.157-1.085-2.157-2.42 0-1.333.956-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.335-.956 2.42-2.157 2.42Zm7.974 0c-1.183 0-2.157-1.085-2.157-2.42 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.335-.946 2.42-2.157 2.42Z"
+      ></path>
+    </svg>
+    <span class="alc-nav__link-text">Discord</span>
+  </a>
+  <button
+    type="button"
+    class="alc-nav__theme-toggle"
+    aria-label="Toggle color theme"
+    title="Toggle color theme"
+    data-theme-toggle
+  >
+    {/* Sun — shown in dark mode (click → light) */}
+    <svg
+      class="alc-theme-icon alc-theme-icon--sun"
+      aria-hidden="true"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <circle cx="12" cy="12" r="4"></circle>
+      <path
+        d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+      ></path>
+    </svg>
+    {/* Moon — shown in light mode (click → dark) */}
+    <svg
+      class="alc-theme-icon alc-theme-icon--moon"
+      aria-hidden="true"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"></path>
+    </svg>
+  </button>
+</nav>
+
+<style>
+  .alc-nav,
+  .alc-nav * {
+    box-sizing: border-box;
+  }
+  .alc-nav {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .alc-nav__brand {
+    text-decoration: none;
+  }
+  .alc-nav__spacer {
+    flex: 1;
+  }
+  .alc-nav__search {
+    display: flex;
+    align-items: center;
+    width: 220px;
+  }
+  .alc-nav__search :global(site-search) {
+    display: block;
+    width: 100%;
+  }
+  .alc-nav__search :global(button[data-open-modal]) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 32px;
+    padding: 0 8px 0 12px;
+    background: var(--alc-bg);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--alc-fg-4);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .alc-nav__search :global(button[data-open-modal]:hover) {
+    border-color: var(--alc-fg-4);
+    color: var(--alc-fg-2);
+  }
+  .alc-nav__search :global(button[data-open-modal] svg) {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  .alc-nav__search :global(button[data-open-modal] > :last-child) {
+    margin-inline-start: auto;
+  }
+  .alc-nav__search :global(button[data-open-modal] kbd) {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font-family: var(--alc-font-mono);
+    font-size: 11px;
+    color: var(--alc-fg-2);
+  }
+  .alc-nav__search :global(button[data-open-modal] kbd kbd) {
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .alc-nav__theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--alc-fg-2);
+    cursor: pointer;
+    font: inherit;
+    transition:
+      color var(--alc-dur) var(--alc-ease),
+      border-color var(--alc-dur) var(--alc-ease),
+      background-color var(--alc-dur) var(--alc-ease);
+  }
+  .alc-nav__theme-toggle:hover {
+    color: var(--alc-accent-deep);
+    border-color: var(--alc-accent-40);
+    background: var(--alc-bg-elev-1);
+  }
+  .alc-nav__theme-toggle:focus-visible {
+    outline: 2px solid var(--alc-accent-40);
+    outline-offset: 2px;
+  }
+  .alc-theme-icon {
+    display: block;
+  }
+  /* Show one icon per mode. Default (no [data-theme] yet, before pre-paint
+     script runs) shows the moon — matches the historical light bias. */
+  .alc-theme-icon--sun { display: none; }
+  :global([data-theme="dark"]) .alc-theme-icon--sun { display: block; }
+  :global([data-theme="dark"]) .alc-theme-icon--moon { display: none; }
+  .alc-nav__link {
+    color: var(--alc-fg-2);
+    text-decoration: none;
+    font-size: 14px;
+  }
+  .alc-nav__link:hover {
+    color: var(--alc-accent-deep);
+  }
+  .alc-nav__link--icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  @media (max-width: 880px) {
+    .alc-nav__search {
+      display: none;
+    }
+    .alc-nav__link--icon .alc-nav__link-text {
+      display: none;
+    }
+  }
+  @media (max-width: 640px) {
+    .alc-nav { gap: 16px; }
+  }
+</style>
+
+<style is:global>
+  /*
+   * Starlight's Search dialog is rendered in the top layer (outside any
+   * scoped style boundary) and relies on Starlight tokens / utility classes
+   * (`--sl-color-*`, `sl-hidden`, `md:sl-hidden`) that are not loaded on
+   * marketing pages. We map the missing Starlight color tokens onto our
+   * parchment palette inside the search dialog so Starlight's own Pagefind
+   * styling (page icon, sub-result tree connector, focus rings, etc.)
+   * "just works" on every page.
+   */
+  site-search {
+    /* Starlight color tokens, mapped to our palette. Scoped to site-search
+       so docs pages keep their existing Starlight theme untouched. */
+    --sl-color-white: var(--alc-fg-1);
+    --sl-color-text: var(--alc-fg-1);
+    --sl-color-text-accent: var(--alc-accent-deep);
+    --sl-color-accent: var(--alc-accent);
+    --sl-color-accent-high: var(--alc-accent-deep);
+    --sl-color-accent-low: var(--alc-accent-12);
+    --sl-color-gray-1: var(--alc-fg-1);
+    --sl-color-gray-2: var(--alc-fg-2);
+    --sl-color-gray-3: var(--alc-fg-3);
+    --sl-color-gray-4: var(--alc-fg-4);
+    --sl-color-gray-5: var(--alc-hairline-2);
+    --sl-color-gray-6: var(--alc-bg-sunk);
+    --sl-color-black: var(--alc-bg-elev-1);
+    --sl-color-backdrop-overlay: rgba(42, 38, 32, 0.35);
+    --sl-shadow-lg: 0 24px 64px rgba(42, 38, 32, 0.25);
+    --__sl-font: var(--alc-font-sans);
+  }
+
+  site-search dialog {
+    color: var(--alc-fg-2);
+    border-radius: 12px;
+    font-family: var(--alc-font-sans);
+  }
+  site-search dialog::backdrop {
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+
+  /* Hide the mobile-only Cancel button on desktop. Starlight uses
+     `md:sl-hidden` for this but the utility CSS isn't loaded on the
+     marketing pages, so it otherwise leaks into the input on desktop. */
+  site-search button[data-close-modal] {
+    display: none;
+    font-family: var(--alc-font-sans);
+  }
+  @media (max-width: 50rem) {
+    site-search button[data-close-modal] {
+      display: inline-flex;
+    }
+  }
+
+  /* ── Pagefind UI re-skin (Effect-style result cards) ────────────────── */
+  site-search #starlight__search {
+    --pagefind-ui-primary: var(--alc-fg-1);
+    --pagefind-ui-text: var(--alc-fg-2);
+    --pagefind-ui-background: var(--alc-bg-sunk);
+    --pagefind-ui-border: var(--alc-hairline-2);
+    --pagefind-ui-tag: var(--alc-bg-sunk);
+    --pagefind-ui-border-width: 1px;
+    --pagefind-ui-font: var(--alc-font-sans);
+    --pagefind-ui-scale: 0.85;
+  }
+  /* Search input — sits on a slightly sunk surface so the white result
+     cards beneath it have something to pop against. */
+  site-search #starlight__search .pagefind-ui__form {
+    border-bottom: 1px solid var(--alc-hairline-2);
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.25rem;
+  }
+  site-search #starlight__search .pagefind-ui__search-input {
+    color: var(--alc-fg-1);
+    background: var(--alc-bg-elev-1);
+    font-family: var(--alc-font-sans);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 8px;
+  }
+  site-search #starlight__search input:focus {
+    --pagefind-ui-border: var(--alc-accent);
+    box-shadow: 0 0 0 3px var(--alc-accent-12);
+  }
+  site-search #starlight__search .pagefind-ui__message {
+    color: var(--alc-fg-3);
+    font-weight: 500;
+    padding-block: 0.5rem;
+  }
+
+  /* Each "result" = a page = a white elevated card. */
+  site-search #starlight__search .pagefind-ui__results {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  site-search #starlight__search .pagefind-ui__results > * + * {
+    margin-top: 0;
+  }
+  site-search #starlight__search .pagefind-ui__result {
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline);
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(42, 38, 32, 0.04);
+    overflow: hidden;
+  }
+  site-search #starlight__search .pagefind-ui__result-inner {
+    background: transparent;
+  }
+  /* Top-level page row + sub-result rows share the same elevated card,
+     so we drop the per-row backgrounds Starlight applies. */
+  site-search
+    #starlight__search
+    .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)),
+  site-search #starlight__search .pagefind-ui__result-nested {
+    background: transparent;
+  }
+  /* Hover/focus highlight — soft accent tint instead of a hard outline. */
+  site-search
+    #starlight__search
+    .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)):hover,
+  site-search #starlight__search .pagefind-ui__result-nested:hover,
+  site-search
+    #starlight__search
+    .pagefind-ui__result-title:not(
+      :where(.pagefind-ui__result-nested *)
+    ):focus-within,
+  site-search #starlight__search .pagefind-ui__result-nested:focus-within {
+    outline: none;
+    background: var(--alc-accent-12);
+  }
+
+  site-search #starlight__search .pagefind-ui__result-link {
+    --pagefind-ui-text: var(--alc-fg-1);
+    color: var(--alc-fg-1);
+    font-weight: 700;
+    font-size: 1rem;
+  }
+  site-search #starlight__search .pagefind-ui__result-excerpt {
+    color: var(--alc-fg-3);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    margin-top: 0.25rem;
+  }
+  site-search #starlight__search mark {
+    color: var(--alc-accent-deep);
+    background: transparent;
+    font-weight: 700;
+  }
+  /* Page / tree icons recolored to fit parchment. */
+  site-search #starlight__search .pagefind-ui__result-title::before {
+    background: var(--alc-fg-4) !important;
+  }
+  site-search #starlight__search .pagefind-ui__result-nested::before {
+    background: var(--alc-hairline-3) !important;
+  }
+</style>
+
+<script is:inline>
+  (() => {
+    const button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+    const STORAGE_KEY = "starlight-theme";
+    button.addEventListener("click", () => {
+      const current = document.documentElement.dataset.theme === "dark"
+        ? "dark"
+        : "light";
+      const next = current === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try {
+        localStorage.setItem(STORAGE_KEY, next);
+      } catch {}
+    });
+  })();
+</script>

@@ -1,0 +1,386 @@
+---
+title: Resource
+description: Resources are named cloud entities with input properties and output attributes.
+sidebar:
+  order: 1
+---
+
+import DAG from "../../../components/DAG.astro";
+
+A **Resource** represents a cloud entity managed by Alchemy — a
+bucket, database, queue, function, DNS record, or anything else that
+has a lifecycle of reconcile and delete.
+
+## Declaring a Resource
+
+Resources are declared with a **logical ID** and optional **input
+properties**:
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket("Bucket");
+const queue = yield* AWS.SQS.Queue("Jobs", {
+  fifoQueue: true,
+});
+```
+
+The logical ID (`"Bucket"`, `"Jobs"`) is stable across deploys. It
+identifies this resource within the stack and is used to track state.
+
+## Input Properties and Output Attributes
+
+Every resource has two sides:
+
+- **Input Properties** — the desired configuration you pass in
+  (e.g. `fifoQueue: true`)
+- **Output Attributes** — the values produced after creation
+  (e.g. `queueUrl`, `queueArn`)
+
+Output attributes are available as [`Output`](/concepts/outputs)
+expressions on the resource — lazy, typed references that resolve
+once the upstream resource has been created:
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket("Bucket");
+bucket.bucketName; // Output<string>
+```
+
+See [Inputs and Outputs](/concepts/outputs) for the full set of
+operators (`map`, `mapEffect`, `all`, `interpolate`, `ref`).
+
+These are lazy references that resolve after the resource is created.
+You can pass them as inputs to other resources to express
+dependencies.
+
+## Resources are Effects
+
+A resource declaration like `Cloudflare.R2Bucket("Bucket")` is just
+an `Effect` — calling it doesn't talk to the cloud. `yield*`-ing it
+inside a [Stack](/concepts/stack) doesn't either; it just **registers
+the resource on the stack** and hands you back a typed
+[`Output`](/concepts/outputs) reference for its attributes:
+
+```typescript
+// 1. Build the Effect. No API calls. No state mutation.
+const Bucket = Cloudflare.R2Bucket("Bucket");
+
+// 2. Register it on the stack. Still no API calls — alchemy is
+//    just collecting the desired-state graph.
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    const bucket = yield* Bucket;
+    return { name: bucket.bucketName };
+  }),
+);
+```
+
+The cloud is only touched later, when `alchemy deploy` runs the
+collected graph through plan and apply. See
+[Resource Lifecycle](/concepts/resource-lifecycle) for what happens
+after registration.
+
+### Sharing across files
+
+Because the declaration is just a value, you can `export` it and
+import it from anywhere — handlers, layers, other resources:
+
+```typescript
+// src/bucket.ts
+export const Bucket = Cloudflare.R2Bucket("Bucket");
+```
+
+```typescript
+// alchemy.run.ts
+import { Bucket } from "./src/bucket.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    yield* Bucket;
+  }),
+);
+```
+
+Importing the same `Bucket` from multiple files is safe. Alchemy
+keys resources by their fully qualified name, so even if two
+modules `yield*` it, it registers on the stack exactly once.
+
+## `ref`
+
+Every resource constructor exposes a static `ref` returning a
+typed reference to a resource that's already been deployed
+**elsewhere** — another stage of this stack, or a different
+stack entirely:
+
+```typescript
+const project = yield* Neon.Project.ref("app-db", {
+  stage: "staging",
+});
+// project: Neon.Project — same shape, same typed attributes
+```
+
+Lookup keyed by `{ stack, stage, id }`; both options default to
+the current stack/stage. Lazy — no cloud calls at declaration
+time. Typed — the result has the same interface as a freshly
+deployed resource. Strict — fails fast with
+`InvalidReferenceError` when the target is missing.
+
+A typical pattern: PR-preview stages reference long-lived
+`staging` resources instead of provisioning their own:
+
+```typescript
+const project = stage.startsWith("pr-")
+  ? yield* Neon.Project.ref("app-db", { stage: "staging" })
+  : yield* Neon.Project("app-db", { region: "aws-us-east-1" });
+```
+
+See [References](/concepts/references) for the full reference
+surface and the [Shared database across
+stages](/guides/shared-database) guide for the canonical
+walkthrough.
+
+## Logical ID
+
+The first argument you pass to a resource constructor is its
+**logical ID** — a name **you** choose to identify the resource
+within its stack:
+
+```typescript
+const Bucket = Cloudflare.R2Bucket("Bucket"); // logical ID: "Bucket"
+const Jobs = AWS.SQS.Queue("Jobs");           // logical ID: "Jobs"
+```
+
+The logical ID is how alchemy tracks the resource in state across
+deploys:
+
+- **Stable across deploys** — keep the same ID and alchemy keeps
+  updating the same underlying cloud resource.
+- **Stable across renames** — change the variable name, change the
+  TypeScript class, move the file; as long as the logical ID stays
+  the same, alchemy still recognizes it.
+- **Rename = replace** — change the logical ID and alchemy treats
+  it as a new resource (and deletes the old one on the next deploy).
+
+Logical IDs only need to be unique **within a stack**.
+
+## Physical Name
+
+The **physical name** is what the cloud actually sees — `myapp-dev_sam-bucket-a3f1`
+on R2, an ARN suffix on AWS, etc. Alchemy generates it for you from
+three things:
+
+```text
+{stack-name}-{stage}-{logical-id}-{instance-id}
+   "myapp"    "dev_sam"  "Bucket"     "a3f1"
+```
+
+The first three are obvious. The **instance ID** is a short,
+deterministic suffix tied to *this specific instance* of the
+resource. While the resource lives, the instance ID stays the same,
+so re-running create finds the existing resource instead of
+duplicating it.
+
+The whole scheme means:
+
+- **Stages don't collide** — `dev_sam` and `prod` produce different
+  physical names from the same code.
+- **Creates are idempotent** — same logical ID + same instance ID =
+  same physical name on retry.
+- **State can recover** — if persistence fails, alchemy can re-run
+  create and find the existing cloud resource.
+
+The instance ID is the part that **does** change when a resource is
+replaced — which leads us to…
+
+## Replacement
+
+Some property changes can't be applied in place. Changing a
+DynamoDB table's partition key, for example, can't be done on a
+live table — it has to be re-created.
+
+Before:
+
+```typescript
+const Jobs = DynamoDB.Table("Jobs", {
+  partitionKey: "id",
+  attributes: { id: "S" },
+});
+```
+
+After:
+
+```diff lang="typescript"
+  const Jobs = DynamoDB.Table("Jobs", {
+-   partitionKey: "id",
+-   attributes: { id: "S" },
++   partitionKey: "tenantId",
++   attributes: { tenantId: "S" },
+  });
+```
+
+The logical ID (`"Jobs"`) doesn't change, but the **instance ID
+does** — which means the physical name does too:
+
+```text
+before:  myapp-prod-jobs-a3f1
+after:   myapp-prod-jobs-9b2c
+```
+
+When the next plan runs, alchemy:
+
+1. Creates a new table with the new instance ID (and physical name)
+2. Updates downstream resources to reference the new one
+3. Deletes the old table
+
+The resource's [provider](/concepts/provider) decides which property
+changes trigger replacement vs in-place update (via
+[`diff`](/concepts/provider#diff)). For the full lifecycle
+(reconcile / replace / delete) see
+[Resource Lifecycle](/concepts/resource-lifecycle).
+
+## Defining your own Resource type
+
+A resource is just a typed Effect. To support a new cloud or
+third-party API, declare a `Resource` type with its input props and
+output attributes — then implement its provider as a `Layer`. Same
+engine plans, deploys, and destroys it.
+
+See [Writing a Custom Resource Provider](/guides/custom-provider)
+for a step-by-step walkthrough of declaring the type and
+implementing each lifecycle hook (`reconcile`, `delete`, `diff`,
+`read`).
+
+```typescript
+// 1. Declare the type + constructor.
+export type StripeProduct = Resource<
+  "Stripe.Product",
+  { name: string; price: number }, // input props
+  { productId: string; priceId: string } // output attrs
+>;
+export const StripeProduct = Resource<StripeProduct>("Stripe.Product");
+
+// 2. Use it like any built-in resource.
+const Pro = yield* StripeProduct("Pro", {
+  name: "Pro plan",
+  price: 2900,
+});
+// ^? typed Pro.productId, Pro.priceId
+```
+
+- **Inputs & outputs are typed** — Props you pass in, attributes the
+  provider returns. Both fully typed, both checked at the call site.
+- **Compose with built-in providers** — Merge your provider Layer with
+  `Cloudflare.providers()` or `AWS.providers()`. One stack, mixed
+  clouds.
+
+The lifecycle hooks the provider implements — `reconcile`,
+`delete`, `diff`, `read` — are documented in
+[Provider](/concepts/provider#lifecycle-operations).
+
+## The resource graph
+
+Passing an `Output` from one resource as input to another draws an
+edge in the dependency graph. Take this stack:
+
+```typescript
+const Bucket = yield* Cloudflare.R2Bucket("Bucket");
+const Sessions = yield* Cloudflare.KVNamespace("Sessions");
+
+const Queue = yield* AWS.SQS.Queue("Queue", {
+  name: Output.interpolate`${Bucket.bucketName}-events`,
+});
+
+const Worker = yield* Cloudflare.Worker("Worker", {
+  main: import.meta.path,
+  env: { Bucket, Sessions, Queue },
+});
+```
+
+Alchemy reads the Outputs in each resource's props and builds:
+
+<DAG
+  nodes={[
+    { id: "Bucket", type: "Cloudflare.R2Bucket" },
+    { id: "Sessions", type: "Cloudflare.KVNamespace" },
+    { id: "Queue", type: "AWS.SQS.Queue" },
+    { id: "Worker", type: "Cloudflare.Worker", tone: "accent" },
+  ]}
+  edges={[
+    { from: "Bucket", to: "Queue" },
+    { from: "Bucket", to: "Worker" },
+    { from: "Sessions", to: "Worker" },
+    { from: "Queue", to: "Worker" },
+  ]}
+/>
+
+It then deploys in topological order:
+
+1. `Bucket` and `Sessions` have no dependencies → created **in
+   parallel**.
+2. `Queue` depends on `Bucket.bucketName` → waits for `Bucket`,
+   then created.
+3. `Worker` depends on all three → created last, after every
+   upstream Output has resolved.
+
+Cycles (Worker A binds Worker B, Worker B binds Worker A) are
+handled with a two-phase plan — see
+[Circular Bindings](/guides/circular-bindings).
+
+## Circular references
+
+Real systems have cycles. Two Workers that call each other. A Lambda
+that invokes another Lambda. Tables that reference each other. Most
+IaC engines reject these — alchemy resolves them by splitting each
+[Platform](/concepts/platform) resource into two pieces:
+
+- A **class** that acts as the Tag (the identity / declaration)
+- A **`.make(...)`** Layer that supplies the runtime implementation
+
+The class can be referenced before its implementation exists, so two
+Workers can name each other in their handlers without a hard
+ordering constraint.
+
+For a circular Worker pair, the resource graph contains edges in
+both directions:
+
+<DAG
+  nodes={[
+    { id: "A", label: "Worker A", type: "Cloudflare.Worker", tone: "accent" },
+    { id: "B", label: "Worker B", type: "Cloudflare.Worker", tone: "accent" },
+  ]}
+  edges={[
+    { from: "A", to: "B", label: "binds" },
+    { from: "B", to: "A", label: "binds" },
+  ]}
+/>
+
+```typescript
+// src/MyWorker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+// The class is the Tag — used as a typed identifier elsewhere.
+export class MyWorker extends Cloudflare.Worker<MyWorker>()("MyWorker", {
+  main: import.meta.path,
+}) {}
+
+// The default export is the Layer — the runtime implementation.
+export default MyWorker.make(
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("hello");
+      }),
+    };
+  }),
+);
+```
+
+To compose Workers that reference each other, provide both Layers
+to your Stack with `Effect.provide`. See the
+[Circular Bindings guide](/guides/circular-bindings) for a complete
+worked A↔B example, including how alchemy plans the two-phase
+create-then-wire deploy.

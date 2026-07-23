@@ -1,0 +1,445 @@
+---
+import LegalPage from "../components/LegalPage.astro";
+
+const sections = [
+  ["introduction", "Introduction"],
+  ["information", "Personal information we collect"],
+  ["uses", "How we use your personal information"],
+  ["sharing", "How we share your personal information"],
+  ["choices", "Your choices regarding your personal information"],
+  ["security", "Security of your personal information"],
+  ["international", "International users"],
+  ["children", "Children"],
+  ["do-not-track", "Do Not Track"],
+  ["updates", "Updates to this Privacy Policy"],
+  ["contact", "Contact us"],
+] as const;
+---
+
+<LegalPage
+  title="Privacy Policy — T3 Code"
+  description="How T3 Tools, Inc. handles information when you use T3 Code, app.t3.codes, and t3.codes."
+  heading="T3 Code Privacy Policy"
+  lede="This Privacy Policy describes how T3 Tools, Inc. collects, uses, and shares personal information when you use the T3 Code desktop, mobile, and hosted web applications, visit the t3.codes marketing site, or use the optional T3 Connect service."
+  effectiveDate="2026-07-14"
+  lastUpdated="2026-07-14"
+  sections={sections}
+>
+  <section id="introduction">
+          <p class="section-number">01</p>
+          <h2>Introduction</h2>
+          <p>
+            This Privacy Policy (the “Policy”) describes how T3 Tools, Inc. (the “Company,” “T3
+            Tools,” “we,” or “us”) collects, uses, and shares personal information when you use the T3
+            Code desktop and mobile applications, the hosted T3 Code web application located at
+            {" "}<a href="https://app.t3.codes">https://app.t3.codes</a>, or the optional T3 Connect
+            service (together, the “Services”), or visit the T3 Code marketing website located at
+            {" "}<a href="https://t3.codes">https://t3.codes</a> (the “Site”). This Policy applies to
+            personal information we collect through the Site and the Services, as well as personal
+            information you provide to us directly.
+          </p>
+          <p>
+            By using the Site or the Services, you acknowledge the practices described in this
+            Policy. If you do not agree with this Policy, please do not use the Site or the Services.
+            This Policy does not govern third-party coding agents, artificial-intelligence providers,
+            identity providers, or environments that you choose to connect to T3 Code; those third
+            parties process information under their own terms and privacy policies.
+          </p>
+        </section>
+
+        <section id="information">
+          <p class="section-number">02</p>
+          <h2>Personal Information We Collect</h2>
+
+          <p>
+            We collect personal information about you in different ways depending on how you use
+            T3 Code and which optional features you enable.
+          </p>
+
+          <h3>Personal Information From Users of T3 Code</h3>
+
+          <p>
+            When you use T3 Code, we may collect the following categories of personal information:
+          </p>
+          <ul>
+            <li>
+              <strong>Account information.</strong> If you create or sign in to a T3 account, we
+              receive general identifiers and profile information from our authentication provider
+              and the identity provider you select. This may include your name, email address,
+              profile image, user ID, sign-in method, and authentication credentials or tokens.
+            </li>
+            <li>
+              <strong>Environment and device information.</strong> If you enable T3 Connect, we
+              process information needed to connect and secure your environments and devices,
+              including identifiers, labels you assign, public keys, connection endpoints,
+              credential hashes, connection status, app and operating-system versions, and
+              notification preferences.
+            </li>
+            <li>
+              <strong>Agent activity and notifications.</strong> If you enable notifications or Live
+              Activities, we process push tokens and limited activity information needed to provide
+              those features, such as project and thread titles, model name, status, and activity
+              headline.
+            </li>
+            <li>
+              <strong>Information you provide to us.</strong> We collect information that you choose
+              to provide when you request support, send feedback, or otherwise communicate with us.
+            </li>
+          </ul>
+
+          <h3>Personal Information From Users of Our Site Generally</h3>
+          <p>
+            When you visit the Site or use online portions of the Services, we and our service
+            providers may automatically log online identifiers and internet-activity information,
+            including your Internet Protocol (IP) address, device and operating-system type, browser
+            or app type and version, pages viewed, access times, request timestamps, connection
+            events, latency, error details, and diagnostic traces. The amount of information we
+            collect depends on the Services you use and your device and browser settings.
+          </p>
+          <p>
+            We use operational and diagnostic information to provide, secure, maintain, and
+            troubleshoot the Services, not for targeted advertising.
+          </p>
+
+          <h3>Information We Get From Others</h3>
+          <p>
+            We may receive personal information from service providers that help us operate the
+            Services, such as authentication and identity providers, app stores, device-platform
+            providers, and coding-agent providers you choose to use. We may combine this information
+            with information we collect through the Site and the Services.
+          </p>
+
+          <h3>Cookies and Local Storage</h3>
+          <p>
+            The Site and online portions of the Services may use cookies or similar technologies to
+            operate essential features, maintain sessions, remember preferences, and understand
+            whether the Services are functioning correctly. T3 Code also stores connection settings,
+            credentials, preferences, drafts, and cached thread, file, branch, and server metadata on
+            your device. Credentials and session tokens use platform-provided protected storage where
+            supported. Information stored only on your device is not collected by T3 Tools unless it
+            is transmitted as part of a feature you use.
+          </p>
+
+          <h3>Device Permissions</h3>
+          <ul>
+            <li>
+              <strong>Camera.</strong> Used when you choose to scan a pairing QR code. Camera frames
+              are processed on your device.
+            </li>
+            <li>
+              <strong>Photos and files.</strong> Items you select are accessed only to preview them or
+              attach them to a request you initiate.
+            </li>
+            <li>
+              <strong>Notifications.</strong> Used only if you enable agent-status notifications or
+              Live Activities.
+            </li>
+            <li>
+              <strong>Local network.</strong> Used to discover or connect to T3 Code environments
+              accessible from your machine over the network.
+            </li>
+          </ul>
+        </section>
+
+        <section id="uses">
+          <p class="section-number">03</p>
+          <h2>How We Use Your Personal Information</h2>
+          <p>
+            Subject to this Policy and applicable terms governing third-party applications and
+            services, we may use personal information for the following purposes:
+          </p>
+          <ul>
+            <li>To establish and verify your identity and authenticate your account;</li>
+            <li>To link and protect devices and environments and deliver optional notifications;</li>
+            <li>To process and fulfill requests you make through the Services;</li>
+            <li>To provide customer service and respond to support requests and feedback;</li>
+            <li>To communicate with you about the Services and your relationship with us;</li>
+            <li>To monitor reliability, prevent abuse, and investigate security incidents;</li>
+            <li>To comply with applicable law and enforce the terms governing the Services; and</li>
+            <li>
+              To analyze and improve T3 Code using aggregated, de-identified, or other anonymous
+              operational information.
+            </li>
+          </ul>
+
+          <h3>Training of AI Models</h3>
+          <p>
+            We do not use your personal information, source code, prompts, or agent responses to
+            train artificial-intelligence models.
+          </p>
+
+          <h3>Compliance and Protection</h3>
+          <p>We may use personal information to:</p>
+          <ul>
+            <li>Comply with applicable laws, lawful requests, and legal process;</li>
+            <li>Protect the rights, privacy, safety, and property of T3 Tools, our users, and others;</li>
+            <li>Audit our internal processes for legal, contractual, and policy compliance;</li>
+            <li>Enforce the terms and conditions that govern the Site and the Services; and</li>
+            <li>
+              Prevent, identify, investigate, and deter fraudulent, harmful, unauthorized,
+              unethical, or illegal activity, including cyberattacks and identity theft.
+            </li>
+          </ul>
+          <p>
+            We may also use personal information for other purposes consistent with this Policy or
+            explained to you when we collect the information.
+          </p>
+        </section>
+
+        <section id="sharing">
+          <p class="section-number">04</p>
+          <h2>How We Share Your Personal Information</h2>
+          <p>
+            We may disclose the categories of personal information described above to the following
+            categories of third parties:
+          </p>
+
+          <h3>Providers You Choose</h3>
+          <p>
+            At your direction, prompts, files, and related content are sent to coding agents and
+            artificial-intelligence providers configured in your environment. Because you bring and
+            configure your own coding-agent harness and provider, the applicable third parties vary.
+            Those providers process information under their own terms and privacy policies.
+          </p>
+
+          <h3>Third-Party Service Providers</h3>
+          <p>
+            We use third-party service providers to help provide the Services and operate our
+            business. Depending on the features you use, these providers may include:
+          </p>
+          <ul class="provider-list">
+            <li>
+              <strong>Clerk</strong> <em>(Clerk, Inc.)</em>.<br />
+              We use Clerk to provide account authentication.<br />
+              You can view Clerk's privacy policy here:{" "}<a href="https://clerk.com/legal/privacy"
+                >https://clerk.com/legal/privacy</a
+              >.
+            </li>
+            <li>
+              <strong>Cloudflare</strong> <em>(Cloudflare, Inc.)</em>.<br />
+              We use Cloudflare for networking, T3 Connect infrastructure, and content delivery.<br />
+              You can view Cloudflare's privacy policy here:{" "}<a
+                href="https://www.cloudflare.com/policies/privacy/"
+                >https://www.cloudflare.com/policies/privacy/</a
+              >.
+            </li>
+            <li>
+              <strong>PlanetScale</strong> <em>(PlanetScale, Inc.)</em>.<br />
+              We use PlanetScale to host the database that supports T3 Connect.<br />
+              You can view PlanetScale's privacy policy here:{" "}<a
+                href="https://planetscale.com/legal/privacy"
+                >https://planetscale.com/legal/privacy</a
+              >.
+            </li>
+            <li>
+              <strong>Vercel</strong> <em>(Vercel Inc.)</em>.<br />
+              We use Vercel to host and deploy the T3 Code Site.<br />
+              You can view Vercel's privacy notice here:{" "}<a
+                href="https://vercel.com/legal/privacy-notice"
+                >https://vercel.com/legal/privacy-notice</a
+              >.
+            </li>
+            <li>
+              <strong>Axiom</strong> <em>(Axiom, Inc.)</em>.<br />
+              We use Axiom for operational diagnostics that help us maintain and troubleshoot the
+              Services.<br />
+              You can view Axiom's privacy policy here:{" "}<a
+                href="https://axiom.co/docs/legal/privacy">https://axiom.co/docs/legal/privacy</a
+              >.
+            </li>
+            <li>
+              <strong>Expo</strong> <em>(650 Industries, Inc.)</em>.<br />
+              We use Expo for application updates and related mobile-app services.<br />
+              You can view Expo's privacy policy here:{" "}<a href="https://expo.dev/privacy"
+                >https://expo.dev/privacy</a
+              >.
+            </li>
+            <li>
+              <strong>Apple</strong> <em>(Apple Inc.)</em>.<br />
+              We use Apple services for app distribution, optional authentication, and platform
+              notifications.<br />
+              You can view Apple's privacy policy here:{" "}<a
+                href="https://www.apple.com/legal/privacy/">https://www.apple.com/legal/privacy/</a
+              >.
+            </li>
+            <li>
+              <strong>Google</strong> <em>(Google LLC)</em>.<br />
+              We use Google services for app distribution and optional authentication.<br />
+              You can view Google's privacy policy here:{" "}<a
+                href="https://policies.google.com/privacy">https://policies.google.com/privacy</a
+              >.
+            </li>
+          </ul>
+          <p>
+            These providers process information for us under their own contractual and privacy
+            obligations.
+          </p>
+
+          <h3>Affiliates and Professional Advisors</h3>
+          <p>
+            We may share personal information with our affiliates for purposes consistent with this
+            Policy and with lawyers, accountants, bankers, and other professional advisors in the
+            course of the services they provide to us.
+          </p>
+
+          <h3>Corporate Restructuring</h3>
+          <p>
+            We may share some or all personal information in connection with or during negotiation of
+            a merger, financing, acquisition, reorganization, bankruptcy, dissolution, sale of
+            assets, or similar transaction. If another company acquires T3 Tools or its assets, that
+            company may possess the personal information collected by us and assume the rights and
+            obligations described in this Policy.
+          </p>
+
+          <h3>Legal and Safety Disclosures</h3>
+          <p>
+            We may disclose personal information if we believe in good faith that disclosure is
+            necessary to comply with law or legal process; protect or defend the rights, property, or
+            safety of T3 Tools, users of the Site or the Services, or others; investigate or prevent
+            fraud, abuse, or unlawful activity; or enforce this Policy and the terms governing the
+            Services. We may also share personal information at your direction, with your consent, or
+            as described to you when the information is collected.
+          </p>
+
+          <h3>No Sale of Personal Information</h3>
+          <p>
+            We do not sell your personal information or share it for cross-context behavioral or
+            targeted advertising.
+          </p>
+
+          <h3>Third-Party Websites and Services</h3>
+          <p>
+            The Site and the Services may contain links to third-party websites or services. When you
+            follow a third-party link or connect a third-party service, that third party may collect
+            personal information from you. We do not control and are not responsible for the privacy
+            practices or content of third parties.
+          </p>
+        </section>
+
+        <section id="choices">
+          <p class="section-number">05</p>
+          <h2>Your Choices Regarding Your Personal Information</h2>
+
+          <h3>Account and Connection Choices</h3>
+          <p>
+            You may use local or direct connections without signing in to a T3 account. You can
+            disconnect environments, sign out, disable optional notifications and Live Activities,
+            and clear local caches from Settings. You can grant or revoke camera, photo, local-network,
+            and notification permissions in your device settings.
+          </p>
+
+          <h3>Cookies and Local Data</h3>
+          <p>
+            You can use your browser settings to stop accepting or to delete cookies, although some
+            portions of the Site or the Services may not function correctly as a result. Information
+            stored only on your device remains there until you clear it, remove the relevant
+            connection, or uninstall the app. The mobile app provides cache controls under
+            {" "}<strong>Settings → App → Client Storage</strong>.
+          </p>
+
+          <h3>Retention and Deletion</h3>
+          <p>
+            We retain account, environment-link, device-registration, notification, and security
+            information while your account or the relevant feature is active and for as long as
+            reasonably necessary to provide the Services, protect them from abuse, comply with law,
+            and resolve disputes. Operational diagnostic traces are configured to expire after 30
+            days. Some records may remain longer in backups or where retention is required for
+            security, fraud prevention, or legal compliance.
+          </p>
+          <p>
+            To request deletion of your T3 account and associated T3 Connect data, email{" "}<a
+              href="mailto:privacy@t3.tools">privacy@t3.tools</a
+            >{" "}from the email address associated with your account. We may need to verify your
+            identity. Deleting a T3 account does not delete information held by an environment or
+            coding-agent provider you control; contact those providers or delete that information
+            directly.
+          </p>
+
+          <h3>Your Privacy Rights</h3>
+          <p>
+            Depending on where you live, you may have rights to request access to, correction of,
+            deletion of, or a portable copy of your personal information, or to restrict or object
+            to certain processing. You may also have the right to appeal our response or complain to
+            a data-protection authority. We will honor applicable rights after verifying your
+            request.
+          </p>
+        </section>
+
+        <section id="security">
+          <p class="section-number">06</p>
+          <h2>Security of Your Personal Information</h2>
+          <p>
+            T3 Tools is committed to protecting the security of your personal information. We use
+            administrative, technical, and organizational safeguards designed to protect personal
+            information from unauthorized access, use, or disclosure. These safeguards include
+            encrypted network transport, scoped and proof-bound access tokens for supported
+            connection flows, protected credential storage, and redaction of authorization headers
+            from relay diagnostics.
+          </p>
+          <p>
+            No method of transmission over the Internet or method of electronic storage is completely
+            secure. While we use reasonable efforts to protect personal information, we cannot
+            guarantee its absolute security. You are responsible for securing the environments,
+            coding-agent accounts, credentials, and networks that you connect to T3 Code.
+          </p>
+        </section>
+
+        <section id="international">
+          <p class="section-number">07</p>
+          <h2>International Users</h2>
+          <p>
+            The Site and the Services are provided from the United States and are governed by United
+            States law. If you use the Site or the Services from outside the United States, your
+            personal information may be transferred to and processed in the United States and other
+            countries where we or our service providers operate. Where required, we use lawful
+            safeguards for international transfers of personal information.
+          </p>
+        </section>
+
+        <section id="children">
+          <p class="section-number">08</p>
+          <h2>Children</h2>
+          <p>
+            The Site and the Services are not intended for children under 13 years of age, and you
+            must be at least 13 years old to use them. We do not knowingly collect, use, or disclose
+            personal information from children under 13. If you believe a child under 13 has provided
+            us with personal information, please contact us so that we can take appropriate action.
+          </p>
+        </section>
+
+        <section id="do-not-track">
+          <p class="section-number">09</p>
+          <h2>Do Not Track</h2>
+          <p>
+            We currently do not respond to browser “Do Not Track” signals. T3 Code does not use
+            personal information for cross-context behavioral or targeted advertising.
+          </p>
+        </section>
+
+        <section id="updates">
+          <p class="section-number">10</p>
+          <h2>Updates to This Privacy Policy</h2>
+          <p>
+            We reserve the right to update this Policy from time to time. If we make material changes,
+            we will post the revised Policy at this URL, update the “Last Updated” and “Effective Date”
+            above, and provide any additional notice required by law. Except as otherwise indicated,
+            changes become effective when the revised Policy is posted.
+          </p>
+        </section>
+
+        <section id="contact">
+          <p class="section-number">11</p>
+          <h2>Contact Us</h2>
+          <p>
+            If you have questions about this Policy or wish to make a privacy or deletion request,
+            please contact us at:
+          </p>
+          <address>
+            <strong>T3 Tools, Inc.</strong><br />
+            2261 Market Street #5309<br />
+            San Francisco, CA 94114<br />
+            United States
+          </address>
+          <a class="contact-link" href="mailto:privacy@t3.tools">privacy@t3.tools</a>
+  </section>
+</LegalPage>

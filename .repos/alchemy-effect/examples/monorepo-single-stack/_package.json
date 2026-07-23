@@ -1,0 +1,36 @@
+{
+  "name": "example-monorepo-single-stack",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alchemy-run/alchemy-effect"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  },
+  "workspaces": {
+    "packages": ["frontend", "backend"],
+    "catalog": {
+      "@effect/platform-bun": "4.0.0-beta.60",
+      "@effect/platform-node": "4.0.0-beta.60",
+      "@types/bun": "latest",
+      "alchemy": "file:../packages/alchemy",
+      "effect": "4.0.0-beta.60",
+      "typescript": "^6.0.3",
+      "vite": "^8.0.7"
+    }
+  }
+}
