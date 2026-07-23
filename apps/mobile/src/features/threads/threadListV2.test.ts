@@ -106,6 +106,36 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
+  it("classifies snooze with the second-precise clock and reports the next wake", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("just-woke"),
+          title: "Just woke",
+          // Woke 30s ago: hidden under the minute-floored clock, visible
+          // under the precise one.
+          snoozedUntil: "2026-06-02T00:00:30.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("still-snoozed"),
+          title: "Still snoozed",
+          snoozedUntil: "2026-06-02T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      // Minute-floored partition clock vs precise snooze clock.
+      now: "2026-06-02T00:01:00.000Z",
+      snoozeNow: "2026-06-02T00:01:07.500Z",
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["just-woke"]);
+    expect(layout.snoozedCount).toBe(1);
+    expect(layout.nextSnoozeWakeAt).toBe("2026-06-02T09:00:00.000Z");
+  });
+
   it("keeps snoozed threads visible on environments without the snooze capability", () => {
     const layout = buildThreadListV2Items({
       threads: [

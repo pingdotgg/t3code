@@ -87,6 +87,10 @@ export interface ThreadListV2Layout {
   /** Snoozed threads hidden from the list (visibility parity with web's
       collapsed Snoozed shelf; mobile has no shelf UI yet). */
   readonly snoozedCount: number;
+  /** Soonest wake time among hidden snoozed threads, or null. Callers arm
+      a timeout at this boundary so the list re-partitions the moment a
+      snooze expires instead of on the next minute tick. */
+  readonly nextSnoozeWakeAt: string | null;
 }
 
 /**
@@ -117,8 +121,14 @@ export function buildThreadListV2Items(input: {
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
   readonly now?: string;
+  /** Second-precise clock for snooze classification. Callers pass a
+      minute-quantized `now` for memoization; snooze wake times are
+      second-precise, so classifying with the floored minute would hold a
+      woken thread hidden for up to a minute. Defaults to `now`. */
+  readonly snoozeNow?: string;
 }): ThreadListV2Layout {
   const now = input.now ?? new Date().toISOString();
+  const snoozeNow = input.snoozeNow ?? now;
   const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
@@ -128,6 +138,7 @@ export function buildThreadListV2Items(input: {
   const active: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   let snoozedCount = 0;
+  let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
     // Callers pass live (unarchived) shells; settled threads are among them
     // and partition into the tail via effectiveSettled.
@@ -143,8 +154,15 @@ export function buildThreadListV2Items(input: {
     // Visibility parity with web: a snoozed thread leaves the list until it
     // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
     // work). Snooze outranks settled classification, same as web.
-    if (supportsSnooze && effectiveSnoozed(thread, { now })) {
+    if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
       snoozedCount += 1;
+      if (
+        thread.snoozedUntil != null &&
+        (nextSnoozeWakeAt === null ||
+          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
+      ) {
+        nextSnoozeWakeAt = thread.snoozedUntil;
+      }
       continue;
     }
     if (
@@ -183,5 +201,10 @@ export function buildThreadListV2Items(input: {
   if (last) {
     items[items.length - 1] = { ...last, isLast: true };
   }
-  return { items, hiddenSettledCount: orderedSettled.length - visibleSettled.length, snoozedCount };
+  return {
+    items,
+    hiddenSettledCount: orderedSettled.length - visibleSettled.length,
+    snoozedCount,
+    nextSnoozeWakeAt,
+  };
 }
