@@ -2792,7 +2792,7 @@ describe("ProviderRuntimeIngestion", () => {
     ]);
   });
 
-  it("defers failed final assistant deltas without blocking the ingestion worker", async () => {
+  it("retries failed final assistant deltas and completion without replaying the runtime event", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const turnId = asTurnId("turn-streaming-finalization-retry");
     const itemId = asItemId("item-streaming-finalization-retry");
@@ -2841,6 +2841,10 @@ describe("ProviderRuntimeIngestion", () => {
       3,
       (command) => command.type === "thread.message.assistant.delta",
     );
+    const getCompleteFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.complete",
+    );
     harness.emit({
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error-streaming-finalization-retry"),
@@ -2873,6 +2877,7 @@ describe("ProviderRuntimeIngestion", () => {
       5000,
     );
     expect(getFailureCount()).toBe(3);
+    expect(getCompleteFailureCount()).toBe(3);
     expect(
       thread.messages.find(
         (message: ProviderRuntimeTestMessage) =>
@@ -2899,11 +2904,96 @@ describe("ProviderRuntimeIngestion", () => {
     expect(
       events.filter(
         (event) =>
+          event.type === "thread.session-set" &&
+          event.payload.session.status === "error" &&
+          event.payload.session.updatedAt === timestampAt(2),
+      ),
+    ).toHaveLength(1);
+    expect(
+      events.filter(
+        (event) =>
           event.type === "thread.message-sent" &&
           event.payload.messageId === "assistant:item-streaming-finalization-retry" &&
           !event.payload.streaming,
       ),
     ).toHaveLength(2);
+  });
+
+  it("does not duplicate a recovered final delta when completion also retries", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-finalization-stage-retry");
+    const itemId = asItemId("item-finalization-stage-retry");
+    const startedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const timestampAt = (offsetMillis: number) =>
+      DateTime.formatIso(DateTime.addDuration(startedAt, offsetMillis));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-finalization-stage-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(0),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-finalization-stage-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(1),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "persist exactly once" },
+    });
+
+    const getDeltaFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.delta",
+    );
+    const getCompleteFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.complete",
+    );
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-finalization-stage-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: timestampAt(2),
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "provider failed" },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "stopped" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-finalization-stage-retry" &&
+            !message.streaming &&
+            message.text === "persist exactly once",
+        ),
+      5000,
+    );
+    expect(getDeltaFailureCount()).toBe(3);
+    expect(getCompleteFailureCount()).toBe(3);
+
+    const events = await runtime!.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const assistantEvents = events.filter(
+      (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
+        event.type === "thread.message-sent" &&
+        event.payload.messageId === "assistant:item-finalization-stage-retry",
+    );
+    expect(assistantEvents.map((event) => event.payload.text)).toEqual([
+      "persist exactly once",
+      "",
+    ]);
+    expect(assistantEvents.map((event) => event.payload.streaming)).toEqual([true, false]);
   });
 
   it("keeps retained streaming chunks bounded while dispatch retries", async () => {
