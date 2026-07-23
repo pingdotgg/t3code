@@ -773,6 +773,16 @@ describe("canSettleLegacySidebarRouteThread", () => {
     }
   });
 
+  it("does not reopen settlement for an explicitly settled thread", () => {
+    expect(
+      canSettleLegacySidebarRouteThread({
+        thread: makeThreadShell({ settledOverride: "settled" }),
+        settlementSupported: true,
+        now,
+      }),
+    ).toBe(false);
+  });
+
   it("uses the settle operation's capability and live-work guards", () => {
     expect(
       canSettleLegacySidebarRouteThread({

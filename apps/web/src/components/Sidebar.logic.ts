@@ -134,6 +134,7 @@ export function canSettleLegacySidebarRouteThread(input: {
   return (
     input.thread !== null &&
     input.settlementSupported &&
+    input.thread.settledOverride !== "settled" &&
     canSettle(input.thread, { now: input.now })
   );
 }
