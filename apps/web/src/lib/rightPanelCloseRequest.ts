@@ -39,6 +39,17 @@ export function resolveCloseRequestAction(
   return target === "right-panel-terminal" ? "close-right-panel-terminal" : null;
 }
 
+export function claimCloseRequestAction(
+  event: Pick<Event, "preventDefault">,
+  target: CloseRequestTarget,
+  command: string | null,
+): CloseRequestAction | null {
+  const action = resolveCloseRequestAction(target, command);
+  if (action === null) return null;
+  event.preventDefault();
+  return action;
+}
+
 export function requestCloseFocusedRegion(target: Pick<Window, "dispatchEvent"> = window): boolean {
   const event = new Event(CLOSE_FOCUSED_REGION_EVENT, {
     cancelable: true,

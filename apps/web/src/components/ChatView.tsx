@@ -164,7 +164,8 @@ import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { sharedCloseFocusTracker } from "../lib/closeFocus";
 import {
   CLOSE_FOCUSED_REGION_EVENT,
-  type CloseRequestTarget,
+  claimCloseRequestAction,
+  type CloseRequestAction,
   resolveCloseRequestAction,
   resolveCloseRequestTarget,
 } from "../lib/rightPanelCloseRequest";
@@ -3291,31 +3292,29 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiState.terminalOpen,
   ]);
   const closeActiveRightPanelTarget = useCallback(() => {
-    if (!rightPanelOpen || !activeThreadRef) return false;
+    if (!rightPanelOpen || !activeThreadRef) return;
     if (activeRightPanelSurface) {
       closeRightPanelSurface(activeRightPanelSurface);
     } else {
       setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
     }
-    return true;
   }, [activeRightPanelSurface, activeThreadRef, closeRightPanelSurface, rightPanelOpen]);
-  const performCloseRequest = useCallback(
-    (target: CloseRequestTarget, command: string | null) => {
-      const action = resolveCloseRequestAction(target, command);
+  const performCloseAction = useCallback(
+    (action: CloseRequestAction) => {
       if (action === "close-drawer-terminal") {
         closeTerminal(terminalUiState.activeTerminalId);
-        return true;
+        return;
       }
       if (action === "close-right-panel-terminal") {
-        if (activeRightPanelSurface?.kind !== "terminal") return false;
-        closePanelTerminal(activeRightPanelSurface.activeTerminalId);
-        return true;
+        if (activeRightPanelSurface?.kind === "terminal") {
+          closePanelTerminal(activeRightPanelSurface.activeTerminalId);
+        }
+        return;
       }
       if (action === "close-right-panel-surface") {
-        return closeActiveRightPanelTarget();
+        closeActiveRightPanelTarget();
       }
-      return false;
     },
     [
       activeRightPanelSurface,
@@ -3330,8 +3329,9 @@ function ChatViewContent(props: ChatViewProps) {
     const { closeRequestTarget: target, context } = readShortcutFocus();
     if (target === null) return;
     const command = resolveShortcutCommand(NATIVE_CLOSE_SHORTCUT, keybindings, { context });
-    if (!performCloseRequest(target, command)) return;
-    event.preventDefault();
+    const action = claimCloseRequestAction(event, target, command);
+    if (action === null) return;
+    performCloseAction(action);
   });
   useEffect(() => {
     const listener = (event: Event) => handleCloseRequest(event);
@@ -4269,11 +4269,11 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (command === "rightPanel.closeActiveSurface") {
-        if (closeRequestTarget === null || !performCloseRequest(closeRequestTarget, command)) {
-          return;
-        }
-        event.preventDefault();
+        if (closeRequestTarget === null) return;
+        const action = claimCloseRequestAction(event, closeRequestTarget, command);
+        if (action === null) return;
         event.stopPropagation();
+        performCloseAction(action);
         return;
       }
 
@@ -4309,7 +4309,8 @@ function ChatViewContent(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (closeRequestTarget !== null) {
-          if (performCloseRequest(closeRequestTarget, command)) return;
+          const action = resolveCloseRequestAction(closeRequestTarget, command);
+          if (action !== null) performCloseAction(action);
           return;
         }
         if (!terminalUiState.terminalOpen) return;
@@ -4369,7 +4370,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
-    performCloseRequest,
+    performCloseAction,
     readShortcutFocus,
     toggleRightPanel,
     toggleTerminalVisibility,

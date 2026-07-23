@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   CLOSE_FOCUSED_REGION_EVENT,
+  claimCloseRequestAction,
   requestCloseFocusedRegion,
   resolveCloseRequestAction,
   resolveCloseRequestTarget,
@@ -103,5 +104,23 @@ describe("resolveCloseRequestAction", () => {
       resolveCloseRequestAction("drawer-terminal", "rightPanel.closeActiveSurface"),
     ).toBeNull();
     expect(resolveCloseRequestAction("right-panel", null)).toBeNull();
+  });
+});
+
+describe("claimCloseRequestAction", () => {
+  it("claims a mapped focused-region close before its operation runs", () => {
+    const event = new Event("close-request", { cancelable: true });
+
+    expect(claimCloseRequestAction(event, "right-panel", "rightPanel.closeActiveSurface")).toBe(
+      "close-right-panel-surface",
+    );
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("leaves an unmapped native shortcut available for window closing", () => {
+    const event = new Event("close-request", { cancelable: true });
+
+    expect(claimCloseRequestAction(event, "right-panel", null)).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
   });
 });

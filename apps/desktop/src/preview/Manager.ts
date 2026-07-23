@@ -345,7 +345,7 @@ const APP_FORWARDED_SHORTCUTS = Object.freeze([
   // Meta+, → settings (macOS convention)
   { key: ",", shiftKey: false },
 ]);
-const DEFAULT_RIGHT_PANEL_CLOSE_SHORTCUTS = Object.freeze([modShortcut("w")]);
+const NATIVE_WINDOW_CLOSE_SHORTCUT = modShortcut("w");
 const ELECTRON_KEY_CODES: Readonly<Record<string, string>> = {
   " ": "Space",
   arrowdown: "Down",
@@ -389,10 +389,34 @@ function electronKeyCodeForShortcut(key: string, inputKey: string): string | nul
   return normalizeKeybindingEventKey(inputKey) === key ? inputKey : null;
 }
 
+export function resolveNativeWindowCloseShortcutKey(
+  input: ForwardedPreviewShortcutInput,
+  platform: NodeJS.Platform,
+): string | null {
+  if (platform !== "darwin" || input.type !== "keyDown") return null;
+  if (
+    !matchesKeybindingShortcut(
+      {
+        key: input.key,
+        code: input.code,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        shiftKey: input.shift,
+        altKey: input.alt,
+      },
+      NATIVE_WINDOW_CLOSE_SHORTCUT,
+      platform,
+    )
+  ) {
+    return null;
+  }
+  return electronKeyCodeForShortcut(NATIVE_WINDOW_CLOSE_SHORTCUT.key, input.key);
+}
+
 export function resolveForwardedPreviewShortcutKey(
   input: ForwardedPreviewShortcutInput,
   platform: NodeJS.Platform,
-  rightPanelCloseShortcuts: ReadonlyArray<KeybindingShortcut> = DEFAULT_RIGHT_PANEL_CLOSE_SHORTCUTS,
+  rightPanelCloseShortcuts: ReadonlyArray<KeybindingShortcut> = [],
 ): string | null {
   if (input.type !== "keyDown") return null;
   const shortcutInput = {
@@ -498,9 +522,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const actionSequenceRef = yield* Ref.make(0);
   const pointerSequenceRef = yield* Ref.make(0);
   const recordingTabIdRef = yield* Ref.make<Option.Option<string>>(Option.none());
-  const rightPanelCloseShortcutsRef = yield* Ref.make<ReadonlyArray<KeybindingShortcut>>(
-    DEFAULT_RIGHT_PANEL_CLOSE_SHORTCUTS,
-  );
+  const rightPanelCloseShortcutsRef = yield* Ref.make<ReadonlyArray<KeybindingShortcut>>([]);
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({

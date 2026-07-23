@@ -435,7 +435,7 @@ export const make = Effect.gen(function* () {
     window.webContents.on("before-input-event", (event, input) => {
       if (
         environment.platform !== "darwin" ||
-        PreviewManager.resolveForwardedPreviewShortcutKey(input, environment.platform) !== "w"
+        PreviewManager.resolveNativeWindowCloseShortcutKey(input, environment.platform) !== "w"
       ) {
         return;
       }
