@@ -11,6 +11,7 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   probeClaudeCapabilities,
+  resolveClaudeEnvironmentHomePath,
 } from "./ClaudeProvider.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -37,6 +38,24 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.abortController, abortController);
   assert.equal(options.env?.HOME, "/home/user");
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+});
+
+it("derives the child home with HOME then USERPROFILE precedence", () => {
+  assert.equal(
+    resolveClaudeEnvironmentHomePath(
+      {
+        HOME: "/posix-home",
+        USERPROFILE: "C:\\windows-profile",
+      },
+      "/process-home",
+    ),
+    "/posix-home",
+  );
+  assert.equal(
+    resolveClaudeEnvironmentHomePath({ USERPROFILE: "C:\\windows-profile" }, "/process-home"),
+    "C:\\windows-profile",
+  );
+  assert.equal(resolveClaudeEnvironmentHomePath({}, "/process-home"), "/process-home");
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
@@ -147,6 +166,23 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           },
         ],
       });
+
+      const childHome = path.join(tempDir, "child-home");
+      const capabilitiesFromChildHome = yield* probeClaudeCapabilities(
+        decodeClaudeSettings({ binaryPath: executablePath }),
+        {
+          ...process.env,
+          CLAUDE_CONFIG_DIR: undefined,
+          HOME: childHome,
+          USERPROFILE: path.join(tempDir, "other-profile"),
+          T3_PROBE_INVOCATION_PATH: invocationPath,
+        },
+        workspaceCwd,
+      );
+      assert.equal(
+        capabilitiesFromChildHome?.skills[0]?.path,
+        path.join(childHome, ".claude", "skills", "probe-fake-skill"),
+      );
 
       const capabilitiesWithoutSkills = yield* probeClaudeCapabilities(
         decodeClaudeSettings({ binaryPath: executablePath }),
