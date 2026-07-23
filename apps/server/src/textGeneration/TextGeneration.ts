@@ -1,7 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  AutoReviewFindings,
+  ChatAttachment,
+  ModelSelection,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -102,6 +107,21 @@ export interface ScenerySetGenerationResult {
   locations?: ScenerySetLocationGeneration[] | undefined;
 }
 
+export interface AutoReviewFindingsGenerationInput {
+  cwd: string;
+  prNumber: number;
+  prTitle: string;
+  prBody: string;
+  baseBranch: string;
+  headBranch: string;
+  headSha: string;
+  diffPatch: string;
+  truncated: boolean;
+  modelSelection: ModelSelection;
+}
+
+export type AutoReviewFindingsGenerationResult = AutoReviewFindings;
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -110,6 +130,9 @@ export interface TextGenerationService {
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
   generateScenerySet(input: ScenerySetGenerationInput): Promise<ScenerySetGenerationResult>;
+  generateAutoReviewFindings(
+    input: AutoReviewFindingsGenerationInput,
+  ): Promise<AutoReviewFindingsGenerationResult>;
 }
 
 /**
@@ -153,6 +176,13 @@ export class TextGeneration extends Context.Service<
     readonly generateScenerySet: (
       input: ScenerySetGenerationInput,
     ) => Effect.Effect<ScenerySetGenerationResult, TextGenerationError>;
+
+    /**
+     * Produce structured PR review findings for the native auto-reviewer.
+     */
+    readonly generateAutoReviewFindings: (
+      input: AutoReviewFindingsGenerationInput,
+    ) => Effect.Effect<AutoReviewFindingsGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -164,7 +194,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateScenerySet";
+  | "generateScenerySet"
+  | "generateAutoReviewFindings";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -207,6 +238,10 @@ export const makeTextGenerationFromRegistry = (
     generateScenerySet: (input) =>
       resolveInstance(registry, "generateScenerySet", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateScenerySet(input)),
+      ),
+    generateAutoReviewFindings: (input) =>
+      resolveInstance(registry, "generateAutoReviewFindings", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateAutoReviewFindings(input)),
       ),
   });
 

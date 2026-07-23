@@ -100,6 +100,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -580,12 +581,19 @@ const buildAppUnderTest = (options?: {
                 sceneNames: ["Test Peak"],
                 queries: [{ text: "test landscape" }],
               }),
+            generateAutoReviewFindings: () =>
+              Effect.succeed({
+                summary: "Looks fine.",
+                decision: "comment" as const,
+                comments: [],
+              }),
           }),
         ),
       ),
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),
       Layer.provide(reviewLayer),
+      Layer.provide(AutoReviewJobStore.layerInMemory),
       Layer.provide(vcsProvisioningLayer),
       Layer.provide(
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({

@@ -67,6 +67,7 @@ const textGeneration: TextGeneration["Service"] = {
   generateBranchName: () => unsupportedTextGeneration("generateBranchName"),
   generateThreadTitle: () => unsupportedTextGeneration("generateThreadTitle"),
   generateScenerySet: () => unsupportedTextGeneration("generateScenerySet"),
+  generateAutoReviewFindings: () => unsupportedTextGeneration("generateAutoReviewFindings"),
 };
 
 const withInstanceIdentity =

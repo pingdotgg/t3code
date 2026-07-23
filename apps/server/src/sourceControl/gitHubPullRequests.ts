@@ -19,6 +19,8 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  /** Head commit OID when requested via `gh pr list/view --json headRefOid`. */
+  readonly headRefOid?: string | null;
 }
 
 const GitHubPullRequestSchema = Schema.Struct({
@@ -46,6 +48,7 @@ const GitHubPullRequestSchema = Schema.Struct({
       }),
     ),
   ),
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 function trimOptionalString(value: string | null | undefined): string | null {
@@ -94,6 +97,7 @@ function normalizeGitHubPullRequestRecord(
       : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(trimOptionalString(raw.headRefOid) ? { headRefOid: trimOptionalString(raw.headRefOid) } : {}),
   };
 }
 

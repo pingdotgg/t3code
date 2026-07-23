@@ -121,6 +121,67 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-review findings
+// ---------------------------------------------------------------------------
+
+export interface AutoReviewFindingsPromptInput {
+  prNumber: number;
+  prTitle: string;
+  prBody: string;
+  baseBranch: string;
+  headBranch: string;
+  headSha: string;
+  diffPatch: string;
+  truncated: boolean;
+}
+
+export function buildAutoReviewFindingsPrompt(input: AutoReviewFindingsPromptInput) {
+  const prompt = [
+    "You are a senior code reviewer for a GitHub pull request.",
+    "Return a JSON object with keys: summary, decision, comments.",
+    "Rules:",
+    "- summary is markdown for the PR review body (concise, high signal)",
+    "- decision must be one of: comment, request_changes, approve",
+    "- prefer few high-signal comments over spam",
+    "- focus on correctness, security, regressions, missing tests, and API contract breaks",
+    "- comments[].path is a repo-relative file path",
+    "- comments[].line is the new-file (RIGHT) line number when known, else null",
+    "- comments[].side is LEFT, RIGHT, or null",
+    "- comments[].severity is one of: blocking, important, nit, info",
+    "- comments[].body is markdown explaining the issue and a fix direction",
+    "- only mark severity blocking for true correctness/security problems",
+    "- if the diff is truncated, say so in summary",
+    "",
+    `PR #${input.prNumber}: ${input.prTitle}`,
+    `Base: ${input.baseBranch}`,
+    `Head: ${input.headBranch} (${input.headSha})`,
+    `Diff truncated: ${input.truncated ? "yes" : "no"}`,
+    "",
+    "PR body:",
+    limitSection(input.prBody || "(empty)", 6_000),
+    "",
+    "Diff patch:",
+    limitSection(input.diffPatch, 40_000),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    summary: Schema.String,
+    decision: Schema.Literals(["comment", "request_changes", "approve"]),
+    comments: Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        line: Schema.NullOr(Schema.Number),
+        side: Schema.NullOr(Schema.Literals(["LEFT", "RIGHT"])),
+        severity: Schema.Literals(["blocking", "important", "nit", "info"]),
+        body: Schema.String,
+      }),
+    ),
+  });
+
+  return { prompt, outputSchema };
+}
+
+// ---------------------------------------------------------------------------
 // Branch name
 // ---------------------------------------------------------------------------
 

@@ -98,6 +98,15 @@ export function applyServerSettingsPatch(
         }
       : {}),
     ...(patch.extensions !== undefined ? { extensions: patch.extensions } : {}),
+    ...(patch.autoReview?.projects !== undefined
+      ? {
+          autoReview: {
+            ...next.autoReview,
+            ...patch.autoReview,
+            projects: patch.autoReview.projects,
+          },
+        }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

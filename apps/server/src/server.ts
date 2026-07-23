@@ -55,6 +55,8 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
+import * as AutoReviewRunner from "./autoReview/AutoReviewRunner.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -218,14 +220,26 @@ const ReviewLayerLive = ReviewService.layer.pipe(
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
+// Fully satisfy runner deps here so the layer does not leak requirements into
+// the server bootstrap graph. Job store is provideMerged so RPC handlers share
+// the same in-memory queue as the runner.
+const AutoReviewLayerLive = AutoReviewRunner.layer.pipe(
+  Layer.provideMerge(AutoReviewJobStore.layerInMemory),
+  Layer.provideMerge(GitHubCli.layer),
+  Layer.provideMerge(TextGeneration.layer),
+);
+
 const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(VcsProjectConfig.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(VcsProvisioningService.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(ReviewLayerLive),
+  Layer.provideMerge(AutoReviewLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
   Layer.provideMerge(VcsStatusBroadcaster.layer.pipe(Layer.provide(GitWorkflowLayerLive))),
+  // Poller starts only after broader runtime deps exist; provided again at
+  // RuntimeCoreDependenciesLive so ProjectionSnapshotQuery is available.
 );
 
 const CheckpointingLayerLive = Layer.empty.pipe(
