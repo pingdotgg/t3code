@@ -30,7 +30,7 @@ Primary files:
 
 ## Sidebar And Shell Consistency
 
-Sidebar archive visibility is centralized across persisted and optimistic archive states. Project rows, project status, sorting, keyboard navigation, and prewarming exclude an optimistically archived conversation immediately, so durable cold-storage work cannot leave a stale row or keyboard target visible while the server shell catches up.
+Sidebar archive visibility is centralized across persisted and optimistic archive states. Project rows, project status, sorting, keyboard navigation, prewarming, and command-palette thread/project actions exclude an optimistically archived conversation immediately, so durable cold-storage work cannot leave a stale row or navigation target visible while the server shell catches up.
 
 Authoritative shell synchronization is shared runtime behavior in `packages/client-runtime/src/state/shell.ts`, `packages/client-runtime/src/rpc/client.ts`, and `apps/server/src/ws.ts`, rather than a branch-specific subscription implementation. HTTP snapshots provide an early shell, while completion-capable WebSocket sessions revalidate it with a socket-owned snapshot after live buffering begins; the same refresh runs when the app returns to the foreground. Cold archive storage relies on this contract because compacted per-thread history cannot prove that cached projects and threads still exist.
 
