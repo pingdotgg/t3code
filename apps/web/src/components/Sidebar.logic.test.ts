@@ -34,6 +34,7 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldShowAllSidebarThreads,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
@@ -1861,6 +1862,32 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("shouldShowAllSidebarThreads", () => {
+  it("always shows the complete list in flat mode", () => {
+    expect(
+      shouldShowAllSidebarThreads({
+        flatMode: true,
+        isThreadListExpanded: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves preview folding for grouped projects", () => {
+    expect(
+      shouldShowAllSidebarThreads({
+        flatMode: false,
+        isThreadListExpanded: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowAllSidebarThreads({
+        flatMode: false,
+        isThreadListExpanded: true,
+      }),
+    ).toBe(true);
   });
 });
 

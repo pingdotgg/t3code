@@ -217,6 +217,7 @@ import {
   orderItemsByPreferredIds,
   sidebarProviderInstanceKey,
   shouldClearThreadSelectionOnMouseDown,
+  shouldShowAllSidebarThreads,
   sortProjectsForSidebar,
   startSidebarRecentFilterClock,
   useThreadJumpHintVisibility,
@@ -1498,17 +1499,22 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
+    const showAllThreads = shouldShowAllSidebarThreads({
+      flatMode,
+      isThreadListExpanded,
+    });
     const {
-      hasHiddenThreads: hasOverflowingThreads,
+      hasHiddenThreads,
       hiddenThreads,
       visibleThreads: previewThreads,
     } = getVisibleThreadsForProject({
       threads: visibleProjectThreads,
       activeThreadKey: activeRouteThreadKey,
       getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      isThreadListExpanded,
+      isThreadListExpanded: showAllThreads,
       previewLimit: sidebarThreadPreviewCount,
     });
+    const hasOverflowingThreads = !flatMode && hasHiddenThreads;
     const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
     return {
       hasOverflowingThreads,
@@ -1520,6 +1526,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
     };
   }, [
+    flatMode,
     isThreadListExpanded,
     activeRouteThreadKey,
     pinnedCollapsedThread,
@@ -4044,11 +4051,8 @@ export default function Sidebar() {
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(() => {
     if (!sidebarThreadFilters.groupByProject) {
-      const flatProject = buildFlatSidebarProjectSnapshot(sortedProjects);
       const sortedThreads = sortThreads(filteredSidebarThreads, sidebarThreadSortOrder);
-      const showAll =
-        flatProject !== null && expandedThreadListsByProject.has(flatProject.projectKey);
-      return (showAll ? sortedThreads : sortedThreads.slice(0, sidebarThreadPreviewCount))
+      return sortedThreads
         .filter((thread) => thread.archivedAt === null)
         .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
     }

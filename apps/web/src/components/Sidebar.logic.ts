@@ -950,6 +950,13 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+export function shouldShowAllSidebarThreads(input: {
+  flatMode: boolean;
+  isThreadListExpanded: boolean;
+}): boolean {
+  return input.flatMode || input.isThreadListExpanded;
+}
+
 export function getVisibleThreadsForProject<T>(input: {
   threads: readonly T[];
   activeThreadKey: string | null;
