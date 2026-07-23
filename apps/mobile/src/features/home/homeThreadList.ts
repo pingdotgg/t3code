@@ -113,10 +113,7 @@ export function buildHomeProjectScopes(input: {
     const representative = projects[0]!;
     return {
       key,
-      title:
-        projects.length > 1
-          ? deriveProjectGroupLabel({ representative, members: projects })
-          : representative.title,
+      title: deriveProjectGroupLabel({ representative, members: projects }),
       representative,
       projects,
       projectRefs: projectRefsByGroup.get(key) ?? [],
@@ -346,10 +343,7 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const title =
-      group.projects.length > 1
-        ? deriveProjectGroupLabel({ representative, members: group.projects })
-        : representative.title;
+    const title = deriveProjectGroupLabel({ representative, members: group.projects });
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||

@@ -43,21 +43,12 @@ export function buildHomeListFilterMenu(props: {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  readonly onOpenSettings?: () => void;
   /** False hides the sort/group submenus. Thread List v2 uses a fixed
       creation-order layout, so offering those controls while it silently
       ignores them would be a lie; the environment filter still applies. */
   readonly listOrganization?: boolean;
 }): HomeListFilterMenu {
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
-
-  if (props.onOpenSettings) {
-    items.push({
-      type: "action",
-      title: "Settings",
-      onPress: props.onOpenSettings,
-    });
-  }
 
   items.push({
     type: "submenu",

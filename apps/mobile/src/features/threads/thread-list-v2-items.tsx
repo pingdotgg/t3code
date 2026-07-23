@@ -90,6 +90,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly variant: "card" | "slim";
   readonly showSettledDivider: boolean;
   readonly project: EnvironmentProject | null;
+  readonly projectTitle?: string;
   readonly providerDriver: string | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
@@ -219,7 +220,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <ProjectFavicon
             environmentId={thread.environmentId}
             size={15}
-            projectTitle={props.project.title}
+            projectTitle={props.projectTitle ?? props.project.title}
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
@@ -230,7 +231,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           )}
           numberOfLines={1}
         >
-          {props.project?.title ?? ""}
+          {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
         <Text
           className={cn(
@@ -393,7 +394,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 size={15}
-                projectTitle={props.project.title}
+                projectTitle={props.projectTitle ?? props.project.title}
                 workspaceRoot={props.project.workspaceRoot}
               />
             </View>

@@ -4,7 +4,6 @@ import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -16,6 +15,7 @@ import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
+import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -61,16 +61,15 @@ export function HomeRouteScreen() {
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectFilterOptions = useMemo(
     () =>
-      projects
-        .filter(
-          (project) =>
-            selectedEnvironmentId === null || project.environmentId === selectedEnvironmentId,
-        )
-        .map((project) => ({
-          key: scopedProjectKey(project.environmentId, project.id),
-          label: project.title,
-        })),
-    [projects, selectedEnvironmentId],
+      buildHomeProjectScopes({
+        projects,
+        environmentId: selectedEnvironmentId,
+        projectGroupingMode: listOptions.projectGroupingMode,
+      }).map((scope) => ({
+        key: scope.key,
+        label: scope.title,
+      })),
+    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
   useEffect(() => {
     if (

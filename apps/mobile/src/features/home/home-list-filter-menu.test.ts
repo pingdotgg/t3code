@@ -24,6 +24,7 @@ describe("buildHomeListFilterMenu", () => {
     const projectMenu = menu.items.find(
       (item) => item.type === "submenu" && item.title === "Project",
     );
+    expect(menu.items.some((item) => item.title === "Settings")).toBe(false);
     expect(projectMenu).toMatchObject({
       type: "submenu",
       items: [
