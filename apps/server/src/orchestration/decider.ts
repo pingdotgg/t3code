@@ -2,7 +2,9 @@ import {
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationQueuedMessage,
   type OrchestrationReadModel,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -114,6 +116,216 @@ type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
+
+/**
+ * A turn is considered active while its session is starting or running.
+ * Follow-up `thread.turn.start` commands arriving in that window are queued
+ * instead of dispatched; explicit `thread.queue.steer` bypasses the queue.
+ */
+function isThreadTurnActive(thread: OrchestrationThread): boolean {
+  const status = thread.session?.status;
+  return status === "running" || status === "starting";
+}
+
+/**
+ * Settle-guard heuristic: the latest user message is newer than any turn
+ * activity, i.e. a turn start that no session has picked up yet. Message
+ * timestamps are client-supplied, so queue/dispatch decisions must NOT
+ * hang off this (see `pendingTurnStart` on the thread for the event-driven
+ * signal); settle tolerates the skew — it merely delays settling within
+ * the grace window.
+ */
+function hasRecentUnadoptedUserMessage(thread: OrchestrationThread, occurredAt: string): boolean {
+  const latestUserMessageAtMs = thread.messages.reduce(
+    (latest, message) =>
+      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
+    Number.NEGATIVE_INFINITY,
+  );
+  const latestTurnAtMs =
+    thread.latestTurn === null
+      ? Number.NEGATIVE_INFINITY
+      : Math.max(
+          ...[
+            thread.latestTurn.requestedAt,
+            thread.latestTurn.startedAt,
+            thread.latestTurn.completedAt,
+          ].map((candidate) =>
+            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
+          ),
+        );
+  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
+  return (
+    thread.session?.status !== "error" &&
+    Number.isFinite(latestUserMessageAtMs) &&
+    latestUserMessageAtMs > latestTurnAtMs &&
+    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  );
+}
+
+/**
+ * Enforced here in the decider so a `thread.message-queued` event past the
+ * cap is never emitted — projections and persistence stay in lockstep with
+ * the event stream instead of each clamping independently.
+ */
+const MAX_THREAD_QUEUED_MESSAGES = 50;
+
+interface TurnStartMessageInput {
+  readonly messageId: OrchestrationQueuedMessage["messageId"];
+  readonly text: string;
+  readonly attachments: OrchestrationQueuedMessage["attachments"];
+  readonly modelSelection?: OrchestrationQueuedMessage["modelSelection"];
+  readonly titleSeed?: string;
+  readonly sourceProposedPlan?: OrchestrationQueuedMessage["sourceProposedPlan"];
+}
+
+/**
+ * Plan the `thread.message-sent` + `thread.turn-start-requested` event pair
+ * shared by immediate turn starts, queued-message steers, and queue drains.
+ */
+const planTurnStartEvents = Effect.fn("planTurnStartEvents")(function* ({
+  commandId,
+  thread,
+  message,
+  occurredAt,
+}: {
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly thread: OrchestrationThread;
+  readonly message: TurnStartMessageInput;
+  readonly occurredAt: string;
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedOrchestrationEvent>,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const userMessageEvent: PlannedOrchestrationEvent = {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      occurredAt,
+      commandId,
+    })),
+    type: "thread.message-sent",
+    payload: {
+      threadId: thread.id,
+      messageId: message.messageId,
+      role: "user",
+      text: message.text,
+      attachments: message.attachments,
+      turnId: null,
+      streaming: false,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    },
+  };
+  const turnStartRequestedEvent: PlannedOrchestrationEvent = {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      occurredAt,
+      commandId,
+    })),
+    causationEventId: userMessageEvent.eventId,
+    type: "thread.turn-start-requested",
+    payload: {
+      threadId: thread.id,
+      messageId: message.messageId,
+      ...(message.modelSelection !== undefined ? { modelSelection: message.modelSelection } : {}),
+      ...(message.titleSeed !== undefined ? { titleSeed: message.titleSeed } : {}),
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      ...(message.sourceProposedPlan !== undefined
+        ? { sourceProposedPlan: message.sourceProposedPlan }
+        : {}),
+      createdAt: occurredAt,
+    },
+  };
+  // Real activity resets ANY override: it wakes an explicitly settled
+  // thread, and it clears a keep-active pin back to neutral so the
+  // thread can auto-settle again after this burst of work goes stale.
+  if (thread.settledOverride === null) {
+    return [userMessageEvent, turnStartRequestedEvent];
+  }
+  const unsettledEvent: PlannedOrchestrationEvent = {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      occurredAt,
+      commandId,
+    })),
+    type: "thread.unsettled",
+    payload: {
+      threadId: thread.id,
+      reason: "activity",
+      updatedAt: occurredAt,
+    },
+  };
+  return [unsettledEvent, userMessageEvent, turnStartRequestedEvent];
+});
+
+/**
+ * Plan the dispatch of one queued message: remove it from the queue and
+ * start (or steer into) a turn with it. `sourceProposedPlan` is dropped
+ * rather than failed when the referenced plan no longer exists — the
+ * message itself must still send.
+ */
+const planQueuedMessageDispatch = Effect.fn("planQueuedMessageDispatch")(function* ({
+  commandId,
+  readModel,
+  thread,
+  queuedMessage,
+  occurredAt,
+}: {
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly readModel: OrchestrationReadModel;
+  readonly thread: OrchestrationThread;
+  readonly queuedMessage: OrchestrationQueuedMessage;
+  readonly occurredAt: string;
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedOrchestrationEvent>,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const sourceProposedPlan = queuedMessage.sourceProposedPlan;
+  const sourceThread = sourceProposedPlan
+    ? readModel.threads.find((entry) => entry.id === sourceProposedPlan.threadId)
+    : undefined;
+  const sourcePlanStillValid =
+    sourceProposedPlan !== undefined &&
+    sourceThread !== undefined &&
+    sourceThread.projectId === thread.projectId &&
+    sourceThread.proposedPlans.some((entry) => entry.id === sourceProposedPlan.planId);
+
+  const removedEvent: PlannedOrchestrationEvent = {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      occurredAt,
+      commandId,
+    })),
+    type: "thread.queued-message-removed",
+    payload: {
+      threadId: thread.id,
+      messageId: queuedMessage.messageId,
+      reason: "dispatched",
+      removedAt: occurredAt,
+    },
+  };
+  const turnStartEvents = yield* planTurnStartEvents({
+    commandId,
+    thread,
+    message: {
+      messageId: queuedMessage.messageId,
+      text: queuedMessage.text,
+      attachments: queuedMessage.attachments,
+      ...(queuedMessage.modelSelection !== undefined
+        ? { modelSelection: queuedMessage.modelSelection }
+        : {}),
+      ...(sourcePlanStillValid ? { sourceProposedPlan } : {}),
+    },
+    occurredAt,
+  });
+  return [removedEvent, ...turnStartEvents];
+});
 
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
@@ -422,35 +634,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // last user message postdates their turn timestamps (older-server
       // data, mid-turn messages) must stay settleable. A failed session
       // start (status "error") clears the block immediately.
-      const latestUserMessageAtMs = thread.messages.reduce(
-        (latest, message) =>
-          message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-        Number.NEGATIVE_INFINITY,
-      );
-      const latestTurnAtMs =
-        thread.latestTurn === null
-          ? Number.NEGATIVE_INFINITY
-          : Math.max(
-              ...[
-                thread.latestTurn.requestedAt,
-                thread.latestTurn.startedAt,
-                thread.latestTurn.completedAt,
-              ].map((candidate) =>
-                candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-              ),
-            );
-      // The age check is bounded on BOTH sides: message timestamps are
-      // client-supplied, so a client clock ahead of the server yields a
-      // negative age. Without the lower bound that negative age satisfies
-      // `<= grace` for as long as the skew lasts, extending the settle
-      // block far past the intended two minutes.
-      const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-      const hasQueuedTurnStart =
-        thread.session?.status !== "error" &&
-        Number.isFinite(latestUserMessageAtMs) &&
-        latestUserMessageAtMs > latestTurnAtMs &&
-        Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS;
-      if (hasQueuedTurnStart) {
+      if (hasRecentUnadoptedUserMessage(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -618,69 +802,169 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,
         });
       }
-      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.message-sent",
-        payload: {
-          threadId: command.threadId,
+      // Queue-by-default: a follow-up arriving while a turn is active is
+      // held server-side and drained on natural turn completion. Explicit
+      // mid-turn injection goes through `thread.queue.steer`. Bootstrap
+      // starts are exempt — their thread was created in the same dispatch.
+      // `pendingTurnStart` covers the window where a turn start was just
+      // dispatched (by a send or a queue drain) but the provider has not
+      // reported the session status yet — a send in that gap must queue,
+      // not open a second concurrent turn ahead of already-queued chips.
+      if (
+        command.bootstrap === undefined &&
+        (isThreadTurnActive(targetThread) || targetThread.pendingTurnStart !== null)
+      ) {
+        if (targetThread.queuedMessages.length >= MAX_THREAD_QUEUED_MESSAGES) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Thread '${command.threadId}' already has ${MAX_THREAD_QUEUED_MESSAGES} queued messages.`,
+          });
+        }
+        return {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-queued",
+          payload: {
+            threadId: command.threadId,
+            messageId: command.message.messageId,
+            text: command.message.text,
+            attachments: command.message.attachments,
+            ...(command.modelSelection !== undefined
+              ? { modelSelection: command.modelSelection }
+              : {}),
+            ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+            queuedAt: command.createdAt,
+          },
+        };
+      }
+
+      return yield* planTurnStartEvents({
+        commandId: command.commandId,
+        thread: targetThread,
+        message: {
           messageId: command.message.messageId,
-          role: "user",
           text: command.message.text,
           attachments: command.message.attachments,
-          turnId: null,
-          streaming: false,
-          createdAt: command.createdAt,
-          updatedAt: command.createdAt,
-        },
-      };
-      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        causationEventId: userMessageEvent.eventId,
-        type: "thread.turn-start-requested",
-        payload: {
-          threadId: command.threadId,
-          messageId: command.message.messageId,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
-          runtimeMode: targetThread.runtimeMode,
-          interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
-          createdAt: command.createdAt,
         },
-      };
-      // Real activity resets ANY override: it wakes an explicitly settled
-      // thread, and it clears a keep-active pin back to neutral so the
-      // thread can auto-settle again after this burst of work goes stale.
-      if (targetThread.settledOverride === null) {
-        return [userMessageEvent, turnStartRequestedEvent];
+        occurredAt: command.createdAt,
+      });
+    }
+
+    case "thread.queue.steer": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedMessage = thread.queuedMessages.find(
+        (entry) => entry.messageId === command.messageId,
+      );
+      if (!queuedMessage) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued message '${command.messageId}' does not exist on thread '${command.threadId}'.`,
+        });
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
+      // While a turn start is still pending there is no provider turn to
+      // steer into — dispatching now would race the pending turn/start with
+      // a second one. The message stays queued; steer again once running.
+      // A session that already tracks an active turn (running, or a
+      // provider reconnect mid-turn) is steerable. Rejected shapes: starting
+      // with no active turn, and any session without an active turn while a
+      // just-dispatched turn start is still awaiting adoption — including
+      // "running" with a null activeTurnId (provider waiting).
+      const steerRacesPendingStart =
+        (thread.session?.status === "starting" && thread.session.activeTurnId === null) ||
+        (thread.pendingTurnStart !== null && (thread.session?.activeTurnId ?? null) === null);
+      if (steerRacesPendingStart) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is still starting a turn; steer once it is running.`,
+        });
+      }
+      // Otherwise dispatch unconditionally: with a running turn the provider
+      // adapters treat the resulting sendTurn as a steer; on an idle thread
+      // this degrades to a normal turn start.
+      return yield* planQueuedMessageDispatch({
+        commandId: command.commandId,
+        readModel,
+        thread,
+        queuedMessage,
+        occurredAt: command.createdAt,
+      });
+    }
+
+    case "thread.queue.remove": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedMessage = thread.queuedMessages.find(
+        (entry) => entry.messageId === command.messageId,
+      );
+      if (!queuedMessage) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued message '${command.messageId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         })),
-        type: "thread.unsettled",
+        type: "thread.queued-message-removed",
         payload: {
           threadId: command.threadId,
-          reason: "activity",
-          updatedAt: command.createdAt,
+          messageId: command.messageId,
+          reason: "user",
+          removedAt: command.createdAt,
         },
       };
-      return [unsettledEvent, userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.queue.drain": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedMessage = thread.queuedMessages.at(0);
+      if (!queuedMessage) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no queued messages to drain.`,
+        });
+      }
+      // The user may have raced a new message in between turn completion and
+      // this drain; keep the queue intact and let the next completion retry.
+      // The pending-start check also stops a duplicate drain from double-
+      // dispatching while the first drained turn's session is still unset.
+      if (isThreadTurnActive(thread) || thread.pendingTurnStart !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is busy; queued messages drain on turn completion.`,
+        });
+      }
+      return yield* planQueuedMessageDispatch({
+        commandId: command.commandId,
+        readModel,
+        thread,
+        queuedMessage,
+        occurredAt: command.createdAt,
+      });
     }
 
     case "thread.turn.interrupt": {

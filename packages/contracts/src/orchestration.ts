@@ -342,6 +342,22 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * A follow-up message held server-side while a turn is running. Queued
+ * messages are not part of the thread timeline; they enter it via the
+ * normal `thread.message-sent` event when dispatched (auto-drain on turn
+ * completion, or an explicit `thread.queue.steer`).
+ */
+export const OrchestrationQueuedMessage = Schema.Struct({
+  messageId: MessageId,
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+  modelSelection: Schema.optional(ModelSelection),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  queuedAt: IsoDateTime,
+});
+export type OrchestrationQueuedMessage = typeof OrchestrationQueuedMessage.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -363,6 +379,22 @@ export const OrchestrationThread = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
+  queuedMessages: Schema.Array(OrchestrationQueuedMessage).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /**
+   * The turn start that was requested but not yet adopted by a provider
+   * session. Non-null between `thread.turn-start-requested` and the session
+   * reporting running (or a terminal status / start failure). While set,
+   * follow-up sends queue and drains hold — the session status alone cannot
+   * see this window. Read-model twin of the SQL pending-turn-start row.
+   */
+  pendingTurnStart: Schema.NullOr(
+    Schema.Struct({
+      messageId: MessageId,
+      requestedAt: IsoDateTime,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -684,6 +716,26 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/**
+ * Send a queued message immediately, steering the active turn. Degrades to
+ * a normal turn start when the thread is idle by the time it is processed.
+ */
+const ThreadQueueSteerCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.steer"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadQueueRemoveCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.remove"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadApprovalRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.approval.respond"),
   commandId: CommandId,
@@ -732,6 +784,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadQueueSteerCommand,
+  ThreadQueueRemoveCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -755,6 +809,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadQueueSteerCommand,
+  ThreadQueueRemoveCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -819,6 +875,18 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/**
+ * Server-internal: dispatch the queued-message head as a turn after a
+ * natural (non-interrupted) turn completion. Rejected when the queue is
+ * empty or the thread is busy again; the dispatcher ignores the rejection.
+ */
+const ThreadQueueDrainCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.drain"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -834,6 +902,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadQueueDrainCommand,
   ThreadRevertCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
@@ -858,6 +927,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.message-queued",
+  "thread.queued-message-removed",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -978,6 +1049,26 @@ export const ThreadMessageSentPayload = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+});
+
+export const ThreadMessageQueuedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+  modelSelection: Schema.optional(ModelSelection),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  queuedAt: IsoDateTime,
+});
+
+export const ThreadQueuedMessageRemovedReason = Schema.Literals(["user", "dispatched"]);
+export type ThreadQueuedMessageRemovedReason = typeof ThreadQueuedMessageRemovedReason.Type;
+
+export const ThreadQueuedMessageRemovedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  reason: ThreadQueuedMessageRemovedReason,
+  removedAt: IsoDateTime,
 });
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
@@ -1141,6 +1232,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-queued"),
+    payload: ThreadMessageQueuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-removed"),
+    payload: ThreadQueuedMessageRemovedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

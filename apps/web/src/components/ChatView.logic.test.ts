@@ -44,6 +44,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: "default",
     session: null,
     messages: [],
+    queuedMessages: [],
+    pendingTurnStart: null,
     proposedPlans: [],
     activities: [],
     checkpoints: [],
@@ -398,6 +400,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: completedTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        projectedMessageIds: new Set<string>(),
         session: readySession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -424,6 +427,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "ready",
         latestTurn: newerTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        projectedMessageIds: new Set<string>(),
         session: { ...readySession, updatedAt: newerTurn.completedAt },
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -451,6 +455,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        projectedMessageIds: new Set<string>(),
         session: {
           ...readySession,
           status: "running",
@@ -467,6 +472,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         phase: "running",
         latestTurn: runningTurn,
         latestUserMessageId: localDispatch.latestUserMessageId,
+        projectedMessageIds: new Set<string>(),
         session: {
           ...readySession,
           status: "running",
@@ -508,18 +514,63 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       }),
     );
 
+    // Dispatch without a known messageId keeps the legacy heuristic: a new
+    // latest user message acknowledges it.
     expect(
       hasServerAcknowledgedLocalDispatch({
         localDispatch,
         phase: "running",
         latestTurn: runningTurn,
         latestUserMessageId: MessageId.make("message-steer"),
+        projectedMessageIds: new Set<string>(),
         session: runningSession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
       }),
     ).toBe(true);
+
+    const correlatedDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestTurn: runningTurn, session: runningSession }),
+      { messageId: MessageId.make("message-mine") },
+    );
+
+    // A correlated dispatch acknowledges when its exact message appears in
+    // the timeline or the queue...
+    for (const projectedMessageIds of [
+      new Set(["message-mine"]),
+      new Set(["message-other", "message-mine"]),
+    ]) {
+      expect(
+        hasServerAcknowledgedLocalDispatch({
+          localDispatch: correlatedDispatch,
+          phase: "running",
+          latestTurn: runningTurn,
+          latestUserMessageId: correlatedDispatch.latestUserMessageId,
+          projectedMessageIds,
+          session: runningSession,
+          hasPendingApproval: false,
+          hasPendingUserInput: false,
+          threadError: null,
+        }),
+      ).toBe(true);
+    }
+
+    // ...but ignores unrelated queue/timeline changes (another client's
+    // queued message, or a different queued chip being steered/removed).
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch: correlatedDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        latestUserMessageId: MessageId.make("message-someone-else"),
+        projectedMessageIds: new Set(["message-someone-else"]),
+        session: runningSession,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
   });
 
   it("acknowledges pending user interaction and errors immediately", () => {
@@ -529,6 +580,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       phase: "ready" as const,
       latestTurn: null,
       latestUserMessageId: localDispatch.latestUserMessageId,
+      projectedMessageIds: new Set<string>(),
       session: null,
       hasPendingApproval: false,
       hasPendingUserInput: false,

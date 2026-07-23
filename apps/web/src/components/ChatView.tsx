@@ -221,6 +221,7 @@ import {
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { QueuedMessageChips } from "./chat/QueuedMessageChips";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -465,6 +466,20 @@ function useLocalDispatchState(input: {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
   const latestUserMessageId =
     input.activeThread?.messages.findLast((message) => message.role === "user")?.id ?? null;
+  const activeThreadMessages = input.activeThread?.messages;
+  const activeThreadQueuedMessages = input.activeThread?.queuedMessages;
+  // Every server-projected id for this thread — timeline messages plus the
+  // held queue — so acknowledgment can match the exact dispatched message.
+  const projectedMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of activeThreadMessages ?? []) {
+      ids.add(message.id);
+    }
+    for (const queuedMessage of activeThreadQueuedMessages ?? []) {
+      ids.add(queuedMessage.messageId);
+    }
+    return ids;
+  }, [activeThreadMessages, activeThreadQueuedMessages]);
 
   const resetLocalDispatch = useCallback(() => {
     setLocalDispatch(null);
@@ -477,6 +492,7 @@ function useLocalDispatchState(input: {
         phase: input.phase,
         latestTurn: input.activeLatestTurn,
         latestUserMessageId,
+        projectedMessageIds,
         session: input.activeThread?.session ?? null,
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
@@ -490,12 +506,13 @@ function useLocalDispatchState(input: {
       input.phase,
       input.threadError,
       latestUserMessageId,
+      projectedMessageIds,
       localDispatch,
     ],
   );
   const activeLocalDispatch = serverAcknowledgedLocalDispatch ? null : localDispatch;
   const beginLocalDispatch = useCallback(
-    (options?: { preparingWorktree?: boolean }) => {
+    (options?: { preparingWorktree?: boolean; messageId?: MessageId }) => {
       const preparingWorktree = Boolean(options?.preparingWorktree);
       setLocalDispatch((current) => {
         const active = serverAcknowledgedLocalDispatch ? null : current;
@@ -1126,6 +1143,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const steerQueuedThreadMessage = useAtomCommand(threadEnvironment.steerQueuedMessage, {
+    reportFailure: false,
+  });
+  const removeQueuedThreadMessage = useAtomCommand(threadEnvironment.removeQueuedMessage, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -3725,10 +3748,16 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id) return;
-    if (activeThread.messages.length === 0) {
+    if (activeThread.messages.length === 0 && activeThread.queuedMessages.length === 0) {
       return;
     }
-    const serverIds = new Set(activeThread.messages.map((message) => message.id));
+    // A queued message is server-acknowledged too — it renders as a chip
+    // above the composer, so its optimistic timeline copy must go.
+    const persistedMessageIds = new Set(activeThread.messages.map((message) => message.id));
+    const serverIds = new Set([
+      ...persistedMessageIds,
+      ...activeThread.queuedMessages.map((message) => message.messageId),
+    ]);
     const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
     if (removedMessages.length === 0) {
       return;
@@ -3740,7 +3769,10 @@ function ChatViewContent(props: ChatViewProps) {
     }, 0);
     for (const removedMessage of removedMessages) {
       const previewUrls = collectUserMessageBlobPreviewUrls(removedMessage);
-      if (previewUrls.length > 0) {
+      // Handoff keeps blob previews alive only for messages entering the
+      // timeline; a queued-only acknowledgment renders as a text chip, so
+      // its previews would never be promoted — revoke them instead.
+      if (previewUrls.length > 0 && persistedMessageIds.has(removedMessage.id)) {
         handoffAttachmentPreviews(removedMessage.id, previewUrls);
         continue;
       }
@@ -3749,7 +3781,13 @@ function ChatViewContent(props: ChatViewProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
+  }, [
+    activeThread?.id,
+    activeThread?.messages,
+    activeThread?.queuedMessages,
+    handoffAttachmentPreviews,
+    optimisticUserMessages,
+  ]);
 
   useEffect(() => {
     setOptimisticUserMessages((existing) => {
@@ -4382,7 +4420,11 @@ function ChatViewContent(props: ChatViewProps) {
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    const messageIdForSend = newMessageId();
+    beginLocalDispatch({
+      preparingWorktree: Boolean(baseBranchForWorktree),
+      messageId: messageIdForSend,
+    });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -4401,7 +4443,6 @@ function ChatViewContent(props: ChatViewProps) {
       messageTextWithPreviewAnnotations,
       composerReviewCommentsSnapshot,
     );
-    const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -4566,7 +4607,7 @@ function ChatViewContent(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
+      beginLocalDispatch({ preparingWorktree: false, messageId: messageIdForSend });
       const startResult = await startThreadTurn({
         environmentId,
         input: {
@@ -4656,6 +4697,36 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError(
         activeThread.id,
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+      );
+    }
+  };
+
+  const onSteerQueuedMessage = async (messageId: MessageId) => {
+    if (!activeThread) return;
+    const result = await steerQueuedThreadMessage({
+      environmentId,
+      input: { threadId: activeThread.id, messageId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to steer the queued message.",
+      );
+    }
+  };
+
+  const onRemoveQueuedMessage = async (messageId: MessageId) => {
+    if (!activeThread) return;
+    const result = await removeQueuedThreadMessage({
+      environmentId,
+      input: { threadId: activeThread.id, messageId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to remove the queued message.",
       );
     }
   };
@@ -4869,7 +4940,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
 
       sendInFlightRef.current = true;
-      beginLocalDispatch({ preparingWorktree: false });
+      beginLocalDispatch({ preparingWorktree: false, messageId: messageIdForSend });
       setThreadError(threadIdForSend, null);
 
       // Position this sent row once LegendList has measured the anchored tail.
@@ -5582,7 +5653,17 @@ function ChatViewContent(props: ChatViewProps) {
                       <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                     </div>
                   ) : (
-                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    <>
+                      {isServerThread && activeThread ? (
+                        <QueuedMessageChips
+                          queuedMessages={activeThread.queuedMessages}
+                          disabled={Boolean(activeEnvironmentUnavailableState)}
+                          onSteer={(messageId) => void onSteerQueuedMessage(messageId)}
+                          onRemove={(messageId) => void onRemoveQueuedMessage(messageId)}
+                        />
+                      ) : null}
+                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    </>
                   )}
                   <div
                     className="relative"

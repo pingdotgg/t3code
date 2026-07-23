@@ -69,6 +69,8 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
+    queuedMessages: [],
+    pendingTurnStart: null,
     createdAt: draftThread.createdAt,
     updatedAt: draftThread.createdAt,
     archivedAt: null,
@@ -416,6 +418,13 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
+  /**
+   * The messageId of the send this dispatch is waiting on, when the send
+   * path knows it. Acknowledgment then correlates with this exact message
+   * being projected (timeline or queue) instead of global tail heuristics
+   * that other clients' activity could satisfy.
+   */
+  expectedMessageId: ChatMessage["id"] | null;
   latestUserMessageId: ChatMessage["id"] | null;
   latestTurnTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
@@ -427,7 +436,7 @@ export interface LocalDispatchSnapshot {
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
+  options?: { preparingWorktree?: boolean; messageId?: ChatMessage["id"] },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
   const session = activeThread?.session ?? null;
@@ -435,6 +444,7 @@ export function createLocalDispatchSnapshot(
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
+    expectedMessageId: options?.messageId ?? null,
     latestUserMessageId: latestUserMessage?.id ?? null,
     latestTurnTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
@@ -450,6 +460,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
   latestUserMessageId: ChatMessage["id"] | null;
+  projectedMessageIds: ReadonlySet<string>;
   session: Thread["session"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
@@ -464,6 +475,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
+  const expectedMessageId = input.localDispatch.expectedMessageId;
   const latestUserMessageChanged =
     input.localDispatch.latestUserMessageId !== input.latestUserMessageId;
   const latestTurnChanged =
@@ -472,12 +484,18 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
 
+  // The dispatched message being projected (timeline or queue) is the
+  // strongest acknowledgment in every phase: the server also queues sends
+  // while a session is starting ("connecting" phase), where neither turn
+  // nor session fields necessarily change.
+  if (expectedMessageId !== null && input.projectedMessageIds.has(expectedMessageId)) {
+    return true;
+  }
+
   if (input.phase === "running") {
-    // Steering adds a user message to the current running turn without
-    // necessarily changing any of the turn timestamps. Treat that projected
-    // message as the server acknowledgment so the composer does not remain
-    // stuck in its local "Sending" state until the turn settles.
-    if (latestUserMessageChanged) {
+    // Dispatches without a known messageId (e.g. plan-implementation flows)
+    // keep the legacy latest-user-message heuristic.
+    if (expectedMessageId === null && latestUserMessageChanged) {
       return true;
     }
     if (!latestTurnChanged) {
