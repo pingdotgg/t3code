@@ -385,10 +385,6 @@ function IosHomeHeader(props: HomeHeaderProps) {
             title="Thread list options"
             separateBackground
           >
-            <NativeHeaderToolbar.MenuAction onPress={props.onOpenSettings}>
-              <NativeHeaderToolbar.Label>Settings</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
-
             <NativeHeaderToolbar.Menu title="Environment">
               <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
