@@ -170,6 +170,7 @@ function DocumentTitleSync() {
 
     const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
     let frame = 0;
+    document.title = `${frames[frame++ % frames.length]} ${title}`;
     const timer = window.setInterval(() => {
       document.title = `${frames[frame++ % frames.length]} ${title}`;
     }, 500);
