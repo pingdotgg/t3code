@@ -2,6 +2,7 @@ import type {
   VcsPanelChangeGroup,
   VcsPanelStash,
   VcsPanelSnapshotResult,
+  VcsRef,
 } from "@t3tools/contracts";
 import {
   mergePanelChangeGroups,
@@ -25,6 +26,19 @@ export {
 export type { BranchSyncState, PanelChangedFile };
 
 export type AttentionKind = BranchAttentionKind;
+
+export function branchIsCheckedOut(branch: VcsRef | undefined): boolean {
+  return branch?.current === true || branch?.worktreePath != null;
+}
+
+export function namedBranchOperationCwd(
+  branches: readonly VcsRef[],
+  branchName: string,
+  fallbackCwd: string,
+): string {
+  const branch = branches.find((candidate) => candidate.name === branchName);
+  return branch ? branchOperationCwd(branch, fallbackCwd) : fallbackCwd;
+}
 
 export type PanelFileDiffLoadState =
   | { readonly status: "loading" }

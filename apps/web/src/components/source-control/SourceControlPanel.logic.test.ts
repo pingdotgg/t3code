@@ -5,12 +5,14 @@ import {
   beginPanelFileDiffLoad,
   branchAttention,
   branchHasUpstream,
+  branchIsCheckedOut,
   branchOperationCwd,
   branchSyncState,
   completePanelFileDiffLoad,
   failPanelFileDiffLoad,
   formatRelativeDate,
   mergeChangeGroups,
+  namedBranchOperationCwd,
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
@@ -102,6 +104,23 @@ describe("SourceControlPanel branch sync logic", () => {
       ),
     ).toBe("/repo.worktrees/feature");
     expect(branchOperationCwd(branch({}), "/repo")).toBe("/repo");
+  });
+
+  it("resolves named branch actions to the checkout that owns the branch", () => {
+    const branches = [
+      branch({ name: "main", current: true, worktreePath: "/repo" }),
+      branch({ name: "feature", worktreePath: "/repo.worktrees/feature" }),
+    ];
+
+    expect(namedBranchOperationCwd(branches, "feature", "/repo")).toBe("/repo.worktrees/feature");
+    expect(namedBranchOperationCwd(branches, "missing", "/repo")).toBe("/repo");
+  });
+
+  it("treats current and sibling-worktree branches as checked out", () => {
+    expect(branchIsCheckedOut(branch({ current: true }))).toBe(true);
+    expect(branchIsCheckedOut(branch({ worktreePath: "/repo.worktrees/feature" }))).toBe(true);
+    expect(branchIsCheckedOut(branch({}))).toBe(false);
+    expect(branchIsCheckedOut(undefined)).toBe(false);
   });
 });
 

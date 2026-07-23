@@ -112,6 +112,7 @@ import {
   beginPanelFileDiffLoad,
   branchAttention,
   branchHasUpstream,
+  branchIsCheckedOut,
   branchOperationCwd,
   branchSyncCounts,
   branchSyncState,
@@ -119,6 +120,7 @@ import {
   failPanelFileDiffLoad,
   formatRelativeDate,
   mergeChangeGroups,
+  namedBranchOperationCwd,
   type PanelChangedFile,
   type PanelFileDiffLoadState,
   stashIdentityKey,
@@ -2145,11 +2147,16 @@ export function SourceControlPanel({
     (branchName: string, commit?: VcsPanelCommitSummary) =>
       void (async () => {
         const actionKey = commitUndoActionKey(branchName, commit?.sha);
+        const localBranches = snapshot?.localBranches ?? [];
+        const branch = localBranches.find((candidate) => candidate.name === branchName);
+        const targetCwd = namedBranchOperationCwd(localBranches, branchName, cwd);
         const confirmed = commit
           ? await confirm(
               `Undo ${commit.shortSha} and any newer commits on ${branchName}?${
-                snapshot?.localBranches.find((branch) => branch.name === branchName)?.current
-                  ? " Changes stay in the working tree."
+                branchIsCheckedOut(branch)
+                  ? branch?.current
+                    ? " Changes stay in the working tree."
+                    : " Changes stay in that branch's worktree."
                   : " This moves the branch back to that commit's parent."
               }`,
             )
@@ -2159,7 +2166,7 @@ export function SourceControlPanel({
           actionKey,
           () =>
             api?.vcs.undoLatestCommit({
-              cwd,
+              cwd: targetCwd,
               branchName,
               ...(commit ? { sha: commit.sha } : {}),
             }) ?? Promise.resolve(),
@@ -3371,9 +3378,10 @@ export function SourceControlPanel({
     const rebaseKey = `rebase-current:${branch.name}`;
     const syncLabel = options.syncLabel ?? branchSyncActionLabel(syncState);
     const relativeDate = formatRelativeDate(branch.lastActivityAt);
-    const switchDisabled = current || isActionRunning(switchKey);
+    const checkedOut = branchIsCheckedOut(branch);
+    const switchDisabled = checkedOut || isActionRunning(switchKey);
     const syncDisabled = isActionRunning(syncKey) || isActionRunning(fetchKey);
-    const deleteDisabled = current || isActionRunning(deleteKey);
+    const deleteDisabled = checkedOut || isActionRunning(deleteKey);
     const runSync = (event?: ReactMouseEvent<HTMLButtonElement>) =>
       options.onSync
         ? options.onSync(event)
@@ -3550,12 +3558,13 @@ export function SourceControlPanel({
     const undoKey = `branch-undo-latest:${branch.name}`;
     const mergeKey = `branch-merge:${branch.name}`;
     const rebaseKey = `rebase-current:${branch.name}`;
-    const switchDisabled = current || isActionRunning(switchKey);
+    const checkedOut = hasLocalBranch && branchIsCheckedOut(branch);
+    const switchDisabled = checkedOut || isActionRunning(switchKey);
     const syncLabel = hasLocalBranch ? branchSyncActionLabel(syncState) : "Fetch branch";
     const syncDisabled = hasLocalBranch
       ? isActionRunning(syncKey) || isActionRunning(fetchKey)
       : isActionRunning(fetchKey);
-    const deleteDisabled = isActionRunning(deleteKey);
+    const deleteDisabled = checkedOut || isActionRunning(deleteKey);
     const fetchRemoteBranch = () =>
       void runAction(
         fetchKey,
