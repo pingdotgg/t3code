@@ -1451,7 +1451,7 @@ const make = Effect.gen(function* () {
         );
         if (Exit.isFailure(dispatchExit)) {
           yield* deferFinalization(dispatchExit.cause, true);
-          return;
+          return false;
         }
       }
 
@@ -1476,11 +1476,12 @@ const make = Effect.gen(function* () {
         );
         if (Exit.isFailure(dispatchExit)) {
           yield* deferFinalization(dispatchExit.cause, false);
-          return;
+          return false;
         }
       }
       yield* clearAssistantMessageState(input.messageId);
       yield* forgetAssistantMessageIdForThread(input.threadId, input.messageId);
+      return true;
     });
 
   const finalizeActiveAssistantSegmentForTurn = (input: {
@@ -1502,7 +1503,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* finalizeAssistantMessage({
+      const finalized = yield* finalizeAssistantMessage({
         event: input.event,
         threadId: input.threadId,
         messageId: activeMessageId.value,
@@ -1514,6 +1515,9 @@ const make = Effect.gen(function* () {
           input.hasProjectedMessage ||
           (input.flushedMessageIds?.has(activeMessageId.value) ?? false),
       });
+      if (!finalized) {
+        return;
+      }
       yield* forgetAssistantMessageId(input.threadId, input.turnId, activeMessageId.value);
 
       const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
@@ -2059,7 +2063,7 @@ const make = Effect.gen(function* () {
           serverSettingsService.getSettings,
           (settings) => (settings.enableAssistantStreaming ? "streaming" : "buffered"),
         );
-        yield* processAssistantDelta({
+        const assistantDeltaInput = {
           source: "assistant-delta",
           event,
           threadId: thread.id,
@@ -2067,7 +2071,20 @@ const make = Effect.gen(function* () {
           ...(turnId ? { turnId } : {}),
           deliveryMode: assistantDeliveryMode,
           delta: assistantDelta,
-        });
+        } as const;
+        if (yield* hasDeferredAssistantDelta(assistantMessageId)) {
+          // Keep later provider events behind the already scheduled retry.
+          // Otherwise they can enter the retained buffer between a failed
+          // chunk and that input's unprocessed remainder.
+          yield* markDeferredAssistantDelta(assistantMessageId);
+          yield* scheduleAssistantDeltaRetry({
+            ...assistantDeltaInput,
+            flushPendingFirst: true,
+            isDeferred: true,
+          });
+        } else {
+          yield* processAssistantDelta(assistantDeltaInput);
+        }
       }
 
       const pauseForUserTurnId =
@@ -2161,12 +2178,13 @@ const make = Effect.gen(function* () {
           hasAssistantMessagesForTurn &&
           (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
 
+        let assistantFinalized = true;
         if (!shouldSkipRedundantCompletion) {
           if (turnId && Option.isNone(activeAssistantMessageId)) {
             yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
 
-          yield* finalizeAssistantMessage({
+          assistantFinalized = yield* finalizeAssistantMessage({
             event,
             threadId: thread.id,
             messageId: assistantMessageId,
@@ -2180,12 +2198,12 @@ const make = Effect.gen(function* () {
               : {}),
           });
 
-          if (turnId) {
+          if (turnId && assistantFinalized) {
             yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
         }
 
-        if (turnId) {
+        if (turnId && assistantFinalized) {
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
         }
       }
@@ -2210,7 +2228,7 @@ const make = Effect.gen(function* () {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* Effect.forEach(
+          const finalizedAssistantMessages = yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
               finalizeAssistantMessage({
@@ -2224,9 +2242,11 @@ const make = Effect.gen(function* () {
                 hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
               }),
             { concurrency: 1 },
-          ).pipe(Effect.asVoid);
-          yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          );
+          if (finalizedAssistantMessages.every(Boolean)) {
+            yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
+            yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          }
 
           yield* finalizeBufferedProposedPlan({
             event,
