@@ -98,6 +98,43 @@ describe("refreshQueryOnSuccess", () => {
     }),
   );
 
+  it.effect("keeps a preloaded zero-TTL query warm through the consumer handoff", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const query = Atom.make(
+        Effect.sync(() => {
+          reads += 1;
+          return reads;
+        }),
+      ).pipe(Atom.setIdleTTL(0));
+      const signal = Atom.make<AsyncResult.AsyncResult<string, never>>(
+        AsyncResult.initial<string, never>(false),
+      ).pipe(Atom.setIdleTTL(0));
+      const liveQuery = refreshQueryOnSuccess(query, signal);
+      const preloadedQuery = liveQuery.pipe(Atom.setIdleTTL(1_000));
+      const registry = AtomRegistry.make();
+
+      const preload = yield* Effect.promise(() =>
+        executeAtomQuery(registry, preloadedQuery, {
+          label: "preload",
+        }),
+      );
+      expect(AsyncResult.isSuccess(preload)).toBe(true);
+      expect(reads).toBe(1);
+
+      const unmountConsumer = registry.mount(liveQuery);
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe(1);
+      expect(reads).toBe(1);
+
+      unmountConsumer();
+      registry.dispose();
+    }),
+  );
+
   it.effect("revalidates a stale cached query after the live query remounts", () =>
     Effect.gen(function* () {
       let contents = "initial";
