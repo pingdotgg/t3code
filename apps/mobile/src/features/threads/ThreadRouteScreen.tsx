@@ -9,7 +9,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript, type TurnId } from "@t3tools/contracts";
-import { supportsSelectedResponseFork } from "@t3tools/client-runtime/thread-forking";
+import {
+  releaseForkActionLock,
+  supportsSelectedResponseFork,
+  tryAcquireForkActionLock,
+} from "@t3tools/client-runtime/thread-forking";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import * as Haptics from "expo-haptics";
@@ -64,7 +68,6 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { uuidv4 } from "../../lib/uuid";
-import { releaseForkActionLock, tryAcquireForkActionLock } from "./fork-action-lock";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,

@@ -26,7 +26,11 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { supportsSelectedResponseFork } from "@t3tools/client-runtime/thread-forking";
+import {
+  releaseForkActionLock,
+  supportsSelectedResponseFork,
+  tryAcquireForkActionLock,
+} from "@t3tools/client-runtime/thread-forking";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -1258,6 +1262,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [isForkingToSide, setIsForkingToSide] = useState(false);
+  const forkingToSideTurnIdRef = useRef<TurnId | null>(null);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
   );
@@ -5184,41 +5189,52 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onForkToSide = useCallback(
     async (sourceTurnId: TurnId) => {
-      if (!activeThread || !activeThreadRef || !isServerThread || isForkingToSide) return;
+      if (
+        !activeThread ||
+        !activeThreadRef ||
+        !isServerThread ||
+        !tryAcquireForkActionLock(forkingToSideTurnIdRef, sourceTurnId)
+      ) {
+        return;
+      }
 
       const nextThreadId = newThreadId();
       const title = truncate(`${activeThread.title} (fork)`);
       setIsForkingToSide(true);
-      const result = await forkThread({
-        environmentId: activeThread.environmentId,
-        input: {
-          threadId: nextThreadId,
-          sourceThreadId: activeThread.id,
-          sourceTurnId,
-          title,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      setIsForkingToSide(false);
+      try {
+        const result = await forkThread({
+          environmentId: activeThread.environmentId,
+          input: {
+            threadId: nextThreadId,
+            sourceThreadId: activeThread.id,
+            sourceTurnId,
+            title,
+            createdAt: new Date().toISOString(),
+          },
+        });
 
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not fork side chat",
-              description:
-                error instanceof Error ? error.message : "The thread could not be forked.",
-            }),
-          );
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not fork side chat",
+                description:
+                  error instanceof Error ? error.message : "The thread could not be forked.",
+              }),
+            );
+          }
+          return;
         }
-        return;
-      }
 
-      useRightPanelStore.getState().openThread(activeThreadRef, nextThreadId, title);
+        useRightPanelStore.getState().openThread(activeThreadRef, nextThreadId, title);
+      } finally {
+        releaseForkActionLock(forkingToSideTurnIdRef, sourceTurnId);
+        setIsForkingToSide(false);
+      }
     },
-    [activeThread, activeThreadRef, forkThread, isForkingToSide, isServerThread],
+    [activeThread, activeThreadRef, forkThread, isServerThread],
   );
 
   const onImplementPlanInNewThread = useCallback(async () => {

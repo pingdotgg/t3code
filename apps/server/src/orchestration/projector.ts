@@ -34,7 +34,6 @@ import {
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
-const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
@@ -89,10 +88,11 @@ function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
+  threadId: ThreadId,
 ): ReadonlyArray<OrchestrationMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
-    if (message.role === "system") {
+    if (message.role === "system" || message.id.startsWith(`${threadId}:fork:`)) {
       retainedMessageIds.add(message.id);
       continue;
     }
@@ -529,12 +529,10 @@ export function projectEvent(
                 : entry,
             )
           : [...thread.messages, message];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
-
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            messages: cappedMessages,
+            messages,
             updatedAt: event.occurredAt,
           }),
         };
@@ -727,7 +725,8 @@ export function projectEvent(
             thread.messages,
             retainedTurnIds,
             payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
+            payload.threadId,
+          );
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,
             retainedTurnIds,

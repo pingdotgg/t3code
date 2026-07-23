@@ -438,10 +438,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : yield* Effect.forEach(message.attachments, (attachment) => {
                 const attachmentId = createForkedAttachmentId(command.threadId, attachment.id);
                 return attachmentId === null
-                  ? new OrchestrationCommandInvariantError({
-                      commandType: command.type,
-                      detail: `Cannot fork attachment '${attachment.id}' into thread '${command.threadId}'.`,
-                    })
+                  ? Effect.fail(
+                      new OrchestrationCommandInvariantError({
+                        commandType: command.type,
+                        detail: `Cannot fork attachment '${attachment.id}' into thread '${command.threadId}'.`,
+                      }),
+                    )
                   : Effect.succeed({
                       ...attachment,
                       id: attachmentId,

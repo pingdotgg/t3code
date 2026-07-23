@@ -284,4 +284,42 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       expect(error.message).toContain("has no completed assistant response to fork");
     }),
   );
+
+  it.effect("rejects attachments that cannot be assigned a fork-owned ID", () =>
+    Effect.gen(function* () {
+      const readModel = seedReadModel();
+      const source = readModel.threads[0]!;
+      const firstMessage = source.messages[0]!;
+      const error = yield* decideOrchestrationCommand({
+        command: forkCommand(turnOneId),
+        readModel: {
+          ...readModel,
+          threads: [
+            {
+              ...source,
+              messages: [
+                {
+                  ...firstMessage,
+                  attachments: [
+                    {
+                      type: "image",
+                      id: "legacy-attachment",
+                      name: "question.png",
+                      mimeType: "image/png",
+                      sizeBytes: 5,
+                    },
+                  ],
+                },
+                ...source.messages.slice(1),
+              ],
+            },
+          ],
+        },
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain(
+        "Cannot fork attachment 'legacy-attachment' into thread 'thread-fork'",
+      );
+    }),
+  );
 });
