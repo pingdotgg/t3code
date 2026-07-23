@@ -105,13 +105,15 @@ export function canSettle(
 export const CHANGE_REQUEST_SETTLE_IDLE_MS = 60 * 60 * 1_000;
 
 /**
- * Settled resolution over the server-backed settled lifecycle. The explicit
- * user override (thread.settle / thread.unsettle commands, projected into
- * settledOverride + settledAt) wins in both directions; without one, a
- * thread auto-settles on a merged/closed PR (once idle) or inactivity past
- * the window. The server un-settles on real activity (user message, session
- * start, approval/user-input request), so an override never goes stale
- * silently.
+ * Settled resolution over the server-backed settled lifecycle. Activity
+ * blockers (pending approval/user-input, a live session, an unadjudicated
+ * queued turn) are checked first and hold a thread active regardless of any
+ * override. Past the blockers, the explicit user override (thread.settle /
+ * thread.unsettle commands, projected into settledOverride + settledAt)
+ * wins in both directions; without one, a thread auto-settles on a
+ * merged/closed PR (once idle) or inactivity past the window. The server
+ * un-settles on real activity (user message, session start, approval/
+ * user-input request), so an override never goes stale silently.
  */
 export function effectiveSettled(
   shell: OrchestrationThreadShell,
