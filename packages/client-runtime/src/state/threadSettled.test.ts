@@ -178,6 +178,51 @@ describe("effectiveSettled", () => {
     ).toBe(false);
   });
 
+  it("keeps a new turn active from queued through starting and running", () => {
+    const requestedAt = "2026-04-09T12:00:00.000Z";
+    const transitionNow = "2026-04-09T12:00:30.000Z";
+    const base = makeShell({
+      settledOverride: null,
+      activityAt: STALE,
+    });
+    const queued: OrchestrationThreadShell = {
+      ...base,
+      latestUserMessageAt: requestedAt,
+      latestTurn: null,
+      session: null,
+    };
+    const starting: OrchestrationThreadShell = {
+      ...queued,
+      session: {
+        threadId: queued.id,
+        status: "starting",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: requestedAt,
+      },
+    };
+    const running: OrchestrationThreadShell = {
+      ...starting,
+      session: {
+        ...starting.session!,
+        status: "running",
+        activeTurnId: TurnId.make("turn-new"),
+      },
+    };
+
+    for (const shell of [queued, starting, running]) {
+      expect(
+        effectiveSettled(shell, {
+          now: transitionNow,
+          autoSettleAfterDays: 3,
+          changeRequestState: "merged",
+        }),
+      ).toBe(false);
+    }
+  });
+
   it("uses a strict inactivity boundary and honors a null threshold", () => {
     const boundary = makeShell({
       activityAt: "2026-04-07T00:00:00.000Z",
