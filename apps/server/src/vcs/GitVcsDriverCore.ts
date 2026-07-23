@@ -53,6 +53,7 @@ const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const GIT_TEMPORARY_PACK_PREFIX = "tmp_pack_";
+const GIT_TEMPORARY_PACK_STALE_AGE = Duration.hours(1);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -228,12 +229,16 @@ export function splitNullSeparatedGitStdoutPaths(
   return splitNullSeparatedPaths(result.stdout, result.stdoutTruncated);
 }
 
-export function findNewGitTemporaryPackFiles(
-  entries: ReadonlyArray<string>,
-  preexistingEntries: ReadonlySet<string>,
-): string[] {
-  return entries.filter(
-    (entry) => entry.startsWith(GIT_TEMPORARY_PACK_PREFIX) && !preexistingEntries.has(entry),
+export function isStaleGitTemporaryPackFile(input: {
+  entry: string;
+  modifiedAtMs: number | null;
+  nowMs: number;
+  staleAfterMs: number;
+}): boolean {
+  return (
+    input.entry.startsWith(GIT_TEMPORARY_PACK_PREFIX) &&
+    input.modifiedAtMs !== null &&
+    input.nowMs - input.modifiedAtMs >= input.staleAfterMs
   );
 }
 
@@ -944,34 +949,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const fetchCwd =
         path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
       const packDirectory = path.join(gitCommonDir, "objects", "pack");
-      const preexistingEntries = yield* fileSystem.exists(packDirectory).pipe(
-        Effect.flatMap((exists) =>
-          exists
-            ? fileSystem
-                .readDirectory(packDirectory, { recursive: false })
-                .pipe(Effect.map((entries) => new Set(entries) as ReadonlySet<string>))
-            : Effect.succeed(new Set<string>() as ReadonlySet<string>),
-        ),
-        Effect.orElseSucceed(() => null),
-      );
-      const cleanupNewTemporaryPacks =
-        preexistingEntries === null
-          ? Effect.void
-          : fileSystem.readDirectory(packDirectory, { recursive: false }).pipe(
-              Effect.flatMap((entries) =>
-                Effect.forEach(
-                  findNewGitTemporaryPackFiles(entries, preexistingEntries),
-                  (entry) => fileSystem.remove(path.join(packDirectory, entry), { force: true }),
-                  { concurrency: "unbounded", discard: true },
-                ),
-              ),
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to clean temporary Git pack files after status fetch.", {
-                  cause,
-                }),
-              ),
+      const cleanupStaleTemporaryPacks = Effect.gen(function* () {
+        if (!(yield* fileSystem.exists(packDirectory))) return;
+        const now = yield* DateTime.now;
+        const nowMs = DateTime.toEpochMillis(now);
+        const entries = yield* fileSystem.readDirectory(packDirectory, { recursive: false });
+        yield* Effect.forEach(
+          entries,
+          (entry) => {
+            if (!entry.startsWith(GIT_TEMPORARY_PACK_PREFIX)) return Effect.void;
+            const temporaryPackPath = path.join(packDirectory, entry);
+            return fileSystem.stat(temporaryPackPath).pipe(
+              Effect.flatMap((info) => {
+                const modifiedAtMs = Option.getOrNull(info.mtime)?.getTime() ?? null;
+                return isStaleGitTemporaryPackFile({
+                  entry,
+                  modifiedAtMs,
+                  nowMs,
+                  staleAfterMs: Duration.toMillis(GIT_TEMPORARY_PACK_STALE_AGE),
+                })
+                  ? fileSystem.remove(temporaryPackPath, { force: true })
+                  : Effect.void;
+              }),
+              Effect.ignore,
             );
+          },
+          { concurrency: "unbounded", discard: true },
+        );
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to clean stale temporary Git pack files.", { cause }),
+        ),
+      );
 
+      yield* cleanupStaleTemporaryPacks;
       const result = yield* executeGit(
         "GitVcsDriver.fetchRemoteForStatus",
         fetchCwd,
@@ -981,10 +992,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           env: STATUS_UPSTREAM_REFRESH_ENV,
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
         },
-      ).pipe(Effect.tapError(() => cleanupNewTemporaryPacks));
-      if (result.exitCode !== 0) {
-        yield* cleanupNewTemporaryPacks;
-      }
+      ).pipe(Effect.ensuring(cleanupStaleTemporaryPacks));
+      if (result.exitCode !== 0) return;
     });
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {

@@ -13,7 +13,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import {
-  findNewGitTemporaryPackFiles,
+  isStaleGitTemporaryPackFile,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -98,16 +98,42 @@ const initRepoWithCommit = (
     return { initialBranch };
   });
 
-describe("findNewGitTemporaryPackFiles", () => {
-  it("returns only temporary packs created after the status fetch started", () => {
-    const preexistingEntries = new Set(["pack-existing.pack", "tmp_pack_existing"]);
+describe("isStaleGitTemporaryPackFile", () => {
+  it("only selects temporary packs older than the cleanup grace period", () => {
+    const nowMs = 10_000;
+    const staleAfterMs = 1_000;
 
-    assert.deepStrictEqual(
-      findNewGitTemporaryPackFiles(
-        ["pack-existing.pack", "pack-new.pack", "tmp_pack_existing", "tmp_pack_new", "tmp_other"],
-        preexistingEntries,
-      ),
-      ["tmp_pack_new"],
+    assert.isTrue(
+      isStaleGitTemporaryPackFile({
+        entry: "tmp_pack_stale",
+        modifiedAtMs: 9_000,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+    assert.isFalse(
+      isStaleGitTemporaryPackFile({
+        entry: "tmp_pack_active",
+        modifiedAtMs: 9_001,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+    assert.isFalse(
+      isStaleGitTemporaryPackFile({
+        entry: "pack-complete.pack",
+        modifiedAtMs: 1_000,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+    assert.isFalse(
+      isStaleGitTemporaryPackFile({
+        entry: "tmp_pack_unknown",
+        modifiedAtMs: null,
+        nowMs,
+        staleAfterMs,
+      }),
     );
   });
 });
