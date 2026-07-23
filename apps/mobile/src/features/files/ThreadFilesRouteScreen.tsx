@@ -502,6 +502,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           input: { cwd, relativePath },
         })
       : null,
+    { refreshOnMount: true },
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
 

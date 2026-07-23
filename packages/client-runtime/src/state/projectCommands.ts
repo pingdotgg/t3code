@@ -18,6 +18,8 @@ import {
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
+const WORKSPACE_FILE_REFRESH_INTERVAL_MS = 30_000;
+
 export type {
   CreateProjectInput,
   DeleteProjectInput,
@@ -71,6 +73,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      refreshIntervalMs: WORKSPACE_FILE_REFRESH_INTERVAL_MS,
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),

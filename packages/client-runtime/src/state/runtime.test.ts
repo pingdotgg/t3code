@@ -20,6 +20,7 @@ import {
   runAtomCommand,
   settleAsyncResult,
   settlePromise,
+  shouldRefreshQueryOnMount,
   squashAtomCommandFailure,
 } from "./runtime.ts";
 
@@ -58,6 +59,19 @@ describe("settleAsyncResult", () => {
       expect(Cause.hasDies(rejected.cause)).toBe(true);
       expect(Cause.squash(rejected.cause)).toBe(rejectedDefect);
     }
+  });
+});
+
+describe("shouldRefreshQueryOnMount", () => {
+  it("refreshes settled cached results without duplicating initial or active requests", () => {
+    const success = AsyncResult.success("contents");
+    const failure = AsyncResult.failure(Cause.fail(new Error("missing")));
+
+    expect(shouldRefreshQueryOnMount(success, true)).toBe(true);
+    expect(shouldRefreshQueryOnMount(failure, true)).toBe(true);
+    expect(shouldRefreshQueryOnMount(AsyncResult.initial(false), true)).toBe(false);
+    expect(shouldRefreshQueryOnMount(AsyncResult.waiting(success), true)).toBe(false);
+    expect(shouldRefreshQueryOnMount(success, false)).toBe(false);
   });
 });
 

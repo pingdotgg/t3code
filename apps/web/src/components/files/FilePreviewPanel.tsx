@@ -670,7 +670,9 @@ export default function FilePreviewPanel({
     reportFailure: false,
   });
   const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
-  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
+  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage, {
+    refreshOnMount: true,
+  });
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [markdownView, setMarkdownView] = useState<{
     path: string | null;

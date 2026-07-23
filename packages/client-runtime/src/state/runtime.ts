@@ -68,6 +68,13 @@ export interface AtomCommandReporter {
   readonly error: (message: string, cause: Cause.Cause<unknown>) => void;
 }
 
+export function shouldRefreshQueryOnMount(
+  result: AsyncResult.AsyncResult<unknown, unknown>,
+  enabled: boolean,
+): boolean {
+  return enabled && result._tag !== "Initial" && !result.waiting;
+}
+
 export interface AtomCommand<W, A, E> {
   readonly label: string;
   readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
