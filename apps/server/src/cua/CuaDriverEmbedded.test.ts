@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
 
@@ -29,68 +29,69 @@ describe("embedded cua-driver Codex configuration", () => {
     );
   });
 
-  it("reports every unexpected driver exit regardless of its status", async () => {
-    const exits: ReadonlyArray<EmbeddedDriverExit> = [
-      { generation: "generation-1", code: 9, success: false },
-      { generation: "generation-2", code: 0, success: true },
-    ];
-    const observed: Array<EmbeddedDriverExit> = [];
+  it.effect("reports every unexpected driver exit regardless of its status", () =>
+    Effect.gen(function* () {
+      const exits: ReadonlyArray<EmbeddedDriverExit> = [
+        { generation: "generation-1", code: 9, success: false },
+        { generation: "generation-2", code: 0, success: true },
+      ];
+      const observed: Array<EmbeddedDriverExit> = [];
 
-    for (const exit of exits) {
-      await Effect.runPromise(
-        monitorEmbeddedCuaDriverExit(
+      for (const exit of exits) {
+        yield* monitorEmbeddedCuaDriverExit(
           () => Promise.resolve(exit),
           (value) =>
             Effect.sync(() => {
               observed.push(value);
             }),
-        ),
-      );
-    }
+        );
+      }
 
-    expect(observed).toEqual(exits);
-  });
+      expect(observed).toEqual(exits);
+    }),
+  );
 
-  it("does not report an exit when its scope shuts down", async () => {
+  it.effect("does not report an exit when its scope shuts down", () => {
     let reported = false;
 
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* monitorEmbeddedCuaDriverExit(
-            () => new Promise<EmbeddedDriverExit>(() => {}),
-            () =>
-              Effect.sync(() => {
-                reported = true;
-              }),
-          ).pipe(Effect.forkScoped);
-          yield* Effect.yieldNow;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* monitorEmbeddedCuaDriverExit(
+          () => new Promise<EmbeddedDriverExit>(() => {}),
+          () =>
+            Effect.sync(() => {
+              reported = true;
+            }),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => expect(reported).toBe(false))));
+  });
+
+  it.effect("restores prior Codex launch arguments once when Cua becomes unavailable", () => {
+    const original = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+    process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = "--existing";
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const deactivate = yield* installCodexLaunchArgs("--cua");
+        expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing --cua");
+        expect(yield* deactivate()).toBe(true);
+        expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing");
+        expect(yield* deactivate()).toBe(false);
+      }),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() =>
+          expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing"),
+        ),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (original === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+          else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = original;
         }),
       ),
     );
-
-    expect(reported).toBe(false);
-  });
-
-  it("restores prior Codex launch arguments once when Cua becomes unavailable", async () => {
-    const original = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-    process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = "--existing";
-    try {
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const deactivate = yield* installCodexLaunchArgs("--cua");
-            expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing --cua");
-            expect(yield* deactivate()).toBe(true);
-            expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing");
-            expect(yield* deactivate()).toBe(false);
-          }),
-        ),
-      );
-      expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing");
-    } finally {
-      if (original === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-      else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = original;
-    }
   });
 });

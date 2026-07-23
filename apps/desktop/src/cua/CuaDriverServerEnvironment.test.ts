@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -44,7 +44,7 @@ describe("cua-driver server environment", () => {
     expect(Option.isNone(resolveEmbeddedDriverPath({ T3CODE_CUA_DRIVER_PATH: "  " }))).toBe(true);
   });
 
-  it("prevents inherited configuration from bypassing the desktop opt-in", async () => {
+  it.effect("prevents inherited configuration from bypassing the desktop opt-in", () => {
     const names = [
       T3CODE_CUA_DRIVER_PATH_ENV,
       T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV,
@@ -52,22 +52,27 @@ describe("cua-driver server environment", () => {
     ] as const;
     const previous = Object.fromEntries(names.map((name) => [name, process.env[name]] as const));
     for (const name of names) process.env[name] = `inherited-${name}`;
-    try {
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            yield* disableCuaDriverServerEnvironment();
-            for (const name of names) expect(process.env[name]).toBeUndefined();
-          }),
-        ),
-      );
-      for (const name of names) expect(process.env[name]).toBe(`inherited-${name}`);
-    } finally {
-      for (const name of names) {
-        const value = previous[name];
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-      }
-    }
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* disableCuaDriverServerEnvironment();
+        for (const name of names) expect(process.env[name]).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          for (const name of names) expect(process.env[name]).toBe(`inherited-${name}`);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          for (const name of names) {
+            const value = previous[name];
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+          }
+        }),
+      ),
+    );
   });
 });

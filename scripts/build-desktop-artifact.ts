@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -1572,7 +1572,9 @@ const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(function*
   const checksum = (filePath: string) =>
     fs
       .readFile(filePath)
-      .pipe(Effect.map((contents) => createHash("sha256").update(contents).digest("hex")));
+      .pipe(
+        Effect.map((contents) => NodeCrypto.createHash("sha256").update(contents).digest("hex")),
+      );
   if ((yield* fs.exists(archivePath)) && (yield* checksum(archivePath)) !== asset.sha256) {
     yield* fs.remove(archivePath, { force: true });
   }
