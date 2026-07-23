@@ -1,10 +1,7 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
@@ -62,7 +59,10 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import {
+  buildSidebarProjectSnapshots,
+  type SidebarProjectSnapshot,
+} from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -894,66 +894,86 @@ export default function SidebarV2() {
   }, [clearSelection, projectScopeKey]);
 
   const handleRemoveProject = useCallback(
-    async (project: EnvironmentProject) => {
+    async (projectGroup: SidebarProjectSnapshot) => {
       const api = readLocalApi();
       if (!api) return;
 
-      const projectThreads = threads.filter(
-        (thread) =>
-          thread.environmentId === project.environmentId && thread.projectId === project.id,
+      const memberKeys = new Set(
+        projectGroup.memberProjectRefs.map(
+          (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+        ),
+      );
+      const projectThreads = threads.filter((thread) =>
+        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           projectThreads.length > 0
             ? [
-                `Remove project "${project.title}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
-                `Path: ${project.workspaceRoot}`,
+                `Remove project "${projectGroup.displayName}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
+                ...(projectGroup.memberProjects.length === 1
+                  ? [`Path: ${projectGroup.workspaceRoot}`]
+                  : [
+                      `This removes ${projectGroup.memberProjects.length} grouped project entries.`,
+                    ]),
                 "This permanently clears conversation history for those threads.",
-                "This removes only the project entry, not the files on disk.",
+                "This removes only the project entries, not the files on disk.",
                 "This action cannot be undone.",
               ].join("\n")
             : [
-                `Remove project "${project.title}"?`,
-                `Path: ${project.workspaceRoot}`,
-                "This removes only the project entry, not the files on disk.",
+                `Remove project "${projectGroup.displayName}"?`,
+                ...(projectGroup.memberProjects.length === 1
+                  ? [`Path: ${projectGroup.workspaceRoot}`]
+                  : [
+                      `This removes ${projectGroup.memberProjects.length} grouped project entries.`,
+                    ]),
+                "This removes only the project entries, not the files on disk.",
               ].join("\n"),
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
 
-      const projectRef = scopeProjectRef(project.environmentId, project.id);
-      const result = await deleteProject({
-        environmentId: project.environmentId,
-        input: {
-          projectId: project.id,
-          ...(projectThreads.length > 0 ? { force: true } : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `Failed to remove "${project.title}"`,
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-
       const draftStore = useComposerDraftStore.getState();
-      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-      const shouldNavigate = shouldNavigateAfterProjectRemoval({
-        routeTarget: routeTargetRef.current,
-        projectThreads,
-        projectDraftId: projectDraftThread?.draftId ?? null,
-      });
-      if (projectDraftThread) {
-        draftStore.clearDraftThread(projectDraftThread.draftId);
+      let shouldNavigate = false;
+      for (const project of projectGroup.memberProjects) {
+        const memberThreads = projectThreads.filter(
+          (thread) =>
+            thread.environmentId === project.environmentId && thread.projectId === project.id,
+        );
+        const projectRef = scopeProjectRef(project.environmentId, project.id);
+        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+        shouldNavigate ||= shouldNavigateAfterProjectRemoval({
+          routeTarget: routeTargetRef.current,
+          projectThreads: memberThreads,
+          projectDraftId: projectDraftThread?.draftId ?? null,
+        });
+
+        const result = await deleteProject({
+          environmentId: project.environmentId,
+          input: {
+            projectId: project.id,
+            ...(memberThreads.length > 0 ? { force: true } : {}),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: `Failed to remove "${project.title}"`,
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+
+        if (projectDraftThread) {
+          draftStore.clearDraftThread(projectDraftThread.draftId);
+        }
+        draftStore.clearProjectDraftThreadId(projectRef);
       }
-      draftStore.clearProjectDraftThreadId(projectRef);
 
       if (shouldNavigate) {
         void router.navigate({ to: "/" });
@@ -1650,11 +1670,11 @@ export default function SidebarV2() {
                             cwd={project.workspaceRoot}
                             className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate text-sm">{project.title}</span>
+                          <span className="min-w-0 truncate text-sm">{project.displayName}</span>
                           <button
                             type="button"
-                            aria-label={`Remove project ${project.title}`}
-                            title={`Remove ${project.title}`}
+                            aria-label={`Remove project ${project.displayName}`}
+                            title={`Remove ${project.displayName}`}
                             className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-destructive/12 hover:text-destructive focus-visible:bg-destructive/12 focus-visible:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
