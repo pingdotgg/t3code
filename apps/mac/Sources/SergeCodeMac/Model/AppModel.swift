@@ -1224,6 +1224,12 @@ public final class AppModel {
         enqueueMessage(threadID: threadID, text: text, attachments: attachments)
     }
 
+    /// Resolves a persisted chat attachment to a loadable image URL
+    /// (`assets.createUrl`). Callers should treat the URL as short-lived.
+    public func attachmentImageURL(id: String) async throws -> URL {
+        try await backend.attachmentImageURL(id: id)
+    }
+
     @discardableResult
     public func takeQueuedMessage(id: String, from threadID: String) -> QueuedOutgoingMessage? {
         guard var queue = queuedMessagesByThread[threadID],
@@ -1377,7 +1383,7 @@ public final class AppModel {
     {
         guard
             let start = timeline.firstIndex(where: {
-                if case .userMessage(let id, _, _) = $0 { return id == messageID }
+                if case .userMessage(let id, _, _, _) = $0 { return id == messageID }
                 return false
             })
         else { return nil }
@@ -1400,7 +1406,7 @@ public final class AppModel {
     {
         var index = 0
         for item in timeline {
-            guard case .userMessage(let id, _, _) = item else { continue }
+            guard case .userMessage(let id, _, _, _) = item else { continue }
             if id == messageID { return index }
             index += 1
         }

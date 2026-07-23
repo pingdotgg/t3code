@@ -432,13 +432,29 @@ public enum UsageLimitActionState: Equatable, Sendable {
     case failed(String)
 }
 
+/// Image (or future media) metadata on a user message. Bytes are not embedded —
+/// resolve via `BackendService.attachmentImageURL(id:)` / `assets.createUrl`.
+public struct MessageAttachment: Identifiable, Equatable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+    public var mimeType: String
+    public var sizeBytes: Int
+
+    public init(id: String, name: String, mimeType: String, sizeBytes: Int) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+    }
+}
+
 /// `Equatable` is load-bearing for render cost, not just convenience: the
 /// display cache uses it to reuse untouched rows across a streaming refresh,
 /// and `ChatTimelineRowView` uses it to skip re-rendering rows whose content
 /// did not change. Every payload is `Hashable`, so the conformance is
 /// synthesized.
 public enum TimelineItem: Identifiable, Equatable, Sendable {
-    case userMessage(id: String, text: String, at: Date)
+    case userMessage(id: String, text: String, attachments: [MessageAttachment], at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
     /// `output` is the tool's result text when available (command stdout,
     /// etc.); `outputIsError` is true for Claude tool_result errors.
@@ -461,7 +477,7 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
 
     public var id: String {
         switch self {
-        case .userMessage(let id, _, _): id
+        case .userMessage(let id, _, _, _): id
         case .assistantMessage(let id, _, _, _): id
         case .toolEvent(let id, _, _, _, _, _, _, _): id
         case .approval(let request): request.id
@@ -481,7 +497,7 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
     /// entity; a subagent row starts at the task's start time.
     public var at: Date? {
         switch self {
-        case .userMessage(_, _, let at): at
+        case .userMessage(_, _, _, let at): at
         case .assistantMessage(_, _, _, let at): at
         case .toolEvent(_, _, _, _, _, let at, _, _): at
         case .approval(let request): request.createdAt

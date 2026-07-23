@@ -28,13 +28,13 @@ struct ReviewFollowUpTests {
 
     private func answeredTimeline(lastUserMessage: String? = nil) -> [TimelineItem] {
         var timeline: [TimelineItem] = [
-            .userMessage(id: "u1", text: "add the thing", at: Date(timeIntervalSince1970: 1)),
+            .userMessage(id: "u1", text: "add the thing", attachments: [], at: Date(timeIntervalSince1970: 1)),
             .assistantMessage(
                 id: "a1", markdown: "done", isStreaming: false, at: Date(timeIntervalSince1970: 2)),
         ]
         if let lastUserMessage {
             timeline.append(
-                .userMessage(id: "u2", text: lastUserMessage, at: Date(timeIntervalSince1970: 3)))
+                .userMessage(id: "u2", text: lastUserMessage, attachments: [], at: Date(timeIntervalSince1970: 3)))
         }
         return timeline
     }
@@ -148,7 +148,7 @@ struct ReviewFollowUpTests {
             ReviewLifecycle.followUp(
                 threadStatus: .idle, vcs: status(unresolvedReviewThreadCount: 2),
                 timeline: [
-                    .userMessage(id: "u1", text: "hi", at: Date(timeIntervalSince1970: 1))
+                    .userMessage(id: "u1", text: "hi", attachments: [], at: Date(timeIntervalSince1970: 1))
                 ]) == ReviewFollowUp.none)
     }
 }

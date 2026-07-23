@@ -26,8 +26,7 @@ struct AppModelTimelineEvictionTests {
         let items: [TimelineItem] = (0..<itemCount).map { index in
             .userMessage(
                 id: "\(threadID)-u\(index)",
-                text: "seed \(index)",
-                at: Date(timeIntervalSince1970: Double(index)))
+                text: "seed \(index)", attachments: [], at: Date(timeIntervalSince1970: Double(index)))
         }
         model.enqueue(.timelineReset(threadID: threadID, items: items))
         model.flushPendingEvents()
@@ -172,7 +171,7 @@ struct AppModelTimelineEvictionTests {
         let model = AppModel(backend: backend)
         let ids = (1...5).map { "thread-\($0)" }
         let stale = TimelineItem.userMessage(
-            id: "stale", text: "retained while refetching", at: Date(timeIntervalSince1970: 1))
+            id: "stale", text: "retained while refetching", attachments: [], at: Date(timeIntervalSince1970: 1))
         model.enqueue(.timelineReset(threadID: ids[0], items: [stale]))
         model.flushPendingEvents()
         for id in ids.dropFirst() { seedTimeline(model, threadID: id) }

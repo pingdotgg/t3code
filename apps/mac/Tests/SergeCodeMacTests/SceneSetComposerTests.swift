@@ -282,6 +282,9 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func deleteThread(id: String) async throws {}
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {}
+    func attachmentImageURL(id: String) async throws -> URL {
+        throw CancellationError()
+    }
     func cancelTurn(threadID: String) async throws {}
     func stopTask(threadID: String, taskId: String) async throws {}
     func respondToApproval(id: String, approve: Bool) async throws {}

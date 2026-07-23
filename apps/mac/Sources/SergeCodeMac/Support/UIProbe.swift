@@ -162,7 +162,7 @@
             await model.cancelCurrentTurn()
             try? await Task.sleep(for: .seconds(2))
             let autoSent = model.selectedTimeline().contains {
-                if case .userMessage(_, let text, _) = $0 {
+                if case .userMessage(_, let text, _, _) = $0 {
                     return text.contains(queuedMarker)
                 }
                 return false
@@ -1007,7 +1007,7 @@
 
         private static func firstUserMessageText(_ model: AppModel) -> String? {
             for item in model.selectedTimeline() {
-                if case .userMessage(_, let text, _) = item { return text }
+                if case .userMessage(_, let text, _, _) = item { return text }
             }
             return nil
         }

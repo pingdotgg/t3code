@@ -38,7 +38,7 @@ struct TimelineGroupingCacheTests {
         TimelineDisplayCache.resetForTesting()
         let date = Date(timeIntervalSince1970: 1)
         let initialItems: [TimelineItem] = [
-            .userMessage(id: "user-1", text: "hello", at: date),
+            .userMessage(id: "user-1", text: "hello", attachments: [], at: date),
             .assistantMessage(id: "assistant-1", markdown: "old", isStreaming: true, at: date),
         ]
 
@@ -46,7 +46,7 @@ struct TimelineGroupingCacheTests {
         #expect(TimelineDisplayCache.fullPassCount == 1)
 
         let refreshedItems: [TimelineItem] = [
-            .userMessage(id: "user-1", text: "hello", at: date),
+            .userMessage(id: "user-1", text: "hello", attachments: [], at: date),
             .assistantMessage(
                 id: "assistant-1", markdown: "new markdown", isStreaming: true, at: date),
         ]
@@ -72,7 +72,7 @@ struct TimelineGroupingCacheTests {
         let date = Date(timeIntervalSince1970: 1)
         func items(assistantMarkdown: String) -> [TimelineItem] {
             [
-                .userMessage(id: "user-1", text: "hello", at: date),
+                .userMessage(id: "user-1", text: "hello", attachments: [], at: date),
                 .notice(id: "notice-1", text: "heads up", at: date),
                 .assistantMessage(
                     id: "assistant-1", markdown: assistantMarkdown, isStreaming: true, at: date),

@@ -66,7 +66,7 @@ enum ReviewLifecycle {
     /// prompt we sent, so no extra thread state has to be tracked.
     private static func isFixTurnRunning(timeline: [TimelineItem]) -> Bool {
         for item in timeline.reversed() {
-            if case .userMessage(_, let text, _) = item {
+            if case .userMessage(_, let text, _, _) = item {
                 return text == fixReviewCommentsPrompt
             }
         }

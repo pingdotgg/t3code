@@ -16,14 +16,14 @@ struct AppModelEditResendTests {
 
     private func userTexts(_ items: [TimelineItem]) -> [String] {
         items.compactMap {
-            if case .userMessage(_, let text, _) = $0 { return text }
+            if case .userMessage(_, let text, _, _) = $0 { return text }
             return nil
         }
     }
 
     private func userIDs(_ items: [TimelineItem]) -> [String] {
         items.compactMap {
-            if case .userMessage(let id, _, _) = $0 { return id }
+            if case .userMessage(let id, _, _, _) = $0 { return id }
             return nil
         }
     }
@@ -34,12 +34,12 @@ struct AppModelEditResendTests {
     func mappingUsesCheckpointTurnCount() {
         let now = Date()
         let timeline: [TimelineItem] = [
-            .userMessage(id: "u1", text: "first", at: now),
+            .userMessage(id: "u1", text: "first", attachments: [], at: now),
             .assistantMessage(id: "a1", markdown: "r1", isStreaming: false, at: now),
             .checkpoint(
                 Checkpoint(
                     id: "ck1", threadID: "t", label: "Turn 1", createdAt: now, turnCount: 1)),
-            .userMessage(id: "u2", text: "second", at: now),
+            .userMessage(id: "u2", text: "second", attachments: [], at: now),
             .assistantMessage(id: "a2", markdown: "r2", isStreaming: false, at: now),
             .checkpoint(
                 Checkpoint(
@@ -53,9 +53,9 @@ struct AppModelEditResendTests {
     func mappingFallsBackToUserIndex() {
         let now = Date()
         let timeline: [TimelineItem] = [
-            .userMessage(id: "u1", text: "first", at: now),
+            .userMessage(id: "u1", text: "first", attachments: [], at: now),
             .assistantMessage(id: "a1", markdown: "r1", isStreaming: false, at: now),
-            .userMessage(id: "u2", text: "second — stopped mid-turn", at: now),
+            .userMessage(id: "u2", text: "second — stopped mid-turn", attachments: [], at: now),
         ]
         #expect(AppModel.revertTurnCount(forUserMessageID: "u1", in: timeline) == 0)
         #expect(AppModel.revertTurnCount(forUserMessageID: "u2", in: timeline) == 1)
@@ -64,7 +64,7 @@ struct AppModelEditResendTests {
     @Test("unknown message id yields nil")
     func mappingUnknownMessage() {
         let timeline: [TimelineItem] = [
-            .userMessage(id: "u1", text: "hi", at: Date())
+            .userMessage(id: "u1", text: "hi", attachments: [], at: Date())
         ]
         #expect(AppModel.revertTurnCount(forUserMessageID: "missing", in: timeline) == nil)
     }
@@ -78,9 +78,9 @@ struct AppModelEditResendTests {
             id: "t-edit", projectID: "p1", title: "Edit", provider: .codex,
             status: .idle, updatedAt: now)
         let seeded: [TimelineItem] = [
-            .userMessage(id: "u1", text: "first turn", at: now),
+            .userMessage(id: "u1", text: "first turn", attachments: [], at: now),
             .assistantMessage(id: "a1", markdown: "reply one", isStreaming: false, at: now),
-            .userMessage(id: "u2", text: "second turn", at: now),
+            .userMessage(id: "u2", text: "second turn", attachments: [], at: now),
             .assistantMessage(id: "a2", markdown: "reply two", isStreaming: false, at: now),
         ]
         let backend = RecordingBackend(
@@ -136,7 +136,7 @@ struct AppModelEditResendTests {
             id: "t-b", projectID: "p1", title: "B", provider: .codex,
             status: .idle, updatedAt: now)
         let seededA: [TimelineItem] = [
-            .userMessage(id: "u-a", text: "only on A", at: now),
+            .userMessage(id: "u-a", text: "only on A", attachments: [], at: now),
             .assistantMessage(id: "a-a", markdown: "reply A", isStreaming: false, at: now),
         ]
         let backend = RecordingBackend(
@@ -287,11 +287,15 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
     {
         sentTexts.append(text)
         sentThreadIDs.append(threadID)
-        let item = TimelineItem.userMessage(id: "sent-\(sentTexts.count)", text: text, at: Date())
+        let item = TimelineItem.userMessage(id: "sent-\(sentTexts.count)", text: text, attachments: [], at: Date())
         timelines[threadID, default: []].append(item)
         let event = BackendEvent.timelineAppended(threadID: threadID, item: item)
         emitted.append(event)
         continuation.yield(event)
+    }
+
+    func attachmentImageURL(id: String) async throws -> URL {
+        throw CancellationError()
     }
 
     func cancelTurn(threadID: String) async throws {}

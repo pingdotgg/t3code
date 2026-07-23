@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import T3Kit
 
@@ -127,9 +128,10 @@ struct ChatTimelineRowView: View, Equatable {
     @ViewBuilder
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .userMessage(let id, let text, let at):
+        case .userMessage(let id, let text, let attachments, let at):
             UserMessageBubble(
-                messageID: id, text: text, threadID: threadID, model: model, at: at,
+                messageID: id, text: text, attachments: attachments, threadID: threadID,
+                model: model, at: at,
                 canSend: context.isConnectionReady && context.threadStatus != .running)
         case .assistantMessage(let id, let markdown, let isStreaming, let at):
             AssistantMarkdownView(
@@ -220,6 +222,7 @@ struct ChatTimelineRowView: View, Equatable {
 private struct UserMessageBubble: View {
     let messageID: String
     let text: String
+    let attachments: [MessageAttachment]
     let threadID: String
     let model: AppModel
     let at: Date?
@@ -233,6 +236,7 @@ private struct UserMessageBubble: View {
     /// Local double-click guard: `canResend` flips only after the thread's
     /// status round-trips to `.running`, which is async.
     @UIState private var isResending = false
+    @UIState private var previewAttachment: MessageAttachment?
     @Environment(\.openSelectText) private var openSelectText
 
     /// Resending mid-turn would interleave with the running agent; the
@@ -247,75 +251,78 @@ private struct UserMessageBubble: View {
         return String(text.prefix(1_600)) + "\n\n…"
     }
 
+    private var hasText: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            VStack(alignment: .trailing, spacing: 2) {
-                AssistantMarkdownView(
-                    markdown: visibleText,
-                    isStreaming: false,
-                    threadID: threadID,
-                    model: model,
-                    style: .userBubble)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        LinearGradient(
-                            colors: [AlpineTheme.userBubbleTop, AlpineTheme.userBubbleBottom],
-                            startPoint: .top,
-                            endPoint: .bottom),
-                        in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
-                    .foregroundStyle(AlpineTheme.forest)
-                    .overlay(alignment: .topTrailing) {
-                        MessageActionChip {
-                            CopyActionButton(text: text)
-                            MessageActionButton(
-                                systemImage: "pencil", help: "Edit in composer and resend",
-                                disabled: !canResend
-                            ) {
+            VStack(alignment: .trailing, spacing: 6) {
+                if !attachments.isEmpty {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        ForEach(attachments) { attachment in
+                            ChatAttachmentThumbnail(
+                                attachment: attachment,
+                                model: model,
+                                onOpen: { previewAttachment = attachment })
+                        }
+                    }
+                }
+
+                if hasText {
+                    AssistantMarkdownView(
+                        markdown: visibleText,
+                        isStreaming: false,
+                        threadID: threadID,
+                        model: model,
+                        style: .userBubble)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            LinearGradient(
+                                colors: [AlpineTheme.userBubbleTop, AlpineTheme.userBubbleBottom],
+                                startPoint: .top,
+                                endPoint: .bottom),
+                            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+                        .foregroundStyle(AlpineTheme.forest)
+                        .overlay(alignment: .topTrailing) {
+                            messageActions
+                        }
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
+                                .strokeBorder(AlpineTheme.forest.opacity(0.14), lineWidth: 1))
+                        .overlay(alignment: .bottomLeading) {
+                            if isLarge {
+                                Button(isExpanded ? "Show Less" : "Show More") {
+                                    isExpanded.toggle()
+                                }
+                                .buttonStyle(.plain)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(AlpineTheme.forest.opacity(0.78))
+                                .padding(.leading, 14)
+                                .padding(.bottom, 5)
+                            }
+                        }
+                        .contextMenu {
+                            Button("Copy") { Pasteboard.copy(text) }
+                            Button("Edit in Composer") {
                                 model.stageComposerText(text, editedMessageID: messageID)
                             }
-                            MessageActionButton(
-                                systemImage: "arrow.clockwise", help: "Send this message again",
-                                disabled: !canResend
-                            ) {
-                                resend()
-                            }
-                        }
-                        .opacity(isHovering ? 1 : 0)
-                        .allowsHitTesting(isHovering)
-                        .accessibilityHidden(!isHovering)
-                        .padding(3)
-                    }
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
-                            .strokeBorder(AlpineTheme.forest.opacity(0.14), lineWidth: 1))
-                    .overlay(alignment: .bottomLeading) {
-                        if isLarge {
-                            Button(isExpanded ? "Show Less" : "Show More") {
-                                isExpanded.toggle()
-                            }
-                            .buttonStyle(.plain)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(AlpineTheme.forest.opacity(0.78))
-                            .padding(.leading, 14)
-                            .padding(.bottom, 5)
-                        }
-                    }
-                    .contextMenu {
-                        Button("Copy") { Pasteboard.copy(text) }
-                        Button("Edit in Composer") {
-                            model.stageComposerText(text, editedMessageID: messageID)
-                        }
-                        .disabled(!canResend)
-                        Button("Retry") { resend() }
                             .disabled(!canResend)
-                        if let openSelectText {
-                            Divider()
-                            Button("Select Text…") { openSelectText() }
+                            Button("Retry") { resend() }
+                                .disabled(!canResend)
+                            if let openSelectText {
+                                Divider()
+                                Button("Select Text…") { openSelectText() }
+                            }
                         }
-                    }
+                } else if !attachments.isEmpty {
+                    // Attachment-only messages still need edit/retry affordances.
+                    messageActions
+                        .padding(3)
+                }
 
                 if let at, isHovering {
                     TranscriptTimestamp(date: at)
@@ -326,7 +333,35 @@ private struct UserMessageBubble: View {
             // row — the spacer's empty area shouldn't reveal actions.
             .onHover { isHovering = $0 }
             .animation(Motion.feedback, value: isHovering)
+            .sheet(item: $previewAttachment) { attachment in
+                ChatAttachmentPreviewSheet(attachment: attachment, model: model)
+            }
         }
+    }
+
+    @ViewBuilder
+    private var messageActions: some View {
+        MessageActionChip {
+            if hasText {
+                CopyActionButton(text: text)
+            }
+            MessageActionButton(
+                systemImage: "pencil", help: "Edit in composer and resend",
+                disabled: !canResend
+            ) {
+                model.stageComposerText(text, editedMessageID: messageID)
+            }
+            MessageActionButton(
+                systemImage: "arrow.clockwise", help: "Send this message again",
+                disabled: !canResend
+            ) {
+                resend()
+            }
+        }
+        .opacity(isHovering ? 1 : 0)
+        .allowsHitTesting(isHovering)
+        .accessibilityHidden(!isHovering)
+        .padding(3)
     }
 
     private func resend() {
@@ -341,6 +376,188 @@ private struct UserMessageBubble: View {
             isResending = false
         }
     }
+}
+
+// MARK: - Attachment thumbnails
+
+private enum AttachmentImagePhase: Equatable {
+    case loading
+    case loaded
+    case failed
+}
+
+private struct ChatAttachmentThumbnail: View {
+    let attachment: MessageAttachment
+    let model: AppModel
+    let onOpen: () -> Void
+
+    @UIState private var phase: AttachmentImagePhase = .loading
+    @UIState private var image: NSImage?
+    @UIState private var reloadToken = 0
+
+    var body: some View {
+        Button(action: onOpen) {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                    .fill(AlpineTheme.userBubbleBottom.opacity(0.85))
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                }
+                if phase == .loading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if phase == .failed {
+                    VStack(spacing: 4) {
+                        Image(systemName: "photo")
+                            .font(.title3)
+                        Text("Unavailable")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(AlpineTheme.forest.opacity(0.7))
+                }
+            }
+            .frame(width: 220, height: 160)
+            .clipShape(RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous))
+            .overlay(alignment: .bottom) {
+                HStack {
+                    Text(attachment.name)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(formatAttachmentSize(attachment.sizeBytes))
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.black.opacity(0.55))
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                    .strokeBorder(AlpineTheme.forest.opacity(0.14), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(phase != .loaded)
+        .accessibilityLabel(
+            "\(attachment.name), \(formatAttachmentSize(attachment.sizeBytes)) image. Opens a full-size preview."
+        )
+        .task(id: "\(attachment.id)-\(reloadToken)") {
+            await load()
+        }
+        .contextMenu {
+            if phase == .failed {
+                Button("Retry") { reloadToken += 1 }
+            }
+        }
+    }
+
+    private func load() async {
+        phase = .loading
+        image = nil
+        do {
+            let url = try await model.attachmentImageURL(id: attachment.id)
+            let loaded = try await loadNSImage(from: url)
+            image = loaded
+            phase = .loaded
+        } catch {
+            phase = .failed
+        }
+    }
+}
+
+private struct ChatAttachmentPreviewSheet: View {
+    let attachment: MessageAttachment
+    let model: AppModel
+
+    @Environment(\.dismiss) private var dismiss
+    @UIState private var phase: AttachmentImagePhase = .loading
+    @UIState private var image: NSImage?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(attachment.name)
+                        .font(.headline)
+                    Text(formatAttachmentSize(attachment.sizeBytes))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.06))
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                if phase == .loading {
+                    ProgressView()
+                } else if phase == .failed {
+                    ContentUnavailableView(
+                        "Image unavailable",
+                        systemImage: "photo",
+                        description: Text("Couldn’t load \(attachment.name)"))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(16)
+        .frame(minWidth: 480, minHeight: 360)
+        .task(id: attachment.id) {
+            phase = .loading
+            image = nil
+            do {
+                let url = try await model.attachmentImageURL(id: attachment.id)
+                image = try await loadNSImage(from: url)
+                phase = .loaded
+            } catch {
+                phase = .failed
+            }
+        }
+    }
+}
+
+private func formatAttachmentSize(_ sizeBytes: Int) -> String {
+    if sizeBytes < 1024 { return "\(sizeBytes) B" }
+    let units = ["KB", "MB", "GB"]
+    var value = Double(sizeBytes)
+    var unitIndex = -1
+    while value >= 1024, unitIndex < units.count - 1 {
+        value /= 1024
+        unitIndex += 1
+    }
+    if value >= 10 || value.rounded() == value {
+        return "\(Int(value.rounded())) \(units[unitIndex])"
+    }
+    return String(format: "%.1f %@", value, units[unitIndex])
+}
+
+private func loadNSImage(from url: URL) async throws -> NSImage {
+    if url.scheme == "data" {
+        let absolute = url.absoluteString
+        guard let marker = absolute.range(of: "base64,"),
+            let data = Data(base64Encoded: String(absolute[marker.upperBound...])),
+            let image = NSImage(data: data)
+        else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        return image
+    }
+    let (data, response) = try await URLSession.shared.data(from: url)
+    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+        throw URLError(.badServerResponse)
+    }
+    guard let image = NSImage(data: data) else {
+        throw URLError(.cannotDecodeContentData)
+    }
+    return image
 }
 
 /// A finished burst of tool work, condensed to one disclosure row once the

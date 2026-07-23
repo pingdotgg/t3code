@@ -14,7 +14,7 @@ struct TranscriptTextBuilderTests {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let items: [TimelineDisplayItem] = [
             .single(
-                .userMessage(id: "u1", text: "Please fix the sort.", at: now)),
+                .userMessage(id: "u1", text: "Please fix the sort.", attachments: [], at: now)),
             .single(
                 .assistantMessage(
                     id: "a1",
