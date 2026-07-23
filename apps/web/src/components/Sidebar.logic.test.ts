@@ -281,6 +281,106 @@ describe("sidebar thread filters", () => {
     ).toBe(false);
   });
 
+  it("matches unread live threads through either their live or unread status facet", () => {
+    const workingThread = {
+      ...filterableThread,
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    } as const;
+
+    expect(
+      matchesSidebarThreadFilters({
+        thread: workingThread,
+        isExplicitlyUnread: true,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["unread"] },
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: workingThread,
+        isExplicitlyUnread: true,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["working"] },
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: workingThread,
+        isExplicitlyUnread: true,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["done"] },
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, latestTurn: makeLatestTurn() },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["unread"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("composes the attention quick filter with live and unread status facets", () => {
+    const workingThread = {
+      ...filterableThread,
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    } as const;
+
+    for (const statuses of [["working"], ["unread"]] as const) {
+      expect(
+        matchesSidebarThreadFilters({
+          thread: workingThread,
+          isExplicitlyUnread: true,
+          providerDriverKind: ProviderDriverKind.make("codex"),
+          filters: {
+            ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+            attentionOnly: true,
+            statuses: [...statuses],
+          },
+        }),
+      ).toBe(true);
+    }
+    expect(
+      matchesSidebarThreadFilters({
+        thread: workingThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          attentionOnly: true,
+          statuses: ["working"],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, hasPendingUserInput: true },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          attentionOnly: true,
+          statuses: ["needs_attention"],
+        },
+      }),
+    ).toBe(true);
+  });
+
   it("matches recent activity within the last seven days", () => {
     const filters = {
       ...DEFAULT_SIDEBAR_THREAD_FILTERS,
