@@ -10,6 +10,7 @@ import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  resolveComposerPickerOpenChange,
   resolveModelOptionsShortcutTarget,
   toggleCompactControlsMenuForShortcut,
 } from "./composerProviderState";
@@ -118,6 +119,58 @@ describe("toggleCompactControlsMenuForShortcut", () => {
   it("closes a menu that was opened directly", () => {
     expect(toggleCompactControlsMenuForShortcut("direct", "model-options")).toBeNull();
     expect(toggleCompactControlsMenuForShortcut("direct", "runtime-mode")).toBeNull();
+  });
+});
+
+describe("resolveComposerPickerOpenChange", () => {
+  const closed = {
+    modelOpen: false,
+    traitsOpen: false,
+    runtimeModeOpen: false,
+    compactControlsMenuOpenSource: null,
+  } as const;
+
+  it("keeps keyboard-opened composer pickers mutually exclusive", () => {
+    const modelOpen = resolveComposerPickerOpenChange(closed, "model", true);
+    const traitsOpen = resolveComposerPickerOpenChange(modelOpen, "traits", true);
+    const runtimeModeOpen = resolveComposerPickerOpenChange(traitsOpen, "runtime-mode", true);
+
+    expect(modelOpen).toEqual({ ...closed, modelOpen: true });
+    expect(traitsOpen).toEqual({ ...closed, traitsOpen: true });
+    expect(runtimeModeOpen).toEqual({ ...closed, runtimeModeOpen: true });
+  });
+
+  it("treats the compact controls menu as the only open picker", () => {
+    const modelOpen = resolveComposerPickerOpenChange(closed, "model", true);
+    const compactOpen = resolveComposerPickerOpenChange(
+      modelOpen,
+      "compact-controls-menu",
+      true,
+      "model-options",
+    );
+    const switchedSource = resolveComposerPickerOpenChange(
+      compactOpen,
+      "compact-controls-menu",
+      true,
+      "runtime-mode",
+    );
+
+    expect(compactOpen).toEqual({
+      ...closed,
+      compactControlsMenuOpenSource: "model-options",
+    });
+    expect(switchedSource).toEqual({
+      ...closed,
+      compactControlsMenuOpenSource: "runtime-mode",
+    });
+  });
+
+  it("does not close the active picker when a previous picker reports closing", () => {
+    const runtimeModeOpen = { ...closed, runtimeModeOpen: true };
+
+    expect(resolveComposerPickerOpenChange(runtimeModeOpen, "traits", false)).toEqual(
+      runtimeModeOpen,
+    );
   });
 });
 

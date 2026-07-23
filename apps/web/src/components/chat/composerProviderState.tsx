@@ -43,6 +43,42 @@ export type ComposerProviderState = {
 
 export type ModelOptionsShortcutTarget = "compact-controls-menu" | "traits-picker";
 export type CompactControlsMenuOpenSource = "direct" | "model-options" | "runtime-mode";
+export type ComposerPicker = "model" | "traits" | "runtime-mode" | "compact-controls-menu";
+
+export type ComposerPickerState = {
+  readonly modelOpen: boolean;
+  readonly traitsOpen: boolean;
+  readonly runtimeModeOpen: boolean;
+  readonly compactControlsMenuOpenSource: CompactControlsMenuOpenSource | null;
+};
+
+export function resolveComposerPickerOpenChange(
+  current: ComposerPickerState,
+  picker: ComposerPicker,
+  open: boolean,
+  compactControlsMenuOpenSource: CompactControlsMenuOpenSource = "direct",
+): ComposerPickerState {
+  if (!open) {
+    switch (picker) {
+      case "model":
+        return { ...current, modelOpen: false };
+      case "traits":
+        return { ...current, traitsOpen: false };
+      case "runtime-mode":
+        return { ...current, runtimeModeOpen: false };
+      case "compact-controls-menu":
+        return { ...current, compactControlsMenuOpenSource: null };
+    }
+  }
+
+  return {
+    modelOpen: picker === "model",
+    traitsOpen: picker === "traits",
+    runtimeModeOpen: picker === "runtime-mode",
+    compactControlsMenuOpenSource:
+      picker === "compact-controls-menu" ? compactControlsMenuOpenSource : null,
+  };
+}
 
 export function toggleCompactControlsMenuForShortcut(
   current: CompactControlsMenuOpenSource | null,
