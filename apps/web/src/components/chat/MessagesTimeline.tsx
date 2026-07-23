@@ -1997,12 +1997,15 @@ function toWorkspaceRelativeFilePath(
   filePath: string,
   workspaceRoot: string | undefined,
 ): string | null {
-  const normalizedPath = filePath.replaceAll("\\", "/");
+  const normalizedPath = filePath.replaceAll("\\", "/").replace(/^\/(?=[A-Za-z]:\/)/, "");
   if (!workspaceRoot) {
     return normalizedPath.startsWith("/") ? null : normalizedPath.replace(/^\.\/+/, "");
   }
 
-  const normalizedRoot = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  const normalizedRoot = workspaceRoot
+    .replaceAll("\\", "/")
+    .replace(/^\/(?=[A-Za-z]:\/)/, "")
+    .replace(/\/+$/, "");
   const rootWithSeparator = `${normalizedRoot}/`;
   const usesCaseInsensitiveComparison =
     /^[A-Za-z]:\//.test(normalizedRoot) || normalizedRoot.startsWith("//");

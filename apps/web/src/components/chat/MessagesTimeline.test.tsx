@@ -535,7 +535,7 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
-              changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
+              changedFiles: ["/C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
             },
           },
         ]}
