@@ -588,6 +588,51 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
+  it.each([null, "ready"] as const)(
+    "acknowledges the exact projected message when the dispatch session status is %s",
+    (sessionStatus) => {
+      const steerMessageId = MessageId.make("message-steer");
+      const runningTurn = {
+        ...completedTurn,
+        state: "running" as const,
+        completedAt: null,
+      };
+      const runningSession = {
+        ...readySession,
+        status: "running" as const,
+        activeTurnId: runningTurn.turnId,
+      };
+      const localDispatch = {
+        ...createLocalDispatchSnapshot(
+          makeThread({
+            latestTurn: runningTurn,
+            session: runningSession,
+          }),
+          { expectedUserMessageId: steerMessageId },
+        ),
+        sessionStatus,
+      };
+
+      expect(
+        hasServerAcknowledgedLocalDispatch({
+          localDispatch,
+          phase: "running",
+          latestTurn: runningTurn,
+          session: runningSession,
+          projectedMessages: [
+            {
+              id: steerMessageId,
+              role: "user",
+            },
+          ],
+          hasPendingApproval: false,
+          hasPendingUserInput: false,
+          threadError: null,
+        }),
+      ).toBe(true);
+    },
+  );
+
   it("requires the next steer id after the previous steer was projected", () => {
     const previousSteerMessageId = MessageId.make("message-steer");
     const nextSteerMessageId = MessageId.make("message-next-steer");

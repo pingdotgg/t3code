@@ -462,12 +462,12 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     return true;
   }
 
-  // A prompt sent while a turn is already running is a steer. Providers can
-  // apply that prompt to the existing turn without opening a new one, so the
-  // latest turn/session fields may remain unchanged until the agent finishes.
-  // The projected user message is the server acknowledgement in that case.
+  // The projected message with the exact outbound id is authoritative server
+  // acknowledgement even when the dispatch snapshot has stale session state.
+  // This matters for steers because providers can apply them to the existing
+  // turn without changing the latest turn/session fields until it finishes.
   const expectedUserMessageId = input.localDispatch.expectedUserMessageId;
-  if (input.localDispatch.sessionStatus === "running" && expectedUserMessageId !== null) {
+  if (expectedUserMessageId !== null) {
     for (let index = input.projectedMessages.length - 1; index >= 0; index -= 1) {
       const message = input.projectedMessages[index];
       if (message?.role === "user" && message.id === expectedUserMessageId) {
