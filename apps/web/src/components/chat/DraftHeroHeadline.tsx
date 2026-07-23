@@ -83,14 +83,16 @@ export function DraftHeroHeadline({
     () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
     [projectPickerEntries],
   );
-  const activeProjectKey =
+  const activeProjectGroup =
     activeProjectRef === null
-      ? ""
+      ? null
       : (projectGroups.find((group) =>
           group.memberProjectRefs.some(
             (projectRef) => scopedProjectKey(projectRef) === scopedProjectKey(activeProjectRef),
           ),
-        )?.projectKey ?? "");
+        ) ?? null);
+  const activeProjectKey = activeProjectGroup?.projectKey ?? "";
+  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
@@ -101,7 +103,7 @@ export function DraftHeroHeadline({
         aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
         className="pointer-events-auto inline cursor-pointer border-current border-b border-dotted text-foreground underline-offset-8 transition-opacity hover:opacity-75 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {activeProjectTitle ?? "Choose a project"}
+        {activeProjectDisplayName ?? "Choose a project"}
       </MenuTrigger>
       <MenuPopup align="center" className="max-h-80 w-64 overflow-y-auto">
         <MenuRadioGroup
