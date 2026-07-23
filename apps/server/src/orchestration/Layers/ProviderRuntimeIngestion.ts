@@ -748,6 +748,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(0),
   });
 
+  const assistantLatestOccurredAtByMessageId = yield* Cache.make<MessageId, string>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(""),
+  });
+
   const streamingAssistantFlushScheduledByMessageId = yield* Cache.make<MessageId, boolean>({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
@@ -1079,14 +1085,59 @@ const make = Effect.gen(function* () {
       clearBufferedAssistantText(messageId),
       Cache.invalidate(streamingAssistantLastFlushAtByMessageId, messageId),
       Cache.invalidate(streamingAssistantFlushScheduledByMessageId, messageId),
+      Cache.invalidate(assistantLatestOccurredAtByMessageId, messageId),
+      Cache.invalidate(deferredAssistantDeltaCountByMessageId, messageId),
     ]).pipe(Effect.asVoid);
+
+  const laterOccurredAt = (left: string, right: string) => {
+    const leftMillis = Date.parse(left);
+    const rightMillis = Date.parse(right);
+    if (!Number.isFinite(leftMillis)) return right;
+    if (!Number.isFinite(rightMillis)) return left;
+    return rightMillis >= leftMillis ? right : left;
+  };
+
+  const rememberAssistantOccurredAt = (messageId: MessageId, occurredAt: string) =>
+    Cache.getOption(assistantLatestOccurredAtByMessageId, messageId).pipe(
+      Effect.flatMap((existing) =>
+        Cache.set(
+          assistantLatestOccurredAtByMessageId,
+          messageId,
+          Option.match(existing, {
+            onNone: () => occurredAt,
+            onSome: (value) => (value.length > 0 ? laterOccurredAt(value, occurredAt) : occurredAt),
+          }),
+        ),
+      ),
+    );
+
+  const getLatestAssistantOccurredAt = (messageId: MessageId, fallback: string) =>
+    Cache.getOption(assistantLatestOccurredAtByMessageId, messageId).pipe(
+      Effect.map((existing) =>
+        Option.match(existing, {
+          onNone: () => fallback,
+          onSome: (value) => (value.length > 0 ? laterOccurredAt(value, fallback) : fallback),
+        }),
+      ),
+    );
 
   const commitStreamingAssistantFlush = (messageId: MessageId, occurredAt: string) =>
     Effect.gen(function* () {
       yield* clearBufferedAssistantText(messageId);
       const occurredAtMillis = Date.parse(occurredAt);
       if (Number.isFinite(occurredAtMillis)) {
-        yield* Cache.set(streamingAssistantLastFlushAtByMessageId, messageId, occurredAtMillis);
+        const previous = yield* Cache.getOption(
+          streamingAssistantLastFlushAtByMessageId,
+          messageId,
+        );
+        yield* Cache.set(
+          streamingAssistantLastFlushAtByMessageId,
+          messageId,
+          Math.max(
+            Option.getOrElse(previous, () => 0),
+            occurredAtMillis,
+          ),
+        );
       }
     });
 
@@ -1113,6 +1164,7 @@ const make = Effect.gen(function* () {
     commandTag: string;
   }) =>
     Effect.gen(function* () {
+      const createdAt = yield* getLatestAssistantOccurredAt(input.messageId, input.createdAt);
       const commandId = yield* providerCommandId(input.event, input.commandTag);
       yield* dispatchRetainedAssistantDelta(
         {
@@ -1122,9 +1174,9 @@ const make = Effect.gen(function* () {
           messageId: input.messageId,
           delta: input.delta,
           ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
+          createdAt,
         },
-        commitStreamingAssistantFlush(input.messageId, input.createdAt),
+        commitStreamingAssistantFlush(input.messageId, createdAt),
       ).pipe(
         // Keep a short synchronous retry window, then let the caller retain
         // and defer the chunk so one failed message cannot monopolize the
@@ -1199,6 +1251,17 @@ const make = Effect.gen(function* () {
       Effect.flatMap(() =>
         enqueueInput
           ? enqueueInput(input)
+          : Effect.die(new Error("provider runtime ingestion worker is not initialized")),
+      ),
+      Effect.forkIn(streamingFlushTimerScope),
+      Effect.asVoid,
+    );
+
+  const scheduleRuntimeEventRetry = (event: ProviderRuntimeEvent) =>
+    Effect.sleep(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)).pipe(
+      Effect.flatMap(() =>
+        enqueueInput
+          ? enqueueInput({ source: "runtime", event })
           : Effect.die(new Error("provider runtime ingestion worker is not initialized")),
       ),
       Effect.forkIn(streamingFlushTimerScope),
@@ -1288,20 +1351,54 @@ const make = Effect.gen(function* () {
           : "";
       const shouldDispatchText =
         hasRenderableAssistantText(text) || (hasBufferedText && input.hasProjectedMessage === true);
+      const createdAt = yield* getLatestAssistantOccurredAt(input.messageId, input.createdAt);
 
       if (shouldDispatchText) {
-        yield* dispatchRetainedAssistantDelta(
-          {
-            type: "thread.message.assistant.delta",
-            commandId: yield* providerCommandId(input.event, input.finalDeltaCommandTag),
+        const commandId = yield* providerCommandId(input.event, input.finalDeltaCommandTag);
+        const dispatchExit = yield* Effect.exit(
+          dispatchRetainedAssistantDelta(
+            {
+              type: "thread.message.assistant.delta",
+              commandId,
+              threadId: input.threadId,
+              messageId: input.messageId,
+              delta: text,
+              ...(input.turnId ? { turnId: input.turnId } : {}),
+              createdAt,
+            },
+            clearBufferedAssistantText(input.messageId),
+          ).pipe(
+            Effect.retry({
+              schedule: Schedule.spaced(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)),
+              times: 2,
+            }),
+          ),
+        );
+        if (Exit.isFailure(dispatchExit)) {
+          yield* Effect.logWarning(
+            "provider runtime ingestion deferred assistant finalization after retries",
+            {
+              eventId: input.event.eventId,
+              messageId: input.messageId,
+              cause: Cause.pretty(dispatchExit.cause),
+            },
+          );
+          yield* Cache.set(bufferedAssistantTextByMessageId, input.messageId, text);
+          yield* markDeferredAssistantDelta(input.messageId);
+          yield* scheduleAssistantDeltaRetry({
+            source: "assistant-delta",
+            event: input.event,
             threadId: input.threadId,
             messageId: input.messageId,
-            delta: text,
             ...(input.turnId ? { turnId: input.turnId } : {}),
-            createdAt: input.createdAt,
-          },
-          clearBufferedAssistantText(input.messageId),
-        );
+            deliveryMode: "streaming",
+            delta: "",
+            flushPendingFirst: true,
+            isDeferred: true,
+          });
+          yield* scheduleRuntimeEventRetry(input.event);
+          return yield* Effect.failCause(dispatchExit.cause);
+        }
       }
 
       if (input.hasProjectedMessage || shouldDispatchText) {
@@ -1311,7 +1408,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
+          createdAt,
         });
       }
       yield* clearAssistantMessageState(input.messageId);
@@ -1682,15 +1779,7 @@ const make = Effect.gen(function* () {
       if (!hasDeferredDeltas) {
         return false;
       }
-
-      const enqueue = enqueueInput;
-      if (!enqueue) {
-        return yield* Effect.die(new Error("provider runtime ingestion worker is not initialized"));
-      }
-      yield* Effect.sleep(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)).pipe(
-        Effect.flatMap(() => enqueue({ source: "runtime", event })),
-        Effect.forkIn(streamingFlushTimerScope),
-      );
+      yield* scheduleRuntimeEventRetry(event);
       return true;
     });
 
@@ -2201,6 +2290,7 @@ const make = Effect.gen(function* () {
     input: Extract<RuntimeIngestionInput, { source: "assistant-delta" }>,
   ) =>
     Effect.gen(function* () {
+      yield* rememberAssistantOccurredAt(input.messageId, input.event.createdAt);
       const maxRetainedChars =
         input.deliveryMode === "streaming"
           ? MAX_COALESCED_STREAMING_ASSISTANT_CHARS
