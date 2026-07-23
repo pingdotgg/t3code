@@ -43,30 +43,27 @@ describe("resolveFirstSeenCompletedThreads", () => {
     );
   });
 
-  it("waits for lagging snapshot threads before seeding history", () => {
-    const beforeThreadsHydrate = resolveFirstSeenCompletedThreads({
+  it("seeds a genuinely empty snapshot before observing later completions", () => {
+    const emptySnapshot = resolveFirstSeenCompletedThreads({
       threads: [],
       environmentSnapshotIds: [localEnvironmentId],
       previouslyObservedThreadsByEnvironment: new Map(),
     });
-    const afterThreadsHydrate = resolveFirstSeenCompletedThreads({
-      threads: [thread("historical")],
+    const laterCompletion = resolveFirstSeenCompletedThreads({
+      threads: [thread("completed")],
       environmentSnapshotIds: [localEnvironmentId],
-      previouslyObservedThreadsByEnvironment: beforeThreadsHydrate.nextObservedThreadsByEnvironment,
+      previouslyObservedThreadsByEnvironment: emptySnapshot.nextObservedThreadsByEnvironment,
     });
 
-    expect(beforeThreadsHydrate.nextObservedThreadsByEnvironment.has(localEnvironmentId)).toBe(
-      false,
+    expect(emptySnapshot.nextObservedThreadsByEnvironment.get(localEnvironmentId)).toEqual(
+      new Map(),
     );
-    expect(afterThreadsHydrate.newlyUnreadThreads).toEqual([]);
-    expect(afterThreadsHydrate.nextObservedThreadsByEnvironment.get(localEnvironmentId)).toEqual(
-      new Map([
-        [
-          scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("historical"))),
-          { turnId: "turn-historical", state: "completed" },
-        ],
-      ]),
-    );
+    expect(laterCompletion.newlyUnreadThreads).toEqual([
+      {
+        threadKey: scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("completed"))),
+        completedAt: "2026-06-18T09:00:00.000Z",
+      },
+    ]);
   });
 
   it("marks a completed thread that first appears after bootstrap unread", () => {

@@ -6,19 +6,26 @@ import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-import { useThreadShells } from "../state/entities";
 import { environmentShell } from "../state/shell";
+import { environmentThreadShells } from "../state/threads";
 import { useUiStateStore } from "../uiStateStore";
 
-const environmentSnapshotIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
+// Read snapshot readiness and the shells derived from those snapshots in one
+// Atom transaction. Separate React subscriptions can briefly observe a new
+// snapshot with the prior shell list and misclassify its history as newly
+// completed on the following render.
+const completedThreadObservationSnapshotAtom = Atom.make((get) => {
   const environmentIds: EnvironmentId[] = [];
   for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
     if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
       environmentIds.push(environmentId);
     }
   }
-  return environmentIds;
-}).pipe(Atom.withLabel("completed-thread-unread:snapshot-environments"));
+  return {
+    environmentSnapshotIds: environmentIds,
+    threads: get(environmentThreadShells.threadShellsAtom),
+  };
+}).pipe(Atom.withLabel("completed-thread-unread:observation-snapshot"));
 
 interface FirstSeenThreadInput {
   readonly environmentId: EnvironmentId;
@@ -61,14 +68,17 @@ export function resolveFirstSeenCompletedThreads(input: {
     readonly threadKey: string;
     readonly completedAt: string | null;
   }> = [];
+  for (const environmentId of snapshotEnvironmentIds) {
+    if (!nextObservedThreadsByEnvironment.has(environmentId)) {
+      nextObservedThreadsByEnvironment.set(environmentId, new Map());
+    }
+  }
+
   for (const thread of input.threads) {
     if (!snapshotEnvironmentIds.has(thread.environmentId)) {
       continue;
     }
 
-    if (!nextObservedThreadsByEnvironment.has(thread.environmentId)) {
-      nextObservedThreadsByEnvironment.set(thread.environmentId, new Map());
-    }
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const observedThread: ObservedThreadTurn = {
       turnId: thread.latestTurn?.turnId ?? null,
@@ -98,8 +108,7 @@ export function resolveFirstSeenCompletedThreads(input: {
 }
 
 export function useMarkFirstSeenCompletedThreadsUnread(): void {
-  const threads = useThreadShells();
-  const environmentSnapshotIds = useAtomValue(environmentSnapshotIdsAtom);
+  const { environmentSnapshotIds, threads } = useAtomValue(completedThreadObservationSnapshotAtom);
   const observedThreadsByEnvironmentRef = useRef<
     Map<EnvironmentId, Map<string, ObservedThreadTurn>>
   >(new Map());
