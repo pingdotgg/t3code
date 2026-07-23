@@ -142,6 +142,13 @@ private struct GeneralSettingsTab: View {
     @UIState private var draft: AppSettings?
     @FocusState private var projectsDirectoryFocused: Bool
 
+    @UIState private var notificationsMasterEnabled = AgentNotificationPreferences.isMasterEnabled
+    @UIState private var notifyFinished = AgentNotificationPreferences.isEnabled(.finished)
+    @UIState private var notifyStalled = AgentNotificationPreferences.isEnabled(.stalled)
+    @UIState private var notifyApproval = AgentNotificationPreferences.isEnabled(.needsApproval)
+    @UIState private var notifyInput = AgentNotificationPreferences.isEnabled(.needsInput)
+    @UIState private var notifyFailed = AgentNotificationPreferences.isEnabled(.failed)
+
     var body: some View {
         Form {
             if let settings = draft {
@@ -179,6 +186,51 @@ private struct GeneralSettingsTab: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            Section {
+                Toggle("Agent notifications", isOn: $notificationsMasterEnabled)
+                    .onChange(of: notificationsMasterEnabled) { _, enabled in
+                        AgentNotificationPreferences.isMasterEnabled = enabled
+                        if enabled {
+                            AgentNotificationService.shared.requestAuthorizationIfNeeded()
+                        }
+                    }
+                Text(
+                    "Banner when agents finish, stall, fail, or need your input — suppressed while that thread is frontmost."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if notificationsMasterEnabled {
+                    Toggle(AgentNotificationKind.finished.settingsLabel, isOn: $notifyFinished)
+                        .onChange(of: notifyFinished) { _, enabled in
+                            AgentNotificationPreferences.setEnabled(.finished, enabled)
+                        }
+                        .help(AgentNotificationKind.finished.settingsHelp)
+                    Toggle(AgentNotificationKind.stalled.settingsLabel, isOn: $notifyStalled)
+                        .onChange(of: notifyStalled) { _, enabled in
+                            AgentNotificationPreferences.setEnabled(.stalled, enabled)
+                        }
+                        .help(AgentNotificationKind.stalled.settingsHelp)
+                    Toggle(AgentNotificationKind.needsApproval.settingsLabel, isOn: $notifyApproval)
+                        .onChange(of: notifyApproval) { _, enabled in
+                            AgentNotificationPreferences.setEnabled(.needsApproval, enabled)
+                        }
+                        .help(AgentNotificationKind.needsApproval.settingsHelp)
+                    Toggle(AgentNotificationKind.needsInput.settingsLabel, isOn: $notifyInput)
+                        .onChange(of: notifyInput) { _, enabled in
+                            AgentNotificationPreferences.setEnabled(.needsInput, enabled)
+                        }
+                        .help(AgentNotificationKind.needsInput.settingsHelp)
+                    Toggle(AgentNotificationKind.failed.settingsLabel, isOn: $notifyFailed)
+                        .onChange(of: notifyFailed) { _, enabled in
+                            AgentNotificationPreferences.setEnabled(.failed, enabled)
+                        }
+                        .help(AgentNotificationKind.failed.settingsHelp)
+                }
+            } header: {
+                Text("Notifications")
             }
 
             Section {

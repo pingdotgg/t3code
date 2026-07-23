@@ -1,3 +1,4 @@
+import AppKit
 import Observation
 
 @Observable
@@ -17,7 +18,7 @@ public final class RemoteDeviceSession: Identifiable {
 
 @Observable
 @MainActor
-public final class MultiDeviceModel {
+public final class MultiDeviceModel: AgentNotificationSelectionHandler {
     public let local: AppModel
     public private(set) var remoteSessions: [RemoteDeviceSession]
 
@@ -78,6 +79,12 @@ public final class MultiDeviceModel {
     public func model(for deviceID: DeviceID) -> AppModel? {
         if deviceID == .local { return local }
         return remoteSessions.first { $0.id == deviceID }?.model
+    }
+
+    /// Focus the app on a thread opened from a local agent notification.
+    public func openThreadFromNotification(deviceID: DeviceID, threadID: String) {
+        selection = ThreadSelection(deviceID: deviceID, threadID: threadID)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     public func addSession(_ session: RemoteDeviceSession) {
