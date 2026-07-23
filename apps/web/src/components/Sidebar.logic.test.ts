@@ -1086,11 +1086,20 @@ describe("filterVisibleSidebarThreads", () => {
 
 describe("archived project removal with grouped project actions", () => {
   it("keeps archived-bundle command scope independent for each project member", () => {
+    const members = [
+      { id: "project-with-live-threads", hasLiveThreads: true },
+      { id: "archived-only-project", hasLiveThreads: false },
+    ];
+
     expect(
-      [true, false].map((hasLiveThreads) =>
-        resolveArchivedProjectRemovalCommandOptions(hasLiveThreads),
-      ),
-    ).toEqual([{ force: true }, { deleteArchivedThreads: true }]);
+      members.map((member) => ({
+        id: member.id,
+        options: resolveArchivedProjectRemovalCommandOptions(member.hasLiveThreads),
+      })),
+    ).toEqual([
+      { id: "project-with-live-threads", options: { force: true } },
+      { id: "archived-only-project", options: { deleteArchivedThreads: true } },
+    ]);
   });
 
   it("describes archived deletion for standalone and grouped removals", () => {
@@ -1109,6 +1118,14 @@ describe("archived project removal with grouped project actions", () => {
       }),
     ).toBe(
       "If this project has archived conversations, their history will also be permanently deleted.",
+    );
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 2,
+        hasLiveThreads: true,
+      }),
+    ).toBe(
+      "This permanently clears conversation history for those threads and any archived conversations in these projects.",
     );
     expect(
       getArchivedProjectRemovalWarning({
