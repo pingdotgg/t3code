@@ -537,6 +537,37 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.latestTurn?.state).toBe("running");
   });
 
+  it("settles the projection when the stopped binding shares the session timestamp", async () => {
+    const sharedAt = "2026-01-01T00:01:00.000Z";
+    const harness = await createHarness({
+      initialSession: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("orchestration-turn-1"),
+        lastError: null,
+        updatedAt: sharedAt,
+      },
+      runtimeBindings: [
+        {
+          threadId: ThreadId.make("thread-1"),
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "stopped",
+          runtimeMode: "approval-required",
+          lastSeenAt: sharedAt,
+        },
+      ],
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("stopped");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
   it("rechecks a stopped binding before settling the projected session", async () => {
     const runningAt = "2026-01-01T00:01:00.000Z";
     const stoppedAt = "2026-01-01T00:02:00.000Z";

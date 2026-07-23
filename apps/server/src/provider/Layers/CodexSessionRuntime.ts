@@ -1308,6 +1308,9 @@ export const makeCodexSessionRuntime = (
         return "active";
       }
 
+      // Recovery settles only the turn's terminal state. Item notifications
+      // missed alongside the completion are not replayed, so content produced
+      // during the outage may be absent from the projection.
       yield* emitEvent({
         kind: "notification",
         threadId: options.threadId,

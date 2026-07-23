@@ -87,6 +87,7 @@ export interface CodexAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly turnCompletionRecoveryGraceMs?: number;
   readonly turnCompletionRecoveryPollMs?: number;
+  readonly turnCompletionRecoveryMaxPollMs?: number;
 }
 
 interface CodexAdapterSessionContext {
@@ -1382,6 +1383,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.turnCompletionRecoveryGraceMs ?? 30_000,
   );
   const turnCompletionRecoveryPollMs = Math.max(1, options?.turnCompletionRecoveryPollMs ?? 10_000);
+  const turnCompletionRecoveryMaxPollMs = Math.max(
+    turnCompletionRecoveryPollMs,
+    options?.turnCompletionRecoveryMaxPollMs ?? 60_000,
+  );
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1583,7 +1588,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
 
-    const pollTurnCompletion = (consecutiveFailures = 0): Effect.Effect<void> =>
+    // Each "active" poll costs a full `thread/read` (there is no lighter
+    // provider read), so the cadence backs off geometrically for legitimately
+    // long turns instead of holding the initial interval.
+    const pollTurnCompletion = (
+      consecutiveFailures = 0,
+      pollDelayMs = turnCompletionRecoveryPollMs,
+    ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const currentSession = sessions.get(input.threadId);
         if (currentSession !== session || session.stopped) {
@@ -1609,14 +1620,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             });
             return;
           }
-          yield* Effect.sleep(Duration.millis(turnCompletionRecoveryPollMs));
-          return yield* pollTurnCompletion(failureCount);
+          yield* Effect.sleep(Duration.millis(pollDelayMs));
+          return yield* pollTurnCompletion(failureCount, pollDelayMs);
         }
         if (outcome.value !== "active") {
           return;
         }
-        yield* Effect.sleep(Duration.millis(turnCompletionRecoveryPollMs));
-        return yield* pollTurnCompletion(0);
+        yield* Effect.sleep(Duration.millis(pollDelayMs));
+        return yield* pollTurnCompletion(
+          0,
+          Math.min(pollDelayMs * 2, turnCompletionRecoveryMaxPollMs),
+        );
       });
 
     yield* Effect.sleep(Duration.millis(turnCompletionRecoveryGraceMs)).pipe(

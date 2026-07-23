@@ -621,6 +621,91 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("backs off completion polling geometrically while the turn stays active", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      runtime.reconcileTurnCompletionImpl.mockImplementation(() =>
+        Effect.succeed("active" as const),
+      );
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-1"),
+        input: "long turn",
+        attachments: [],
+      });
+
+      // Grace period, then delays of 10s, 20s, 40s, capped at 60s.
+      yield* TestClock.adjust("30 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 1);
+      yield* TestClock.adjust("10 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 2);
+      yield* TestClock.adjust("10 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 2);
+      yield* TestClock.adjust("10 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 3);
+      yield* TestClock.adjust("40 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 4);
+      yield* TestClock.adjust("60 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 5);
+      yield* TestClock.adjust("60 seconds");
+      NodeAssert.equal(runtime.reconcileTurnCompletionImpl.mock.calls.length, 6);
+    }),
+  );
+
+  it.effect("recovers a failed turn as a failed completion with its error message", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const firstReceived = yield* Deferred.make<void>();
+      const consumer = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Ref.update(receivedRef, (events) => [...events, event]).pipe(
+          Effect.andThen(Deferred.succeed(firstReceived, undefined).pipe(Effect.ignore)),
+        ),
+      ).pipe(Effect.forkChild);
+
+      runtime.reconcileTurnCompletionImpl.mockImplementation((turnId) =>
+        runtime
+          .emit({
+            id: asEventId("evt-recovered-failure"),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:30.000Z",
+            method: "turn/completed",
+            threadId: asThreadId("thread-1"),
+            turnId,
+            payload: {
+              threadId: "provider-thread-1",
+              turn: {
+                id: turnId,
+                items: [],
+                status: "failed",
+                error: { message: "provider exploded" },
+              },
+            },
+          })
+          .pipe(Effect.as("settled" as const)),
+      );
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-1"),
+        input: "fail me",
+        attachments: [],
+      });
+      yield* TestClock.adjust("30 seconds");
+      yield* Deferred.await(firstReceived);
+
+      const received = yield* Ref.get(receivedRef);
+      NodeAssert.equal(received.length, 1);
+      const event = received[0];
+      NodeAssert.equal(event?.type, "turn.completed");
+      if (event?.type === "turn.completed") {
+        NodeAssert.equal(event.payload.state, "failed");
+        NodeAssert.equal(event.payload.errorMessage, "provider exploded");
+      }
+      yield* Fiber.interrupt(consumer);
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

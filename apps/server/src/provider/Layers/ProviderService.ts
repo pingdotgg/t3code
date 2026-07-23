@@ -64,6 +64,15 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  /**
+   * Identity of the process that owns sessions started by this service.
+   * Recorded into persisted runtime bindings so a later startup can tell
+   * whether a "running" binding belongs to a process that no longer exists.
+   * Tests override these; production wiring uses the real pid and a
+   * `process.kill(pid, 0)` liveness probe.
+   */
+  readonly ownerProcessId?: number;
+  readonly isProcessAlive?: (pid: number) => boolean;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -150,6 +159,28 @@ function readPersistedModelSelection(
   return isModelSelection(raw) ? raw : undefined;
 }
 
+function readPersistedOwnerPid(
+  runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
+): number | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const raw = "ownerPid" in runtimePayload ? runtimePayload.ownerPid : undefined;
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0 ? raw : undefined;
+}
+
+function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // Only a definitive ESRCH proves the owner is gone. EPERM (or any other
+    // failure) means a process with this pid may still exist, so we must not
+    // treat its bindings as orphaned.
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 function readPersistedCwd(
   runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
 ): string | undefined {
@@ -214,6 +245,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  const ownerProcessId = options?.ownerProcessId ?? process.pid;
+  const isProcessAlive = options?.isProcessAlive ?? defaultIsProcessAlive;
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
       Effect.tap((credential) =>
@@ -277,7 +310,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         runtimeMode: session.runtimeMode,
         status: toRuntimeStatus(session),
         ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
-        runtimePayload: toRuntimePayloadFromSession(session, extra),
+        runtimePayload: {
+          ...toRuntimePayloadFromSession(session, extra),
+          ownerPid: ownerProcessId,
+        },
       });
     });
 
@@ -1051,6 +1087,67 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
     yield* analytics.flush;
   });
+
+  // Crash recovery: a process that dies without running `runStopAll` leaves
+  // its bindings persisted as "running" forever, and the projection-level
+  // startup reconciliation only settles threads whose binding is "stopped".
+  // Sweep bindings whose recorded owner process verifiably no longer exists.
+  // A pid recycled to another live process makes us skip the sweep (fail-safe:
+  // no worse than before), never stop a live foreign session. Our own pid at
+  // construction time is also stale — this process has not started sessions yet.
+  const reconcileOrphanedRuntimeBindings = Effect.fn("reconcileOrphanedRuntimeBindings")(
+    function* () {
+      const bindings = yield* directory.listBindings();
+      yield* Effect.forEach(
+        bindings,
+        (binding) =>
+          Effect.gen(function* () {
+            if (binding.status !== "running" && binding.status !== "starting") {
+              return;
+            }
+            const ownerPid = readPersistedOwnerPid(binding.runtimePayload);
+            if (
+              ownerPid === undefined ||
+              (ownerPid !== ownerProcessId && isProcessAlive(ownerPid))
+            ) {
+              return;
+            }
+            const providerInstanceId = dieOnMissingBindingInstanceId(
+              "ProviderService.reconcileOrphanedRuntimeBindings",
+              binding,
+            );
+            const lastRuntimeEventAt = yield* nowIso;
+            yield* directory.upsert({
+              threadId: binding.threadId,
+              provider: binding.provider,
+              providerInstanceId,
+              status: "stopped",
+              runtimePayload: {
+                activeTurnId: null,
+                lastRuntimeEvent: "provider.owner-process-gone",
+                lastRuntimeEventAt,
+              },
+            });
+            yield* Effect.logWarning("provider.session.orphaned-binding-stopped", {
+              threadId: binding.threadId,
+              provider: binding.provider,
+              providerInstanceId,
+              ownerPid,
+              previousStatus: binding.status,
+            });
+          }),
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
+
+  yield* reconcileOrphanedRuntimeBindings().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("provider.session.orphan-reconciliation-failed", {
+        errorTag: causeErrorTag(cause),
+      }),
+    ),
+  );
 
   yield* Effect.addFinalizer(() =>
     runStopAll().pipe(

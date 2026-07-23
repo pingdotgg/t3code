@@ -445,6 +445,108 @@ it.effect("ProviderServiceLive stops only sessions owned by this process during 
   }),
 );
 
+it.effect("ProviderServiceLive stops orphaned bindings whose owner process is gone", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [CODEX_DRIVER]: codex.adapter,
+    });
+    const providerAdapterLayer = Layer.succeed(
+      ProviderAdapterRegistry.ProviderAdapterRegistry,
+      registry,
+    );
+    const ownerProcessId = 4242;
+    const alivePid = 1111;
+    const deadPid = 2222;
+    const bindings = new Map<
+      ThreadId,
+      ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata
+    >();
+    const makeBinding = (
+      threadId: ThreadId,
+      status: "running" | "stopped",
+      ownerPid?: number,
+    ): ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata => ({
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      status,
+      runtimeMode: "full-access",
+      lastSeenAt: "2026-01-01T00:00:00.000Z",
+      ...(ownerPid !== undefined ? { runtimePayload: { ownerPid } } : {}),
+    });
+    const deadOwnerThreadId = asThreadId("thread-dead-owner");
+    const aliveOwnerThreadId = asThreadId("thread-alive-owner");
+    const legacyThreadId = asThreadId("thread-no-owner-recorded");
+    const recycledOwnThreadId = asThreadId("thread-recycled-own-pid");
+    bindings.set(deadOwnerThreadId, makeBinding(deadOwnerThreadId, "running", deadPid));
+    bindings.set(aliveOwnerThreadId, makeBinding(aliveOwnerThreadId, "running", alivePid));
+    bindings.set(legacyThreadId, makeBinding(legacyThreadId, "running"));
+    bindings.set(recycledOwnThreadId, makeBinding(recycledOwnThreadId, "running", ownerProcessId));
+    const directoryLayer = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+      upsert: (binding: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+        Effect.sync(() => {
+          const existing = bindings.get(binding.threadId);
+          bindings.set(binding.threadId, {
+            ...existing,
+            ...binding,
+            lastSeenAt: "2026-01-01T00:01:00.000Z",
+          });
+        }),
+      getProvider: (threadId: ThreadId) =>
+        Effect.sync(() => bindings.get(threadId)?.provider ?? CODEX_DRIVER),
+      getBinding: (threadId: ThreadId) =>
+        Effect.sync(() => {
+          const binding = bindings.get(threadId);
+          return binding === undefined
+            ? Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>()
+            : Option.some(binding);
+        }),
+      listThreadIds: () => Effect.sync(() => Array.from(bindings.keys())),
+      listBindings: () => Effect.sync(() => Array.from(bindings.values())),
+    });
+    const providerLayer = Layer.mergeAll(
+      makeProviderServiceLive({
+        ownerProcessId,
+        isProcessAlive: (pid) => pid === alivePid,
+      }).pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provideMerge(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+      directoryLayer,
+      NodeServices.layer,
+    );
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+    const provider = yield* ProviderService.ProviderService.pipe(Effect.provide(runtimeServices));
+
+    assert.equal(bindings.get(deadOwnerThreadId)?.status, "stopped");
+    assert.equal(bindings.get(aliveOwnerThreadId)?.status, "running");
+    assert.equal(bindings.get(legacyThreadId)?.status, "running");
+    assert.equal(bindings.get(recycledOwnThreadId)?.status, "stopped");
+
+    const ownedThreadId = asThreadId("thread-owned-by-this-process");
+    yield* provider.startSession(ownedThreadId, {
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      threadId: ownedThreadId,
+      runtimeMode: "full-access",
+    });
+    const ownedPayload = bindings.get(ownedThreadId)?.runtimePayload;
+    assert.ok(ownedPayload && typeof ownedPayload === "object" && !Array.isArray(ownedPayload));
+    assert.equal((ownedPayload as Record<string, unknown>).ownerPid, ownerProcessId);
+    yield* Scope.close(scope, Exit.void);
+  }),
+);
+
 it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
   Effect.gen(function* () {
     const codex = makeFakeCodexAdapter();
