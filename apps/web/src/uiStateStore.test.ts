@@ -89,6 +89,24 @@ describe("uiStateStore pure functions", () => {
     expect(hydrated.activeThreadVisit).toEqual({ threadId, visitedAt: updatedAt });
   });
 
+  it("clears persisted unread after tracking a draft route before opening the thread", () => {
+    const threadId = ThreadId.make("thread-1");
+    const updatedAt = "2026-02-25T12:30:00.000Z";
+    const restarted = parsePersistedState({
+      threadLastVisitedAtById: { [threadId]: updatedAt },
+      threadExplicitlyUnreadById: { [threadId]: true },
+    });
+
+    const draft = markActiveThreadVisited(restarted, null, null);
+    const routed = markActiveThreadVisited(draft, threadId, null);
+    const hydrated = markActiveThreadVisited(routed, threadId, updatedAt);
+
+    expect(draft.hasTrackedActiveThreadRoute).toBe(true);
+    expect(routed.threadExplicitlyUnreadById[threadId]).toBeUndefined();
+    expect(hydrated.threadExplicitlyUnreadById[threadId]).toBeUndefined();
+    expect(hydrated.activeThreadVisit).toEqual({ threadId, visitedAt: updatedAt });
+  });
+
   it("preserves active unread state through a transient detail gap", () => {
     const threadId = ThreadId.make("thread-1");
     const updatedAt = "2026-02-25T12:30:00.000Z";

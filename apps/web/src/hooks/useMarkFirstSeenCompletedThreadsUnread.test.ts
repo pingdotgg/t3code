@@ -19,7 +19,7 @@ function thread(
     latestTurn: {
       turnId,
       state,
-      completedAt: "2026-06-18T09:00:00.000Z",
+      completedAt: state === "completed" ? "2026-06-18T09:00:00.000Z" : null,
     },
   } as const;
 }
@@ -103,19 +103,41 @@ describe("resolveFirstSeenCompletedThreads", () => {
     expect(result.nextObservedThreadsByEnvironment.has(remoteEnvironmentId)).toBe(false);
   });
 
-  it("marks a previously observed running thread unread when its turn completes", () => {
-    const runningKey = scopedThreadKey(
-      scopeThreadRef(localEnvironmentId, ThreadId.make("running")),
+  it("marks a remote thread unread when a turn first seen running after bootstrap completes", () => {
+    const historicalKey = scopedThreadKey(
+      scopeThreadRef(remoteEnvironmentId, ThreadId.make("historical")),
     );
-    const result = resolveFirstSeenCompletedThreads({
-      threads: [thread("running", "completed")],
-      environmentSnapshotIds: [localEnvironmentId],
-      previouslyObservedThreadsByEnvironment: new Map([
-        [localEnvironmentId, new Map([[runningKey, { turnId: "turn-running", state: "running" }]])],
-      ]),
+    const runningKey = scopedThreadKey(
+      scopeThreadRef(remoteEnvironmentId, ThreadId.make("running")),
+    );
+    const bootstrap = resolveFirstSeenCompletedThreads({
+      threads: [thread("historical", "completed", remoteEnvironmentId)],
+      environmentSnapshotIds: [remoteEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map(),
+    });
+    const runningObservation = resolveFirstSeenCompletedThreads({
+      threads: [
+        thread("historical", "completed", remoteEnvironmentId),
+        thread("running", "running", remoteEnvironmentId),
+      ],
+      environmentSnapshotIds: [remoteEnvironmentId],
+      previouslyObservedThreadsByEnvironment: bootstrap.nextObservedThreadsByEnvironment,
+    });
+    const completion = resolveFirstSeenCompletedThreads({
+      threads: [
+        thread("historical", "completed", remoteEnvironmentId),
+        thread("running", "completed", remoteEnvironmentId),
+      ],
+      environmentSnapshotIds: [remoteEnvironmentId],
+      previouslyObservedThreadsByEnvironment: runningObservation.nextObservedThreadsByEnvironment,
     });
 
-    expect(result.newlyUnreadThreads).toEqual([
+    expect(bootstrap.newlyUnreadThreads).toEqual([]);
+    expect(
+      bootstrap.nextObservedThreadsByEnvironment.get(remoteEnvironmentId)?.get(historicalKey),
+    ).toEqual({ turnId: "turn-historical", state: "completed" });
+    expect(runningObservation.newlyUnreadThreads).toEqual([]);
+    expect(completion.newlyUnreadThreads).toEqual([
       {
         threadKey: runningKey,
         completedAt: "2026-06-18T09:00:00.000Z",
