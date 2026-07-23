@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -60,6 +61,13 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+
+export function preserveLastAvailableClaudeUsage(
+  previous: ServerProvider["usageLimits"] | undefined,
+  next: ServerProvider["usageLimits"] | undefined,
+): ServerProvider["usageLimits"] | undefined {
+  return next ?? previous;
+}
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -162,13 +170,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const lastAvailableUsageRef = yield* Ref.make<ServerProvider["usageLimits"] | undefined>(
+        undefined,
+      );
       const usageProbeCache = yield* Cache.make({
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeUsageLimits(effectiveConfig, processEnv).pipe(
+          probeClaudeUsageLimits(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(Path.Path, path),
+            Effect.flatMap((usageLimits) =>
+              Ref.modify(lastAvailableUsageRef, (previous) => {
+                const next = preserveLastAvailableClaudeUsage(previous, usageLimits);
+                return [next, next] as const;
+              }),
+            ),
           ),
       });
 

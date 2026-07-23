@@ -719,7 +719,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
   args: ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
-  options?: { readonly closeStdin?: boolean },
+  options?: { readonly closeStdin?: boolean; readonly cwd?: string },
 ) {
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const spawnCommand = yield* resolveSpawnCommand(claudeSettings.binaryPath, args, {
@@ -728,6 +728,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     env: claudeEnvironment,
     shell: spawnCommand.shell,
+    ...(options?.cwd ? { cwd: options.cwd } : {}),
     ...(options?.closeStdin ? { stdin: "ignore" as const } : {}),
   });
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
@@ -736,6 +737,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
 export const probeClaudeUsageLimits = Effect.fn("probeClaudeUsageLimits")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ): Effect.fn.Return<
   ServerProviderUsageLimits | undefined,
   never,
@@ -759,7 +761,7 @@ export const probeClaudeUsageLimits = Effect.fn("probeClaudeUsageLimits")(functi
       ...(environment ?? process.env),
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
     },
-    { closeStdin: true },
+    { closeStdin: true, ...(cwd ? { cwd } : {}) },
   ).pipe(
     Effect.timeoutOption(USAGE_PROBE_TIMEOUT_MS),
     Effect.map(
