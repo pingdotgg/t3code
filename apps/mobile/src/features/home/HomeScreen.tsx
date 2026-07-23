@@ -456,8 +456,17 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const snoozeEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0 };
+    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0, snoozedCount: 0 };
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
@@ -467,6 +476,7 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
     });
@@ -475,6 +485,7 @@ export function HomeScreen(props: HomeScreenProps) {
     nowMinute,
     settledVisibleCount,
     settlementEnvironmentIds,
+    snoozeEnvironmentIds,
     props.searchQuery,
     props.selectedEnvironmentId,
     props.threads,

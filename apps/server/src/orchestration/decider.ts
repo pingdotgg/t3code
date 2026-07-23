@@ -542,8 +542,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const occurredAt = yield* nowIso;
       // A wake time in the past would create a thread that is snoozed and
       // woken at once — the row would never leave the inbox but still carry
-      // snooze state. Reject instead of silently normalizing.
-      if (Date.parse(command.snoozedUntil) <= Date.parse(occurredAt)) {
+      // snooze state. Reject instead of silently normalizing. The negated
+      // comparison also catches unparseable wake times (IsoDateTime is
+      // structurally just a string): NaN fails every comparison, and an
+      // unparseable snoozedUntil must never persist.
+      if (!(Date.parse(command.snoozedUntil) > Date.parse(occurredAt))) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,

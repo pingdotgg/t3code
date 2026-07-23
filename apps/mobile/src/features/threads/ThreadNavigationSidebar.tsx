@@ -405,8 +405,17 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const snoozeEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0 };
+    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0, snoozedCount: 0 };
     return buildThreadListV2Items({
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
@@ -414,6 +423,7 @@ function ThreadNavigationSidebarPane(
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
     });
@@ -424,6 +434,7 @@ function ThreadNavigationSidebarPane(
     props.searchQuery,
     settledVisibleCount,
     settlementEnvironmentIds,
+    snoozeEnvironmentIds,
     threadListV2Enabled,
     threads,
     selectedProjectScope,

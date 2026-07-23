@@ -98,6 +98,23 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
     }),
   );
 
+  it.effect("rejects an unparseable wake time", () =>
+    Effect.gen(function* () {
+      // IsoDateTime is structurally a string, so garbage can reach the
+      // decider; a NaN wake time must never persist as snooze state.
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-snooze-garbage"),
+          threadId: ThreadId.make("thread-1"),
+          snoozedUntil: "not-a-date",
+        },
+        readModel: makeReadModel({}),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
   it.effect("rejects snoozing blocked-on-you work", () =>
     Effect.gen(function* () {
       const requestActivity = {
