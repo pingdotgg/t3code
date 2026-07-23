@@ -43,6 +43,32 @@ describe("resolveFirstSeenCompletedThreads", () => {
     );
   });
 
+  it("waits for lagging snapshot threads before seeding history", () => {
+    const beforeThreadsHydrate = resolveFirstSeenCompletedThreads({
+      threads: [],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: new Map(),
+    });
+    const afterThreadsHydrate = resolveFirstSeenCompletedThreads({
+      threads: [thread("historical")],
+      environmentSnapshotIds: [localEnvironmentId],
+      previouslyObservedThreadsByEnvironment: beforeThreadsHydrate.nextObservedThreadsByEnvironment,
+    });
+
+    expect(beforeThreadsHydrate.nextObservedThreadsByEnvironment.has(localEnvironmentId)).toBe(
+      false,
+    );
+    expect(afterThreadsHydrate.newlyUnreadThreads).toEqual([]);
+    expect(afterThreadsHydrate.nextObservedThreadsByEnvironment.get(localEnvironmentId)).toEqual(
+      new Map([
+        [
+          scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("historical"))),
+          { turnId: "turn-historical", state: "completed" },
+        ],
+      ]),
+    );
+  });
+
   it("marks a completed thread that first appears after bootstrap unread", () => {
     const historicalKey = scopedThreadKey(
       scopeThreadRef(localEnvironmentId, ThreadId.make("historical")),

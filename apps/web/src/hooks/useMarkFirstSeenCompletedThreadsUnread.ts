@@ -61,17 +61,14 @@ export function resolveFirstSeenCompletedThreads(input: {
     readonly threadKey: string;
     readonly completedAt: string | null;
   }> = [];
-  for (const environmentId of snapshotEnvironmentIds) {
-    if (!nextObservedThreadsByEnvironment.has(environmentId)) {
-      nextObservedThreadsByEnvironment.set(environmentId, new Map());
-    }
-  }
-
   for (const thread of input.threads) {
     if (!snapshotEnvironmentIds.has(thread.environmentId)) {
       continue;
     }
 
+    if (!nextObservedThreadsByEnvironment.has(thread.environmentId)) {
+      nextObservedThreadsByEnvironment.set(thread.environmentId, new Map());
+    }
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const observedThread: ObservedThreadTurn = {
       turnId: thread.latestTurn?.turnId ?? null,
