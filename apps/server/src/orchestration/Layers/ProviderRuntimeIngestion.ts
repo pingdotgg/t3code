@@ -1921,6 +1921,7 @@ const make = Effect.gen(function* () {
           loadedThreadDetail = (yield* resolveThreadDetail(thread.id)) ?? null;
           return loadedThreadDetail;
         });
+      let deferredThreadSession: NonNullable<typeof thread.session> | null = null;
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
@@ -2049,24 +2050,34 @@ const make = Effect.gen(function* () {
             );
           }
 
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: yield* providerCommandId(event, "thread-session-set"),
+          const nextSession = {
             threadId: thread.id,
-            session: {
+            status,
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: nextActiveTurnId,
+            lastError,
+            updatedAt: now,
+          } satisfies NonNullable<typeof thread.session>;
+          const shouldDeferSessionUpdate =
+            event.type === "turn.completed" ||
+            event.type === "session.exited" ||
+            (event.type === "session.state.changed" &&
+              (event.payload.state === "error" || event.payload.state === "stopped"));
+          if (shouldDeferSessionUpdate) {
+            deferredThreadSession = nextSession;
+          } else {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.session.set",
+              commandId: yield* providerCommandId(event, "thread-session-set"),
               threadId: thread.id,
-              status,
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: nextActiveTurnId,
-              lastError,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
+              session: nextSession,
+              createdAt: now,
+            });
+          }
         }
       }
 
@@ -2308,6 +2319,9 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           createdAt: now,
         });
+        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+          return;
+        }
         yield* clearTurnStateForSession(thread.id);
       }
 
@@ -2319,24 +2333,18 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: yield* providerCommandId(event, "runtime-error-session-set"),
+          deferredThreadSession = {
             threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "error",
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
-              lastError: runtimeErrorMessage,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
+            status: "error",
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: eventTurnId ?? null,
+            lastError: runtimeErrorMessage,
+            updatedAt: now,
+          };
           yield* finalizeAssistantMessagesForTerminalEvent({
             event,
             threadId: thread.id,
@@ -2404,6 +2412,22 @@ const make = Effect.gen(function* () {
           const threadDetail = yield* getLoadedThreadDetail();
           taskTitle = findTaskTitleInActivities(threadDetail?.activities, event.payload.taskId);
         }
+      }
+
+      if (deferredThreadSession !== null) {
+        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+          return;
+        }
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: yield* providerCommandId(
+            event,
+            event.type === "runtime.error" ? "runtime-error-session-set" : "thread-session-set",
+          ),
+          threadId: thread.id,
+          session: deferredThreadSession,
+          createdAt: now,
+        });
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);

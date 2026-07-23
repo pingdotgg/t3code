@@ -3052,6 +3052,49 @@ describe("ProviderRuntimeIngestion", () => {
     expect(assistantEvents.map((event) => event.payload.streaming)).toEqual([true, false]);
   });
 
+  it("retains fallback completion text when its final delta retries", async () => {
+    const harness = await createHarness();
+    const itemId = asItemId("item-fallback-delta-retry");
+    const now = "2026-01-01T00:00:00.000Z";
+    const getDeltaFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.delta",
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-fallback-delta-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "fallback survives the retry",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-fallback-delta-retry" &&
+            !message.streaming &&
+            message.text === "fallback survives the retry",
+        ),
+      5000,
+    );
+    expect(getDeltaFailureCount()).toBe(3);
+    expect(
+      thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-fallback-delta-retry",
+      )?.text,
+    ).toBe("fallback survives the retry");
+  });
+
   it("keeps retained streaming chunks bounded while dispatch retries", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const turnId = asTurnId("turn-streaming-bounded-retry");
@@ -3550,6 +3593,73 @@ describe("ProviderRuntimeIngestion", () => {
       );
     });
     expect(completionEvents).toHaveLength(1);
+  });
+
+  it("publishes assistant completion before a successful turn boundary", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-successful-boundary-order");
+    const itemId = asItemId("item-successful-boundary-order");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-successful-boundary-order"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-successful-boundary-order"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "complete before ready",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-successful-boundary-order"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-successful-boundary-order" && !message.streaming,
+        ),
+    );
+
+    const events = await runtime!.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const assistantCompletionIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.message-sent" &&
+        event.payload.messageId === "assistant:item-successful-boundary-order" &&
+        !event.payload.streaming,
+    );
+    const turnReadyIndex = events.findLastIndex(
+      (event) => event.type === "thread.session-set" && event.payload.session.status === "ready",
+    );
+    expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
+    expect(turnReadyIndex).toBeGreaterThan(assistantCompletionIndex);
   });
 
   it("keeps a turn boundary behind deferred item finalization", async () => {
