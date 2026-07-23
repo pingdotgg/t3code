@@ -199,6 +199,7 @@ import {
   getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   hasActiveSidebarThreadFilters,
+  hasNarrowingSidebarThreadFilters,
   matchesSidebarThreadFilters,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -3682,6 +3683,7 @@ export default function Sidebar() {
   const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const threadExplicitlyUnreadById = useUiStateStore((state) => state.threadExplicitlyUnreadById);
   const filtersActive = hasActiveSidebarThreadFilters(sidebarThreadFilters);
+  const narrowingFiltersActive = hasNarrowingSidebarThreadFilters(sidebarThreadFilters);
   const filteredSidebarThreads = useMemo(
     () =>
       sidebarThreadsWithArchived.filter((thread) => {
@@ -3852,7 +3854,7 @@ export default function Sidebar() {
     const sortableProjects = sidebarProjects
       .filter(
         (project) =>
-          !filtersActive || (threadsByProjectKey.get(project.projectKey)?.length ?? 0) > 0,
+          !narrowingFiltersActive || (threadsByProjectKey.get(project.projectKey)?.length ?? 0) > 0,
       )
       .map((project) => ({
         ...project,
@@ -3879,7 +3881,7 @@ export default function Sidebar() {
   }, [
     sidebarProjectSortOrder,
     filteredSidebarThreads,
-    filtersActive,
+    narrowingFiltersActive,
     physicalToLogicalKey,
     projectPhysicalKeyByScopedRef,
     sidebarProjectByKey,

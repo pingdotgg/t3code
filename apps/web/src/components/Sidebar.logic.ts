@@ -266,6 +266,22 @@ type SidebarThreadFilterInput = Pick<
 export const SIDEBAR_RECENT_WINDOW_DAYS = 7;
 const SIDEBAR_RECENT_WINDOW_MS = SIDEBAR_RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
 
+function latestValidTimestampMs(...timestamps: ReadonlyArray<string | null>): number | null {
+  let latestTimestampMs: number | null = null;
+  for (const timestamp of timestamps) {
+    if (timestamp === null) {
+      continue;
+    }
+    const timestampMs = Date.parse(timestamp);
+    if (Number.isNaN(timestampMs)) {
+      continue;
+    }
+    latestTimestampMs =
+      latestTimestampMs === null ? timestampMs : Math.max(latestTimestampMs, timestampMs);
+  }
+  return latestTimestampMs;
+}
+
 export function classifySidebarThreadFilterStatus(
   thread: SidebarThreadFilterInput & { readonly lastVisitedAt?: string | undefined },
 ): SidebarThreadFilterStatus {
@@ -329,10 +345,13 @@ export function matchesSidebarThreadFilters(input: {
     return false;
   }
   if (filters.recentOnly) {
-    const recentTimestamp = thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt;
-    const recentTimestampMs = Date.parse(recentTimestamp);
+    const recentTimestampMs = latestValidTimestampMs(
+      thread.latestUserMessageAt,
+      thread.updatedAt,
+      thread.createdAt,
+    );
     if (
-      Number.isNaN(recentTimestampMs) ||
+      recentTimestampMs === null ||
       recentTimestampMs < (input.nowMs ?? Date.now()) - SIDEBAR_RECENT_WINDOW_MS
     ) {
       return false;
@@ -341,7 +360,7 @@ export function matchesSidebarThreadFilters(input: {
   return filters.statuses.includes(status);
 }
 
-export function hasActiveSidebarThreadFilters(filters: SidebarThreadFilters): boolean {
+export function hasNarrowingSidebarThreadFilters(filters: SidebarThreadFilters): boolean {
   const selectedStatuses = new Set(filters.statuses);
   const includesEveryStatus = SIDEBAR_THREAD_FILTER_STATUSES.every((status) =>
     selectedStatuses.has(status),
@@ -349,12 +368,15 @@ export function hasActiveSidebarThreadFilters(filters: SidebarThreadFilters): bo
   return (
     filters.attentionOnly ||
     filters.recentOnly ||
-    filters.includeArchived ||
     filters.environmentIds.length > 0 ||
     filters.sources.length > 0 ||
     selectedStatuses.size !== SIDEBAR_THREAD_FILTER_STATUSES.length ||
     !includesEveryStatus
   );
+}
+
+export function hasActiveSidebarThreadFilters(filters: SidebarThreadFilters): boolean {
+  return filters.includeArchived || hasNarrowingSidebarThreadFilters(filters);
 }
 
 export function sidebarProviderInstanceKey(

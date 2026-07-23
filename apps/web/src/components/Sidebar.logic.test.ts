@@ -13,6 +13,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   hasActiveSidebarThreadFilters,
+  hasNarrowingSidebarThreadFilters,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   matchesSidebarThreadFilters,
@@ -300,6 +301,7 @@ describe("sidebar thread filters", () => {
           ...filterableThread,
           latestUserMessageAt: null,
           updatedAt: "2026-03-03T09:59:59.999Z",
+          createdAt: "2026-03-03T09:00:00.000Z",
         },
         providerDriverKind: ProviderDriverKind.make("codex"),
         filters,
@@ -312,16 +314,42 @@ describe("sidebar thread filters", () => {
           ...filterableThread,
           latestUserMessageAt: null,
           updatedAt: "not-a-date",
+          createdAt: "2026-03-03T09:00:00.000Z",
         },
         providerDriverKind: ProviderDriverKind.make("codex"),
         filters,
         nowMs,
       }),
     ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: "2026-03-01T10:00:00.000Z",
+          updatedAt: "2026-03-10T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: "not-a-date",
+          updatedAt: "2026-03-10T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(true);
   });
 
   it("recognizes the default filter state and meaningful deviations", () => {
     expect(hasActiveSidebarThreadFilters(DEFAULT_SIDEBAR_THREAD_FILTERS)).toBe(false);
+    expect(hasNarrowingSidebarThreadFilters(DEFAULT_SIDEBAR_THREAD_FILTERS)).toBe(false);
     expect(
       hasActiveSidebarThreadFilters({
         ...DEFAULT_SIDEBAR_THREAD_FILTERS,
@@ -334,6 +362,12 @@ describe("sidebar thread filters", () => {
         includeArchived: true,
       }),
     ).toBe(true);
+    expect(
+      hasNarrowingSidebarThreadFilters({
+        ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+        includeArchived: true,
+      }),
+    ).toBe(false);
     expect(
       hasActiveSidebarThreadFilters({
         ...DEFAULT_SIDEBAR_THREAD_FILTERS,
