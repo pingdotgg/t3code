@@ -116,6 +116,17 @@ import { useComposerDraftStore } from "../composerDraftStore";
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 
+const SIDEBAR_V2_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
+  "cursor-pointer rounded-md border border-sidebar-border bg-sidebar-row-hover text-muted-foreground hover:text-foreground dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5";
+const SIDEBAR_V2_ICON_LIFECYCLE_BUTTON_CLASS_NAME = cn(
+  "inline-flex size-6 items-center justify-center",
+  SIDEBAR_V2_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+);
+const SIDEBAR_V2_ROW_LIFECYCLE_BUTTON_CLASS_NAME = cn(
+  "absolute inset-y-0 right-0 inline-flex items-center gap-1 px-2 text-xs opacity-0 transition-opacity focus-visible:opacity-100 group-hover/v2-row:opacity-100",
+  SIDEBAR_V2_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+);
+
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -207,6 +218,80 @@ function SidebarV2ThreadTooltip({
         </div>
       </div>
     </TooltipPopup>
+  );
+}
+
+function SidebarV2SettledLifecycleControls({
+  settlementSupported,
+  archiveDisabled,
+  onUnsettle,
+  onArchive,
+}: {
+  settlementSupported: boolean;
+  archiveDisabled: boolean;
+  onUnsettle: (event: ReactMouseEvent) => void;
+  onArchive: (event: ReactMouseEvent) => void;
+}) {
+  return (
+    <span className="absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100">
+      {settlementSupported ? (
+        <button
+          type="button"
+          aria-label="Un-settle thread"
+          onClick={onUnsettle}
+          className={SIDEBAR_V2_ICON_LIFECYCLE_BUTTON_CLASS_NAME}
+        >
+          <Undo2Icon aria-hidden className="size-3" />
+        </button>
+      ) : null}
+      <button
+        type="button"
+        aria-label="Archive thread"
+        disabled={archiveDisabled}
+        onClick={onArchive}
+        className={cn(
+          SIDEBAR_V2_ICON_LIFECYCLE_BUTTON_CLASS_NAME,
+          "disabled:pointer-events-none disabled:opacity-50",
+        )}
+      >
+        <ArchiveIcon aria-hidden className="size-3" />
+      </button>
+    </span>
+  );
+}
+
+function SidebarV2SettledDivider({
+  archivableCount,
+  isArchiving,
+  onArchiveAll,
+}: {
+  archivableCount: number;
+  isArchiving: boolean;
+  onArchiveAll: () => void;
+}) {
+  return (
+    <li data-thread-selection-safe className="list-none">
+      <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
+        <span className="text-xs font-medium text-muted-foreground/50">Settled</span>
+        <span className="h-px flex-1 bg-sidebar-border/60" />
+        {archivableCount > 0 ? (
+          <button
+            type="button"
+            aria-label={`Archive all ${archivableCount} settled thread${archivableCount === 1 ? "" : "s"}`}
+            disabled={isArchiving}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onArchiveAll();
+            }}
+            className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            <ArchiveIcon aria-hidden className="size-3" />
+            Archive all
+          </button>
+        ) : null}
+      </div>
+    </li>
   );
 }
 
@@ -586,33 +671,18 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 </span>
               </span>
               {variantAction === "unsettle" ? (
-                <span className="absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100">
-                  {props.settlementSupported ? (
-                    <button
-                      type="button"
-                      aria-label="Un-settle thread"
-                      onClick={handleUnsettleClick}
-                      className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-sidebar-row-hover text-muted-foreground hover:text-foreground dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
-                    >
-                      <Undo2Icon aria-hidden className="size-3" />
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    aria-label="Archive thread"
-                    disabled={isThreadSessionRunning(thread.session)}
-                    onClick={handleArchiveClick}
-                    className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-sidebar-row-hover text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
-                  >
-                    <ArchiveIcon aria-hidden className="size-3" />
-                  </button>
-                </span>
+                <SidebarV2SettledLifecycleControls
+                  settlementSupported={props.settlementSupported}
+                  archiveDisabled={isThreadSessionRunning(thread.session)}
+                  onUnsettle={handleUnsettleClick}
+                  onArchive={handleArchiveClick}
+                />
               ) : !props.settlementSupported ? null : (
                 <button
                   type="button"
                   aria-label="Settle thread"
                   onClick={handleSettleClick}
-                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                  className={SIDEBAR_V2_ROW_LIFECYCLE_BUTTON_CLASS_NAME}
                 >
                   <CheckIcon className="size-3" />
                 </button>
@@ -689,7 +759,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     type="button"
                     aria-label="Settle thread"
                     onClick={handleSettleClick}
-                    className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                    className={SIDEBAR_V2_ROW_LIFECYCLE_BUTTON_CLASS_NAME}
                   >
                     <CheckIcon className="size-3" />
                     Settle
@@ -1879,28 +1949,12 @@ export default function SidebarV2() {
                 // along with whichever row happens to be first in the tail —
                 // and row heights stay independent of neighbor classification.
                 return [
-                  <li key="settled-divider" data-thread-selection-safe className="list-none">
-                    <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
-                      <span className="text-xs font-medium text-muted-foreground/50">Settled</span>
-                      <span className="h-px flex-1 bg-sidebar-border/60" />
-                      {archivableSettledThreads.length > 0 ? (
-                        <button
-                          type="button"
-                          aria-label={`Archive all ${archivableSettledThreads.length} settled thread${archivableSettledThreads.length === 1 ? "" : "s"}`}
-                          disabled={isArchivingAllSettled}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            archiveAllSettled();
-                          }}
-                          className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-50"
-                        >
-                          <ArchiveIcon aria-hidden className="size-3" />
-                          Archive all
-                        </button>
-                      ) : null}
-                    </div>
-                  </li>,
+                  <SidebarV2SettledDivider
+                    key="settled-divider"
+                    archivableCount={archivableSettledThreads.length}
+                    isArchiving={isArchivingAllSettled}
+                    onArchiveAll={archiveAllSettled}
+                  />,
                   row,
                 ];
               })}
