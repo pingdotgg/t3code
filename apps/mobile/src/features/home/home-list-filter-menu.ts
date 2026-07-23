@@ -1,15 +1,7 @@
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 
 import type { HomeProjectSortOrder } from "./homeThreadList";
-import {
-  PROJECT_GROUPING_OPTIONS,
-  PROJECT_SORT_OPTIONS,
-  THREAD_SORT_OPTIONS,
-} from "./home-list-options";
+import { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-options";
 
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
@@ -47,12 +39,10 @@ export function buildHomeListFilterMenu(props: {
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   readonly onOpenSettings?: () => void;
   /** False hides the sort/group submenus. Thread List v2 uses a fixed
       creation-order layout, so offering those controls while it silently
@@ -134,17 +124,6 @@ export function buildHomeListFilterMenu(props: {
           title: option.label,
           state: props.threadSortOrder === option.value ? "on" : "off",
           onPress: () => props.onThreadSortOrderChange(option.value),
-        })),
-      },
-      {
-        type: "submenu",
-        title: "Group projects",
-        items: PROJECT_GROUPING_OPTIONS.map((option) => ({
-          type: "action",
-          title: option.label,
-          subtitle: option.subtitle,
-          state: props.projectGroupingMode === option.value ? "on" : "off",
-          onPress: () => props.onProjectGroupingModeChange(option.value),
         })),
       },
     );

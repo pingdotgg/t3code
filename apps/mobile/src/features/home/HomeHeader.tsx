@@ -1,8 +1,4 @@
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -28,7 +24,6 @@ import {
 } from "./home-list-filter-menu";
 import {
   hasCustomHomeListOptions,
-  PROJECT_GROUPING_OPTIONS,
   PROJECT_SORT_OPTIONS,
   THREAD_SORT_OPTIONS,
 } from "./home-list-options";
@@ -43,13 +38,11 @@ export function HomeHeader(props: {
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
@@ -143,20 +136,10 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 state: checkedMenuState(props.threadSortOrder === option.value),
               })),
             },
-            {
-              id: "project-grouping",
-              title: "Group projects",
-              subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
-                id: `project-grouping:${option.value}`,
-                title: option.label,
-                state: checkedMenuState(props.projectGroupingMode === option.value),
-              })),
-            },
           ] satisfies MenuAction[])),
     ],
     [
       props.environments,
-      props.projectGroupingMode,
       props.projectSortOrder,
       props.projects,
       props.selectedEnvironmentId,
@@ -209,13 +192,6 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       if (threadSort) {
         props.onThreadSortOrderChange(threadSort.value);
         return;
-      }
-
-      const grouping = PROJECT_GROUPING_OPTIONS.find(
-        (option) => id === `project-grouping:${option.value}`,
-      );
-      if (grouping) {
-        props.onProjectGroupingModeChange(grouping.value);
       }
     },
     [props],
@@ -475,20 +451,6 @@ function IosHomeHeader(props: HomeHeaderProps) {
                   key={option.value}
                   isOn={props.threadSortOrder === option.value}
                   onPress={() => props.onThreadSortOrderChange(option.value)}
-                >
-                  <NativeHeaderToolbar.Label>{option.label}</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
-
-            <NativeHeaderToolbar.Menu title="Group projects">
-              <NativeHeaderToolbar.Label>Group projects</NativeHeaderToolbar.Label>
-              {PROJECT_GROUPING_OPTIONS.map((option) => (
-                <NativeHeaderToolbar.MenuAction
-                  key={option.value}
-                  isOn={props.projectGroupingMode === option.value}
-                  onPress={() => props.onProjectGroupingModeChange(option.value)}
-                  subtitle={option.subtitle}
                 >
                   <NativeHeaderToolbar.Label>{option.label}</NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>

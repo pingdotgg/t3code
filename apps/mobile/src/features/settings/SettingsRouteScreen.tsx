@@ -119,6 +119,8 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <GeneralSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
@@ -504,6 +506,8 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <GeneralSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
@@ -515,6 +519,25 @@ function ConfiguredSettingsRouteScreen() {
         <AppSettingsSection />
       </ScrollView>
     </View>
+  );
+}
+
+function GeneralSettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.projectGroupingEnabled !== false
+    : true;
+
+  return (
+    <SettingsSection title="General">
+      <SettingsSwitchRow
+        icon="folder"
+        label="Project Grouping"
+        value={projectGroupingEnabled}
+        onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
+      />
+    </SettingsSection>
   );
 }
 
