@@ -2083,14 +2083,14 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    public func addProject(path: String) async throws -> Project {
+    public func addProject(path: String, createWorkspaceRootIfMissing: Bool) async throws -> Project {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         let projectID = UUID().uuidString
         let name = (path as NSString).lastPathComponent
         let title = name.isEmpty ? path : name
         _ = try await client.createProject(
             projectId: projectID, title: title, workspaceRoot: path,
-            createWorkspaceRootIfMissing: false)
+            createWorkspaceRootIfMissing: createWorkspaceRootIfMissing)
         let project = Project(id: projectID, name: title, path: path)
         projectsByID[projectID] = project
         emit(.projectsChanged(currentProjectList()))

@@ -360,8 +360,9 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.restoreCheckpoint(threadID: threadID, turnCount: turnCount)
     }
 
-    public func addProject(path: String) async throws -> Project {
-        await state.addProject(path: path)
+    public func addProject(path: String, createWorkspaceRootIfMissing: Bool) async throws -> Project {
+        _ = createWorkspaceRootIfMissing
+        return await state.addProject(path: path)
     }
 
     public func renameProject(id: String, name: String) async throws {

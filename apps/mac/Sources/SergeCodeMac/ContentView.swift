@@ -32,9 +32,10 @@ struct RootView: View {
                     ThreadDetailView(model: multi.activeModel, scenery: scenery, thread: thread)
                         .transition(.opacity)
                 } else {
-                    EmptyStateView(scenery: scenery) {
-                        showNewSessionSheet = true
-                    }
+                    EmptyStateView(
+                        scenery: scenery,
+                        onQuickChat: { startQuickChat() },
+                        onNewSession: { showNewSessionSheet = true })
                     .transition(.opacity)
                 }
             }
@@ -130,12 +131,20 @@ struct RootView: View {
     }
 
     /// Primary click opens the scalable chooser. The disclosure menu stays a
-    /// genuinely quick path: repeat the current session's target or choose a
-    /// different provider for that same project. It deliberately does not
-    /// reproduce the full device × project × provider tree.
+    /// genuinely quick path: Quick Chat, the full chooser, or repeat the
+    /// current session's project/provider. It deliberately does not reproduce
+    /// the full device × project × provider tree.
     @ViewBuilder
     private var newSessionMenu: some View {
         NewSessionSplitControl(onNewSession: { showNewSessionSheet = true }) {
+            Button {
+                startQuickChat()
+            } label: {
+                Label("Quick Chat", systemImage: "bubble.left.and.bubble.right")
+            }
+            .help("Start a general session in \(GeneralWorkspace.relativePath)")
+            .disabled(!multi.local.capabilities.canBrowseLocalFolders)
+
             Button {
                 showNewSessionSheet = true
             } label: {
@@ -180,6 +189,15 @@ struct RootView: View {
     private var selectedProject: Project? {
         guard let thread = multi.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }
+    }
+
+    private func startQuickChat() {
+        Task {
+            let owner = multi.local
+            if let thread = await owner.startQuickChat(scenery: scenery, passport: passport) {
+                multi.select(threadID: thread.id, on: .local)
+            }
+        }
     }
 
     private func createSession(
