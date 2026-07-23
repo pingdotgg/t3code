@@ -1882,16 +1882,18 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
 function workEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
   workspaceRoot: string | undefined,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
+): { text: string; changedFilePath: string | null } | null {
+  if (workEntry.command) return { text: workEntry.command, changedFilePath: null };
+  if (workEntry.detail) return { text: workEntry.detail, changedFilePath: null };
+  const changedFiles = workEntry.changedFiles ?? [];
+  const [firstPath] = changedFiles;
   if (!firstPath) return null;
   const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
+  const singleChangedFile = changedFiles.length === 1;
+  return {
+    text: singleChangedFile ? displayPath : `${displayPath} +${changedFiles.length - 1} more`,
+    changedFilePath: singleChangedFile ? firstPath : null,
+  };
 }
 
 function workEntryRawCommand(
@@ -1991,7 +1993,12 @@ function toWorkspaceRelativeFilePath(
 
   const normalizedRoot = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
   const rootWithSeparator = `${normalizedRoot}/`;
-  if (normalizedPath.toLowerCase().startsWith(rootWithSeparator.toLowerCase())) {
+  const usesCaseInsensitiveComparison =
+    /^[A-Za-z]:\//.test(normalizedRoot) || normalizedRoot.startsWith("//");
+  const isInsideWorkspace = usesCaseInsensitiveComparison
+    ? normalizedPath.toLowerCase().startsWith(rootWithSeparator.toLowerCase())
+    : normalizedPath.startsWith(rootWithSeparator);
+  if (isInsideWorkspace) {
     return normalizedPath.slice(rootWithSeparator.length);
   }
   return normalizedPath.startsWith("/") || /^[A-Za-z]:\//.test(normalizedPath)
@@ -2011,7 +2018,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
+  const resolvedPreview = workEntryPreview(workEntry, workspaceRoot);
+  const rawPreview = resolvedPreview?.text ?? null;
   const preview =
     rawPreview &&
     normalizeCompactToolLabel(rawPreview).toLowerCase() ===
@@ -2019,10 +2027,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
-  const singleChangedFile =
-    workEntry.changedFiles?.length === 1 ? workEntry.changedFiles[0] : undefined;
-  const openableFilePath = singleChangedFile
-    ? toWorkspaceRelativeFilePath(singleChangedFile, workspaceRoot)
+  const openableFilePath = resolvedPreview?.changedFilePath
+    ? toWorkspaceRelativeFilePath(resolvedPreview.changedFilePath, workspaceRoot)
     : null;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null;
@@ -2091,6 +2097,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                     type="button"
                     className="min-w-0 flex-1 cursor-pointer truncate text-left text-muted-foreground/55 hover:text-foreground hover:underline"
                     aria-label={`Open file ${openableFilePath}`}
+                    onKeyDown={stopRowToggle}
+                    onPointerDown={stopRowToggle}
                     onClick={(event) => {
                       event.stopPropagation();
                       onOpenFile(openableFilePath);

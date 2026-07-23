@@ -548,6 +548,89 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Open file apps/web/src/session-logic.ts"');
   });
 
+  it("rejects case-mismatched POSIX paths outside the workspace", () => {
+    const renderChangedFile = (filePath: string) =>
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Updated file",
+                tone: "tool",
+                changedFiles: [filePath],
+              },
+            },
+          ]}
+          workspaceRoot="/home/alice/Repo"
+        />,
+      );
+
+    expect(renderChangedFile("/home/alice/Repo/inside.ts")).toContain(
+      'aria-label="Open file inside.ts"',
+    );
+    expect(renderChangedFile("/home/alice/repo/outside.ts")).not.toContain('aria-label="Open file');
+  });
+
+  it("does not make command text open an associated changed file", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              command: "git status",
+              changedFiles: ["/home/alice/Repo/inside.ts"],
+            },
+          },
+        ]}
+        workspaceRoot="/home/alice/Repo"
+      />,
+    );
+
+    expect(markup).toContain("git status");
+    expect(markup).not.toContain('aria-label="Open file');
+  });
+
+  it("does not make detail text open an associated changed file", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Updated file",
+              tone: "tool",
+              detail: "Wrote requested content",
+              changedFiles: ["/home/alice/Repo/inside.ts"],
+            },
+          },
+        ]}
+        workspaceRoot="/home/alice/Repo"
+      />,
+    );
+
+    expect(markup).toContain("Wrote requested content");
+    expect(markup).not.toContain('aria-label="Open file');
+  });
+
   it("renders review comment contexts as structured cards instead of raw tags", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
