@@ -29,6 +29,12 @@ const router = getRouter(history);
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
+} else if ("serviceWorker" in navigator) {
+  // Electron loads this same bundle over a custom protocol, not the hosted
+  // origin, so the service worker only makes sense in a real browser.
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js");
+  });
 }
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;

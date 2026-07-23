@@ -63,6 +63,7 @@
     "msw": "2.12.11",
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
+    "vite-plugin-pwa": "^1.3.0",
     "vite-plus": "catalog:"
   }
 }
