@@ -25,6 +25,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadLastVisitedAtById: {},
     threadExplicitlyUnreadById: {},
     threadChangedFilesExpandedById: {},
+    hasTrackedActiveThreadRoute: false,
     activeThreadVisit: null,
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -69,6 +70,48 @@ describe("uiStateStore pure functions", () => {
 
     const away = markActiveThreadVisited(unread, otherThreadId, null);
     const returned = markActiveThreadVisited(away, threadId, updatedAt);
+    expect(returned.threadExplicitlyUnreadById[threadId]).toBeUndefined();
+  });
+
+  it("preserves persisted unread state through initial route hydration", () => {
+    const threadId = ThreadId.make("thread-1");
+    const updatedAt = "2026-02-25T12:30:00.000Z";
+    const restarted = parsePersistedState({
+      threadLastVisitedAtById: { [threadId]: updatedAt },
+      threadExplicitlyUnreadById: { [threadId]: true },
+    });
+
+    const routed = markActiveThreadVisited(restarted, threadId, null);
+    const hydrated = markActiveThreadVisited(routed, threadId, updatedAt);
+
+    expect(routed.threadExplicitlyUnreadById[threadId]).toBe(true);
+    expect(hydrated.threadExplicitlyUnreadById[threadId]).toBe(true);
+    expect(hydrated.activeThreadVisit).toEqual({ threadId, visitedAt: updatedAt });
+  });
+
+  it("preserves active unread state through a transient detail gap", () => {
+    const threadId = ThreadId.make("thread-1");
+    const updatedAt = "2026-02-25T12:30:00.000Z";
+    const active = markActiveThreadVisited(makeUiState(), threadId, updatedAt);
+    const unread = markThreadUnread(active, threadId, null);
+
+    const missing = markActiveThreadVisited(unread, threadId, null);
+    const restored = markActiveThreadVisited(missing, threadId, updatedAt);
+
+    expect(missing).toBe(unread);
+    expect(restored).toBe(unread);
+    expect(restored.threadExplicitlyUnreadById[threadId]).toBe(true);
+  });
+
+  it("clears explicit unread after leaving and returning to the same route", () => {
+    const threadId = ThreadId.make("thread-1");
+    const updatedAt = "2026-02-25T12:30:00.000Z";
+    const active = markActiveThreadVisited(makeUiState(), threadId, updatedAt);
+    const unread = markThreadUnread(active, threadId, null);
+
+    const away = markActiveThreadVisited(unread, null, null);
+    const returned = markActiveThreadVisited(away, threadId, updatedAt);
+
     expect(returned.threadExplicitlyUnreadById[threadId]).toBeUndefined();
   });
 
@@ -207,6 +250,7 @@ describe("parsePersistedState", () => {
       threadExplicitlyUnreadById: {
         "environment:thread-1": true,
       },
+      hasTrackedActiveThreadRoute: false,
       activeThreadVisit: null,
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {

@@ -54,7 +54,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -161,7 +161,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1161,6 +1161,7 @@ function ChatViewContent(props: ChatViewProps) {
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
+  const router = useRouter();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
@@ -1748,31 +1749,29 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!serverThread?.id) {
-      markActiveThreadVisited(null, null);
+    if (routeKind !== "server") {
       return;
     }
-    const visitedAt = Number.isNaN(Date.parse(serverThread.updatedAt))
-      ? null
-      : serverThread.updatedAt;
-    markActiveThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      visitedAt,
-    );
-  }, [
-    markActiveThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.updatedAt,
-  ]);
+    const visitedAt =
+      !serverThread || Number.isNaN(Date.parse(serverThread.updatedAt))
+        ? null
+        : serverThread.updatedAt;
+    markActiveThreadVisited(routeThreadKey, visitedAt);
+  }, [markActiveThreadVisited, routeKind, routeThreadKey, serverThread?.updatedAt]);
 
   useEffect(
     () => () => {
+      const currentRouteParams =
+        router.state.matches[router.state.matches.length - 1]?.params ?? {};
+      const currentRouteTarget = resolveThreadRouteTarget(currentRouteParams);
+      if (currentRouteTarget?.kind === "server") {
+        return;
+      }
       if (useUiStateStore.getState().activeThreadVisit?.threadId === routeThreadKey) {
         markActiveThreadVisited(null, null);
       }
     },
-    [markActiveThreadVisited, routeThreadKey],
+    [markActiveThreadVisited, routeThreadKey, router],
   );
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;

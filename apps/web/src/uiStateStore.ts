@@ -37,6 +37,7 @@ export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadExplicitlyUnreadById: Record<string, boolean>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  hasTrackedActiveThreadRoute: boolean;
   activeThreadVisit: {
     readonly threadId: string;
     readonly visitedAt: string | null;
@@ -55,6 +56,7 @@ const initialState: UiState = {
   threadLastVisitedAtById: {},
   threadExplicitlyUnreadById: {},
   threadChangedFilesExpandedById: {},
+  hasTrackedActiveThreadRoute: false,
   activeThreadVisit: null,
   defaultAdvertisedEndpointKey: null,
 };
@@ -140,6 +142,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
     ),
+    hasTrackedActiveThreadRoute: false,
     activeThreadVisit: null,
     defaultAdvertisedEndpointKey:
       typeof parsed.defaultAdvertisedEndpointKey === "string" &&
@@ -287,25 +290,42 @@ export function markActiveThreadVisited(
   visitedAt: string | null,
 ): UiState {
   if (threadId === null) {
-    return state.activeThreadVisit === null ? state : { ...state, activeThreadVisit: null };
+    return state.activeThreadVisit === null && state.hasTrackedActiveThreadRoute
+      ? state
+      : {
+          ...state,
+          hasTrackedActiveThreadRoute: true,
+          activeThreadVisit: null,
+        };
   }
 
-  if (
-    state.activeThreadVisit?.threadId === threadId &&
-    state.activeThreadVisit.visitedAt === visitedAt
-  ) {
-    return state;
+  if (state.activeThreadVisit?.threadId === threadId) {
+    if (visitedAt === null || state.activeThreadVisit.visitedAt === visitedAt) {
+      return state;
+    }
+
+    if (state.activeThreadVisit.visitedAt === null) {
+      const visitedState = markThreadVisited(state, threadId, visitedAt);
+      return {
+        ...visitedState,
+        hasTrackedActiveThreadRoute: true,
+        activeThreadVisit: { threadId, visitedAt },
+      };
+    }
   }
 
   const visitedState = visitedAt === null ? state : markThreadVisited(state, threadId, visitedAt);
   const nextExplicitlyUnreadById = {
     ...visitedState.threadExplicitlyUnreadById,
   };
-  delete nextExplicitlyUnreadById[threadId];
+  if (state.hasTrackedActiveThreadRoute) {
+    delete nextExplicitlyUnreadById[threadId];
+  }
 
   return {
     ...visitedState,
     threadExplicitlyUnreadById: nextExplicitlyUnreadById,
+    hasTrackedActiveThreadRoute: true,
     activeThreadVisit: { threadId, visitedAt },
   };
 }
