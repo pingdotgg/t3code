@@ -959,6 +959,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const releaseFinalizedAssistantMessageForTurn = Effect.fn(
+    "releaseFinalizedAssistantMessageForTurn",
+  )(function* (threadId: ThreadId, turnId: TurnId, messageId: MessageId) {
+    yield* forgetAssistantMessageId(threadId, turnId, messageId);
+    const state = yield* getAssistantSegmentStateForTurn(threadId, turnId);
+    if (Option.isSome(state) && state.value.activeMessageId === messageId) {
+      yield* setAssistantSegmentStateForTurn(threadId, turnId, {
+        ...state.value,
+        activeMessageId: null,
+      });
+    }
+  });
+
   const startAssistantSegmentForTurn = (input: {
     threadId: ThreadId;
     turnId: TurnId;
@@ -1518,15 +1531,11 @@ const make = Effect.gen(function* () {
       if (!finalized) {
         return;
       }
-      yield* forgetAssistantMessageId(input.threadId, input.turnId, activeMessageId.value);
-
-      const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
-      if (Option.isSome(state)) {
-        yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, {
-          ...state.value,
-          activeMessageId: null,
-        });
-      }
+      yield* releaseFinalizedAssistantMessageForTurn(
+        input.threadId,
+        input.turnId,
+        activeMessageId.value,
+      );
     });
 
   const upsertProposedPlan = (input: {
@@ -2568,10 +2577,17 @@ const make = Effect.gen(function* () {
       case "assistant-delta":
         return processAssistantDelta(input);
       case "assistant-finalize":
-        return Cache.invalidate(
-          assistantFinalizationRetryScheduledByMessageId,
-          input.messageId,
-        ).pipe(Effect.andThen(finalizeAssistantMessage(input)));
+        return Effect.gen(function* () {
+          yield* Cache.invalidate(assistantFinalizationRetryScheduledByMessageId, input.messageId);
+          const finalized = yield* finalizeAssistantMessage(input);
+          if (finalized && input.turnId) {
+            yield* releaseFinalizedAssistantMessageForTurn(
+              input.threadId,
+              input.turnId,
+              input.messageId,
+            );
+          }
+        });
     }
   };
 

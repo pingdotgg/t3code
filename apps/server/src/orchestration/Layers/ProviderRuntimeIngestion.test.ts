@@ -3580,8 +3580,15 @@ describe("ProviderRuntimeIngestion", () => {
     const turnReadyIndex = events.findLastIndex(
       (event) => event.type === "thread.session-set" && event.payload.session.status === "ready",
     );
+    const completionEvents = events.filter(
+      (event) =>
+        event.type === "thread.message-sent" &&
+        event.payload.messageId === "assistant:item-deferred-item-finalization" &&
+        !event.payload.streaming,
+    );
     expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
     expect(turnReadyIndex).toBeGreaterThan(assistantCompletionIndex);
+    expect(completionEvents).toHaveLength(1);
   });
 
   it("maps canonical request events into approval activities with requestKind", async () => {
