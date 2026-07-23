@@ -55,6 +55,12 @@ import {
   PullRequestReviewInput,
   PullRequestReviewResult,
 } from "./review.ts";
+import {
+  GetAutoReviewJobInput,
+  GetAutoReviewJobResult,
+  ListAutoReviewJobsInput,
+  ListAutoReviewJobsResult,
+} from "./autoReview.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   ClientOrchestrationCommand,
@@ -173,6 +179,10 @@ export const WS_METHODS = {
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
   reviewGetPullRequest: "review.getPullRequest",
+
+  // Auto-review methods
+  autoReviewListJobs: "autoReview.listJobs",
+  autoReviewGetJob: "autoReview.getJob",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -535,6 +545,18 @@ export const WsReviewGetPullRequestRpc = Rpc.make(WS_METHODS.reviewGetPullReques
   error: Schema.Union([PullRequestReviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsAutoReviewListJobsRpc = Rpc.make(WS_METHODS.autoReviewListJobs, {
+  payload: ListAutoReviewJobsInput,
+  success: ListAutoReviewJobsResult,
+  error: Schema.Union([EnvironmentAuthorizationError]),
+});
+
+export const WsAutoReviewGetJobRpc = Rpc.make(WS_METHODS.autoReviewGetJob, {
+  payload: GetAutoReviewJobInput,
+  success: GetAutoReviewJobResult,
+  error: Schema.Union([EnvironmentAuthorizationError]),
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -718,6 +740,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetPullRequestRpc,
+  WsAutoReviewListJobsRpc,
+  WsAutoReviewGetJobRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

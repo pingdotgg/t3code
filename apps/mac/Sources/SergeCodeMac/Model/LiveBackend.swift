@@ -2434,18 +2434,58 @@ public actor LiveBackend: BackendService {
 
     public func settings() async throws -> AppSettings {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        return Self.uiSettings(try await client.getSettings())
+        return Self.uiSettings(
+            try await client.getSettings(), projects: Array(projectsByID.values))
     }
 
     public func updateSettings(_ settings: AppSettings) async throws -> AppSettings {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
+        var projectPatches: [String: AutoReviewProjectOverridePatch] = [:]
+        for override in settings.autoReview.projectOverrides {
+            if let enabled = override.enabled {
+                projectPatches[override.projectID] = AutoReviewProjectOverridePatch(enabled: enabled)
+            }
+        }
+        let autoReviewPatch = AutoReviewSettingsPatch(
+            enabled: settings.autoReview.enabled,
+            mode: settings.autoReview.mode,
+            modelSelection: ModelSelection(
+                instanceId: settings.autoReview.modelInstanceID,
+                model: settings.autoReview.modelID),
+            mentionHandle: settings.autoReview.mentionHandle,
+            pollInterval: settings.autoReview.pollIntervalSeconds * 1000,
+            autoFixOriginThread: settings.autoReview.autoFixOriginThread,
+            projects: projectPatches)
         let patch = ServerSettingsPatch(
             enableAssistantStreaming: settings.assistantStreaming,
             enableProviderUpdateChecks: settings.providerUpdateChecks,
             defaultThreadEnvMode: settings.defaultEnvMode == .worktree ? .worktree : .local,
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
-            addProjectBaseDirectory: settings.addProjectBaseDirectory)
-        return Self.uiSettings(try await client.updateSettings(patch: patch))
+            addProjectBaseDirectory: settings.addProjectBaseDirectory,
+            autoReview: autoReviewPatch)
+        return Self.uiSettings(
+            try await client.updateSettings(patch: patch),
+            projects: Array(projectsByID.values))
+    }
+
+    public func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob]
+    {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let payload = try await client.listAutoReviewJobs(projectId: projectID, limit: limit)
+        return payload.jobs.map { job in
+            AppAutoReviewJob(
+                id: job.id,
+                projectID: job.projectId,
+                prNumber: job.prNumber,
+                headSha: job.headSha,
+                status: job.status,
+                trigger: job.trigger,
+                findingsCount: job.findingsCount,
+                reviewURL: job.reviewUrl,
+                error: job.error,
+                autoFixEnqueued: job.autoFixEnqueued,
+                updatedAt: job.updatedAt)
+        }
     }
 
     public func refreshProviders() async throws {
@@ -2469,13 +2509,49 @@ public actor LiveBackend: BackendService {
         return try await client.generateScenerySet(location: location)
     }
 
-    private static func uiSettings(_ settings: ServerSettings) -> AppSettings {
-        AppSettings(
+    private static func uiSettings(
+        _ settings: ServerSettings, projects: [Project]
+    ) -> AppSettings {
+        let ar = settings.autoReview
+        var overrides: [AppAutoReviewProjectOverride] = []
+        // Prefer known project list; fall back to keys present in the wire map.
+        let projectIDs = Set(projects.map(\.id)).union(Self.projectIDs(from: ar.projects))
+        for projectID in projectIDs.sorted() {
+            let title = projects.first(where: { $0.id == projectID })?.name ?? projectID
+            let enabled = Self.projectEnabledOverride(projectID: projectID, projects: ar.projects)
+            overrides.append(
+                AppAutoReviewProjectOverride(
+                    projectID: projectID, projectTitle: title, enabled: enabled))
+        }
+        return AppSettings(
             assistantStreaming: settings.enableAssistantStreaming,
             providerUpdateChecks: settings.enableProviderUpdateChecks,
             defaultEnvMode: settings.defaultThreadEnvMode == .worktree ? .worktree : .local,
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
-            addProjectBaseDirectory: settings.addProjectBaseDirectory)
+            addProjectBaseDirectory: settings.addProjectBaseDirectory,
+            autoReview: AppAutoReviewSettings(
+                enabled: ar.enabled,
+                mode: ar.mode,
+                modelInstanceID: ar.modelSelection.instanceId,
+                modelID: ar.modelSelection.model,
+                mentionHandle: ar.mentionHandle,
+                pollIntervalSeconds: max(15, ar.pollIntervalMs / 1000),
+                autoFixOriginThread: ar.autoFixOriginThread,
+                projectOverrides: overrides))
+    }
+
+    private static func projectIDs(from projects: JSONValue) -> Set<String> {
+        guard case .object(let map) = projects else { return [] }
+        return Set(map.keys)
+    }
+
+    private static func projectEnabledOverride(projectID: String, projects: JSONValue) -> Bool? {
+        guard case .object(let map) = projects, let value = map[projectID] else { return nil }
+        guard case .object(let fields) = value, let enabledValue = fields["enabled"] else {
+            return nil
+        }
+        guard case .bool(let enabled) = enabledValue else { return nil }
+        return enabled
     }
 
     // MARK: - Emit helpers

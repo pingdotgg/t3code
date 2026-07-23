@@ -93,6 +93,7 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -330,6 +331,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
   [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
   [WS_METHODS.reviewGetPullRequest, AuthOrchestrationReadScope],
+  [WS_METHODS.autoReviewListJobs, AuthOrchestrationReadScope],
+  [WS_METHODS.autoReviewGetJob, AuthOrchestrationReadScope],
   [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
   [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
   [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
@@ -473,6 +476,7 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
+      const autoReviewJobs = yield* AutoReviewJobStore.AutoReviewJobStore;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
@@ -1773,6 +1777,23 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.reviewGetPullRequest, review.getPullRequest(input), {
             "rpc.aggregate": "review",
           }),
+        [WS_METHODS.autoReviewListJobs]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.autoReviewListJobs,
+            autoReviewJobs
+              .list({
+                ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+                ...(input.limit !== undefined ? { limit: input.limit } : {}),
+              })
+              .pipe(Effect.map((jobs) => ({ jobs }))),
+            { "rpc.aggregate": "autoReview" },
+          ),
+        [WS_METHODS.autoReviewGetJob]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.autoReviewGetJob,
+            autoReviewJobs.get(input.id).pipe(Effect.map((job) => ({ job }))),
+            { "rpc.aggregate": "autoReview" },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

@@ -114,6 +114,31 @@ interface FakeGitTextGeneration {
     },
     TextGenerationError
   >;
+  generateAutoReviewFindings: (input: {
+    cwd: string;
+    prNumber: number;
+    prTitle: string;
+    prBody: string;
+    baseBranch: string;
+    headBranch: string;
+    headSha: string;
+    diffPatch: string;
+    truncated: boolean;
+    modelSelection: ModelSelection;
+  }) => Effect.Effect<
+    {
+      summary: string;
+      decision: "comment" | "request_changes" | "approve";
+      comments: Array<{
+        path: string;
+        line: number | null;
+        side: "LEFT" | "RIGHT" | null;
+        severity: "blocking" | "important" | "nit" | "info";
+        body: string;
+      }>;
+    },
+    TextGenerationError
+  >;
 }
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
@@ -342,6 +367,12 @@ function createTextGeneration(
         sceneNames: ["Viewpoint"],
         queries: [{ text: "landscape" }],
       }),
+    generateAutoReviewFindings: () =>
+      Effect.succeed({
+        summary: "Looks fine.",
+        decision: "comment" as const,
+        comments: [],
+      }),
     ...overrides,
   };
 
@@ -396,6 +427,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateScenerySet",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateAutoReviewFindings: (input) =>
+      implementation.generateAutoReviewFindings(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateAutoReviewFindings",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),
@@ -646,6 +688,34 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
           ),
         ),
+      listRepositoryOpenPullRequests: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            String(input.limit ?? 50),
+            "--json",
+            "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+          Effect.map((raw) =>
+            raw
+              .map((entry) => normalizeFakePullRequestSummary(entry))
+              .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
+          ),
+        ),
+      listPullRequestIssueComments: () => Effect.succeed([]),
+      getPullRequestDiff: () => Effect.succeed(""),
+      submitPullRequestReview: () =>
+        Effect.succeed({
+          reviewId: "fake-review",
+          url: "https://github.com/example/pull/1#pullrequestreview-1",
+        }),
       createPullRequest: (input) =>
         execute({
           cwd: input.cwd,

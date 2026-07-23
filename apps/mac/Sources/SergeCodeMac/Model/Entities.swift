@@ -1251,6 +1251,87 @@ public enum ProjectEnvMode: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
+/// Per-project override row for Auto Review settings.
+public struct AppAutoReviewProjectOverride: Hashable, Sendable, Identifiable {
+    public var id: String { projectID }
+    public var projectID: String
+    public var projectTitle: String
+    /// `nil` means inherit global enabled flag.
+    public var enabled: Bool?
+
+    public init(projectID: String, projectTitle: String, enabled: Bool?) {
+        self.projectID = projectID
+        self.projectTitle = projectTitle
+        self.enabled = enabled
+    }
+}
+
+/// Native auto-review preferences (global + per-project enable overrides).
+public struct AppAutoReviewSettings: Hashable, Sendable {
+    public var enabled: Bool
+    /// `"auto"` or `"mention"`.
+    public var mode: String
+    public var modelInstanceID: String
+    public var modelID: String
+    public var mentionHandle: String
+    public var pollIntervalSeconds: Double
+    public var autoFixOriginThread: Bool
+    public var projectOverrides: [AppAutoReviewProjectOverride]
+
+    public init(
+        enabled: Bool = false,
+        mode: String = "auto",
+        modelInstanceID: String = "codex",
+        modelID: String = "gpt-5.4-mini",
+        mentionHandle: String = "surgecode",
+        pollIntervalSeconds: Double = 60,
+        autoFixOriginThread: Bool = true,
+        projectOverrides: [AppAutoReviewProjectOverride] = []
+    ) {
+        self.enabled = enabled
+        self.mode = mode
+        self.modelInstanceID = modelInstanceID
+        self.modelID = modelID
+        self.mentionHandle = mentionHandle
+        self.pollIntervalSeconds = pollIntervalSeconds
+        self.autoFixOriginThread = autoFixOriginThread
+        self.projectOverrides = projectOverrides
+    }
+}
+
+/// Recent auto-review job for status UI.
+public struct AppAutoReviewJob: Hashable, Sendable, Identifiable {
+    public var id: String
+    public var projectID: String
+    public var prNumber: Int
+    public var headSha: String
+    public var status: String
+    public var trigger: String
+    public var findingsCount: Int?
+    public var reviewURL: String?
+    public var error: String?
+    public var autoFixEnqueued: Bool
+    public var updatedAt: String
+
+    public init(
+        id: String, projectID: String, prNumber: Int, headSha: String, status: String,
+        trigger: String, findingsCount: Int?, reviewURL: String?, error: String?,
+        autoFixEnqueued: Bool, updatedAt: String
+    ) {
+        self.id = id
+        self.projectID = projectID
+        self.prNumber = prNumber
+        self.headSha = headSha
+        self.status = status
+        self.trigger = trigger
+        self.findingsCount = findingsCount
+        self.reviewURL = reviewURL
+        self.error = error
+        self.autoFixEnqueued = autoFixEnqueued
+        self.updatedAt = updatedAt
+    }
+}
+
 /// The editable server-settings subset surfaced in the Settings scene.
 public struct AppSettings: Hashable, Sendable {
     public var assistantStreaming: Bool
@@ -1258,16 +1339,19 @@ public struct AppSettings: Hashable, Sendable {
     public var defaultEnvMode: ProjectEnvMode
     public var newWorktreesStartFromOrigin: Bool
     public var addProjectBaseDirectory: String
+    public var autoReview: AppAutoReviewSettings
 
     public init(
         assistantStreaming: Bool, providerUpdateChecks: Bool, defaultEnvMode: ProjectEnvMode,
-        newWorktreesStartFromOrigin: Bool, addProjectBaseDirectory: String
+        newWorktreesStartFromOrigin: Bool, addProjectBaseDirectory: String,
+        autoReview: AppAutoReviewSettings = AppAutoReviewSettings()
     ) {
         self.assistantStreaming = assistantStreaming
         self.providerUpdateChecks = providerUpdateChecks
         self.defaultEnvMode = defaultEnvMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.addProjectBaseDirectory = addProjectBaseDirectory
+        self.autoReview = autoReview
     }
 }
 

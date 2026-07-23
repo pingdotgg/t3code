@@ -244,6 +244,11 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
             ...input,
             modelSelection: normalizeRequiredClaudexModelSelection(input.modelSelection),
           }),
+        generateAutoReviewFindings: (input) =>
+          rawTextGeneration.generateAutoReviewFindings({
+            ...input,
+            modelSelection: normalizeRequiredClaudexModelSelection(input.modelSelection),
+          }),
       } satisfies typeof rawTextGeneration;
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
 

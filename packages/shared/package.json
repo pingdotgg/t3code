@@ -19,6 +19,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./autoReview": {
+      "types": "./src/autoReview.ts",
+      "import": "./src/autoReview.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"

@@ -249,6 +249,7 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
             addProjectBaseDirectory: "")
     }
     func updateSettings(_ settings: AppSettings) async throws -> AppSettings { settings }
+    func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob] { [] }
     func refreshProviders() async throws {}
     func updateProvider(instanceID: String) async throws {}
     func generateScenerySet(location: String) async throws -> GeneratedScenerySet {

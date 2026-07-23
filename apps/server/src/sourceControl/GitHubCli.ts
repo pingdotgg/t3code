@@ -209,6 +209,28 @@ export interface GitHubPullRequestSummary {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly headRefOid?: string | null;
+}
+
+export interface GitHubPullRequestIssueComment {
+  readonly id: string;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly authorLogin: string;
+}
+
+export type GitHubPullRequestReviewEvent = "COMMENT" | "REQUEST_CHANGES" | "APPROVE";
+
+export interface GitHubPullRequestReviewCommentInput {
+  readonly path: string;
+  readonly body: string;
+  readonly line?: number | null;
+  readonly side?: "LEFT" | "RIGHT" | null;
+}
+
+export interface GitHubSubmitPullRequestReviewResult {
+  readonly reviewId: string;
+  readonly url: string;
 }
 
 export type GitHubPullRequestReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
@@ -234,6 +256,7 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      readonly stdin?: string;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -241,6 +264,35 @@ export class GitHubCli extends Context.Service<
       readonly headSelector: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
+    /**
+     * List open PRs for the repository at `cwd` (not filtered by head branch).
+     * Includes `headRefOid` for auto-review idempotency.
+     */
+    readonly listRepositoryOpenPullRequests: (input: {
+      readonly cwd: string;
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
+    readonly listPullRequestIssueComments: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestIssueComment>, GitHubCliError>;
+
+    readonly getPullRequestDiff: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<string, GitHubCliError>;
+
+    readonly submitPullRequestReview: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+      readonly commitId: string;
+      readonly body: string;
+      readonly event: GitHubPullRequestReviewEvent;
+      readonly comments?: ReadonlyArray<GitHubPullRequestReviewCommentInput>;
+    }) => Effect.Effect<GitHubSubmitPullRequestReviewResult, GitHubCliError>;
 
     readonly getPullRequest: (input: {
       readonly cwd: string;
@@ -404,8 +456,33 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+
+  const decodePullRequestList = (input: { readonly cwd: string; readonly raw: string }) =>
+    input.raw.length === 0
+      ? Effect.succeed([] as ReadonlyArray<GitHubPullRequestSummary>)
+      : Effect.sync(() => decodeGitHubPullRequestListJson(input.raw)).pipe(
+          Effect.flatMap((decoded) => {
+            if (!Result.isSuccess(decoded)) {
+              return Effect.fail(
+                new GitHubPullRequestListDecodeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  cause: decoded.failure,
+                }),
+              );
+            }
+
+            return Effect.succeed(
+              decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
+            );
+          }),
+        );
+
+  const prListJsonFields =
+    "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner";
 
   return GitHubCli.of({
     execute,
@@ -422,32 +499,162 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+          prListJsonFields,
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          raw.length === 0
-            ? Effect.succeed([])
-            : Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
-                Effect.flatMap((decoded) => {
-                  if (!Result.isSuccess(decoded)) {
-                    return Effect.fail(
-                      new GitHubPullRequestListDecodeError({
-                        command: "gh",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    );
-                  }
-
-                  return Effect.succeed(
-                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
-                  );
-                }),
-              ),
-        ),
+        Effect.flatMap((raw) => decodePullRequestList({ cwd: input.cwd, raw })),
       ),
+    listRepositoryOpenPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--state",
+          "open",
+          "--limit",
+          String(input.limit ?? 50),
+          "--json",
+          prListJsonFields,
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) => decodePullRequestList({ cwd: input.cwd, raw })),
+      ),
+    listPullRequestIssueComments: (input) =>
+      Effect.gen(function* () {
+        const limit = input.limit ?? 50;
+        const raw = yield* execute({
+          cwd: input.cwd,
+          args: ["pr", "view", input.reference, "--json", "comments"],
+        }).pipe(Effect.map((result) => result.stdout.trim() || "{}"));
+
+        const RawCommentsSchema = Schema.Struct({
+          comments: Schema.Array(
+            Schema.Struct({
+              id: Schema.Union([Schema.String, Schema.Number]),
+              body: Schema.String,
+              createdAt: Schema.String,
+              author: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({
+                    login: Schema.optional(Schema.String),
+                  }),
+                ),
+              ),
+            }),
+          ),
+        });
+        const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(RawCommentsSchema))(
+          raw,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitHubCliCommandError({
+                command: "gh",
+                cwd: input.cwd,
+                cause,
+              }),
+          ),
+        );
+
+        return decoded.comments.slice(0, limit).map(
+          (comment): GitHubPullRequestIssueComment => ({
+            id: String(comment.id),
+            body: comment.body,
+            createdAt: comment.createdAt,
+            authorLogin: comment.author?.login?.trim() || "ghost",
+          }),
+        );
+      }),
+    getPullRequestDiff: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "diff", input.reference],
+      }).pipe(Effect.map((result) => result.stdout)),
+    submitPullRequestReview: (input) =>
+      Effect.gen(function* () {
+        const prNumber = parsePullRequestNumber(input.reference);
+        if (prNumber === null) {
+          return yield* new GitHubPullRequestNotFoundError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error("Pull request reference does not contain a number."),
+          });
+        }
+
+        const comments = (input.comments ?? [])
+          .filter((comment) => comment.path.trim().length > 0 && comment.body.trim().length > 0)
+          .map((comment) => {
+            const line =
+              comment.line !== undefined &&
+              comment.line !== null &&
+              Number.isSafeInteger(comment.line) &&
+              comment.line > 0
+                ? comment.line
+                : undefined;
+            const side = comment.side === "LEFT" || comment.side === "RIGHT" ? comment.side : undefined;
+            return {
+              path: comment.path,
+              body: comment.body,
+              ...(line !== undefined ? { line } : {}),
+              ...(side !== undefined ? { side } : {}),
+            };
+          });
+
+        const payload = {
+          commit_id: input.commitId,
+          body: input.body,
+          event: input.event,
+          ...(comments.length > 0 ? { comments } : {}),
+        };
+
+        const raw = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            "--method",
+            "POST",
+            `repos/{owner}/{repo}/pulls/${prNumber}/reviews`,
+            "--input",
+            "-",
+          ],
+          stdin: yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(payload).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitHubCliCommandError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        }).pipe(Effect.map((result) => result.stdout.trim() || "{}"));
+
+        const ReviewResponseSchema = Schema.Struct({
+          id: Schema.Union([Schema.Number, Schema.String]),
+          html_url: Schema.optional(Schema.String),
+          url: Schema.optional(Schema.String),
+        });
+        const decoded = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(ReviewResponseSchema),
+        )(raw).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitHubCliCommandError({
+                command: "gh",
+                cwd: input.cwd,
+                cause,
+              }),
+          ),
+        );
+
+        return {
+          reviewId: String(decoded.id),
+          url: decoded.html_url?.trim() || decoded.url?.trim() || "",
+        } satisfies GitHubSubmitPullRequestReviewResult;
+      }),
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,
@@ -456,7 +663,7 @@ export const make = Effect.gen(function* () {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+          prListJsonFields,
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

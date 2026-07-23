@@ -5,7 +5,7 @@ import T3Kit
 /// Settings tab identifiers — public so debug harnesses (UIProbe) can open
 /// the window on a specific tab.
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case general, providers, dictation, archive, scenery, devices, remoteMacs, connection
+    case general, providers, dictation, autoReview, archive, scenery, devices, remoteMacs, connection
 
     public var id: Self { self }
 
@@ -14,6 +14,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .general: "General"
         case .providers: "Providers"
         case .dictation: "Dictation"
+        case .autoReview: "Auto Review"
         case .archive: "Archive"
         case .scenery: "Scenery"
         case .devices: "Devices"
@@ -27,6 +28,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .providers: "puzzlepiece.extension"
         case .dictation: "mic"
+        case .autoReview: "text.magnifyingglass"
         case .archive: "archivebox"
         case .scenery: "photo.on.rectangle.angled"
         case .devices: "macbook.and.iphone"
@@ -73,6 +75,7 @@ public struct SettingsScene: View {
                 Section("Agents") {
                     settingsRow(.providers)
                     settingsRow(.dictation)
+                    settingsRow(.autoReview)
                 }
                 Section("Workspace") {
                     settingsRow(.archive)
@@ -120,6 +123,8 @@ public struct SettingsScene: View {
             ProvidersSettingsTab(model: model)
         case .dictation:
             DictationSettingsTab(model: model)
+        case .autoReview:
+            AutoReviewSettingsTab(model: model)
         case .archive:
             ArchiveSettingsTab(model: model)
         case .scenery:

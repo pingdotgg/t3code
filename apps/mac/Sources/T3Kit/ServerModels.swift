@@ -371,6 +371,73 @@ public struct ObservabilitySettings: Codable, Sendable {
 // renamed from the wire's `automaticGitFetchInterval` for clarity, which
 // would break Encodable synthesis (no matching CodingKeys case) — kept
 // Decodable-only so that's moot.
+public struct AutoReviewSettings: Decodable, Sendable {
+    public var enabled: Bool
+    public var mode: String
+    public var modelSelection: ModelSelection
+    public var mentionHandle: String
+    /// `Schema.DurationFromMillis` — milliseconds.
+    public var pollIntervalMs: Double
+    public var autoFixOriginThread: Bool
+    public var maxDiffBytes: Int
+    public var concurrency: Int
+    /// Per-project overrides — opaque for v1; full UI can refine later.
+    public var projects: JSONValue
+
+    public static let `default` = AutoReviewSettings(
+        enabled: false,
+        mode: "auto",
+        modelSelection: ModelSelection(instanceId: "codex", model: "gpt-5.4-mini"),
+        mentionHandle: "surgecode",
+        pollIntervalMs: 60_000,
+        autoFixOriginThread: true,
+        maxDiffBytes: 400_000,
+        concurrency: 1,
+        projects: .object([:])
+    )
+
+    public init(
+        enabled: Bool,
+        mode: String,
+        modelSelection: ModelSelection,
+        mentionHandle: String,
+        pollIntervalMs: Double,
+        autoFixOriginThread: Bool,
+        maxDiffBytes: Int,
+        concurrency: Int,
+        projects: JSONValue
+    ) {
+        self.enabled = enabled
+        self.mode = mode
+        self.modelSelection = modelSelection
+        self.mentionHandle = mentionHandle
+        self.pollIntervalMs = pollIntervalMs
+        self.autoFixOriginThread = autoFixOriginThread
+        self.maxDiffBytes = maxDiffBytes
+        self.concurrency = concurrency
+        self.projects = projects
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, mode, modelSelection, mentionHandle, pollInterval, autoFixOriginThread,
+            maxDiffBytes, concurrency, projects
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decode(Bool.self, forKey: .enabled, default: false)
+        mode = try c.decode(String.self, forKey: .mode, default: "auto")
+        modelSelection = try c.decodeIfPresent(ModelSelection.self, forKey: .modelSelection)
+            ?? ModelSelection(instanceId: "codex", model: "gpt-5.4-mini")
+        mentionHandle = try c.decode(String.self, forKey: .mentionHandle, default: "surgecode")
+        pollIntervalMs = try c.decode(Double.self, forKey: .pollInterval, default: 60_000)
+        autoFixOriginThread = try c.decode(Bool.self, forKey: .autoFixOriginThread, default: true)
+        maxDiffBytes = try c.decode(Int.self, forKey: .maxDiffBytes, default: 400_000)
+        concurrency = try c.decode(Int.self, forKey: .concurrency, default: 1)
+        projects = try c.decode(JSONValue.self, forKey: .projects, default: .object([:]))
+    }
+}
+
 public struct ServerSettings: Decodable, Sendable {
     public var enableAssistantStreaming: Bool
     public var enableProviderUpdateChecks: Bool
@@ -386,11 +453,12 @@ public struct ServerSettings: Decodable, Sendable {
     /// `Record<ProviderInstanceId, ProviderInstanceConfig>` — opaque.
     public var providerInstances: JSONValue
     public var observability: ObservabilitySettings
+    public var autoReview: AutoReviewSettings
 
     private enum CodingKeys: String, CodingKey {
         case enableAssistantStreaming, enableProviderUpdateChecks, automaticGitFetchInterval,
             defaultThreadEnvMode, newWorktreesStartFromOrigin, addProjectBaseDirectory,
-            textGenerationModelSelection, providers, providerInstances, observability
+            textGenerationModelSelection, providers, providerInstances, observability, autoReview
     }
 
     public init(from decoder: Decoder) throws {
@@ -415,6 +483,8 @@ public struct ServerSettings: Decodable, Sendable {
         observability = try c.decode(
             ObservabilitySettings.self, forKey: .observability,
             default: ObservabilitySettings(rawTracesUrl: "", rawMetricsUrl: ""))
+        autoReview = try c.decodeIfPresent(AutoReviewSettings.self, forKey: .autoReview)
+            ?? .default
     }
 }
 

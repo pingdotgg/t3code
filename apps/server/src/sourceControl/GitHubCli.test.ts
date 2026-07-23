@@ -105,7 +105,7 @@ describe("GitHubCli.layer", () => {
           "view",
           "#42",
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
@@ -374,6 +374,115 @@ describe("GitHubCli.layer", () => {
       assert.strictEqual(error.cwd, "/repo");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message.includes(cause.detail), false);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("lists repository open pull requests without a head filter", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 12,
+                title: "Ship auto review",
+                url: "https://github.com/octo/repo/pull/12",
+                baseRefName: "main",
+                headRefName: "feat/auto",
+                headRefOid: "abcdef1234567890",
+                state: "OPEN",
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.listRepositoryOpenPullRequests({ cwd: "/repo", limit: 20 });
+
+      assert.deepStrictEqual(result, [
+        {
+          number: 12,
+          title: "Ship auto review",
+          url: "https://github.com/octo/repo/pull/12",
+          baseRefName: "main",
+          headRefName: "feat/auto",
+          headRefOid: "abcdef1234567890",
+          state: "open",
+        },
+      ]);
+      const args = mockRun.mock.calls[0]?.[0]?.args ?? [];
+      assert.equal(args.includes("--head"), false);
+      assert.equal(args.some((arg) => String(arg).includes("headRefOid")), true);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("lists pull request issue comments", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              comments: [
+                {
+                  id: "IC_1",
+                  body: "please @surgecode review",
+                  createdAt: "2026-01-01T00:00:00Z",
+                  author: { login: "alice" },
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.listPullRequestIssueComments({ cwd: "/repo", reference: "12" });
+      assert.deepStrictEqual(result, [
+        {
+          id: "IC_1",
+          body: "please @surgecode review",
+          createdAt: "2026-01-01T00:00:00Z",
+          authorLogin: "alice",
+        },
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("submits a pull request review with stdin json payload", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              id: 99,
+              html_url: "https://github.com/octo/repo/pull/12#pullrequestreview-99",
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.submitPullRequestReview({
+        cwd: "/repo",
+        reference: "12",
+        commitId: "abcdef1234567890",
+        body: "Looks mostly good",
+        event: "COMMENT",
+        comments: [{ path: "src/a.ts", line: 3, side: "RIGHT", body: "npe risk" }],
+      });
+
+      assert.deepStrictEqual(result, {
+        reviewId: "99",
+        url: "https://github.com/octo/repo/pull/12#pullrequestreview-99",
+      });
+      const call = mockRun.mock.calls[0]?.[0];
+      assert.ok(call?.stdin?.includes("abcdef1234567890"));
+      assert.ok(call?.stdin?.includes("npe risk"));
+      assert.ok(call?.args.includes("--input"));
     }).pipe(Effect.provide(layer)),
   );
 });

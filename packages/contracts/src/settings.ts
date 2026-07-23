@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
 } from "./providerInstance.ts";
 import { DEFAULT_EXTENSION_SETTINGS, ExtensionSettings } from "./extensions.ts";
+import { AutoReviewSettings, AutoReviewSettingsPatch } from "./autoReview.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -645,6 +646,7 @@ export const ServerSettings = Schema.Struct({
   extensions: ExtensionSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_EXTENSION_SETTINGS)),
   ),
+  autoReview: AutoReviewSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -795,6 +797,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // Whole-object replacement for custom instructions. The web UI sends the
   // full global/project bundle every time it edits this field.
   customInstructions: Schema.optionalKey(CustomInstructionsConfig),
+  autoReview: Schema.optionalKey(AutoReviewSettingsPatch),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

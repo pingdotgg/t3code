@@ -1913,6 +1913,16 @@ public final class AppModel {
         }
     }
 
+    public private(set) var autoReviewJobs: [AppAutoReviewJob] = []
+
+    public func refreshAutoReviewJobs(projectID: String? = nil) async {
+        do {
+            autoReviewJobs = try await backend.listAutoReviewJobs(projectID: projectID, limit: 30)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     public func refreshProviders() async {
         do {
             try await backend.refreshProviders()

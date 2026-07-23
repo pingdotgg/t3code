@@ -24,6 +24,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
+  buildAutoReviewFindingsPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -101,7 +102,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     | "generatePrContent"
     | "generateBranchName"
     | "generateThreadTitle"
-    | "generateScenerySet";
+    | "generateScenerySet"
+    | "generateAutoReviewFindings";
 
   const encodeJsonForOperation = (
     operation: ClaudeTextGenerationOp,
@@ -404,11 +406,49 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       return sanitized;
     });
 
+  const generateAutoReviewFindings: TextGeneration.TextGeneration["Service"]["generateAutoReviewFindings"] =
+    Effect.fn("ClaudeTextGeneration.generateAutoReviewFindings")(function* (input) {
+      const { prompt, outputSchema } = buildAutoReviewFindingsPrompt({
+        prNumber: input.prNumber,
+        prTitle: input.prTitle,
+        prBody: input.prBody,
+        baseBranch: input.baseBranch,
+        headBranch: input.headBranch,
+        headSha: input.headSha,
+        diffPatch: input.diffPatch,
+        truncated: input.truncated,
+      });
+
+      const generated = yield* runClaudeJson({
+        operation: "generateAutoReviewFindings",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        summary: generated.summary.trim(),
+        decision: generated.decision,
+        comments: generated.comments.map((comment) => ({
+          path: comment.path.trim(),
+          line:
+            comment.line !== null && Number.isSafeInteger(comment.line) && comment.line > 0
+              ? comment.line
+              : null,
+          side: comment.side,
+          severity: comment.severity,
+          body: comment.body.trim(),
+        })),
+      };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateScenerySet,
+    generateAutoReviewFindings,
   } satisfies TextGeneration.TextGeneration["Service"];
 });
