@@ -42,6 +42,7 @@ export const make = Effect.gen(function* () {
       port: config.port,
       host: config.host,
       instanceKey: config.stateDir,
+      development: config.devUrl !== undefined,
     }),
   };
 

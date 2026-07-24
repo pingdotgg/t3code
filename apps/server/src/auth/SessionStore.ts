@@ -472,6 +472,7 @@ export const make = Effect.gen(function* () {
     port: serverConfig.port,
     host: serverConfig.host,
     instanceKey: serverConfig.stateDir,
+    development: serverConfig.devUrl !== undefined,
   });
 
   const emitUpsert = (clientSession: AuthClientSession) =>

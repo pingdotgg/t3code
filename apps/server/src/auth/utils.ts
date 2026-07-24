@@ -15,12 +15,13 @@ export function resolveSessionCookieName(input: {
   readonly port: number;
   readonly host: string | undefined;
   readonly instanceKey: string;
+  readonly development: boolean;
 }): string {
   if (input.mode === "desktop") {
     return `${SESSION_COOKIE_NAME}_${input.port}`;
   }
 
-  if (isRemoteReachableHost(input.host)) {
+  if (!input.development && isRemoteReachableHost(input.host)) {
     return SESSION_COOKIE_NAME;
   }
 
