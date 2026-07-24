@@ -1,5 +1,3 @@
-import { CHAT_GLASS_MENU_POPUP_CLASS, CHAT_GLASS_ROW_POPUP_CLASS } from "./glassPopupStyles";
-
 /**
  * Visual primitives shared by controls when they are rendered in the thread details panel.
  *
@@ -48,6 +46,6 @@ export const THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS = `h-9 w-8 rounded-s-non
 
 export const THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS = "h-4 w-px shrink-0 bg-border/65";
 
-export const THREAD_DETAILS_PANEL_ROW_POPUP_CLASS = CHAT_GLASS_ROW_POPUP_CLASS;
+export const THREAD_DETAILS_PANEL_ROW_POPUP_CLASS = "w-(--anchor-width)";
 
-export const THREAD_DETAILS_PANEL_MENU_POPUP_CLASS = CHAT_GLASS_MENU_POPUP_CLASS;
+export const THREAD_DETAILS_PANEL_MENU_POPUP_CLASS = "min-w-60 max-w-(--available-width)";
