@@ -86,6 +86,7 @@ import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -533,6 +534,11 @@ const buildAppUnderTest = (options?: {
               getThreadDetailById: () => Effect.succeed(Option.none()),
               getProjectShellById: () => Effect.succeed(Option.none()),
               ...options?.layers?.projectionSnapshotQuery,
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(GitHubCli.GitHubCli)({
+              execute: () => Effect.die("GitHubCli not stubbed in this test"),
             }),
           ),
           Layer.provide(ServerSettings.layerTest()),

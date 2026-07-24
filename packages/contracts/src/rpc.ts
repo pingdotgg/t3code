@@ -43,6 +43,9 @@ import {
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
+  ReviewMergePullRequestError,
+  ReviewMergePullRequestInput,
+  ReviewMergePullRequestResult,
   ReviewThreadSummaryError,
   ReviewThreadSummaryInput,
   ReviewThreadSummaryResult,
@@ -185,6 +188,7 @@ export const WS_METHODS = {
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
   reviewSummarizeThread: "review.summarizeThread",
+  reviewMergePullRequest: "review.mergePullRequest",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -507,6 +511,16 @@ export const WsReviewSummarizeThreadRpc = Rpc.make(WS_METHODS.reviewSummarizeThr
   error: Schema.Union([ReviewThreadSummaryError, EnvironmentAuthorizationError]),
 });
 
+/** Merge a review-sweep thread's PR after re-validating merge readiness
+    against live GitHub state. Non-exceptional failures (conflict, already
+    closed, no longer ready) are outcomes, not errors, so the client's merge
+    queue can branch on them. */
+export const WsReviewMergePullRequestRpc = Rpc.make(WS_METHODS.reviewMergePullRequest, {
+  payload: ReviewMergePullRequestInput,
+  success: ReviewMergePullRequestResult,
+  error: Schema.Union([ReviewMergePullRequestError, EnvironmentAuthorizationError]),
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -751,6 +765,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewSummarizeThreadRpc,
+  WsReviewMergePullRequestRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

@@ -67,6 +67,15 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ThreadReviewPullRequestContext {
+  number: number;
+  state: "open" | "closed" | "merged";
+  reviewDecision: string | null;
+  checksPassing: boolean | null;
+  mergeable: boolean | null;
+  recentComments: ReadonlyArray<{ author: string; createdAt: string; body: string }>;
+}
+
 export interface ThreadReviewGenerationInput {
   cwd: string;
   title: string;
@@ -75,6 +84,8 @@ export interface ThreadReviewGenerationInput {
   isActive: boolean;
   firstUserMessage: string | null;
   recentMessages: ReadonlyArray<{ role: "user" | "assistant" | "system"; text: string }>;
+  /** Live PR state + recent comments when the thread has one. */
+  pullRequest?: ThreadReviewPullRequestContext | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }

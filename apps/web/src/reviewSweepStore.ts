@@ -7,16 +7,19 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type {
-  EnvironmentId,
-  ProjectId,
-  ReviewThreadSummaryResult,
-  ScopedThreadRef,
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type EnvironmentId,
+  type ProjectId,
+  type ReviewThreadSummaryResult,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { stackedThreadToast, toastManager } from "./components/ui/toast";
 import { getClientSettings } from "./hooks/useSettings";
+import { newMessageId } from "~/lib/utils";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { readThreadShell, readThreadRefs } from "./state/entities";
 import { reviewEnvironment } from "./state/review";
@@ -46,6 +49,10 @@ export const SWEEP_MAX_THREADS = 50;
 
 export type SweepItemStatus = "pending" | "running" | "done" | "error";
 
+/** Merge-queue lifecycle for merge-ready items. "conflicted" means the
+    merge failed and the thread's agent has been asked to resolve it. */
+export type SweepMergeStatus = "idle" | "queued" | "merging" | "merged" | "conflicted" | "failed";
+
 export interface SweepItem {
   readonly ref: ScopedThreadRef;
   readonly projectId: ProjectId;
@@ -59,6 +66,8 @@ export interface SweepItem {
   readonly titleApplied: boolean;
   readonly settleApplied: boolean;
   readonly dismissed: boolean;
+  readonly mergeStatus: SweepMergeStatus;
+  readonly mergeDetail: string | null;
 }
 
 export type SweepPhase = "idle" | "running" | "complete";
@@ -202,6 +211,17 @@ async function reviewOne(runId: number, item: SweepItem): Promise<void> {
   }
 }
 
+/** Navigation callback installed by the app shell so store-level toasts can
+    deep-link to /review-sweep without importing the router. */
+let navigateToSweepResults: (() => void) | null = null;
+export function setSweepResultsNavigator(navigate: (() => void) | null): void {
+  navigateToSweepResults = navigate;
+}
+
+function isViewingSweepResults(): boolean {
+  return window.location.pathname === "/review-sweep";
+}
+
 async function runPool(runId: number, items: ReadonlyArray<SweepItem>): Promise<void> {
   let next = 0;
   const workers = Array.from({ length: Math.min(SWEEP_CONCURRENCY, items.length) }, async () => {
@@ -213,7 +233,35 @@ async function runPool(runId: number, items: ReadonlyArray<SweepItem>): Promise<
     }
   });
   await Promise.all(workers);
-  useReviewSweepStore.getState().finishRun(runId);
+  const store = useReviewSweepStore.getState();
+  if (store.runId !== runId) return;
+  store.finishRun(runId);
+  // The sweep runs in the background; only toast when the user isn't
+  // already staring at the results page.
+  if (!isViewingSweepResults()) {
+    const actionable = Object.values(store.items).filter(
+      (item) =>
+        !item.dismissed &&
+        ((item.result?.suggestedTitle && !item.titleApplied) ||
+          (item.result?.recommendSettle && !item.settleApplied) ||
+          item.result?.prStatus?.mergeReady === true),
+    ).length;
+    toastManager.add(
+      stackedThreadToast({
+        type: "success",
+        title: "Work review finished",
+        description:
+          actionable > 0
+            ? `${actionable} ${actionable === 1 ? "thread has" : "threads have"} recommended actions.`
+            : "No actions recommended — you're caught up.",
+        actionVariant: "outline",
+        actionProps: {
+          children: "View results",
+          onClick: () => navigateToSweepResults?.(),
+        },
+      }),
+    );
+  }
 }
 
 /** Kick off a sweep over every unsettled thread. Runs outside React so it
@@ -235,6 +283,8 @@ export function startReviewSweep(): void {
       titleApplied: false,
       settleApplied: false,
       dismissed: false,
+      mergeStatus: "idle",
+      mergeDetail: null,
     }),
   );
   useReviewSweepStore.getState().startRun({
@@ -371,4 +421,164 @@ export async function applyAllSweepRecommendations(): Promise<void> {
 
 export function dismissSweepItem(key: string): void {
   useReviewSweepStore.getState().patchItem(key, { dismissed: true });
+}
+
+// ---------------------------------------------------------------------------
+// Merge queue
+// ---------------------------------------------------------------------------
+
+/** Message sent to a thread's agent when its PR stopped merging cleanly
+    because earlier queue entries landed first. */
+function conflictHandoffMessage(prNumber: number): string {
+  return [
+    `PR #${prNumber} no longer merges cleanly — other pull requests were merged into the base branch ahead of it.`,
+    "Please rebase this branch onto the latest base branch, resolve any merge conflicts, verify the build still passes, and push the updated branch.",
+  ].join(" ");
+}
+
+function isMergeQueueCandidate(item: SweepItem): boolean {
+  return (
+    !item.dismissed &&
+    item.result?.prStatus?.mergeReady === true &&
+    (item.mergeStatus === "idle" || item.mergeStatus === "queued")
+  );
+}
+
+let mergeQueueActive = false;
+
+/** Merge one item's PR and settle its thread on success. On conflict, mark
+    the card and hand the rebase to the thread's agent. Returns the outcome
+    for queue accounting. */
+async function mergeOne(
+  runId: number,
+  key: string,
+): Promise<"merged" | "conflict" | "skipped" | "failed"> {
+  const store = useReviewSweepStore.getState();
+  if (store.runId !== runId) return "skipped";
+  const item = store.items[key];
+  const prNumber = item?.result?.prStatus?.number;
+  if (!item || prNumber === undefined) return "skipped";
+  store.patchItem(key, { mergeStatus: "merging" });
+
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    reviewEnvironment.mergePullRequest,
+    {
+      environmentId: item.ref.environmentId,
+      input: { threadId: item.ref.threadId, pullRequestNumber: prNumber },
+    },
+    { reportFailure: false, reportDefect: false },
+  );
+
+  const after = useReviewSweepStore.getState();
+  if (after.runId !== runId) return "skipped";
+
+  if (result._tag === "Failure") {
+    const error = squashAtomCommandFailure(result);
+    after.patchItem(key, {
+      mergeStatus: "failed",
+      mergeDetail: error instanceof Error ? error.message : "Merge failed.",
+    });
+    return "failed";
+  }
+
+  const outcome = result.value.outcome;
+  if (outcome === "merged" || outcome === "already-closed") {
+    after.patchItem(key, { mergeStatus: "merged", mergeDetail: result.value.detail });
+    // Merged PRs are concluded work: settle right away so the sidebar
+    // reflects the merge without waiting for auto-settle.
+    const settleResult = await runAtomCommand(
+      appAtomRegistry,
+      threadEnvironment.settle,
+      {
+        environmentId: item.ref.environmentId,
+        input: { threadId: item.ref.threadId },
+      },
+      { reportFailure: false },
+    );
+    if (settleResult._tag === "Success") {
+      useReviewSweepStore.getState().patchItem(key, { settleApplied: true });
+    }
+    return "merged";
+  }
+
+  if (outcome === "conflict") {
+    after.patchItem(key, { mergeStatus: "conflicted", mergeDetail: result.value.detail });
+    // Hand the conflict to the thread's own agent: it has the branch
+    // checked out and the full context to rebase and resolve.
+    await runAtomCommand(
+      appAtomRegistry,
+      threadEnvironment.startTurn,
+      {
+        environmentId: item.ref.environmentId,
+        input: {
+          threadId: item.ref.threadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user" as const,
+            text: conflictHandoffMessage(prNumber),
+            attachments: [],
+          },
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: new Date().toISOString(),
+        },
+      },
+      { reportFailure: false },
+    );
+    return "conflict";
+  }
+
+  after.patchItem(key, { mergeStatus: "failed", mergeDetail: result.value.detail });
+  return "failed";
+}
+
+/** Merge a single card's PR (per-item button). */
+export async function mergeSweepItem(key: string): Promise<void> {
+  const { runId } = useReviewSweepStore.getState();
+  await mergeOne(runId, key);
+}
+
+/** Merge every merge-ready PR SEQUENTIALLY — one at a time, so each merge
+    sees the base branch the previous one produced and the server re-check
+    catches freshly introduced conflicts. Conflicts don't stop the queue:
+    the item is marked conflicted and its thread's agent is asked to rebase
+    and resolve; re-run the sweep once it pushes to pick the PR back up. */
+export async function runMergeQueue(): Promise<void> {
+  if (mergeQueueActive) return;
+  mergeQueueActive = true;
+  try {
+    const { order, items, runId } = useReviewSweepStore.getState();
+    const queueKeys = order.filter((key) => {
+      const item = items[key];
+      return item !== undefined && isMergeQueueCandidate(item);
+    });
+    for (const key of queueKeys) {
+      useReviewSweepStore.getState().patchItem(key, { mergeStatus: "queued" });
+    }
+
+    let mergedCount = 0;
+    let conflictCount = 0;
+    for (const key of queueKeys) {
+      const outcome = await mergeOne(runId, key);
+      if (outcome === "merged") mergedCount += 1;
+      if (outcome === "conflict") conflictCount += 1;
+      if (useReviewSweepStore.getState().runId !== runId) return;
+    }
+
+    if (queueKeys.length > 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: conflictCount > 0 ? "warning" : "success",
+          title: `Merge queue finished: ${mergedCount} of ${queueKeys.length} merged`,
+          description:
+            conflictCount > 0
+              ? `${conflictCount} ${conflictCount === 1 ? "PR hit a conflict and was" : "PRs hit conflicts and were"} handed to ${conflictCount === 1 ? "its" : "their"} thread's agent to rebase.`
+              : undefined,
+        }),
+      );
+    }
+  } finally {
+    mergeQueueActive = false;
+  }
 }

@@ -6,7 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as Schema from "effect/Schema";
+
 import {
+  ReviewMergeError,
   ReviewThreadNotFoundError,
   TextGenerationError,
   VcsRepositoryDetectionError,
@@ -14,6 +17,10 @@ import {
   type ReviewDiffPreviewError,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewResult,
+  type ReviewMergePullRequestError,
+  type ReviewMergePullRequestInput,
+  type ReviewMergePullRequestResult,
+  type ReviewThreadPrStatus,
   type ReviewThreadSummaryError,
   type ReviewThreadSummaryInput,
   type ReviewThreadSummaryResult,
@@ -23,6 +30,7 @@ import { resolveThreadWorkspaceCwd } from "../checkpointing/Utils.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -36,8 +44,108 @@ export class ReviewService extends Context.Service<
     readonly summarizeThread: (
       input: ReviewThreadSummaryInput,
     ) => Effect.Effect<ReviewThreadSummaryResult, ReviewThreadSummaryError>;
+    readonly mergePullRequest: (
+      input: ReviewMergePullRequestInput,
+    ) => Effect.Effect<ReviewMergePullRequestResult, ReviewMergePullRequestError>;
   }
 >()("t3/review/ReviewService") {}
+
+// ---------------------------------------------------------------------------
+// PR investigation
+// ---------------------------------------------------------------------------
+
+/** Shape of `gh pr view --json <fields>` we rely on. Decoded leniently:
+    a schema miss degrades to "no PR context", never a failed review. */
+const GhPrView = Schema.Struct({
+  number: Schema.Int,
+  url: Schema.String,
+  state: Schema.String,
+  reviewDecision: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  mergeable: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(Schema.Struct({ conclusion: Schema.optionalKey(Schema.NullOr(Schema.String)) })),
+    ),
+  ),
+  comments: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          author: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+          body: Schema.String,
+          createdAt: Schema.String,
+        }),
+      ),
+    ),
+  ),
+});
+const decodeGhPrView = Schema.decodeUnknownEffect(Schema.fromJsonString(GhPrView));
+
+const GH_PR_VIEW_FIELDS = "number,url,state,reviewDecision,mergeable,statusCheckRollup,comments";
+const PR_COMMENT_CONTEXT_COUNT = 5;
+const PR_COMMENT_CHAR_LIMIT = 500;
+
+export interface ThreadPrContext {
+  readonly status: ReviewThreadPrStatus;
+  /** Pre-rendered recent-comments block for the review prompt. */
+  readonly recentComments: ReadonlyArray<{
+    readonly author: string;
+    readonly createdAt: string;
+    readonly body: string;
+  }>;
+}
+
+function ghStateToPrState(state: string): "open" | "closed" | "merged" | null {
+  const normalized = state.trim().toUpperCase();
+  if (normalized === "OPEN") return "open";
+  if (normalized === "CLOSED") return "closed";
+  if (normalized === "MERGED") return "merged";
+  return null;
+}
+
+function rollupToChecksPassing(
+  rollup: ReadonlyArray<{ conclusion?: string | null }> | null | undefined,
+): boolean | null {
+  if (!rollup || rollup.length === 0) return null;
+  // Neutral/skipped conclusions don't block; pending (null conclusion on some
+  // check types) and failures do.
+  const blocking = rollup.some((check) => {
+    const conclusion = check.conclusion?.trim().toUpperCase() ?? "";
+    return !["SUCCESS", "NEUTRAL", "SKIPPED"].includes(conclusion);
+  });
+  return !blocking;
+}
+
+function toPrStatus(view: typeof GhPrView.Type): ReviewThreadPrStatus | null {
+  const state = ghStateToPrState(view.state);
+  if (state === null) return null;
+  const reviewDecision = view.reviewDecision?.trim() || null;
+  const checksPassing = rollupToChecksPassing(view.statusCheckRollup ?? null);
+  const mergeable =
+    view.mergeable == null
+      ? null
+      : view.mergeable.trim().toUpperCase() === "MERGEABLE"
+        ? true
+        : view.mergeable.trim().toUpperCase() === "CONFLICTING"
+          ? false
+          : null;
+  const mergeReady =
+    state === "open" &&
+    mergeable === true &&
+    checksPassing !== false &&
+    reviewDecision !== "CHANGES_REQUESTED" &&
+    reviewDecision !== "REVIEW_REQUIRED";
+  return {
+    number: view.number,
+    url: view.url,
+    state,
+    reviewDecision,
+    checksPassing,
+    mergeable,
+    mergeReady,
+    recentCommentCount: view.comments?.length ?? 0,
+  };
+}
 
 // Mirrors QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts and
 // the decider's thread.settle guard.
@@ -83,6 +191,42 @@ export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const gitHubCli = yield* GitHubCli.GitHubCli;
+
+  /** Look up the thread branch's PR with one `gh pr view`. Every failure —
+      no PR, gh unauthenticated, schema drift — degrades to null: PR context
+      enriches a review but must never fail it. */
+  const investigateThreadPr = Effect.fn("ReviewService.investigateThreadPr")(function* (
+    cwd: string,
+    branch: string,
+  ): Effect.fn.Return<ThreadPrContext | null, never> {
+    const context = yield* gitHubCli
+      .execute({
+        cwd,
+        args: ["pr", "view", branch, "--json", GH_PR_VIEW_FIELDS],
+        timeoutMs: 20_000,
+      })
+      .pipe(
+        Effect.flatMap((output) => decodeGhPrView(output.stdout)),
+        Effect.map((view): ThreadPrContext | null => {
+          const status = toPrStatus(view);
+          if (status === null) return null;
+          const recentComments = (view.comments ?? [])
+            .slice(-PR_COMMENT_CONTEXT_COUNT)
+            .map((comment) => ({
+              author: comment.author?.login ?? "unknown",
+              createdAt: comment.createdAt,
+              body:
+                comment.body.length > PR_COMMENT_CHAR_LIMIT
+                  ? `${comment.body.slice(0, PR_COMMENT_CHAR_LIMIT)}…`
+                  : comment.body,
+            }));
+          return { status, recentComments };
+        }),
+        Effect.catch(() => Effect.succeed(null)),
+      );
+    return context;
+  });
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -235,6 +379,11 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+    // Deeper investigation: live PR state + recent comments, when the
+    // thread has a branch. Failures degrade to "no PR context".
+    const prContext =
+      thread.branch !== null ? yield* investigateThreadPr(cwd, thread.branch) : null;
+
     const generated = yield* textGeneration.generateThreadReview({
       cwd,
       title: thread.title,
@@ -242,6 +391,18 @@ export const make = Effect.gen(function* () {
       firstUserMessage,
       recentMessages,
       modelSelection,
+      ...(prContext !== null
+        ? {
+            pullRequest: {
+              number: prContext.status.number,
+              state: prContext.status.state,
+              reviewDecision: prContext.status.reviewDecision,
+              checksPassing: prContext.status.checksPassing,
+              mergeable: prContext.status.mergeable,
+              recentComments: prContext.recentComments,
+            },
+          }
+        : {}),
     });
 
     // Belt and braces on top of prompt rules + normalizeThreadReview: an
@@ -269,12 +430,105 @@ export const make = Effect.gen(function* () {
       recommendSettle,
       settleReason: recommendSettle ? generated.settleReason : null,
       ...(diffStats !== undefined ? { diffStats } : {}),
+      ...(prContext !== null ? { prStatus: prContext.status } : {}),
     };
+  });
+
+  const mergePullRequest: ReviewService["Service"]["mergePullRequest"] = Effect.fn(
+    "ReviewService.mergePullRequest",
+  )(function* (input) {
+    const mapProjectionError = (cause: unknown) =>
+      new ReviewMergeError({
+        threadId: input.threadId,
+        detail: `Failed to read the thread projection: ${String(cause)}`,
+      });
+    const threadOption = yield* projectionSnapshotQuery
+      .getThreadDetailById(input.threadId)
+      .pipe(Effect.mapError(mapProjectionError));
+    if (Option.isNone(threadOption)) {
+      return yield* new ReviewThreadNotFoundError({ threadId: input.threadId });
+    }
+    const thread = threadOption.value;
+    const projectOption = yield* projectionSnapshotQuery
+      .getProjectShellById(thread.projectId)
+      .pipe(Effect.mapError(mapProjectionError));
+    const cwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: Option.isSome(projectOption) ? [projectOption.value] : [],
+    });
+    if (cwd === undefined || thread.branch === null) {
+      return yield* new ReviewMergeError({
+        threadId: input.threadId,
+        detail: "Thread has no resolvable workspace or branch to merge from.",
+      });
+    }
+
+    // Re-validate against LIVE GitHub state: in a merge queue, an earlier
+    // merge may have landed since the review ran and made this branch
+    // conflict (or someone merged/closed the PR out of band).
+    const prContext = yield* investigateThreadPr(cwd, thread.branch);
+    if (prContext === null || prContext.status.number !== input.pullRequestNumber) {
+      return {
+        threadId: input.threadId,
+        outcome: "not-ready" as const,
+        detail: "The pull request could not be re-validated against GitHub.",
+      };
+    }
+    const status = prContext.status;
+    if (status.state !== "open") {
+      return {
+        threadId: input.threadId,
+        outcome: "already-closed" as const,
+        detail: `PR #${status.number} is already ${status.state}.`,
+      };
+    }
+    if (status.mergeable === false) {
+      return {
+        threadId: input.threadId,
+        outcome: "conflict" as const,
+        detail: `PR #${status.number} no longer merges cleanly onto its base branch.`,
+      };
+    }
+    if (!status.mergeReady) {
+      return {
+        threadId: input.threadId,
+        outcome: "not-ready" as const,
+        detail: `PR #${status.number} is not merge-ready (checks: ${String(status.checksPassing)}, review: ${status.reviewDecision ?? "none"}).`,
+      };
+    }
+
+    const mergeResult = yield* gitHubCli
+      .execute({
+        cwd,
+        args: ["pr", "merge", String(status.number), "--squash"],
+        timeoutMs: 60_000,
+      })
+      .pipe(
+        Effect.map(() => ({ merged: true as const, detail: null as string | null })),
+        Effect.catch((error) =>
+          Effect.succeed({
+            merged: false as const,
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        ),
+      );
+    if (!mergeResult.merged) {
+      // gh merge failures at this point are usually races (base advanced,
+      // check flipped). Surface as conflict so the queue hands it to the
+      // thread's agent rather than aborting the whole run.
+      return {
+        threadId: input.threadId,
+        outcome: "conflict" as const,
+        detail: mergeResult.detail ?? "gh pr merge failed.",
+      };
+    }
+    return { threadId: input.threadId, outcome: "merged" as const, detail: null };
   });
 
   return ReviewService.of({
     getDiffPreview,
     summarizeThread,
+    mergePullRequest,
   });
 });
 

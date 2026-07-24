@@ -17,5 +17,9 @@ export function createReviewEnvironmentAtoms<R, E>(
       label: "environment-data:review:summarize-thread",
       tag: WS_METHODS.reviewSummarizeThread,
     }),
+    mergePullRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:review:merge-pull-request",
+      tag: WS_METHODS.reviewMergePullRequest,
+    }),
   };
 }

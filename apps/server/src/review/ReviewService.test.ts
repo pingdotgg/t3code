@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import {
   ThreadId,
@@ -15,10 +16,34 @@ import {
 import { ServerConfig } from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ReviewService from "./ReviewService.ts";
+
+const GhPrViewFixture = Schema.Struct({
+  number: Schema.Int,
+  url: Schema.String,
+  state: Schema.String,
+  reviewDecision: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  mergeable: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optionalKey(Schema.Array(Schema.Struct({ conclusion: Schema.String }))),
+  comments: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        author: Schema.Struct({ login: Schema.String }),
+        body: Schema.String,
+        createdAt: Schema.String,
+      }),
+    ),
+  ),
+});
+const encodeGhPrViewFixture = Schema.encodeUnknownSync(Schema.fromJsonString(GhPrViewFixture));
+
+function ghPrViewJson(fixture: typeof GhPrViewFixture.Type): string {
+  return encodeGhPrViewFixture(fixture);
+}
 
 function makeShellFromThread(
   thread: OrchestrationThread,
@@ -56,6 +81,7 @@ function makeLayer(input: {
   readonly shellOverrides?: Partial<OrchestrationThreadShell>;
   readonly generateThreadReview?: TextGeneration.TextGeneration["Service"]["generateThreadReview"];
   readonly reviewCalls?: Array<TextGeneration.ThreadReviewGenerationInput>;
+  readonly ghExecute?: GitHubCli.GitHubCli["Service"]["execute"];
 }) {
   return ReviewService.layer.pipe(
     Layer.provide(
@@ -102,6 +128,13 @@ function makeLayer(input: {
             })
           );
         },
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitHubCli.GitHubCli)({
+        // Threads in these tests have no PR; investigation must degrade to
+        // "no context" without touching gh.
+        execute: input.ghExecute ?? (() => Effect.die("gh not stubbed in this test")),
       }),
     ),
     Layer.provide(ServerSettings.layerTest()),
@@ -395,6 +428,177 @@ describe("ReviewService", () => {
       if (error._tag === "TextGenerationError") {
         assert.match(error.detail, /Unable to resolve a workspace directory/);
       }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread attaches PR status and prompt context when gh finds a PR", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({ branch: "feat/settle-default" });
+      const ghPayload = ghPrViewJson({
+        number: 4415,
+        url: "https://github.com/pingdotgg/t3code/pull/4415",
+        state: "OPEN",
+        reviewDecision: "APPROVED",
+        mergeable: "MERGEABLE",
+        statusCheckRollup: [{ conclusion: "SUCCESS" }, { conclusion: "SKIPPED" }],
+        comments: [
+          { author: { login: "reviewer" }, body: "LGTM", createdAt: "2026-07-24T00:00:00Z" },
+        ],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            ghExecute: () =>
+              Effect.succeed({
+                exitCode: 0,
+                stdout: ghPayload,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as never),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.prStatus?.number, 4415);
+      assert.strictEqual(result.prStatus?.state, "open");
+      assert.strictEqual(result.prStatus?.mergeReady, true);
+      assert.strictEqual(result.prStatus?.checksPassing, true);
+      assert.strictEqual(reviewCalls[0]?.pullRequest?.number, 4415);
+      assert.strictEqual(reviewCalls[0]?.pullRequest?.recentComments[0]?.body, "LGTM");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread degrades to no PR context when gh fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({ branch: "feat/no-pr" });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            ghExecute: (ghInput) =>
+              Effect.fail(
+                new GitHubCli.GitHubCliUnavailableError({
+                  command: "gh",
+                  cwd: ghInput.cwd,
+                  cause: "gh missing in test",
+                }) as never,
+              ),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.prStatus, undefined);
+      assert.strictEqual(reviewCalls[0]?.pullRequest, undefined);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("mergePullRequest reports conflict when the branch no longer merges cleanly", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const thread = makeThread({ branch: "feat/conflicting" });
+      const ghPayload = ghPrViewJson({
+        number: 77,
+        url: "https://github.com/x/y/pull/77",
+        state: "OPEN",
+        reviewDecision: "APPROVED",
+        mergeable: "CONFLICTING",
+        statusCheckRollup: [{ conclusion: "SUCCESS" }],
+        comments: [],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.mergePullRequest({ threadId: thread.id, pullRequestNumber: 77 });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            ghExecute: () =>
+              Effect.succeed({
+                exitCode: 0,
+                stdout: ghPayload,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as never),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.outcome, "conflict");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("mergePullRequest merges and reports merged for a ready PR", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const thread = makeThread({ branch: "feat/ready" });
+      const ghCalls: string[] = [];
+      const ghPayload = ghPrViewJson({
+        number: 88,
+        url: "https://github.com/x/y/pull/88",
+        state: "OPEN",
+        reviewDecision: "APPROVED",
+        mergeable: "MERGEABLE",
+        statusCheckRollup: [{ conclusion: "SUCCESS" }],
+        comments: [],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.mergePullRequest({ threadId: thread.id, pullRequestNumber: 88 });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            ghExecute: (ghInput) => {
+              ghCalls.push(ghInput.args.join(" "));
+              return Effect.succeed({
+                exitCode: 0,
+                stdout: ghInput.args[1] === "view" ? ghPayload : "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as never);
+            },
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.outcome, "merged");
+      assert.ok(ghCalls.some((call) => call.startsWith("pr merge 88")));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

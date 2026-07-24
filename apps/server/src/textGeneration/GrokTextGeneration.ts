@@ -257,6 +257,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         isActive: input.isActive,
         firstUserMessage: input.firstUserMessage,
         recentMessages: input.recentMessages,
+        pullRequest: input.pullRequest,
       });
 
       const generated = yield* runGrokJson({

@@ -333,6 +333,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
   [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
   [WS_METHODS.reviewSummarizeThread, AuthReviewWriteScope],
+  [WS_METHODS.reviewMergePullRequest, AuthReviewWriteScope],
   [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
   [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
   [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
@@ -1855,6 +1856,10 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.reviewSummarizeThread]: (input) =>
           observeRpcEffect(WS_METHODS.reviewSummarizeThread, review.summarizeThread(input), {
+            "rpc.aggregate": "review",
+          }),
+        [WS_METHODS.reviewMergePullRequest]: (input) =>
+          observeRpcEffect(WS_METHODS.reviewMergePullRequest, review.mergePullRequest(input), {
             "rpc.aggregate": "review",
           }),
         [WS_METHODS.terminalOpen]: (input) =>

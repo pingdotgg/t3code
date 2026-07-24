@@ -410,6 +410,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         isActive: input.isActive,
         firstUserMessage: input.firstUserMessage,
         recentMessages: input.recentMessages,
+        pullRequest: input.pullRequest,
       });
 
       const generated = yield* runCodexJson({

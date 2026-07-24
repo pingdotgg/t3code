@@ -8,6 +8,7 @@ import {
   ArchiveIcon,
   ArrowRightIcon,
   CircleAlertIcon,
+  GitMergeIcon,
   InfoIcon,
   ListChecksIcon,
   LoaderIcon,
@@ -26,7 +27,9 @@ import {
   applySweepTitle,
   dismissSweepItem,
   isSweepCandidate,
+  mergeSweepItem,
   retrySweepItem,
+  runMergeQueue,
   sortSweepCandidates,
   startReviewSweep,
   SWEEP_MAX_THREADS,
@@ -56,9 +59,17 @@ import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/to
 // reading, then no-action-possible tails.
 // ---------------------------------------------------------------------------
 
-type SweepBucket = "settle" | "title" | "attention" | "inFlight" | "failed" | "reviewing";
+type SweepBucket =
+  | "mergeReady"
+  | "settle"
+  | "title"
+  | "attention"
+  | "inFlight"
+  | "failed"
+  | "reviewing";
 
 const BUCKET_ORDER: readonly SweepBucket[] = [
+  "mergeReady",
   "settle",
   "title",
   "attention",
@@ -71,6 +82,12 @@ const BUCKET_META: Record<
   SweepBucket,
   { title: string; hint: string; accent: string; icon: typeof ArchiveIcon }
 > = {
+  mergeReady: {
+    title: "Merge ready",
+    hint: "Open PRs with green CI, approvals, and clean merges.",
+    accent: "border-s-violet-500/70",
+    icon: GitMergeIcon,
+  },
   settle: {
     title: "Ready to settle",
     hint: "Work concluded — one click clears each from your active list.",
@@ -112,6 +129,10 @@ const BUCKET_META: Record<
 function classifySweepItem(item: SweepItem): SweepBucket {
   if (item.status === "error") return "failed";
   if (item.status !== "done" || item.result === null) return "reviewing";
+  // Merge-ready wins over everything: it's the highest-leverage one-click.
+  // Items stay in the bucket through the queue lifecycle (queued → merging
+  // → merged/conflicted) so progress is visible in place.
+  if (item.result.prStatus?.mergeReady && !item.settleApplied) return "mergeReady";
   if (item.result.recommendSettle && !item.settleApplied) return "settle";
   if (item.result.suggestedTitle && !item.titleApplied) return "title";
   // Live shell wins over review-time knowledge: a thread blocked on the user
@@ -165,10 +186,42 @@ function SweepItemMetaRow({
           {item.branch}
         </span>
       ) : null}
+      {item.result?.prStatus ? (
+        <a
+          href={item.result.prStatus.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 font-mono text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+        >
+          #{item.result.prStatus.number}
+        </a>
+      ) : null}
       {age ? <span className="shrink-0">{age}</span> : null}
       <DiffStatsLabel item={item} />
     </div>
   );
+}
+
+function MergeStatusBadge({ item }: { item: SweepItem }) {
+  switch (item.mergeStatus) {
+    case "queued":
+      return <Badge variant="secondary">Queued</Badge>;
+    case "merging":
+      return (
+        <Badge variant="info">
+          <Spinner className="me-1 size-3" />
+          Merging
+        </Badge>
+      );
+    case "merged":
+      return <Badge variant="success">Merged</Badge>;
+    case "conflicted":
+      return <Badge variant="warning">Conflict — agent rebasing</Badge>;
+    case "failed":
+      return <Badge variant="error">Merge failed</Badge>;
+    default:
+      return null;
+  }
 }
 
 function SweepItemCard({
@@ -188,7 +241,23 @@ function SweepItemCard({
   const meta = BUCKET_META[bucket];
 
   const primaryAction =
-    bucket === "settle" ? (
+    bucket === "mergeReady" ? (
+      item.mergeStatus === "idle" || item.mergeStatus === "failed" ? (
+        <Button
+          size="xs"
+          variant="outline"
+          className="shrink-0"
+          disabled={applying}
+          onClick={() => {
+            setApplying(true);
+            void mergeSweepItem(key).finally(() => setApplying(false));
+          }}
+        >
+          <GitMergeIcon className="me-1 size-3.5" />
+          Merge & settle
+        </Button>
+      ) : null
+    ) : bucket === "settle" ? (
       <Button
         size="xs"
         variant="outline"
@@ -246,6 +315,7 @@ function SweepItemCard({
         {bucket === "settle" && item.settleApplied ? (
           <Badge variant="outline">Settled</Badge>
         ) : null}
+        {bucket === "mergeReady" ? <MergeStatusBadge item={item} /> : null}
         <div className="ms-auto flex shrink-0 items-center gap-1">
           {result?.summary ? (
             <Tooltip>
@@ -282,6 +352,8 @@ function SweepItemCard({
 
       {item.status === "error" ? (
         <p className="line-clamp-2 text-sm text-red-400/90">{item.errorMessage}</p>
+      ) : item.mergeStatus === "conflicted" || item.mergeStatus === "failed" ? (
+        <p className="line-clamp-2 text-sm text-warning-foreground">{item.mergeDetail}</p>
       ) : nextStep ? (
         <p className="line-clamp-2 text-sm text-foreground/90">{nextStep}</p>
       ) : null}
@@ -313,8 +385,10 @@ function SweepItemCard({
 const SWEEP_COST_NOTE_THRESHOLD = 15;
 
 /** Pre-run summary: how many threads a sweep would cover and which model
-    each environment's server will use, so starting is an informed choice. */
-function SweepPreRunSummary() {
+    each environment's server will use, so starting is an informed choice.
+    Rendered on the idle /review-sweep page and inside the sidebar's launch
+    modal. `onStarted` lets the modal close itself when the sweep kicks off. */
+export function SweepPreRunSummary({ onStarted }: { onStarted?: () => void } = {}) {
   const shells = useThreadShells();
   const serverConfigs = useServerConfigs();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
@@ -405,7 +479,13 @@ function SweepPreRunSummary() {
           <div>Model is configurable under Settings → Models (text generation).</div>
         )}
       </div>
-      <Button size="sm" onClick={() => startReviewSweep()}>
+      <Button
+        size="sm"
+        onClick={() => {
+          startReviewSweep();
+          onStarted?.();
+        }}
+      >
         <ListChecksIcon className="me-1.5 size-4" />
         Review {reviewedCount} {reviewedCount === 1 ? "thread" : "threads"}
       </Button>
@@ -479,6 +559,7 @@ export function ReviewSweepView() {
   ).length;
   const running = phase === "running";
   const [applyingAll, setApplyingAll] = useState(false);
+  const [mergingAll, setMergingAll] = useState(false);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -564,6 +645,12 @@ export function ReviewSweepView() {
                 {buckets.map(([bucket, bucketItems]) => {
                   const meta = BUCKET_META[bucket];
                   const BucketIcon = meta.icon;
+                  const mergeableCount =
+                    bucket === "mergeReady"
+                      ? bucketItems.filter(
+                          (item) => item.mergeStatus === "idle" || item.mergeStatus === "queued",
+                        ).length
+                      : 0;
                   return (
                     <section key={bucket} className="flex flex-col gap-2">
                       <div className="flex items-baseline gap-2">
@@ -578,6 +665,21 @@ export function ReviewSweepView() {
                           <span className="truncate text-xs text-muted-foreground/70">
                             {meta.hint}
                           </span>
+                        ) : null}
+                        {bucket === "mergeReady" && mergeableCount > 0 ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            className="ms-auto shrink-0"
+                            disabled={mergingAll}
+                            onClick={() => {
+                              setMergingAll(true);
+                              void runMergeQueue().finally(() => setMergingAll(false));
+                            }}
+                          >
+                            <GitMergeIcon className="me-1 size-3.5" />
+                            Merge all ({mergeableCount})
+                          </Button>
                         ) : null}
                       </div>
                       <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">

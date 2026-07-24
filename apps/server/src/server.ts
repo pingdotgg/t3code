@@ -223,6 +223,7 @@ const ReviewLayerLive = ReviewService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provide(TextGeneration.layer),
+  Layer.provide(GitHubCli.layer),
 );
 
 const VcsLayerLive = Layer.empty.pipe(

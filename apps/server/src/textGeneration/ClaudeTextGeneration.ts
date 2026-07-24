@@ -366,6 +366,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         isActive: input.isActive,
         firstUserMessage: input.firstUserMessage,
         recentMessages: input.recentMessages,
+        pullRequest: input.pullRequest,
       });
 
       const generated = yield* runClaudeJson({

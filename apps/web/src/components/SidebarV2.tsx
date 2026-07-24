@@ -82,6 +82,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { publishSweepChangeRequestStates } from "../reviewSweepStore";
+import { ReviewSweepLaunchDialog } from "./reviewSweep/ReviewSweepLaunchDialog";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -2205,12 +2206,13 @@ export default function SidebarV2() {
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
-  // Navigate only — the review-sweep page shows a pre-run summary (thread
-  // count + models that will be used) and the sweep starts on explicit click.
+  // Open the launch modal — the sweep itself runs in the background and
+  // announces completion with a toast, so no navigation happens here.
+  const [reviewSweepDialogOpen, setReviewSweepDialogOpen] = useState(false);
   const handleReviewSweepClick = useCallback(() => {
     if (isMobile) setOpenMobile(false);
-    void router.navigate({ to: "/review-sweep" });
-  }, [isMobile, router, setOpenMobile]);
+    setReviewSweepDialogOpen(true);
+  }, [isMobile, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
@@ -2221,6 +2223,10 @@ export default function SidebarV2() {
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
+      <ReviewSweepLaunchDialog
+        open={reviewSweepDialogOpen}
+        onOpenChange={setReviewSweepDialogOpen}
+      />
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 pb-2 pt-3">
           <div className="flex items-center gap-1">

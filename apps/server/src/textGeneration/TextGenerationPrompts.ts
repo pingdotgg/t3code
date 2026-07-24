@@ -233,6 +233,34 @@ export interface ThreadReviewPromptInput {
   isActive: boolean;
   firstUserMessage: string | null;
   recentMessages: ReadonlyArray<ThreadReviewMessage>;
+  pullRequest?:
+    | {
+        number: number;
+        state: "open" | "closed" | "merged";
+        reviewDecision: string | null;
+        checksPassing: boolean | null;
+        mergeable: boolean | null;
+        recentComments: ReadonlyArray<{ author: string; createdAt: string; body: string }>;
+      }
+    | undefined;
+}
+
+function renderPullRequestSection(
+  pullRequest: NonNullable<ThreadReviewPromptInput["pullRequest"]>,
+): string {
+  const lines = [
+    `PR #${pullRequest.number}: state=${pullRequest.state}`,
+    `review decision: ${pullRequest.reviewDecision ?? "none required"}`,
+    `CI checks passing: ${pullRequest.checksPassing === null ? "unknown" : String(pullRequest.checksPassing)}`,
+    `mergeable: ${pullRequest.mergeable === null ? "unknown" : String(pullRequest.mergeable)}`,
+  ];
+  if (pullRequest.recentComments.length > 0) {
+    lines.push("Recent PR comments (newest last):");
+    for (const comment of pullRequest.recentComments) {
+      lines.push(`[${comment.author} @ ${comment.createdAt}] ${comment.body}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 const THREAD_REVIEW_RECENT_MESSAGE_COUNT = 20;
@@ -268,8 +296,21 @@ export function buildThreadReviewPrompt(input: ThreadReviewPromptInput) {
           "- this thread is still ACTIVE (running or awaiting the user): recommendSettle must be false",
         ]
       : []),
+    ...(input.pullRequest
+      ? [
+          "- weigh the PR context heavily: an open PR awaiting the user's review/merge is NOT settleable; a merged PR with no follow-up work is",
+          "- if the PR is open, CI is green, reviews approve it, and it is mergeable, nextStep should be to merge it",
+        ]
+      : []),
     "",
     `Current title: ${input.title}`,
+    ...(input.pullRequest
+      ? [
+          "",
+          "Pull request status:",
+          limitSection(renderPullRequestSection(input.pullRequest), 6_000),
+        ]
+      : []),
     "",
     "First user message:",
     limitSection(input.firstUserMessage ?? "(none)", THREAD_REVIEW_MESSAGE_CHAR_LIMIT),
