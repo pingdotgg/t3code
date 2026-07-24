@@ -135,6 +135,15 @@ it.effect("uses gh json listing for non-open change request state queries", () =
 
     const changeRequests = yield* provider.listChangeRequests({
       cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://github.com/totalolage/t3code.git",
+      },
       headSelector: "feature/merged",
       state: "all",
       limit: 10,
@@ -149,6 +158,8 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "all",
       "--limit",
       "10",
+      "--repo",
+      "totalolage/t3code",
       "--json",
       "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
@@ -191,6 +202,15 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
 
     yield* provider.createChangeRequest({
       cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        remoteName: "origin",
+        remoteUrl: "git@github.com:totalolage/t3code.git",
+      },
       baseRefName: "main",
       headSelector: "owner:feature/provider",
       title: "Provider PR",
@@ -203,6 +223,7 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
       headSelector: "owner:feature/provider",
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
+      repository: "totalolage/t3code",
     });
   }),
 );

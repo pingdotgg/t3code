@@ -325,6 +325,43 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("creates pull requests in the explicitly selected repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        repository: "totalolage/t3code",
+        baseBranch: "main",
+        headSelector: "agent/fix-pr-target",
+        title: "Fix PR target",
+        bodyFile: "/tmp/body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "create",
+          "--base",
+          "main",
+          "--head",
+          "agent/fix-pr-target",
+          "--title",
+          "Fix PR target",
+          "--body-file",
+          "/tmp/body.md",
+          "--repo",
+          "totalolage/t3code",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("falls back to constructed URLs when create output omits a URL", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
