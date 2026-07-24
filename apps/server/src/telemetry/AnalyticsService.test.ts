@@ -2,8 +2,13 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -16,24 +21,45 @@ interface RecordedBatchRequest {
   readonly path: string;
   readonly body: {
     readonly batch?: ReadonlyArray<{
-      readonly event?: string;
-      readonly properties?: {
-        readonly index?: number;
-        readonly clientType?: string;
-      };
+      readonly event?: string | undefined;
+      readonly properties?:
+        | {
+            readonly index?: number | undefined;
+            readonly clientType?: string | undefined;
+          }
+        | undefined;
     }>;
   } | null;
 }
 
 interface RecordedBatchBody {
   readonly batch: ReadonlyArray<{
-    readonly event?: string;
-    readonly properties?: {
-      readonly index?: number;
-      readonly clientType?: string;
-    };
+    readonly event?: string | undefined;
+    readonly properties?:
+      | {
+          readonly index?: number | undefined;
+          readonly clientType?: string | undefined;
+        }
+      | undefined;
   }>;
 }
+
+const RecordedBatchBodySchema = Schema.Struct({
+  batch: Schema.Array(
+    Schema.Struct({
+      event: Schema.optional(Schema.String),
+      properties: Schema.optional(
+        Schema.Struct({
+          index: Schema.optional(Schema.Number),
+          clientType: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+});
+const decodeRecordedBatchBody = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(RecordedBatchBodySchema),
+);
 
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
   it.effect("flush drains all buffered events across multiple batches", () =>
@@ -114,6 +140,76 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           request.body.batch.every((event) => event.properties?.clientType === "cli-web-client"),
         ),
         true,
+      );
+    }),
+  );
+
+  it.effect("background flush runs on the TestClock-adjustable interval", () =>
+    Effect.gen(function* () {
+      const capturedRequests: Array<RecordedBatchRequest> = [];
+      const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-telemetry-clock-",
+      });
+      const telemetryLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
+      const configLayer = ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_POSTHOG_KEY: "phc_test_key",
+          T3CODE_POSTHOG_HOST: "http://posthog.test",
+          T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+        }),
+      );
+      const httpClientLayer = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request, url) =>
+          Effect.gen(function* () {
+            const body =
+              request.body._tag === "Uint8Array"
+                ? yield* decodeRecordedBatchBody(new TextDecoder().decode(request.body.body)).pipe(
+                    Effect.orDie,
+                  )
+                : null;
+            capturedRequests.push({ path: url.pathname, body });
+            return HttpClientResponse.fromWeb(request, new Response("{}", { status: 200 }));
+          }),
+        ),
+      );
+      const runtimeLayer = telemetryLayer.pipe(
+        Layer.provide(configLayer),
+        Layer.provide(httpClientLayer),
+      );
+
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        yield* analytics.record("test.flush.clock", { index: 1 });
+
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(999));
+        assert.equal(capturedRequests.length, 0);
+
+        yield* TestClock.adjust(Duration.millis(1));
+        yield* Effect.yieldNow;
+      }).pipe(Effect.provide(Layer.merge(runtimeLayer, TestClock.layer())));
+
+      const batchRequests = capturedRequests.filter(
+        (request): request is RecordedBatchRequest & { readonly body: RecordedBatchBody } =>
+          Array.isArray(request.body?.batch),
+      );
+      assert.equal(batchRequests.length, 1);
+      assert.equal(batchRequests[0]?.path, "/batch/");
+      assert.deepEqual(
+        batchRequests[0]?.body.batch.map((event) => ({
+          event: event.event,
+          index: event.properties?.index,
+          clientType: event.properties?.clientType,
+        })),
+        [
+          {
+            event: "test.flush.clock",
+            index: 1,
+            clientType: "cli-web-client",
+          },
+        ],
       );
     }),
   );

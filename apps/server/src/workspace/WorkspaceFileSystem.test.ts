@@ -1,9 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it, describe, expect } from "@effect/vitest";
+import { assert, it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -186,7 +187,13 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           operation: "realpath-target",
         });
         expect(error.cause).toBeInstanceOf(Error);
-        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+        const cause = error.cause as PlatformError.PlatformError;
+        assert.equal(cause._tag, "PlatformError");
+        if (cause.reason._tag === "BadArgument") {
+          assert.fail("expected filesystem system error");
+        }
+        assert.equal(cause.reason._tag, "NotFound");
+        assert.equal(cause.reason.pathOrDescriptor, resolvedPath);
       }),
     );
   });

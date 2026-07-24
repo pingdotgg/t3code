@@ -10,6 +10,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -42,6 +43,8 @@ const TelemetryEnvConfig = Config.all({
   ),
   wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
+
+const BACKGROUND_FLUSH_INTERVAL = Duration.seconds(1);
 
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
@@ -172,7 +175,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  yield* Effect.forever(Effect.sleep(1000).pipe(Effect.flatMap(() => flush)), {
+  yield* Effect.forever(Effect.sleep(BACKGROUND_FLUSH_INTERVAL).pipe(Effect.flatMap(() => flush)), {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
