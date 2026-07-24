@@ -437,19 +437,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     );
   }
 
-  .floating-glass-surface,
-  .chat-composer-lower-chrome {
-    background: color-mix(in srgb, var(--card) 20%, transparent);
-  }
-
-  .floating-glass-surface {
-    box-shadow:
-      0 18px 48px -20px rgb(0 0 0 / 28%),
-      0 4px 14px -7px rgb(0 0 0 / 22%);
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
-  }
-
   .chat-composer-glass {
     background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -517,6 +504,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .chat-composer-glass-host {
     position: relative;
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
   }
 
   .chat-composer-glass-host::after {
@@ -555,11 +543,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     border-radius: 0 0 16px 16px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
     mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
     content: "";
-  }
-
-  .dark .floating-glass-surface {
-    background: color-mix(in srgb, var(--card) 45%, transparent);
   }
 
   .dark .chat-composer-glass-shell {
@@ -586,6 +571,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         transparent calc(1rem + 10px)
       ),
       rgb(255 255 255 / 2%);
+    box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
   }
 
   @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
@@ -685,38 +671,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       0 24px 72px -20px rgb(0 0 0 / 90%);
   }
 
-  .dark .floating-glass-surface {
-    box-shadow:
-      0 18px 48px -20px rgb(0 0 0 / 60%),
-      0 4px 14px -7px rgb(0 0 0 / 40%);
+  .dark .dialog-backdrop {
+    background: color-mix(in srgb, var(--background) 64%, transparent);
   }
 
-  .chat-composer-glass-shell-with-context::before {
-    border-radius: 0;
-    /*
-     * One continuous glass layer: a 22px composer joined to a 16px strip,
-     * whose visible sides align with the composer's bottom tangents.
-     */
-    clip-path: shape(
-      from 0 22px,
-      curve to 22px 0 with 0 9.85px / 9.85px 0,
-      line to calc(100% - 22px) 0,
-      curve to 100% 22px with calc(100% - 9.85px) 0 / 100% 9.85px,
-      line to 100% calc(100% - var(--chat-composer-context-extension) - 22px),
-      curve to calc(100% - 22px) calc(100% - var(--chat-composer-context-extension)) with 100%
-        calc(100% - var(--chat-composer-context-extension) - 9.85px) / calc(100% - 9.85px)
-        calc(100% - var(--chat-composer-context-extension)),
-      line to calc(100% - 22px) calc(100% - 16px),
-      curve to calc(100% - 38px) 100% with calc(100% - 22px) calc(100% - 7.16px) /
-        calc(100% - 29.16px) 100%,
-      line to 38px 100%,
-      curve to 22px calc(100% - 16px) with 29.16px 100% / 22px calc(100% - 7.16px),
-      line to 22px calc(100% - var(--chat-composer-context-extension)),
-      curve to 0 calc(100% - var(--chat-composer-context-extension) - 22px) with 9.85px
-        calc(100% - var(--chat-composer-context-extension)) / 0
-        calc(100% - var(--chat-composer-context-extension) - 9.85px),
-      line to 0 22px,
-      close
+  .glass-opacity-slider {
+    --glass-slider-progress: 0%;
+    --glass-slider-fill-offset: 0.5rem;
+    --glass-slider-fill-position: calc(
+      var(--glass-slider-progress) + var(--glass-slider-fill-offset)
     );
   }
 
@@ -735,11 +698,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .floating-glass-surface,
-    .chat-composer-lower-chrome {
-      background: var(--background);
-    }
-
     .chat-composer-glass,
     .alert-glass {
       background: var(--background) !important;
