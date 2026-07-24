@@ -1,73 +1,21 @@
-import {
-  SubAgentError,
-  SubAgentListResult,
-  SubAgentSendInput,
-  SubAgentSendResult,
-  SubAgentSpawnInput,
-  SubAgentSpawnResult,
-  SubAgentWaitInput,
-  SubAgentWaitResult,
-} from "@t3tools/contracts";
+import { DelegateError, DelegateTaskInput, DelegateTaskResult } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { SubAgentCoordinator } from "./SubAgentCoordinator.ts";
+import { DelegateCoordinator } from "./DelegateCoordinator.ts";
 
-const dependencies = [McpInvocationContext.McpInvocationContext, SubAgentCoordinator];
+const dependencies = [McpInvocationContext.McpInvocationContext, DelegateCoordinator];
 
-// Omit `parameters` so Tool.make defaults to EmptyParams. Schema.Struct({}) emits
-// anyOf without top-level type:"object", which MCP clients reject for inputSchema.
-export const AgentListTool = Tool.make("agent_list", {
+export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "List coding-agent providers configured on this server (instance id, driver, readiness, model slugs) and the sub-agents this session has already spawned via agent_spawn (threadId, optional name, title, status). Status is running while a turn is in progress, otherwise completed/interrupted/error. Use providers to pick a spawnable providerInstanceId; use agents to recall named workers for agent_send/agent_wait. Spawned handles do not survive server restarts.",
-  success: SubAgentListResult,
-  failure: SubAgentError,
+    "Delegate one self-contained task to a background agent that runs on this session's own provider and model, inside this thread's project and worktree. Blocks until the agent finishes and returns its final message. The agent does not see this conversation — include everything it needs in the prompt. At most 3 delegated agents may run concurrently per session, and delegated agents cannot delegate further.",
+  parameters: DelegateTaskInput,
+  success: DelegateTaskResult,
+  failure: DelegateError,
   dependencies,
 })
-  .annotate(Tool.Title, "List sub-agent providers")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
-
-export const AgentSpawnTool = Tool.make("agent_spawn", {
-  description:
-    "Spawn a sub-agent: start a new thread on any configured provider instance (including a different agent than yourself — e.g. delegate from Claude to Codex or vice versa) and send it an initial prompt. Sub-agents always use standard mode; fast/priority mode cannot be requested for child threads. Banned child models are claude-fable-5, claudex-sol, gpt-5.6-sol, and outdated Codex generations (gpt-5.5, gpt-5.4, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5-codex, and other non-5.6 gpt slugs). Allowed Luna models default to xhigh and cap at xhigh; every other child model caps at high; max and ultracode are never allowed. The server rejects more than 5 running children per caller, 10 running sub-agents per root tree, or 3 spawns per caller in 60 seconds. Banned or outdated model slugs are clamped to an allowed replacement and the result includes policyNotices. Spawned threads are titled with the \"Agent: <name/title/prompt>\" convention for easy identification in the UI and agent_list. The sub-agent works in this thread's project and worktree. Returns immediately with the new threadId; use agent_wait to collect the result and agent_send for follow-up prompts. Use agent_list first to pick a spawnable providerInstanceId. Every spawned sub-agent inherits the parent thread's stored runtime mode.",
-  parameters: SubAgentSpawnInput,
-  success: SubAgentSpawnResult,
-  failure: SubAgentError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Spawn sub-agent")
+  .annotate(Tool.Title, "Delegate task to background agent")
   .annotate(Tool.OpenWorld, true)
   .annotate(Tool.Destructive, true);
 
-export const AgentSendTool = Tool.make("agent_send", {
-  description:
-    "Send a follow-up prompt to a sub-agent thread previously created with agent_spawn. Returns immediately; use agent_wait to collect the response.",
-  parameters: SubAgentSendInput,
-  success: SubAgentSendResult,
-  failure: SubAgentError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Prompt sub-agent")
-  .annotate(Tool.OpenWorld, true)
-  .annotate(Tool.Destructive, true);
-
-export const AgentWaitTool = Tool.make("agent_wait", {
-  description:
-    "Wait for a sub-agent thread (created with agent_spawn) to finish its current turn and return the final assistant message. Blocks up to timeoutSeconds (default 60, max 600); a running result includes lastActivityAt and stalled so callers can distinguish progress from a wedged turn.",
-  parameters: SubAgentWaitInput,
-  success: SubAgentWaitResult,
-  failure: SubAgentError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Await sub-agent result")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
-
-export const SubAgentToolkit = Toolkit.make(
-  AgentListTool,
-  AgentSpawnTool,
-  AgentSendTool,
-  AgentWaitTool,
-);
+export const DelegateToolkit = Toolkit.make(DelegateTaskTool);

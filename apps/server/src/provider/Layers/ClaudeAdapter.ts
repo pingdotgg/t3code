@@ -294,8 +294,6 @@ const BACKGROUND_TASK_OUTPUT_POLL_INTERVAL = Duration.millis(500);
 const BACKGROUND_TASK_OUTPUT_READ_SIZE = 64 * 1024;
 const BACKGROUND_TASK_OUTPUT_EVENT_SIZE = 8 * 1024;
 
-const SERGECODE_SUBAGENT_INSTRUCTIONS = `SergeCode provides native sub-thread tools through the t3-code MCP server: agent_list, agent_spawn, agent_send, and agent_wait. When the user asks you to delegate work, create a subagent, or run another configured provider/model (including Codex or Grok), use those MCP tools so the worker is created as a visible SergeCode sub-thread. Never launch a provider CLI through Bash/local_bash as a substitute for agent_spawn. Use agent_list to resolve the provider instance and model, agent_spawn to start it, and agent_wait to collect its result.`;
-
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly driverKind?: ProviderDriverKind;
@@ -4696,7 +4694,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: SERGECODE_SUBAGENT_INSTRUCTIONS,
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is

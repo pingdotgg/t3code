@@ -339,38 +339,36 @@ function flushRuntimeEvents(): Effect.Effect<void> {
 }
 
 describe("ClaudeAdapterLive", () => {
-  it.effect(
-    "steers delegation into SergeCode sub-threads and forwards native subagent progress",
-    () => {
-      const harness = makeHarness();
-      return Effect.gen(function* () {
-        const adapter = yield* ClaudeAdapter;
-        yield* adapter.startSession({
-          threadId: THREAD_ID,
-          provider: ProviderDriverKind.make("claudeAgent"),
-          runtimeMode: "full-access",
-        });
+  it.effect("forwards native subagent progress without prompt injection", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
 
-        const options = harness.getLastCreateQueryInput()?.options;
-        assert.equal(options?.forwardSubagentText, true);
-        assert.equal(options?.agentProgressSummaries, true);
-        const systemPrompt = options?.systemPrompt;
-        assert.equal(
-          systemPrompt && typeof systemPrompt === "object" && !Array.isArray(systemPrompt)
-            ? systemPrompt.type
-            : undefined,
-          "preset",
-        );
-        if (systemPrompt && typeof systemPrompt === "object" && !Array.isArray(systemPrompt)) {
-          assert.match(systemPrompt.append ?? "", /agent_spawn/);
-          assert.match(systemPrompt.append ?? "", /Never launch a provider CLI/);
-        }
-      }).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.forwardSubagentText, true);
+      assert.equal(options?.agentProgressSummaries, true);
+      const systemPrompt = options?.systemPrompt;
+      assert.equal(
+        systemPrompt && typeof systemPrompt === "object" && !Array.isArray(systemPrompt)
+          ? systemPrompt.type
+          : undefined,
+        "preset",
       );
-    },
-  );
+      if (systemPrompt && typeof systemPrompt === "object" && !Array.isArray(systemPrompt)) {
+        // Delegation is advertised by the delegate_task tool description, not
+        // by an injected system-prompt block.
+        assert.equal(systemPrompt.append, undefined);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
 
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();

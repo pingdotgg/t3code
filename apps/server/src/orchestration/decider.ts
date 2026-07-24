@@ -22,7 +22,6 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import {
-  clampSubAgentEffortByModel,
   enforceSubAgentStandardMode,
   isSubAgentThreadTitle,
   withSubAgentThreadTitle,
@@ -294,7 +293,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       const modelSelection = isSubAgentThreadTitle(command.title)
-        ? enforceSubAgentStandardMode(clampSubAgentEffortByModel(command.modelSelection))
+        ? enforceSubAgentStandardMode(command.modelSelection)
         : command.modelSelection;
       return {
         ...(yield* withEventBase({
@@ -525,7 +524,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         (command.title !== undefined && isSubAgentThreadTitle(command.title));
       const modelSelection =
         command.modelSelection !== undefined && isSubAgent
-          ? enforceSubAgentStandardMode(clampSubAgentEffortByModel(command.modelSelection))
+          ? enforceSubAgentStandardMode(command.modelSelection)
           : command.modelSelection;
       const title =
         command.title !== undefined && isSubAgent
@@ -662,7 +661,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.modelSelection !== undefined
             ? {
                 modelSelection: isSubAgentThreadTitle(targetThread.title)
-                  ? enforceSubAgentStandardMode(clampSubAgentEffortByModel(command.modelSelection))
+                  ? enforceSubAgentStandardMode(command.modelSelection)
                   : command.modelSelection,
               }
             : {}),
