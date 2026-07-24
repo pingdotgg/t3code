@@ -14,6 +14,7 @@ import {
   getSidebarThreadKeysNeedingChangeRequestReporter,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarThreadEffectivelySnoozed,
   isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -723,6 +724,75 @@ describe("isSidebarThreadEffectivelySettled", () => {
               settlementSupported: true,
               now,
               autoSettleAfterDays: 3,
+            })
+          );
+        },
+      }),
+    ).toBe("active");
+  });
+});
+
+describe("isSidebarThreadEffectivelySnoozed", () => {
+  const now = "2026-04-10T12:00:00.000Z";
+
+  it("requires server snooze support and a future wake time", () => {
+    const snoozedThread = makeThreadShell({
+      snoozedAt: "2026-04-10T09:00:00.000Z",
+      snoozedUntil: "2026-04-11T09:00:00.000Z",
+    });
+
+    expect(
+      isSidebarThreadEffectivelySnoozed({
+        thread: snoozedThread,
+        snoozeSupported: true,
+        now,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadEffectivelySnoozed({
+        thread: snoozedThread,
+        snoozeSupported: false,
+        now,
+      }),
+    ).toBe(false);
+    expect(
+      isSidebarThreadEffectivelySnoozed({
+        thread: makeThreadShell({
+          snoozedAt: "2026-04-09T09:00:00.000Z",
+          snoozedUntil: "2026-04-10T09:00:00.000Z",
+        }),
+        snoozeSupported: true,
+        now,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps snoozed threads out of post-settle navigation targets", () => {
+    const threads = new Map([
+      ["current", makeThreadShell({ id: ThreadId.make("current") })],
+      [
+        "snoozed",
+        makeThreadShell({
+          id: ThreadId.make("snoozed"),
+          snoozedAt: "2026-04-10T09:00:00.000Z",
+          snoozedUntil: "2026-04-11T09:00:00.000Z",
+        }),
+      ],
+      ["active", makeThreadShell({ id: ThreadId.make("active") })],
+    ]);
+
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["current", "snoozed", "active"],
+        settledThreadId: "current",
+        isActive: (threadId) => {
+          const thread = threads.get(threadId);
+          return (
+            thread !== undefined &&
+            !isSidebarThreadEffectivelySnoozed({
+              thread,
+              snoozeSupported: true,
+              now,
             })
           );
         },

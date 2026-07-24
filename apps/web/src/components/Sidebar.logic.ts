@@ -2,6 +2,7 @@ import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import {
   canSettle,
+  effectiveSnoozed,
   effectiveSettled,
   type ChangeRequestStateLike,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -126,6 +127,14 @@ export function isSidebarThreadEffectivelySettled(input: {
         : {}),
     })
   );
+}
+
+export function isSidebarThreadEffectivelySnoozed(input: {
+  readonly thread: SidebarThreadSummary;
+  readonly snoozeSupported: boolean;
+  readonly now: string;
+}): boolean {
+  return input.snoozeSupported && effectiveSnoozed(input.thread, { now: input.now });
 }
 
 export function canSettleLegacySidebarRouteThread(input: {
