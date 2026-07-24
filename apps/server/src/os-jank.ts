@@ -1,4 +1,5 @@
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveDefaultT3BaseDir, resolveT3XdgBaseDir } from "@t3tools/shared/path";
 import {
   listLoginShellCandidates,
   mergePathEntries,
@@ -83,10 +84,26 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
-export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
-  const { join, resolve } = yield* Path.Path;
+export const resolveBaseDir = Effect.fn(function* (
+  raw: string | undefined,
+  xdgDataHome: string | undefined,
+) {
+  const { resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".t3");
+    return resolveDefaultT3BaseDir({
+      platform: yield* HostProcessPlatform,
+      homeDirectory: NodeOS.homedir(),
+      xdgHome: xdgDataHome,
+      path: yield* Path.Path,
+    });
   }
   return resolve(yield* expandHomePath(raw.trim()));
+});
+
+export const resolveXdgBaseDir = Effect.fn(function* (raw: string | undefined) {
+  return resolveT3XdgBaseDir({
+    platform: yield* HostProcessPlatform,
+    xdgHome: raw,
+    path: yield* Path.Path,
+  });
 });

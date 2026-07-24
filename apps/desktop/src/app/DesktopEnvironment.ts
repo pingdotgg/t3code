@@ -4,6 +4,7 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
+import { resolveDefaultT3BaseDir, resolveT3XdgBaseDir } from "@t3tools/shared/path";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -43,6 +44,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly appDataDirectory: string;
     readonly baseDir: string;
     readonly stateDir: string;
+    readonly configDir: string;
     readonly desktopSettingsPath: string;
     readonly clientSettingsPath: string;
     readonly savedEnvironmentRegistryPath: string;
@@ -148,7 +150,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const configuredBaseDir = config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () => path.join(homeDirectory, ".t3"));
+  const baseDir = Option.getOrElse(configuredBaseDir, () =>
+    resolveDefaultT3BaseDir({
+      platform: input.platform,
+      homeDirectory,
+      xdgHome: Option.getOrUndefined(config.xdgDataHome),
+      path,
+    }),
+  );
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -160,6 +169,17 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
+  const xdgConfigDir = resolveT3XdgBaseDir({
+    platform: input.platform,
+    xdgHome: Option.getOrUndefined(config.xdgConfigHome),
+    path,
+  });
+  const configDir =
+    Option.isSome(configuredBaseDir) || xdgConfigDir === undefined
+      ? stateDir
+      : isDevelopment
+        ? path.join(xdgConfigDir, "dev")
+        : xdgConfigDir;
   const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const resourcesPath = input.resourcesPath;
@@ -178,10 +198,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appDataDirectory,
     baseDir,
     stateDir,
-    desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
-    clientSettingsPath: path.join(stateDir, "client-settings.json"),
+    configDir,
+    desktopSettingsPath: path.join(configDir, "desktop-settings.json"),
+    clientSettingsPath: path.join(configDir, "client-settings.json"),
     savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
-    serverSettingsPath: path.join(stateDir, "settings.json"),
+    serverSettingsPath: path.join(configDir, "settings.json"),
     logDir: path.join(stateDir, "logs"),
     browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
     rootDir,

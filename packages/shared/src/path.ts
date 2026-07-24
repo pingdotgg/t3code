@@ -21,6 +21,35 @@ export function isExplicitRelativePath(value: string): boolean {
   );
 }
 
+export function resolveT3XdgBaseDir(input: {
+  readonly platform: string;
+  readonly xdgHome: string | undefined;
+  readonly path: {
+    readonly isAbsolute: (value: string) => boolean;
+    readonly join: (...paths: Array<string>) => string;
+  };
+}): string | undefined {
+  const xdgHome = input.xdgHome?.trim();
+  if (
+    input.platform !== "win32" &&
+    xdgHome !== undefined &&
+    xdgHome.length > 0 &&
+    input.path.isAbsolute(xdgHome)
+  ) {
+    return input.path.join(xdgHome, "t3code");
+  }
+
+  return undefined;
+}
+
+export function resolveDefaultT3BaseDir(
+  input: Parameters<typeof resolveT3XdgBaseDir>[0] & {
+    readonly homeDirectory: string;
+  },
+): string {
+  return resolveT3XdgBaseDir(input) ?? input.path.join(input.homeDirectory, ".t3");
+}
+
 function isRootPath(value: string): boolean {
   return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]?$/.test(value);
 }

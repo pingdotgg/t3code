@@ -14,6 +14,7 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
@@ -58,6 +59,59 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     const { fd } = yield* fs.open(filePath, { flag: "r" });
     return fd;
   });
+
+  it.effect("uses XDG_DATA_HOME when no explicit base directory is configured", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const xdgDataHome = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-xdg-data-",
+      });
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  XDG_CONFIG_HOME: path.join(xdgDataHome, "config"),
+                  XDG_DATA_HOME: xdgDataHome,
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+
+      assert.equal(resolved.baseDir, path.join(xdgDataHome, "t3code"));
+      assert.equal(resolved.stateDir, path.join(xdgDataHome, "t3code", "userdata"));
+      assert.equal(
+        resolved.keybindingsConfigPath,
+        path.join(xdgDataHome, "config", "t3code", "keybindings.json"),
+      );
+      assert.equal(
+        resolved.settingsPath,
+        path.join(xdgDataHome, "config", "t3code", "settings.json"),
+      );
+    }),
+  );
 
   it.effect("falls back to effect/config values when flags are omitted", () =>
     Effect.gen(function* () {
@@ -313,6 +367,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.fromEnv({
                 env: {
                   T3CODE_BOOTSTRAP_FD: String(fd),
+                  XDG_CONFIG_HOME: "/tmp/ignored-xdg-config",
                 },
               }),
             ),

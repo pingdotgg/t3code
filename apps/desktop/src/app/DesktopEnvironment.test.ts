@@ -98,6 +98,45 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("uses XDG_DATA_HOME when T3CODE_HOME is unset", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {
+          homeDirectory: "/home/alice",
+          platform: "linux",
+        },
+        {
+          XDG_CONFIG_HOME: " /home/alice/.config ",
+          XDG_DATA_HOME: " /home/alice/.local/share ",
+        },
+      );
+
+      assert.equal(environment.baseDir, "/home/alice/.local/share/t3code");
+      assert.equal(environment.stateDir, "/home/alice/.local/share/t3code/userdata");
+      assert.equal(environment.configDir, "/home/alice/.config/t3code");
+      assert.equal(environment.serverSettingsPath, "/home/alice/.config/t3code/settings.json");
+    }),
+  );
+
+  it.effect("gives T3CODE_HOME precedence over XDG_DATA_HOME", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {
+          homeDirectory: "/home/alice",
+          platform: "linux",
+        },
+        {
+          T3CODE_HOME: "/srv/t3",
+          XDG_CONFIG_HOME: "/home/alice/.config",
+          XDG_DATA_HOME: "/home/alice/.local/share",
+        },
+      );
+
+      assert.equal(environment.baseDir, "/srv/t3");
+      assert.equal(environment.configDir, "/srv/t3/userdata");
+    }),
+  );
+
   it.effect("keeps implicit development state separate from production state", () =>
     Effect.gen(function* () {
       const development = yield* makeEnvironment(

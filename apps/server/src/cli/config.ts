@@ -15,7 +15,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { expandHomePath, resolveBaseDir, resolveXdgBaseDir } from "../os-jank.ts";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -105,6 +105,14 @@ const EnvServerConfig = Config.all({
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  xdgDataHome: Config.string("XDG_DATA_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  xdgConfigHome: Config.string("XDG_CONFIG_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
     Config.option,
@@ -265,16 +273,26 @@ export const resolveServerConfig = (
       normalizedFlags.baseDir,
       Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
-    const baseDir = yield* resolveBaseDir(
-      Option.getOrUndefined(
-        resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
-      ),
-    );
+    const selectedBaseDir = resolveOptionPrecedence(
+      explicitBaseDir,
+      Option.fromUndefinedOr(bootstrap?.t3Home),
+    ).pipe(Option.filter((value) => value.trim().length > 0));
+    const baseDir = yield* resolveBaseDir(Option.getOrUndefined(selectedBaseDir), env.xdgDataHome);
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
+    const xdgConfigBaseDir = Option.isNone(selectedBaseDir)
+      ? yield* resolveXdgBaseDir(env.xdgConfigHome)
+      : undefined;
+    const configDir =
+      xdgConfigBaseDir === undefined
+        ? undefined
+        : devUrl === undefined
+          ? xdgConfigBaseDir
+          : path.join(xdgConfigBaseDir, "dev");
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      baseDirIsExplicit: Option.isSome(explicitBaseDir),
+      baseDirIsExplicit: Option.isSome(selectedBaseDir),
+      ...(configDir === undefined ? {} : { configDir }),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
