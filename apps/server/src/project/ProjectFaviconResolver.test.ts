@@ -65,6 +65,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
     it.effect("prefers a t3.json iconPath over well-known files", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "t3.json", '{ "iconPath": "brand/mark.svg" }');
         yield* writeTextFile(cwd, "brand/mark.svg", "<svg>mark</svg>");
@@ -72,8 +73,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
         const resolved = yield* resolver.resolvePath(cwd);
 
-        expect(resolved).not.toBeNull();
-        expect(resolved).toContain("brand/mark.svg");
+        expect(resolved).toBe(path.join(cwd, "brand/mark.svg"));
       }),
     );
 
@@ -119,17 +119,37 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect.each<{ relativePath: string }>([
+      { relativePath: "static/favicon.svg" },
+      { relativePath: "static/favicon.ico" },
+      { relativePath: "static/favicon.png" },
+      { relativePath: "src/lib/assets/favicon.svg" },
+      { relativePath: "src/lib/assets/favicon.ico" },
+      { relativePath: "src/lib/assets/favicon.png" },
+    ])("resolves $relativePath", ({ relativePath }) =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, relativePath, "favicon");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).toBe(path.join(cwd, relativePath));
+      }),
+    );
+
     it.effect("resolves icon hrefs from project source files", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
 
         const resolved = yield* resolver.resolvePath(cwd);
 
-        expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved).toBe(path.join(cwd, "public/brand/logo.svg"));
       }),
     );
 
@@ -245,6 +265,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
     it.effect("continues to later sources after an outside-root icon href", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="../../secret.svg">');
         yield* writeTextFile(cwd, "public/index.html", '<link rel="icon" href="/brand/logo.svg">');
@@ -252,8 +273,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
         const resolved = yield* resolver.resolvePath(cwd);
 
-        expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved).toBe(path.join(cwd, "public/brand/logo.svg"));
       }),
     );
   });
