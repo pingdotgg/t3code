@@ -5,8 +5,17 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  resolveNewThreadOnIntent,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("resolveNewThreadOnIntent", () => {
+  it("keeps the intent pending until environment-backed projects load", () => {
+    expect(resolveNewThreadOnIntent({ isActive: false, environmentItemCount: 0 })).toBe("ignore");
+    expect(resolveNewThreadOnIntent({ isActive: true, environmentItemCount: 0 })).toBe("defer");
+    expect(resolveNewThreadOnIntent({ isActive: true, environmentItemCount: 1 })).toBe("open");
+  });
+});
 
 describe("enumerateCommandPaletteItems", () => {
   it("assigns positional jump shortcuts to the first nine displayed items", () => {

@@ -36,6 +36,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -104,6 +105,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  resolveNewThreadOnIntent,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -1242,17 +1244,11 @@ function OpenCommandPaletteDialog(props: {
     projectThreadItems,
   ]);
 
-  useLayoutEffect(() => {
-    if (openIntent?.kind !== "new-thread-on") {
-      return;
-    }
+  const openNewThreadOnFlow = useEffectEvent(() => {
     clearOpenIntent();
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
-    if (newThreadEnvironmentItems.length === 0) {
-      return;
-    }
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [
@@ -1263,7 +1259,18 @@ function OpenCommandPaletteDialog(props: {
         },
       ],
     });
-  }, [clearOpenIntent, newThreadEnvironmentItems, openIntent]);
+  });
+
+  useLayoutEffect(() => {
+    const resolution = resolveNewThreadOnIntent({
+      isActive: openIntent?.kind === "new-thread-on",
+      environmentItemCount: newThreadEnvironmentItems.length,
+    });
+    if (resolution !== "open") {
+      return;
+    }
+    openNewThreadOnFlow();
+  }, [newThreadEnvironmentItems.length, openIntent]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 

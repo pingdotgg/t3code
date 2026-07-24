@@ -15,6 +15,14 @@ export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
 
+export function resolveNewThreadOnIntent(input: {
+  isActive: boolean;
+  environmentItemCount: number;
+}): "ignore" | "defer" | "open" {
+  if (!input.isActive) return "ignore";
+  return input.environmentItemCount > 0 ? "open" : "defer";
+}
+
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
   readonly value: string;
