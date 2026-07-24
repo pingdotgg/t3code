@@ -28,6 +28,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
+    /** Set on terminal detaches (thread archive/delete): revoke the thread's MCP credentials. */
+    revokeMcpCredential: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
