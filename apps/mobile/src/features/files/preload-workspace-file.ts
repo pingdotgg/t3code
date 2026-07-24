@@ -1,5 +1,6 @@
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
@@ -10,6 +11,7 @@ import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 
 const inFlightPreloads = new Map<string, Promise<void>>();
 const MAX_HIGHLIGHT_PRELOAD_CHARACTERS = 256 * 1024;
+const WORKSPACE_FILE_PRELOAD_RETAIN_MS = 1_000;
 
 function preloadKey(input: {
   readonly cwd: string;
@@ -36,10 +38,12 @@ export function preloadWorkspaceFileContents(input: {
 
   const preload = executeAtomQuery(
     appAtomRegistry,
-    projectEnvironment.readFile({
-      environmentId: input.environmentId,
-      input: { cwd: input.cwd, relativePath: input.relativePath },
-    }),
+    projectEnvironment
+      .readFile({
+        environmentId: input.environmentId,
+        input: { cwd: input.cwd, relativePath: input.relativePath },
+      })
+      .pipe(Atom.setIdleTTL(WORKSPACE_FILE_PRELOAD_RETAIN_MS)),
     {
       label: "workspace file preload",
       reportDefect: false,

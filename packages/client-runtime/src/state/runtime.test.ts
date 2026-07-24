@@ -17,6 +17,7 @@ import {
   executeAtomQuery,
   isAtomCommandInterrupted,
   mapAtomCommandResult,
+  refreshQueryOnSuccess,
   runAtomCommand,
   settleAsyncResult,
   settlePromise,
@@ -59,6 +60,135 @@ describe("settleAsyncResult", () => {
       expect(Cause.squash(rejected.cause)).toBe(rejectedDefect);
     }
   });
+});
+
+describe("refreshQueryOnSuccess", () => {
+  it.effect("refreshes the query for new success signals without replaying a cached signal", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const query = Atom.make(
+        Effect.sync(() => {
+          reads += 1;
+          return reads;
+        }),
+      );
+      const signal = Atom.make<AsyncResult.AsyncResult<string, never>>(
+        AsyncResult.initial<string, never>(false),
+      );
+      const liveQuery = refreshQueryOnSuccess(query, signal);
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(liveQuery);
+
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe(1);
+      expect(reads).toBe(1);
+
+      registry.set(signal, AsyncResult.success("changed"));
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe(2);
+
+      unmount();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("keeps a preloaded zero-TTL query warm through the consumer handoff", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const query = Atom.make(
+        Effect.sync(() => {
+          reads += 1;
+          return reads;
+        }),
+      ).pipe(Atom.setIdleTTL(0));
+      const signal = Atom.make<AsyncResult.AsyncResult<string, never>>(
+        AsyncResult.initial<string, never>(false),
+      ).pipe(Atom.setIdleTTL(0));
+      const liveQuery = refreshQueryOnSuccess(query, signal);
+      const preloadedQuery = liveQuery.pipe(Atom.setIdleTTL(1_000));
+      const registry = AtomRegistry.make();
+
+      const preload = yield* Effect.promise(() =>
+        executeAtomQuery(registry, preloadedQuery, {
+          label: "preload",
+        }),
+      );
+      expect(AsyncResult.isSuccess(preload)).toBe(true);
+      expect(reads).toBe(1);
+
+      const unmountConsumer = registry.mount(liveQuery);
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe(1);
+      expect(reads).toBe(1);
+
+      unmountConsumer();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("revalidates a stale cached query after the live query remounts", () =>
+    Effect.gen(function* () {
+      let contents = "initial";
+      let reads = 0;
+      const query = Atom.make(
+        Effect.sync(() => {
+          reads += 1;
+          return contents;
+        }),
+      ).pipe(Atom.swr({ staleTime: 0, revalidateOnMount: true }), Atom.setIdleTTL(0));
+      const signal = Atom.make<AsyncResult.AsyncResult<string, never>>(
+        AsyncResult.initial<string, never>(false),
+      );
+      const liveQuery = refreshQueryOnSuccess(query, signal);
+      const scheduledTasks: Array<() => void> = [];
+      const registry = AtomRegistry.make({
+        defaultIdleTTL: 5 * 60_000,
+        scheduleTask: (task) => {
+          let active = true;
+          scheduledTasks.push(() => {
+            if (active) task();
+          });
+          return () => {
+            active = false;
+          };
+        },
+      });
+      const unmountInitial = registry.mount(liveQuery);
+
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe("initial");
+      const readsAfterInitialMount = reads;
+
+      unmountInitial();
+      contents = "updated";
+      while (scheduledTasks.length > 0) {
+        scheduledTasks.shift()?.();
+      }
+
+      const unmountUpdated = registry.mount(liveQuery);
+      expect(
+        yield* AtomRegistry.getResult(registry, liveQuery, {
+          suspendOnWaiting: true,
+        }),
+      ).toBe("updated");
+      expect(reads).toBe(readsAfterInitialMount + 1);
+
+      unmountUpdated();
+      registry.dispose();
+    }),
+  );
 });
 
 describe("atom command result helpers", () => {

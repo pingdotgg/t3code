@@ -142,9 +142,10 @@ export function useProjectFileQuery(
   relativePath: string | null,
   enabled = true,
 ): ProjectQueryState<ProjectReadFileResult> {
-  const atom = enabled
-    ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
-    : EMPTY_PROJECT_FILE_QUERY_ATOM;
+  const atom =
+    enabled && relativePath !== null
+      ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
+      : EMPTY_PROJECT_FILE_QUERY_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
