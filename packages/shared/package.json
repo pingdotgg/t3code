@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./usagePricing": {
+      "types": "./src/usagePricing.ts",
+      "import": "./src/usagePricing.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

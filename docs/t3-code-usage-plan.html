@@ -1,0 +1,2810 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Evidence-backed implementation plan for a local-first usage dashboard in T3 Code."
+    />
+    <title>T3 Code Usage — Implementation Plan</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --page: #000;
+        --ink: #fff;
+        --muted: #9a9a9a;
+        --faint: #666;
+        --panel: #0a0a0a;
+        --panel-2: #111;
+        --line: #262626;
+        --blue: #76a9ff;
+        --cyan: #69e1ff;
+        --green: #63e6a5;
+        --amber: #ffd166;
+        --red: #ff7b7b;
+        --violet: #bc9cff;
+        --radius: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: #000;
+        color: var(--ink);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+      }
+
+      a {
+        color: var(--blue);
+      }
+
+      code,
+      pre,
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      code {
+        color: #d8e7ff;
+        font-size: 0.92em;
+      }
+
+      pre {
+        overflow-x: auto;
+        margin: 14px 0 0;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #050505;
+        padding: 16px;
+        color: #d7d7d7;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .shell {
+        width: min(1260px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 34px 0 80px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 28px;
+        align-items: end;
+        border-bottom: 1px solid var(--line);
+        padding: 30px 0 34px;
+      }
+
+      .eyebrow {
+        color: var(--green);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 900px;
+        margin: 10px 0 14px;
+        font-size: clamp(42px, 7vw, 82px);
+        font-weight: 760;
+        letter-spacing: -0.055em;
+        line-height: 0.95;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: clamp(25px, 3vw, 36px);
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+      }
+
+      h3 {
+        margin: 0 0 8px;
+        font-size: 17px;
+        letter-spacing: -0.015em;
+      }
+
+      p {
+        margin: 0 0 12px;
+      }
+
+      ul,
+      ol {
+        margin: 10px 0 0;
+        padding-left: 20px;
+      }
+
+      li + li {
+        margin-top: 7px;
+      }
+
+      .lede {
+        max-width: 900px;
+        color: #c3c3c3;
+        font-size: 18px;
+      }
+
+      .header-note {
+        width: 230px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        padding: 16px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .header-note strong {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--ink);
+        font-size: 14px;
+      }
+
+      nav {
+        position: sticky;
+        z-index: 10;
+        top: 0;
+        display: flex;
+        overflow-x: auto;
+        gap: 8px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.94);
+        padding: 11px 0;
+        backdrop-filter: blur(14px);
+      }
+
+      nav a {
+        flex: none;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 6px 10px;
+        color: #c9c9c9;
+        font-size: 12px;
+        text-decoration: none;
+      }
+
+      nav a:hover {
+        border-color: #555;
+        color: var(--ink);
+      }
+
+      section {
+        scroll-margin-top: 76px;
+        border-bottom: 1px solid var(--line);
+        padding: 52px 0;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 30px;
+        margin-bottom: 24px;
+      }
+
+      .section-label {
+        color: var(--faint);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .section-copy {
+        max-width: 880px;
+        color: #b7b7b7;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        grid-column: span 4;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        padding: 20px;
+      }
+
+      .card.half {
+        grid-column: span 6;
+      }
+
+      .card.full {
+        grid-column: span 12;
+      }
+
+      .card p:last-child {
+        margin-bottom: 0;
+      }
+
+      .decision {
+        border-color: rgba(99, 230, 165, 0.32);
+        background: linear-gradient(145deg, rgba(99, 230, 165, 0.08), transparent 55%), #080808;
+      }
+
+      .kicker {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .stat {
+        display: block;
+        margin: 2px 0 8px;
+        color: var(--ink);
+        font-size: clamp(27px, 4vw, 44px);
+        font-weight: 750;
+        letter-spacing: -0.045em;
+        line-height: 1;
+      }
+
+      .subtle {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-top: 13px;
+      }
+
+      .badge {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #050505;
+        padding: 4px 8px;
+        color: #c6c6c6;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .badge.green {
+        border-color: rgba(99, 230, 165, 0.38);
+        color: var(--green);
+      }
+
+      .badge.amber {
+        border-color: rgba(255, 209, 102, 0.38);
+        color: var(--amber);
+      }
+
+      .badge.violet {
+        border-color: rgba(188, 156, 255, 0.38);
+        color: var(--violet);
+      }
+
+      .callout {
+        border: 1px solid rgba(118, 169, 255, 0.28);
+        border-left: 4px solid var(--blue);
+        border-radius: 10px;
+        background: rgba(118, 169, 255, 0.06);
+        padding: 15px 17px;
+        color: #d8e6ff;
+      }
+
+      .callout.warning {
+        border-color: rgba(255, 209, 102, 0.26);
+        border-left-color: var(--amber);
+        background: rgba(255, 209, 102, 0.055);
+        color: #fff0bd;
+      }
+
+      .diagram {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #050505;
+        padding: 18px;
+      }
+
+      .diagram svg {
+        display: block;
+        min-width: 930px;
+        width: 100%;
+        height: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 12px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        padding: 2px 10px;
+      }
+
+      .exact {
+        color: var(--green);
+      }
+
+      .partial {
+        color: var(--amber);
+      }
+
+      .gap {
+        color: var(--red);
+      }
+
+      .metric {
+        grid-column: span 4;
+        border-top: 2px solid var(--cyan);
+        padding-top: 13px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--ink);
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .wireframe {
+        border: 1px solid #333;
+        border-radius: 16px;
+        background: #050505;
+        padding: 14px;
+      }
+
+      .wireframe-bar {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        padding: 6px 4px 14px;
+      }
+
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .filter {
+        border: 1px solid #343434;
+        border-radius: 7px;
+        background: #0e0e0e;
+        padding: 6px 9px;
+        color: #d8d8d8;
+        font-size: 11px;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .summary-cell {
+        min-height: 84px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0b0b0b;
+        padding: 11px;
+      }
+
+      .summary-cell b {
+        display: block;
+        margin-top: 8px;
+        font-size: 20px;
+      }
+
+      .chart-grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 8px;
+      }
+
+      .chart-box {
+        min-height: 210px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #080808;
+        padding: 12px;
+      }
+
+      .bars {
+        display: flex;
+        height: 150px;
+        align-items: end;
+        gap: 5px;
+        border-bottom: 1px solid #333;
+        padding: 16px 4px 0;
+      }
+
+      .bars i {
+        flex: 1;
+        min-width: 5px;
+        border-radius: 3px 3px 0 0;
+        background: linear-gradient(var(--cyan), #285c7a);
+      }
+
+      .heatmap {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 4px;
+        margin-top: 18px;
+      }
+
+      .heatmap i {
+        aspect-ratio: 1;
+        border-radius: 3px;
+        background: #111;
+      }
+
+      .heatmap i:nth-child(3n) {
+        background: #193c47;
+      }
+
+      .heatmap i:nth-child(5n) {
+        background: #2a6879;
+      }
+
+      .heatmap i:nth-child(11n) {
+        background: var(--cyan);
+      }
+
+      .mock-note {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        margin-bottom: 14px;
+        border: 1px solid rgba(124, 229, 255, 0.24);
+        border-radius: 10px;
+        background: rgba(124, 229, 255, 0.045);
+        padding: 12px 14px;
+        color: #d8f7ff;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .mock-note b {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--cyan);
+        padding: 2px 7px;
+        color: #001014;
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .product-mock {
+        overflow: hidden;
+        border: 1px solid #323232;
+        border-radius: 14px;
+        background: #080808;
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+      }
+
+      .mock-chrome {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 43px;
+        border-bottom: 1px solid #252525;
+        background: #0c0c0c;
+        padding: 0 13px;
+      }
+
+      .mock-window-dots,
+      .mock-sync {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .mock-window-dots i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #393939;
+      }
+
+      .mock-wordmark {
+        color: #d7d7d7;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+      }
+
+      .sync-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 12px rgba(126, 231, 135, 0.6);
+      }
+
+      .mock-sync {
+        color: #a8a8a8;
+        font-size: 9px;
+      }
+
+      .mock-shell {
+        display: grid;
+        grid-template-columns: 154px minmax(0, 1fr);
+        min-height: 940px;
+      }
+
+      .mock-sidebar {
+        border-right: 1px solid #242424;
+        background: #060606;
+        padding: 15px 9px;
+      }
+
+      .mock-nav-label {
+        margin: 14px 9px 6px;
+        color: #666;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      .mock-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 2px 0;
+        border-radius: 6px;
+        padding: 7px 9px;
+        color: #8d8d8d;
+        font-size: 10px;
+      }
+
+      .mock-nav-item::before {
+        content: "";
+        width: 5px;
+        height: 5px;
+        border: 1px solid currentColor;
+        border-radius: 2px;
+      }
+
+      .mock-nav-item.active {
+        background: #181818;
+        color: #fff;
+      }
+
+      .mock-nav-item.active::before {
+        border-color: var(--cyan);
+        background: var(--cyan);
+      }
+
+      .mock-environment {
+        margin: 22px 6px 0;
+        border: 1px solid #252525;
+        border-radius: 8px;
+        background: #0a0a0a;
+        padding: 9px;
+        color: #8f8f8f;
+        font-size: 9px;
+        line-height: 1.55;
+      }
+
+      .mock-environment b {
+        display: block;
+        color: #ddd;
+        font-size: 10px;
+      }
+
+      .mock-canvas {
+        min-width: 0;
+        background: #090909;
+        padding: 20px;
+      }
+
+      .mock-page-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .mock-page-head h3 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: -0.035em;
+      }
+
+      .mock-page-head p {
+        margin: 4px 0 0;
+        color: #858585;
+        font-size: 10px;
+      }
+
+      .mock-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .mock-control {
+        border: 1px solid #2e2e2e;
+        border-radius: 6px;
+        background: #111;
+        padding: 6px 8px;
+        color: #c3c3c3;
+        font-size: 9px;
+        white-space: nowrap;
+      }
+
+      .mock-control.primary {
+        border-color: rgba(124, 229, 255, 0.4);
+        background: rgba(124, 229, 255, 0.09);
+        color: #d9f9ff;
+      }
+
+      .mock-tabs {
+        display: flex;
+        gap: 17px;
+        margin: 18px 0 14px;
+        border-bottom: 1px solid #272727;
+      }
+
+      .mock-tab {
+        position: relative;
+        padding: 0 1px 9px;
+        color: #777;
+        font-size: 9px;
+      }
+
+      .mock-tab.active {
+        color: #fff;
+      }
+
+      .mock-tab.active::after {
+        content: "";
+        position: absolute;
+        right: 0;
+        bottom: -1px;
+        left: 0;
+        height: 2px;
+        background: var(--cyan);
+      }
+
+      .mock-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .mock-stat,
+      .mock-panel {
+        border: 1px solid #252525;
+        border-radius: 9px;
+        background: #0d0d0d;
+      }
+
+      .mock-stat {
+        min-height: 98px;
+        padding: 12px;
+      }
+
+      .mock-stat-label,
+      .mock-panel-label {
+        color: #777;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .mock-stat-value {
+        margin: 8px 0 4px;
+        color: #fff;
+        font-size: 23px;
+        font-weight: 680;
+        letter-spacing: -0.035em;
+      }
+
+      .mock-stat-value.cost {
+        color: var(--green);
+      }
+
+      .mock-stat-meta {
+        color: #777;
+        font-size: 9px;
+        line-height: 1.45;
+      }
+
+      .mock-stat-meta.warn {
+        color: var(--amber);
+      }
+
+      .mock-two-col {
+        display: grid;
+        grid-template-columns: 1.35fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .mock-panel {
+        min-width: 0;
+        padding: 13px;
+      }
+
+      .mock-panel-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 13px;
+      }
+
+      .mock-panel-title {
+        margin-top: 3px;
+        color: #e8e8e8;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .mock-panel-detail {
+        color: #737373;
+        font-size: 8px;
+      }
+
+      .cost-total {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 9px;
+      }
+
+      .cost-total strong {
+        color: var(--green);
+        font-size: 25px;
+        letter-spacing: -0.04em;
+      }
+
+      .cost-total span {
+        max-width: 175px;
+        color: #777;
+        font-size: 8px;
+        line-height: 1.45;
+        text-align: right;
+      }
+
+      .coverage-track,
+      .harness-track,
+      .model-track,
+      .reasoning-track,
+      .task-track {
+        display: flex;
+        overflow: hidden;
+        width: 100%;
+        border-radius: 999px;
+        background: #1d1d1d;
+      }
+
+      .coverage-track {
+        height: 9px;
+      }
+
+      .coverage-track .priced {
+        width: 24.8%;
+        background: var(--green);
+      }
+
+      .coverage-track .unpriced {
+        width: 75.2%;
+        background: repeating-linear-gradient(135deg, #4a3e20 0 4px, #292313 4px 8px);
+      }
+
+      .mock-legend-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 7px 14px;
+        margin-top: 8px;
+        color: #888;
+        font-size: 8px;
+      }
+
+      .mock-legend-row b {
+        color: #d7d7d7;
+        font-weight: 600;
+      }
+
+      .cost-lines {
+        display: grid;
+        gap: 7px;
+        margin-top: 13px;
+      }
+
+      .cost-line {
+        display: grid;
+        grid-template-columns: 72px minmax(80px, 1fr) 70px;
+        gap: 8px;
+        align-items: center;
+        color: #aaa;
+        font-size: 9px;
+      }
+
+      .cost-line > span:last-child {
+        color: #ddd;
+        text-align: right;
+      }
+
+      .mini-track {
+        height: 5px;
+        border-radius: 999px;
+        background: #202020;
+      }
+
+      .mini-track i {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--cyan);
+      }
+
+      .mini-track i.green {
+        background: var(--green);
+      }
+
+      .mini-track i.amber {
+        background: var(--amber);
+      }
+
+      .harness-cards {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+      }
+
+      .harness-card {
+        border: 1px solid #242424;
+        border-radius: 7px;
+        background: #090909;
+        padding: 10px;
+      }
+
+      .harness-name {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: #e5e5e5;
+        font-size: 10px;
+        font-weight: 650;
+      }
+
+      .harness-name span {
+        color: #777;
+        font-size: 8px;
+        font-weight: 500;
+      }
+
+      .harness-number {
+        margin: 7px 0 2px;
+        color: #fff;
+        font-size: 17px;
+        font-weight: 650;
+      }
+
+      .harness-card p {
+        margin: 0;
+        color: #737373;
+        font-size: 8px;
+      }
+
+      .preference-rows {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .preference-row {
+        display: grid;
+        grid-template-columns: 55px minmax(80px, 1fr) 62px;
+        gap: 8px;
+        align-items: center;
+        color: #a4a4a4;
+        font-size: 8px;
+      }
+
+      .harness-track {
+        height: 6px;
+      }
+
+      .harness-track i:first-child {
+        background: #c995ff;
+      }
+
+      .harness-track i:last-child {
+        background: var(--cyan);
+      }
+
+      .preference-row > span:last-child {
+        color: #737373;
+        text-align: right;
+      }
+
+      .model-panel {
+        margin-top: 8px;
+      }
+
+      .model-table {
+        display: grid;
+      }
+
+      .model-row {
+        display: grid;
+        grid-template-columns: minmax(126px, 1.15fr) minmax(150px, 1.4fr) minmax(155px, 1.4fr) 66px;
+        gap: 12px;
+        align-items: center;
+        border-top: 1px solid #222;
+        padding: 10px 0;
+      }
+
+      .model-row.header {
+        border-top: 0;
+        padding: 0 0 7px;
+        color: #686868;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .model-name {
+        color: #ddd;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .model-name small {
+        display: block;
+        margin-top: 3px;
+        color: #696969;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        font-size: 8px;
+      }
+
+      .model-usage {
+        display: grid;
+        grid-template-columns: minmax(60px, 1fr) 60px;
+        gap: 7px;
+        align-items: center;
+        color: #aaa;
+        font-size: 8px;
+      }
+
+      .model-track {
+        height: 7px;
+      }
+
+      .model-track i {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #2f788e, var(--cyan));
+      }
+
+      .reasoning-cell {
+        display: grid;
+        gap: 5px;
+      }
+
+      .reasoning-track {
+        height: 7px;
+      }
+
+      .reasoning-track i.low,
+      .reasoning-key i.low {
+        background: var(--blue);
+      }
+
+      .reasoning-track i.medium,
+      .reasoning-key i.medium {
+        background: var(--cyan);
+      }
+
+      .reasoning-track i.high,
+      .reasoning-key i.high {
+        background: var(--green);
+      }
+
+      .reasoning-track i.xhigh,
+      .reasoning-key i.xhigh {
+        background: var(--amber);
+      }
+
+      .reasoning-track i.ultra,
+      .reasoning-key i.ultra {
+        background: #c995ff;
+      }
+
+      .reasoning-labels {
+        color: #707070;
+        font-size: 7px;
+      }
+
+      .reasoning-key {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 9px;
+        color: #777;
+        font-size: 7px;
+      }
+
+      .reasoning-key span {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .reasoning-key i {
+        width: 6px;
+        height: 6px;
+        border-radius: 2px;
+      }
+
+      .price-state {
+        justify-self: end;
+        border: 1px solid rgba(126, 231, 135, 0.24);
+        border-radius: 999px;
+        background: rgba(126, 231, 135, 0.06);
+        padding: 3px 6px;
+        color: var(--green);
+        font-size: 7px;
+      }
+
+      .price-state.unknown {
+        border-color: rgba(255, 209, 102, 0.27);
+        background: rgba(255, 209, 102, 0.06);
+        color: var(--amber);
+      }
+
+      .mock-subscreen {
+        margin-top: 16px;
+        border-top: 1px dashed #333;
+        padding-top: 16px;
+      }
+
+      .subscreen-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 9px;
+        color: #777;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .subscreen-label::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: #242424;
+      }
+
+      .task-panel {
+        overflow-x: auto;
+        border: 1px solid #252525;
+        border-radius: 9px;
+        background: #0d0d0d;
+      }
+
+      .task-row {
+        display: grid;
+        grid-template-columns: minmax(190px, 1.25fr) minmax(235px, 1.55fr) 76px 58px 77px;
+        gap: 12px;
+        align-items: center;
+        min-width: 790px;
+        border-top: 1px solid #222;
+        padding: 10px 12px;
+      }
+
+      .task-row.header {
+        border-top: 0;
+        background: #0a0a0a;
+        color: #686868;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .task-name {
+        color: #e0e0e0;
+        font-size: 9px;
+        font-weight: 620;
+      }
+
+      .task-name small {
+        display: block;
+        margin-top: 3px;
+        color: #686868;
+        font-size: 8px;
+        font-weight: 500;
+      }
+
+      .task-models {
+        display: grid;
+        gap: 5px;
+      }
+
+      .task-track {
+        height: 7px;
+      }
+
+      .task-track i.fable {
+        background: #c995ff;
+      }
+
+      .task-track i.opus {
+        background: var(--amber);
+      }
+
+      .task-track i.sonnet {
+        background: #ef87bd;
+      }
+
+      .task-track i.haiku {
+        background: var(--green);
+      }
+
+      .task-track i.gpt {
+        background: var(--cyan);
+      }
+
+      .task-model-labels {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px 8px;
+        color: #737373;
+        font-size: 7px;
+      }
+
+      .task-model-labels b {
+        color: #a9a9a9;
+        font-weight: 600;
+      }
+
+      .task-number {
+        color: #d8d8d8;
+        font-size: 9px;
+        text-align: right;
+      }
+
+      .task-number small {
+        display: block;
+        margin-top: 3px;
+        color: #707070;
+        font-size: 7px;
+      }
+
+      .task-number.unpriced {
+        color: var(--amber);
+      }
+
+      .mock-footnote {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 8px;
+        color: #666;
+        font-size: 8px;
+        line-height: 1.5;
+      }
+
+      .mock-decisions {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .mock-decision {
+        border: 1px solid #242424;
+        border-radius: 8px;
+        background: #090909;
+        padding: 11px;
+      }
+
+      .mock-decision b {
+        display: block;
+        margin-bottom: 5px;
+        color: #e3e3e3;
+        font-size: 10px;
+      }
+
+      .mock-decision span {
+        color: #777;
+        font-size: 9px;
+        line-height: 1.5;
+      }
+
+      .phase-list {
+        display: grid;
+        gap: 10px;
+        counter-reset: phases;
+      }
+
+      .phase {
+        position: relative;
+        display: grid;
+        grid-template-columns: 52px 190px minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--panel);
+        padding: 17px;
+        counter-increment: phases;
+      }
+
+      .phase::before {
+        content: counter(phases, decimal-leading-zero);
+        color: var(--green);
+        font-family: ui-monospace, monospace;
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .phase-title {
+        color: var(--ink);
+        font-weight: 750;
+      }
+
+      .phase-copy {
+        color: #b5b5b5;
+      }
+
+      .risk {
+        grid-column: span 6;
+        border-left: 3px solid var(--amber);
+        padding-left: 15px;
+      }
+
+      .risk strong {
+        display: block;
+        margin-bottom: 5px;
+      }
+
+      .checklist {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 7px 20px;
+        list-style: none;
+        padding: 0;
+      }
+
+      .checklist li {
+        position: relative;
+        margin: 0;
+        border-bottom: 1px solid #1b1b1b;
+        padding: 9px 0 9px 24px;
+        color: #c5c5c5;
+      }
+
+      .checklist li::before {
+        position: absolute;
+        left: 0;
+        color: var(--green);
+        content: "✓";
+        font-weight: 800;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        padding-top: 30px;
+        color: var(--faint);
+        font-size: 12px;
+      }
+
+      @media (max-width: 860px) {
+        header,
+        .section-head {
+          grid-template-columns: 1fr;
+        }
+
+        .header-note {
+          width: auto;
+        }
+
+        .card,
+        .card.half,
+        .metric,
+        .risk {
+          grid-column: span 12;
+        }
+
+        .summary-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .chart-grid,
+        .phase {
+          grid-template-columns: 1fr;
+        }
+
+        .mock-shell {
+          grid-template-columns: 1fr;
+        }
+
+        .mock-sidebar {
+          display: none;
+        }
+
+        .mock-canvas {
+          padding: 14px;
+        }
+
+        .mock-page-head {
+          display: grid;
+        }
+
+        .mock-actions {
+          justify-content: flex-start;
+        }
+
+        .mock-summary,
+        .mock-decisions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .mock-two-col {
+          grid-template-columns: 1fr;
+        }
+
+        .model-table {
+          overflow-x: auto;
+        }
+
+        .model-row {
+          min-width: 675px;
+        }
+
+        .checklist {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .mock-summary,
+        .mock-decisions,
+        .harness-cards {
+          grid-template-columns: 1fr;
+        }
+
+        .mock-tabs {
+          overflow-x: auto;
+        }
+
+        .mock-footnote {
+          display: grid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <div class="eyebrow">Implementation plan · v2 · independently reviewed</div>
+          <h1>Local-first usage for T3 Code</h1>
+          <p class="lede">
+            Build a top-level Usage page backed by an append-only local ledger. Capture exact usage
+            from live provider events, backfill native logs once, and merge aggregate reports from
+            every connected T3 environment—without uploading raw logs, prompts, or paths.
+          </p>
+          <div class="badges">
+            <span class="badge green">Recommended</span>
+            <span class="badge green">Reviewed by gpt-5.6-sol</span>
+            <span class="badge">T3-only by default</span>
+            <span class="badge">All-local opt-in</span>
+            <span class="badge">No cloud persistence</span>
+          </div>
+        </div>
+        <aside class="header-note">
+          <strong>Plan status — v2</strong>
+          Evidence-backed against the repository, T3 SQLite, provider event logs, native Codex and
+          Claude histories, and ccusage 20.0.8 on <span class="mono">bb-1</span>. Revised after an
+          independent code review by gpt-5.6-sol verified every claim against the codebase; the
+          corrections are in <a href="#review">section 00</a>.
+        </aside>
+      </header>
+
+      <nav aria-label="Plan sections">
+        <a href="#review">Review</a>
+        <a href="#decision">Decision</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#semantics">Metrics</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#providers">Providers</a>
+        <a href="#aggregation">Aggregation</a>
+        <a href="#experience">Experience</a>
+        <a href="#rollout">Rollout</a>
+        <a href="#verification">Verification</a>
+        <a href="#risks">Risks</a>
+      </nav>
+
+      <section id="review">
+        <div class="section-head">
+          <div class="section-label">00 · Independent review (v2 changes)</div>
+          <div>
+            <h2>What the gpt-5.6-sol code review changed.</h2>
+            <p class="section-copy">
+              The v1 plan was reviewed by gpt-5.6-sol with read-only access to the repository; every
+              cited file was re-verified before acceptance. Verdict: product direction and
+              ledger-query shape sound; the persistence design needed restructuring before Phase 1.
+              Four corrections are binding on the rest of this document.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <article class="card half">
+            <span class="kicker">Blocker fixed · durable events, not an ingestion fold</span>
+            <h3>The ledger must be a real projector</h3>
+            <p class="subtle">
+              In this codebase, projections are registered projectors replaying
+              <code>orchestration_events</code> from a <code>projection_state</code> cursor, with
+              writes transactionally coupled to event appends
+              (<code>ProjectionPipeline.ts:1462–1548</code>,
+              <code>OrchestrationEngine.ts:169–180</code>). v1's in-memory per-turn fold writing
+              rows on <code>turn.completed</code> would be restart-lossy and unreplayable. v2:
+              persist durable <code>model.usage-recorded</code> orchestration events (keeping
+              <code>providerRefs</code>, typed <code>modelUsage</code>, exact cost), then derive the
+              ledger with a standard registered projector. A new projector's empty cursor replays
+              history automatically — this also simplifies backfill.
+            </p>
+          </article>
+          <article class="card half">
+            <span class="kicker">Misdiagnosis corrected · the adapter was innocent</span>
+            <h3>Cost dies in ingestion, not in ClaudeAdapter</h3>
+            <p class="subtle">
+              v1 claimed ClaudeAdapter fails to plumb <code>total_cost_usd</code> /
+              <code>modelUsage</code>. Verified false: both completion paths already emit them on
+              <code>turn.completed</code> (<code>ClaudeAdapter.ts:1963–1980</code>,
+              <code>:2036–2050</code>). The loss is downstream —
+              <code>ProviderRuntimeIngestion</code> consumes <code>turn.completed</code> for
+              lifecycle only and discards its usage payload, and
+              <code>buildContextWindowActivityPayload</code> (<code>:596–613</code>) strips
+              <code>providerRefs</code> from persisted usage activities. Phase work moves
+              accordingly. Also confirmed: <code>ThreadTokenUsageSnapshot</code> has no
+              cache-creation field, so "emit the full split" requires a contract extension, and
+              <code>modelUsage</code> needs a typed schema (currently <code>UnknownRecord</code>).
+            </p>
+          </article>
+          <article class="card half">
+            <span class="kicker">Identity fixed · NULLs defeat uniqueness</span>
+            <h3>Fact IDs, not composite keys</h3>
+            <p class="subtle">
+              v1's dedup key <code>(environment, thread, turn, model)</code> fails twice: SQLite
+              UNIQUE ignores NULL components (interrupted turns have no <code>turn_id</code>), and
+              it omits the provider-native session id that validation proved essential (concurrent
+              Codex sessions on one T3 thread inflated sqlite replay 12×). v2: a stable
+              <code>fact_id</code> hashed from provider + native session + native turn/message id +
+              model + kind, with explicit upsert precedence (live &gt; transcripts &gt; events) and
+              a <code>stale</code> flag for lifecycle-rejected completions. Per-model cost and
+              turn-level <code>totalCostUsd</code> are stored as separate fact kinds so totals
+              reconcile instead of double-counting.
+            </p>
+          </article>
+          <article class="card half">
+            <span class="kicker">Semantics added · lifecycle, revert, terminal paths</span>
+            <h3>Usage survives what conversations don't</h3>
+            <p class="subtle">
+              Existing projectors prune on
+              <code>thread.reverted</code> (<code>ProjectionPipeline.ts:851–980</code>); the usage
+              projector deliberately does not — consumed tokens are immutable billing history.
+              Thread deletion keeps facts and redacts linkage. Finalization listens to
+              <code>turn.aborted</code> (Codex emits it: <code>CodexAdapter.ts:788–797</code>),
+              session exit, and steering-superseded turns — not just <code>turn.completed</code>.
+              Backfill leaves schema migrations (which run during SQLite init) and becomes a
+              versioned, resumable server-side job; transcript parsing is opt-in and never runs at
+              startup. Pricing moves to versioned, effective-dated data in shared runtime code,
+              never <code>packages/contracts</code>.
+            </p>
+          </article>
+          <article class="card full">
+            <span class="kicker">Confirmed feasible by the review</span>
+            <ul>
+              <li>
+                Multi-environment fan-out works with the existing client registry (<code
+                  >EnvironmentRegistry.run</code
+                >
+                is environment-scoped) — but it must lease the environment <em>catalog</em>, not
+                just currently-live connections, with bounded concurrency and per-environment
+                timeouts.
+              </li>
+              <li>
+                One dashboard-shaped <code>usage.query</code> RPC (named bucket sets per dimension)
+                avoids four round-trips per page load; it needs a
+                <code>RPC_REQUIRED_SCOPE</code> read-scope entry like every other method.
+              </li>
+              <li>
+                Grouping timezone comes from the requesting client (IANA), attribution at
+                observation time; DST handled by local-calendar bucketing.
+              </li>
+              <li>
+                Sizing revised: the "scrappy 2–3 day" v1 cut is retired — it would have shipped an
+                unreplayable table. Accounting correctness first; UI was mostly done in mock form
+                anyway.
+              </li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="decision">
+        <div class="section-head">
+          <div class="section-label">01 · Product decision</div>
+          <div>
+            <h2>Index once; query the ledger.</h2>
+            <p class="section-copy">
+              The dashboard should never scan gigabytes of JSONL or rotated provider logs on page
+              load. Each T3 environment owns a compact usage ledger in its existing SQLite state.
+              The client asks every connected environment for aggregate rows and merges those rows
+              locally.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <article class="card decision">
+            <span class="kicker">Default scope</span>
+            <h3>T3 Code only</h3>
+            <p class="subtle">
+              Reliably attributable to T3 provider sessions, threads, projects, subagents, and
+              environments.
+            </p>
+          </article>
+          <article class="card decision">
+            <span class="kicker">Optional scope</span>
+            <h3>All local agent activity</h3>
+            <p class="subtle">
+              Opt-in indexing for Codex, Claude, OpenCode, and future sources launched outside T3.
+            </p>
+          </article>
+          <article class="card decision">
+            <span class="kicker">Placement</span>
+            <h3>Top-level <code>/usage</code></h3>
+            <p class="subtle">
+              A destination beside Settings, not a settings panel and not a thread-level activity
+              view.
+            </p>
+          </article>
+          <article class="card half">
+            <span class="kicker">Do</span>
+            <ul>
+              <li>Persist normalized, idempotent usage records.</li>
+              <li>Keep exact provider cost separate from API-equivalent estimates.</li>
+              <li>Return aggregate, coverage, pricing, and freshness metadata.</li>
+              <li>Show partial cross-environment results when a host is offline.</li>
+            </ul>
+          </article>
+          <article class="card half">
+            <span class="kicker">Do not</span>
+            <ul>
+              <li>Require a separately installed <code>ccusage</code> binary.</li>
+              <li>Store usage rows in thread activities or conversation snapshots.</li>
+              <li>Call cache tokens “input” without separating their semantics.</li>
+              <li>Publish durable usage aggregates to the cloud relay.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="evidence">
+        <div class="section-head">
+          <div class="section-label">02 · What exists</div>
+          <div>
+            <h2>The raw signal is already rich.</h2>
+            <p class="section-copy">
+              T3 currently persists turn timing and context snapshots. Native source logs provide
+              model-level token accounting, cache use, reasoning output, and—on Claude—reported USD
+              cost. The missing layer is durable normalization.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <span class="kicker">T3 SQLite</span>
+            <span class="stat">673</span>
+            <p class="subtle">turns across 113 threads</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Context snapshots</span>
+            <span class="stat">19.5k</span>
+            <p class="subtle">durable updates across 103 threads</p>
+          </article>
+          <article class="card">
+            <span class="kicker">T3 provider logs</span>
+            <span class="stat">2.06 GB</span>
+            <p class="subtle">247 current and rotated files</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Codex history</span>
+            <span class="stat">~390</span>
+            <p class="subtle">JSONL sessions · 396 MB</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Claude history</span>
+            <span class="stat">297</span>
+            <p class="subtle">JSONL sessions · 213 MB</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Direct attribution</span>
+            <span class="stat">109/109</span>
+            <p class="subtle">T3 provider sessions matched native logs</p>
+          </article>
+        </div>
+        <div style="height: 14px"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>What it already knows</th>
+                <th>Current limitation</th>
+                <th>Plan role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>T3 projections</td>
+                <td>Turns, timestamps, model selection, project/thread ownership</td>
+                <td>Usage is a generic context activity; completion usage is not projected</td>
+                <td>Exact interaction timing and relational joins</td>
+              </tr>
+              <tr>
+                <td>T3 provider logs</td>
+                <td>Native and canonical events with thread IDs</td>
+                <td>Rotated at 10 × 10 MB per thread; unsuitable as the sole history</td>
+                <td>Recent fallback and debugging</td>
+              </tr>
+              <tr>
+                <td>Codex JSONL</td>
+                <td>Model, cumulative and last-call tokens, cache, reasoning, T3 originator</td>
+                <td>Cumulative counters require careful delta conversion</td>
+                <td>Exact live semantics and historical backfill</td>
+              </tr>
+              <tr>
+                <td>Claude JSONL</td>
+                <td>Per-assistant usage, model, cache creation/read, UUID, cost</td>
+                <td>SDK entrypoint alone is not unique to T3</td>
+                <td>Backfill matched by durable provider session ID</td>
+              </tr>
+              <tr>
+                <td>ccusage</td>
+                <td>Timezone reports, cache split, model breakdown, offline pricing</td>
+                <td>External native binary and output/version coupling</td>
+                <td>Oracle, conventions, and compatibility reference</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="height: 14px"></div>
+        <div class="callout">
+          <strong>Performance finding.</strong> An all-history ccusage scan completed quickly on
+          this host, but peaked near 196 MB RSS and used substantial parallel CPU. A representative
+          SQLite usage aggregation completed in roughly 40 ms. The ledger turns an expensive parse
+          into a cheap read.
+        </div>
+      </section>
+
+      <section id="semantics">
+        <div class="section-head">
+          <div class="section-label">03 · Metric contract</div>
+          <div>
+            <h2>Define the numbers before drawing charts.</h2>
+            <p class="section-copy">
+              Token fields differ across providers. The normalized contract must make inclusion and
+              subset relationships explicit so totals remain comparable.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <strong>Uncached input</strong>
+            <span>Input tokens that were not served from a provider cache.</span>
+          </div>
+          <div class="metric">
+            <strong>Cache read</strong>
+            <span>Reused input tokens. Kept separate because these can dominate totals.</span>
+          </div>
+          <div class="metric">
+            <strong>Cache write</strong>
+            <span>Tokens written into a prompt cache, including Claude cache creation.</span>
+          </div>
+          <div class="metric">
+            <strong>Output</strong>
+            <span>All generated output. Reasoning output is included here.</span>
+          </div>
+          <div class="metric">
+            <strong>Reasoning output</strong>
+            <span>A visible subset of output, never added to the total twice.</span>
+          </div>
+          <div class="metric">
+            <strong>Total tokens</strong>
+            <span>Uncached input + cache read + cache write + output.</span>
+          </div>
+          <div class="metric">
+            <strong>Model calls</strong>
+            <span>Positive native usage records—not turns and not tool calls.</span>
+          </div>
+          <div class="metric">
+            <strong>T3 turns</strong>
+            <span>User-initiated turns. A turn can produce many model calls and subagents.</span>
+          </div>
+          <div class="metric">
+            <strong>Time of day</strong>
+            <span
+              >Turn-start distribution for T3 scope; call distribution for all-local scope.</span
+            >
+          </div>
+        </div>
+        <div style="height: 16px"></div>
+        <div class="callout warning">
+          <strong>Do not report “hours spent” from provider logs.</strong> Logs reveal activity
+          points, not foreground app duration. A future client-presence signal could add actual
+          active time, but it must be named and stored separately.
+        </div>
+      </section>
+
+      <section id="architecture">
+        <div class="section-head">
+          <div class="section-label">04 · Architecture</div>
+          <div>
+            <h2>One normalized path for live and historical usage.</h2>
+            <p class="section-copy">
+              Live adapters emit provider-neutral usage events. Backfill adapters produce identical
+              record identities, so the SQLite uniqueness boundary de-duplicates live and imported
+              data automatically.
+            </p>
+          </div>
+        </div>
+        <div class="diagram" aria-label="Usage architecture diagram">
+          <svg viewBox="0 0 1120 430" role="img" aria-labelledby="architecture-title">
+            <title id="architecture-title">
+              Provider events and native logs feed a local usage ledger queried by connected
+              clients.
+            </title>
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L9,3 z" fill="#666" />
+              </marker>
+              <linearGradient id="ledger" x1="0" x2="1">
+                <stop offset="0" stop-color="#112f25" />
+                <stop offset="1" stop-color="#07120e" />
+              </linearGradient>
+            </defs>
+            <g font-family="ui-sans-serif, sans-serif">
+              <text x="38" y="34" fill="#777" font-size="12" font-weight="700">INGESTION</text>
+              <rect x="38" y="54" width="230" height="92" rx="12" fill="#0c0c0c" stroke="#353535" />
+              <text x="58" y="86" fill="#fff" font-size="17" font-weight="700">
+                Live provider events
+              </text>
+              <text x="58" y="112" fill="#999" font-size="12">Codex · Claude · OpenCode · ACP</text>
+              <text x="58" y="130" fill="#63e6a5" font-size="11">exact, low latency</text>
+
+              <rect
+                x="38"
+                y="182"
+                width="230"
+                height="92"
+                rx="12"
+                fill="#0c0c0c"
+                stroke="#353535"
+              />
+              <text x="58" y="214" fill="#fff" font-size="17" font-weight="700">
+                Native log backfill
+              </text>
+              <text x="58" y="240" fill="#999" font-size="12">
+                incremental JSONL / provider stores
+              </text>
+              <text x="58" y="258" fill="#ffd166" font-size="11">streaming, cursor-based</text>
+
+              <path d="M268 100 H360" stroke="#666" stroke-width="2" marker-end="url(#arrow)" />
+              <path
+                d="M268 228 H315 Q340 228 340 203 V165 Q340 140 360 140"
+                fill="none"
+                stroke="#666"
+                stroke-width="2"
+                marker-end="url(#arrow)"
+              />
+
+              <rect x="370" y="80" width="260" height="132" rx="14" fill="#111" stroke="#76a9ff" />
+              <text x="394" y="113" fill="#76a9ff" font-size="12" font-weight="800">
+                NORMALIZATION
+              </text>
+              <text x="394" y="142" fill="#fff" font-size="18" font-weight="700">
+                model.usage-recorded
+              </text>
+              <text x="394" y="168" fill="#aaa" font-size="12">
+                stable native key · model · token split
+              </text>
+              <text x="394" y="188" fill="#aaa" font-size="12">
+                thread / turn · cost · tier · accuracy
+              </text>
+
+              <path d="M630 146 H700" stroke="#666" stroke-width="2" marker-end="url(#arrow)" />
+
+              <rect
+                x="710"
+                y="70"
+                width="360"
+                height="154"
+                rx="14"
+                fill="url(#ledger)"
+                stroke="#63e6a5"
+              />
+              <text x="736" y="103" fill="#63e6a5" font-size="12" font-weight="800">
+                LOCAL SQLITE
+              </text>
+              <text x="736" y="133" fill="#fff" font-size="20" font-weight="700">
+                usage_records
+              </text>
+              <text x="736" y="160" fill="#b7b7b7" font-size="12">
+                append-only ledger · uniqueness on native key
+              </text>
+              <text x="736" y="182" fill="#fff" font-size="15" font-weight="700">
+                usage_source_state
+              </text>
+              <text x="736" y="202" fill="#b7b7b7" font-size="12">
+                file offsets · parser version · freshness · dataset ID
+              </text>
+
+              <path d="M890 224 V282" stroke="#666" stroke-width="2" marker-end="url(#arrow)" />
+
+              <rect
+                x="710"
+                y="292"
+                width="360"
+                height="92"
+                rx="12"
+                fill="#0c0c0c"
+                stroke="#bc9cff"
+              />
+              <text x="736" y="323" fill="#bc9cff" font-size="12" font-weight="800">
+                READ-ONLY RPC
+              </text>
+              <text x="736" y="349" fill="#fff" font-size="18" font-weight="700">usage.query</text>
+              <text x="736" y="370" fill="#aaa" font-size="12">
+                bounded aggregates · coverage · pricing · freshness
+              </text>
+
+              <path d="M710 338 H620" stroke="#666" stroke-width="2" marker-end="url(#arrow)" />
+              <rect
+                x="320"
+                y="290"
+                width="290"
+                height="96"
+                rx="12"
+                fill="#0c0c0c"
+                stroke="#69e1ff"
+              />
+              <text x="344" y="322" fill="#69e1ff" font-size="12" font-weight="800">
+                CLIENT RUNTIME
+              </text>
+              <text x="344" y="349" fill="#fff" font-size="18" font-weight="700">
+                Connected environments
+              </text>
+              <text x="344" y="371" fill="#aaa" font-size="12">
+                parallel query · dataset dedupe · partial success
+              </text>
+
+              <path d="M320 338 H268" stroke="#666" stroke-width="2" marker-end="url(#arrow)" />
+              <rect x="38" y="296" width="220" height="84" rx="12" fill="#0c0c0c" stroke="#fff" />
+              <text x="60" y="330" fill="#fff" font-size="18" font-weight="700">/usage</text>
+              <text x="60" y="354" fill="#aaa" font-size="12">local merged dashboard</text>
+            </g>
+          </svg>
+        </div>
+
+        <div style="height: 16px"></div>
+        <div class="grid">
+          <article class="card half">
+            <span class="kicker">Canonical event</span>
+            <h3><code>model.usage-recorded</code></h3>
+            <p class="subtle">
+              A single provider-neutral usage contract. Context-window events remain dedicated to UI
+              occupancy and compaction behavior.
+            </p>
+            <pre>
+ProviderUsageRecord {
+  nativeRecordKey, provider, providerInstanceId,
+  threadId?, turnId?, projectId?, providerSessionId?,
+  model, occurredAt, requestCount,
+  uncachedInputTokens, cacheReadInputTokens,
+  cacheWriteInputTokens, outputTokens,
+  reasoningOutputTokens,
+  providerCostMicros?, serviceTier?,
+  origin: "t3" | "external",
+  accuracy: "exact" | "derived" | "estimated"
+}</pre
+            >
+          </article>
+          <article class="card half">
+            <span class="kicker">Idempotency boundary</span>
+            <h3>Stable native identity</h3>
+            <ul class="subtle">
+              <li>Claude: session ID + assistant message UUID</li>
+              <li>Codex: session ID + monotonic cumulative usage state</li>
+              <li>OpenCode: provider session/message ID</li>
+              <li>ACP: session + turn + response ordinal</li>
+              <li>Canonical fallback: T3 provider event ID</li>
+            </ul>
+            <div class="callout" style="margin-top: 15px">
+              Live ingestion and later backfill insert the same key. A unique index prevents double
+              counting without source-specific cleanup passes.
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="providers">
+        <div class="section-head">
+          <div class="section-label">05 · Provider work</div>
+          <div>
+            <h2>Capture at the closest trustworthy source.</h2>
+            <p class="section-copy">
+              Avoid parsing provider-specific <code>Unknown</code> payloads downstream. Each adapter
+              should normalize usage while it still understands the native event schema.
+            </p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Live source</th>
+                <th>Backfill source</th>
+                <th>Required change</th>
+                <th>Expected quality</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Codex</td>
+                <td><code>thread/tokenUsage/updated</code></td>
+                <td><code>~/.codex/sessions/**/*.jsonl</code></td>
+                <td>
+                  Preserve full total/last components, cache write, actual model, and reroutes
+                </td>
+                <td class="exact">Exact</td>
+              </tr>
+              <tr>
+                <td>Claude</td>
+                <td>Native assistant SDK message + result reconciliation</td>
+                <td>Claude project JSONL matched by session ID</td>
+                <td>Emit one record per assistant response UUID; preserve reported cost</td>
+                <td class="exact">Exact</td>
+              </tr>
+              <tr>
+                <td>OpenCode</td>
+                <td>Assistant <code>message.updated</code></td>
+                <td>OpenCode local data store</td>
+                <td>Extract message model, tokens, cost, and message ID currently ignored</td>
+                <td class="exact">Exact when present</td>
+              </tr>
+              <tr>
+                <td>Cursor / Grok ACP</td>
+                <td><code>PromptResponse.usage</code> and <code>usage_update</code></td>
+                <td>Recent native/canonical logs</td>
+                <td>Stop discarding the usage object; preserve cumulative cost carefully</td>
+                <td class="partial">Capability-dependent</td>
+              </tr>
+              <tr>
+                <td>Unknown drivers</td>
+                <td>Turn model selection only</td>
+                <td>None until an adapter exists</td>
+                <td>Return turns with explicit token coverage gap</td>
+                <td class="gap">Unavailable, not zero</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="height: 16px"></div>
+        <div class="grid">
+          <article class="card half">
+            <span class="kicker">T3-only backfill</span>
+            <ol>
+              <li>Resolve configured Codex and Claude home paths per provider instance.</li>
+              <li>Seed ownership from <code>provider_session_runtime</code>.</li>
+              <li>Follow Codex <code>parent_thread_id</code> chains for subagents.</li>
+              <li>Keep Claude sidechains inside the matched direct session.</li>
+              <li>Use T3 originator metadata as validation, not global ownership.</li>
+            </ol>
+          </article>
+          <article class="card half">
+            <span class="kicker">Import mechanics</span>
+            <ul>
+              <li>Stream files; never read entire histories into memory.</li>
+              <li>Persist file identity, byte offset, mtime, and parser version.</li>
+              <li>Tolerate partial final lines, append, truncation, and rotation.</li>
+              <li>Whitelist usage fields; never persist prompt or tool payloads.</li>
+              <li>Run at low priority with visible progress and a manual reindex action.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="aggregation">
+        <div class="section-head">
+          <div class="section-label">06 · Pricing and fleet</div>
+          <div>
+            <h2>Aggregate environments, not SSH machines.</h2>
+            <p class="section-copy">
+              T3 already knows its connected execution environments and can run an RPC in any one of
+              them. That catalog is the product-native aggregation boundary and works for local,
+              SSH, bearer, and relay-backed connections.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <article class="card half">
+            <span class="kicker">usage.query</span>
+            <h3>Request</h3>
+            <p class="subtle">
+              UTC range, IANA timezone, bucket granularity, scope, environment filters, and optional
+              project grouping.
+            </p>
+            <h3 style="margin-top: 17px">Response</h3>
+            <p class="subtle">
+              Totals, daily buckets, model rows, hour/weekday distributions, environment/source
+              breakdown, coverage, indexed-through time, errors, and pricing basis.
+            </p>
+          </article>
+          <article class="card half">
+            <span class="kicker">Failure model</span>
+            <h3>Partial success by default</h3>
+            <p class="subtle">
+              If one environment is offline, show available totals and “3 of 4 environments
+              reporting.” Older environments without <code>usageReporting</code> show “Update
+              required” instead of failing the page.
+            </p>
+            <div class="badges">
+              <span class="badge green">connected</span>
+              <span class="badge amber">stale</span>
+              <span class="badge">unsupported</span>
+              <span class="badge violet">relay transport</span>
+            </div>
+          </article>
+          <article class="card half">
+            <span class="kicker">Cross-environment dedupe</span>
+            <h3>Dataset fingerprints</h3>
+            <p class="subtle">
+              Multiple T3 servers on one physical host can see the same provider directory. Hash a
+              stable host identity plus canonical source root; return per-source rollups and select
+              the freshest duplicate dataset before summing.
+            </p>
+          </article>
+          <article class="card half">
+            <span class="kicker">Authorization</span>
+            <h3>Read-only and already scoped</h3>
+            <p class="subtle">
+              Use the existing <code>orchestration:read</code> scope: it already grants access to
+              more sensitive thread snapshots. Manual reindex can require
+              <code>orchestration:operate</code>.
+            </p>
+          </article>
+        </div>
+
+        <div style="height: 16px"></div>
+        <div class="callout warning">
+          <strong>Cost is not billing.</strong> Display “API-equivalent estimate,” use
+          provider-reported cost where available, bundle a pinned offline pricing snapshot, preserve
+          service tier, and label unknown custom models “Unpriced” rather than <code>$0.00</code>.
+          Support import of ccusage-compatible pricing overrides.
+        </div>
+      </section>
+
+      <section id="experience">
+        <div class="section-head">
+          <div class="section-label">07 · Usage page</div>
+          <div>
+            <h2>Make coverage as visible as consumption.</h2>
+            <p class="section-copy">
+              The page should feel like ccusage translated into an interactive, multi-environment T3
+              surface. Every total needs an inspectable source and quality story.
+            </p>
+          </div>
+        </div>
+        <div class="mock-note">
+          <b>Chosen mock (v6)</b>
+          <span>
+            The approved design, built from this machine's full ledger (3.45B tokens, Jun 26 – Jul
+            22). Interactive version with hover tooltips:
+            <a
+              href="https://postplan.dev/d/5bx21h42g0b9/raw"
+              target="_blank"
+              rel="noopener noreferrer"
+              >postplan.dev/d/5bx21h42g0b9</a
+            >. Design system: hue = harness (Claude terracotta, Codex white), lightness = model
+            within the family; violet is reserved for T3-side stats (heatmap, projects); estimated
+            dollars are always striped, exact ones never.
+          </span>
+        </div>
+
+        <div class="um-hero" aria-label="Approved usage mock: twin donuts and KPI tiles">
+          <div class="um-grid">
+            <div class="um-block">
+              <div class="um-cap">Tokens<small>all processed, by harness</small></div>
+              <div class="um-chartwrap">
+                <svg id="um-tok" viewBox="0 0 300 300"></svg>
+                <div class="um-mid"><b>3.45B</b><span>27 days</span></div>
+              </div>
+              <div class="um-list">
+                <div class="um-row">
+                  <i style="background: #cf6b48"></i><b>Claude</b><small>256 turns · $3,043</small
+                  ><span>57% · 1.95B</span>
+                </div>
+                <div class="um-row sub">
+                  <i style="background: #cf6b48"></i>fable-5<span>1.69B</span>
+                </div>
+                <div class="um-row sub">
+                  <i style="background: #f2c1a4"></i>opus-4.8<span>221M</span>
+                </div>
+                <div class="um-row sub">
+                  <i style="background: #a3492a"></i>sonnet-5 · haiku · sonnet-4-6<span>40M</span>
+                </div>
+                <div class="um-row">
+                  <i style="background: #e8e8e3"></i><b>Codex</b
+                  ><small>127 turns · plan-covered</small><span>43% · 1.50B</span>
+                </div>
+              </div>
+            </div>
+            <div class="um-block">
+              <div class="um-cap">
+                Cost<small>Claude metered exactly · Codex estimated at list price</small>
+              </div>
+              <div class="um-chartwrap">
+                <svg id="um-cost" viewBox="0 0 300 300"></svg>
+                <div class="um-mid"><b>$5,407</b><span>$3,043 exact + $2,364 est.</span></div>
+              </div>
+              <div class="um-list">
+                <div class="um-row">
+                  <i style="background: #cf6b48"></i><b>Claude</b><small>exact · SDK-metered</small
+                  ><span>56% · $3,043</span>
+                </div>
+                <div class="um-row sub">
+                  <i style="background: #cf6b48"></i>fable-5<span>$2,810</span>
+                </div>
+                <div class="um-row sub">
+                  <i style="background: #f2c1a4"></i>opus-4.8<span>$213</span>
+                </div>
+                <div class="um-row">
+                  <i class="um-est"></i><b>Codex <em>est.</em></b
+                  ><small>list price · $0 billed (Pro)</small><span>44% · $2,364</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="um-kpis">
+            <div class="um-kpi">
+              <small>Output tokens</small><b>15.4M</b><span>actually generated text</span>
+            </div>
+            <div class="um-kpi">
+              <small>Claude spend</small><b>$3,043</b><span>exact, from SDK results</span>
+            </div>
+            <div class="um-kpi">
+              <small>Codex value</small><b>~$2,364</b><span>list-price est. · $0 billed</span>
+            </div>
+            <div class="um-kpi"><small>Turns</small><b>383</b><span>across 115 threads</span></div>
+            <div class="um-kpi">
+              <small>Cache hit rate</small><b class="um-good">96.2%</b
+              ><span>of all input tokens</span>
+            </div>
+          </div>
+          <div class="um-below">
+            Below the fold (see the interactive mock): tokens-per-day stacked by model, Claude
+            spend-per-day, hour×weekday turn heatmap in the violet T3 lane, per-provider hourly
+            token charts, the full models table (the accessible view of every chart), projects,
+            reasoning-effort breakdown, and marathon-turn records.
+          </div>
+        </div>
+
+        <style>
+          .um-hero {
+            background: #0a0a0a;
+            border: 1px solid #262626;
+            border-radius: 14px;
+            padding: 22px;
+          }
+          .um-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+          }
+          @media (max-width: 860px) {
+            .um-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+          .um-cap {
+            text-align: center;
+            font-weight: 700;
+            font-size: 13px;
+            margin-bottom: 12px;
+          }
+          .um-cap small {
+            display: block;
+            font-weight: 400;
+            font-size: 11.5px;
+            color: #9a9a9a;
+            margin-top: 2px;
+          }
+          .um-chartwrap {
+            position: relative;
+            max-width: 270px;
+            margin: 0 auto;
+          }
+          .um-mid {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+          }
+          .um-mid b {
+            font-size: 34px;
+            letter-spacing: -0.02em;
+          }
+          .um-mid span {
+            font-size: 11px;
+            color: #9a9a9a;
+            margin-top: 4px;
+          }
+          .um-list {
+            margin-top: 12px;
+            font-size: 13px;
+          }
+          .um-row {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 7px 4px;
+            border-bottom: 1px solid #1d1d1d;
+          }
+          .um-row:last-child {
+            border-bottom: none;
+          }
+          .um-row.sub {
+            padding-left: 26px;
+            color: #9a9a9a;
+            font-size: 12.5px;
+            border-bottom: none;
+            padding-top: 3px;
+            padding-bottom: 3px;
+          }
+          .um-row i {
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+            flex: none;
+          }
+          .um-row.sub i {
+            width: 8px;
+            height: 8px;
+          }
+          .um-row span {
+            margin-left: auto;
+            font-variant-numeric: tabular-nums;
+            color: #ddd;
+          }
+          .um-row small {
+            color: #767676;
+          }
+          .um-est {
+            background: repeating-linear-gradient(45deg, #e8e8e3 0 3px, #8a8880 3px 5px);
+          }
+          .um-kpis {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+          }
+          @media (max-width: 860px) {
+            .um-kpis {
+              grid-template-columns: repeat(2, 1fr);
+            }
+          }
+          .um-kpi {
+            background: #111;
+            border: 1px solid #262626;
+            border-radius: 10px;
+            padding: 11px 13px;
+          }
+          .um-kpi small {
+            color: #9a9a9a;
+            font-size: 11px;
+            display: block;
+          }
+          .um-kpi b {
+            font-size: 21px;
+            letter-spacing: -0.01em;
+          }
+          .um-kpi span {
+            display: block;
+            color: #767676;
+            font-size: 10.5px;
+            margin-top: 1px;
+          }
+          .um-good {
+            color: #63e6a5;
+          }
+          .um-below {
+            margin-top: 16px;
+            font-size: 12.5px;
+            color: #9a9a9a;
+            line-height: 1.6;
+          }
+        </style>
+        <script>
+          (function () {
+            function donut(id, groups) {
+              var svg = document.getElementById(id);
+              var cx = 150,
+                cy = 150,
+                R = 140,
+                r = 96,
+                TAU = Math.PI * 2;
+              var total = 0;
+              groups.forEach(function (g) {
+                g.models.forEach(function (m) {
+                  total += m.v;
+                });
+              });
+              function pt(a, rad) {
+                return (
+                  (cx + Math.cos(a) * rad).toFixed(2) + " " + (cy + Math.sin(a) * rad).toFixed(2)
+                );
+              }
+              var a0 = -Math.PI / 2;
+              var s =
+                '<defs><pattern id="' +
+                id +
+                '-est" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="rgba(0,0,0,0.35)" stroke-width="2.5"/></pattern></defs>';
+              groups.forEach(function (g) {
+                var gStart = a0,
+                  gTotal = 0;
+                g.models.forEach(function (m) {
+                  gTotal += m.v;
+                });
+                g.models.forEach(function (m) {
+                  var sweep = (m.v / total) * TAU,
+                    a1 = a0 + sweep;
+                  var gap = Math.min(0.014, sweep * 0.3);
+                  var b0 = a0 + gap / 2,
+                    b1 = a1 - gap / 2;
+                  var large = b1 - b0 > Math.PI ? 1 : 0;
+                  var d =
+                    "M " +
+                    pt(b0, R) +
+                    " A " +
+                    R +
+                    " " +
+                    R +
+                    " 0 " +
+                    large +
+                    " 1 " +
+                    pt(b1, R) +
+                    " L " +
+                    pt(b1, r) +
+                    " A " +
+                    r +
+                    " " +
+                    r +
+                    " 0 " +
+                    large +
+                    " 0 " +
+                    pt(b0, r) +
+                    " Z";
+                  s += '<path d="' + d + '" fill="' + m.c + '"/>';
+                  if (m.est) s += '<path d="' + d + '" fill="url(#' + id + '-est)"/>';
+                  a0 = a1;
+                });
+                var gPct = (gTotal / total) * 100;
+                if (gPct >= 8) {
+                  var mid = (gStart + a0) / 2,
+                    lr = (R + r) / 2;
+                  var hx = parseInt(g.color.slice(1, 3), 16),
+                    gx = parseInt(g.color.slice(3, 5), 16),
+                    bx = parseInt(g.color.slice(5, 7), 16);
+                  var ink = hx * 0.299 + gx * 0.587 + bx * 0.114 > 150 ? "#1a1a19" : "#fff";
+                  s +=
+                    '<text x="' +
+                    (cx + Math.cos(mid) * lr) +
+                    '" y="' +
+                    (cy + Math.sin(mid) * lr) +
+                    '" text-anchor="middle" dominant-baseline="middle" style="fill:' +
+                    ink +
+                    ';font:680 15px ui-sans-serif,sans-serif">' +
+                    gPct.toFixed(0) +
+                    "%</text>";
+                }
+              });
+              svg.innerHTML = s;
+            }
+            donut("um-tok", [
+              {
+                color: "#cf6b48",
+                models: [
+                  { v: 1692.7, c: "#cf6b48" },
+                  { v: 221.3, c: "#f2c1a4" },
+                  { v: 40.1, c: "#a3492a" },
+                ],
+              },
+              { color: "#e8e8e3", models: [{ v: 1498.2, c: "#e8e8e3" }] },
+            ]);
+            donut("um-cost", [
+              {
+                color: "#cf6b48",
+                models: [
+                  { v: 2810, c: "#cf6b48" },
+                  { v: 213, c: "#f2c1a4" },
+                  { v: 20, c: "#a3492a" },
+                ],
+              },
+              { color: "#e8e8e3", models: [{ v: 2364, c: "#e8e8e3", est: true }] },
+            ]);
+          })();
+        </script>
+
+        <div class="mock-decisions">
+          <div class="mock-decision">
+            <b>Harness first, models as shades</b
+            ><span
+              >The top-level split is Claude vs Codex; models are lightness steps within the harness
+              hue, so the donut reads at two zoom levels.</span
+            >
+          </div>
+          <div class="mock-decision">
+            <b>Exact and estimated never blend</b
+            ><span
+              >Metered cost is solid; list-price estimates are striped and labeled est. — in charts,
+              tiles, and tooltips alike.</span
+            >
+          </div>
+          <div class="mock-decision">
+            <b>Official marks carry identity</b
+            ><span
+              >Provider logos (already in Icons.tsx) appear in legends, tiles, and table rows; brand
+              color is for logos, validated steps for data.</span
+            >
+          </div>
+          <div class="mock-decision">
+            <b>The table is the fallback</b
+            ><span
+              >The models table is the accessible view of every chart; violet marks T3-side stats so
+              provider hues stay unambiguous.</span
+            >
+          </div>
+        </div>
+      </section>
+
+      <section id="rollout">
+        <div class="section-head">
+          <div class="section-label">08 · Delivery sequence</div>
+          <div>
+            <h2>Ship in six reviewable slices.</h2>
+            <p class="section-copy">
+              Establish accounting correctness before UI polish. Each slice leaves a usable,
+              testable boundary and avoids bundling provider parsing, fleet aggregation, and
+              charting into one risky change.
+            </p>
+          </div>
+        </div>
+        <div class="phase-list">
+          <article class="phase">
+            <div class="phase-title">Semantics, durable events, and projector</div>
+            <div class="phase-copy">
+              Add <code>packages/contracts/src/usage.ts</code> (typed facts: cumulative vs interval,
+              cache read vs write, native identity, reset generation; typed
+              <code>modelUsage</code>), emit durable <code>model.usage-recorded</code> orchestration
+              events from ingestion, and register a usage projector with its own
+              <code>projection_state</code> cursor. Schema migration creates tables only. Tests:
+              live-vs-replay equivalence, restart, duplicates, abort, steering, revert retention,
+              deletion redaction.
+            </div>
+          </article>
+          <article class="phase">
+            <div class="phase-title">Codex and Claude live capture</div>
+            <div class="phase-copy">
+              Preserve <code>providerRefs</code>, per-model usage, and exact cost through ingestion
+              (ClaudeAdapter already emits them on <code>turn.completed</code>); finalize on
+              <code>turn.aborted</code>, session exit, and steering-superseded paths, not completion
+              alone. Extend the snapshot contract with cache-creation tokens.
+            </div>
+          </article>
+          <article class="phase">
+            <div class="phase-title">Backfill and pricing</div>
+            <div class="phase-copy">
+              Versioned, resumable server-side backfill job (never inside migrations, no second DB
+              writer): event replay via the projector's empty cursor, then provider-log parse, then
+              opt-in transcript enrichment — same fact IDs, explicit upsert precedence. Versioned,
+              effective-dated pricing catalog in shared runtime code; estimates computed at query
+              time, never stored as truth.
+            </div>
+          </article>
+          <article class="phase">
+            <div class="phase-title">RPC and aggregation</div>
+            <div class="phase-copy">
+              Add <code>usage.query</code>, environment capability negotiation, client-runtime query
+              atoms, partial errors, timezone grouping, and dataset de-duplication.
+            </div>
+          </article>
+          <article class="phase">
+            <div class="phase-title">Web and desktop Usage page</div>
+            <div class="phase-copy">
+              Add the route, sidebar affordance, summary cards, accessible SVG/CSS charts, model and
+              environment tables, coverage states, filters, and empty/error states.
+            </div>
+          </article>
+          <article class="phase">
+            <div class="phase-title">Coverage and mobile</div>
+            <div class="phase-copy">
+              Add OpenCode and ACP capture, all-local opt-in, cached offline aggregates, responsive
+              mobile UI, and the mobile integrated verification pass.
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="verification">
+        <div class="section-head">
+          <div class="section-label">09 · Verification</div>
+          <div>
+            <h2>Test accounting invariants, not screenshots alone.</h2>
+            <p class="section-copy">
+              Backend changes require focused tests for every changed behavior. Frontend integration
+              follows the repository’s isolated T3 app verification workflow.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <article class="card half">
+            <span class="kicker">Normalizer and importer</span>
+            <ul class="checklist">
+              <li>Cumulative-to-delta conversion</li>
+              <li>Counter reset and compaction</li>
+              <li>Cache semantic normalization</li>
+              <li>Reasoning as output subset</li>
+              <li>Model changes and reroutes</li>
+              <li>Duplicate live/backfill keys</li>
+              <li>Partial final JSONL line</li>
+              <li>Append, truncate, and rotate</li>
+              <li>Custom provider home paths</li>
+              <li>T3 descendant attribution</li>
+            </ul>
+          </article>
+          <article class="card half">
+            <span class="kicker">Query and client</span>
+            <ul class="checklist">
+              <li>DST spring and fall boundaries</li>
+              <li>Arbitrary IANA timezones</li>
+              <li>Range limits and read scope</li>
+              <li>Offline partial results</li>
+              <li>Server version skew</li>
+              <li>Dataset fingerprint dedupe</li>
+              <li>Unknown and mixed pricing</li>
+              <li>Accessible chart labels</li>
+              <li>Empty and stale states</li>
+              <li>Thread deletion retention</li>
+            </ul>
+          </article>
+          <article class="card full">
+            <span class="kicker">Integrated pass</span>
+            <p>
+              Launch one isolated environment with the <code>test-t3-app</code> skill, authenticate
+              via its printed pairing URL, seed deterministic ledger rows, and verify the date,
+              scope, model, environment, timezone, partial-data, and unpriced-model flows in the
+              controlled browser. Stop every server and watcher afterward. Run
+              <code>test-t3-mobile</code> only when mobile UI ships.
+            </p>
+            <div class="badges">
+              <span class="badge green">30-day query target &lt; 200 ms / environment</span>
+              <span class="badge">streaming import memory bounded</span>
+              <span class="badge">no full workspace suite locally</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="risks">
+        <div class="section-head">
+          <div class="section-label">10 · Risks and safeguards</div>
+          <div>
+            <h2>Be honest where inference stops.</h2>
+            <p class="section-copy">
+              The largest risk is not missing data; it is silently presenting duplicate, cumulative,
+              unpriced, or differently defined data as a single exact total.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <article class="risk">
+            <strong>Cumulative counters double-count.</strong>
+            <span class="subtle"
+              >Use monotonic totals, stable native keys, and explicit reset rules.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Live and backfill overlap.</strong>
+            <span class="subtle"
+              >Enforce native record uniqueness independent of ingestion source.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Two environments share one provider home.</strong>
+            <span class="subtle"
+              >Return per-source rollups and dedupe hashed dataset fingerprints.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Provider formats drift.</strong>
+            <span class="subtle"
+              >Version parsers, use golden fixtures, surface importer errors, retain cursors.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Custom models have no public price.</strong>
+            <span class="subtle"
+              >Show “Unpriced,” report coverage, and support compatible overrides.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Historical thread deletion changes joins.</strong>
+            <span class="subtle"
+              >Persist stable project/thread IDs in usage rows; clear usage separately.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Raw logs contain private content.</strong>
+            <span class="subtle"
+              >Whitelist fields during streaming parse; store no prompts, tools, or cwd.</span
+            >
+          </article>
+          <article class="risk">
+            <strong>Estimated cost looks like a bill.</strong>
+            <span class="subtle"
+              >Label API-equivalent cost, basis, pricing version, tier, and unknowns.</span
+            >
+          </article>
+        </div>
+      </section>
+
+      <section id="source-map">
+        <div class="section-head">
+          <div class="section-label">11 · Repository map</div>
+          <div>
+            <h2>Likely implementation touch points.</h2>
+            <p class="section-copy">
+              Keep contracts schema-only, place runtime parsing in shared/server modules, and reuse
+              the environment-aware client-runtime query machinery.
+            </p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>Files / package</th>
+                <th>Responsibility</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Contracts</td>
+                <td>
+                  <code>packages/contracts/src/usage.ts</code>, <code>rpc.ts</code>,
+                  <code>environment.ts</code>
+                </td>
+                <td>Usage schemas, RPC input/output, capability flag</td>
+              </tr>
+              <tr>
+                <td>Server usage domain</td>
+                <td><code>apps/server/src/usage/{Services,Layers}</code></td>
+                <td>Ledger, importers, pricing, aggregation, source status</td>
+              </tr>
+              <tr>
+                <td>Persistence</td>
+                <td><code>apps/server/src/persistence/Migrations/033_UsageLedger.ts</code></td>
+                <td>Usage rows, source cursors, indexes, repository tests</td>
+              </tr>
+              <tr>
+                <td>Provider adapters</td>
+                <td>
+                  <code>CodexAdapter.ts</code>, <code>ClaudeAdapter.ts</code>,
+                  <code>OpenCodeAdapter.ts</code>, ACP adapters
+                </td>
+                <td>Native usage extraction and stable record identities</td>
+              </tr>
+              <tr>
+                <td>Transport</td>
+                <td>
+                  <code>apps/server/src/ws.ts</code>, <code>packages/contracts/src/rpc.ts</code>
+                </td>
+                <td>Read query, manual reindex, authorization, instrumentation</td>
+              </tr>
+              <tr>
+                <td>Client runtime</td>
+                <td><code>packages/client-runtime/src/state/usage.ts</code></td>
+                <td>Per-environment queries, partial success, dedupe, merged report</td>
+              </tr>
+              <tr>
+                <td>Web</td>
+                <td><code>apps/web/src/routes/usage.tsx</code>, components, sidebar</td>
+                <td>Filters, charts, tables, freshness, coverage, route navigation</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        <span>T3 Code Usage plan · generated from local repository and log exploration</span>
+        <span>2026-07-22 · America/Los_Angeles</span>
+      </footer>
+    </main>
+  </body>
+</html>

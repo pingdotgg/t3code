@@ -3,6 +3,9 @@ import {
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
+  type OrchestrationThreadShell,
+  type UsageFact,
+  UsageFactId,
   type OrchestrationEvent,
   type OrchestrationMessage,
   type OrchestrationProposedPlanId,
@@ -30,6 +33,17 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionUsageRepository } from "../../persistence/Services/ProjectionUsage.ts";
+import { ProjectionUsageRepositoryLive } from "../../persistence/Layers/ProjectionUsage.ts";
+import {
+  ZERO_USAGE_COUNTERS,
+  type UsageCumulativeCounters,
+  canonicalModelId,
+  claudeCumulativeByModel,
+  codexCumulativeFromSnapshot,
+  isZeroUsage,
+  usageDelta,
+} from "../usageAccounting.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -697,6 +711,7 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
+  const projectionUsageRepository = yield* ProjectionUsageRepository;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1290,6 +1305,194 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // ---------------------------------------------------------------------
+  // Usage accounting: converts provider-cumulative counters into interval
+  // usage facts dispatched as thread.usage.record commands. Baselines are
+  // keyed by provider-native session id + model; on first sight of a session
+  // they are reseeded from projection_usage_facts sums so a server restart
+  // between samples never double counts.
+  // ---------------------------------------------------------------------
+  const usageBaselines = new Map<string, UsageCumulativeCounters>();
+  const seededUsageSessions = new Set<string>();
+  const usageBaselineKey = (providerSessionId: string, model: string) =>
+    `${providerSessionId}|${model}`;
+
+  const seedUsageBaselines = Effect.fn("seedUsageBaselines")(function* (providerSessionId: string) {
+    if (seededUsageSessions.has(providerSessionId)) {
+      return;
+    }
+    seededUsageSessions.add(providerSessionId);
+    const sums = yield* projectionUsageRepository.sumBySessionModel({ providerSessionId });
+    for (const sum of sums) {
+      const key = usageBaselineKey(providerSessionId, sum.model);
+      if (!usageBaselines.has(key)) {
+        usageBaselines.set(key, {
+          inputTokens: sum.inputTokens,
+          cachedInputTokens: sum.cachedInputTokens,
+          cacheCreationTokens: sum.cacheCreationTokens,
+          outputTokens: sum.outputTokens,
+          reasoningOutputTokens: sum.reasoningOutputTokens,
+          costMicroUsd: sum.costMicroUsd,
+        });
+      }
+    }
+  });
+
+  const reasoningEffortFromThread = (thread: OrchestrationThreadShell): string | undefined => {
+    const options = thread.modelSelection.options;
+    if (!options) return undefined;
+    for (const option of options) {
+      if (option.id === "reasoningEffort" && typeof option.value === "string") {
+        return option.value;
+      }
+    }
+    return undefined;
+  };
+
+  const dispatchUsageFacts = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly projectId: OrchestrationThreadShell["projectId"] | null;
+    readonly turnId: TurnId | null;
+    readonly facts: ReadonlyArray<UsageFact>;
+  }) =>
+    providerCommandId(input.event, "usage-record").pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.usage.record",
+          commandId,
+          threadId: input.threadId,
+          turnId: input.turnId,
+          projectId: input.projectId,
+          facts: input.facts,
+          createdAt: input.event.createdAt,
+        }),
+      ),
+      Effect.asVoid,
+    );
+
+  const recordUsageForRuntimeEvent = (
+    event: ProviderRuntimeEvent,
+    thread: OrchestrationThreadShell,
+    options: { readonly staleCompletion: boolean },
+  ) =>
+    Effect.gen(function* () {
+      // Codex path: cumulative totals ride every token-usage notification and
+      // are attributed by the provider-native thread id. Snapshots without
+      // native identity or cumulative fields are context-window telemetry
+      // only and carry no accounting weight.
+      if (event.type === "thread.token-usage.updated") {
+        const cumulative = codexCumulativeFromSnapshot(event.payload.usage);
+        const providerSessionId = event.providerRefs?.providerSessionId;
+        if (!cumulative || !providerSessionId || isZeroUsage(cumulative)) {
+          return;
+        }
+        const model = canonicalModelId(thread.modelSelection.model);
+        yield* seedUsageBaselines(providerSessionId);
+        const key = usageBaselineKey(providerSessionId, model);
+        const baseline = usageBaselines.get(key) ?? ZERO_USAGE_COUNTERS;
+        const { delta, nextBaseline } = usageDelta(baseline, cumulative);
+        usageBaselines.set(key, nextBaseline);
+        if (isZeroUsage(delta)) {
+          return;
+        }
+        const effort = reasoningEffortFromThread(thread);
+        const fact: UsageFact = {
+          factId: UsageFactId.make(`usage:${event.eventId}:${model}`),
+          kind: "interval",
+          provider: event.provider,
+          ...(event.providerInstanceId !== undefined
+            ? { providerInstanceId: event.providerInstanceId }
+            : {}),
+          providerSessionId,
+          model,
+          modelRaw: thread.modelSelection.model,
+          ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+          tokens: {
+            inputTokens: delta.inputTokens,
+            cachedInputTokens: delta.cachedInputTokens,
+            cacheCreationTokens: delta.cacheCreationTokens,
+            outputTokens: delta.outputTokens,
+            reasoningOutputTokens: delta.reasoningOutputTokens,
+          },
+          observedAt: event.createdAt,
+        };
+        yield* dispatchUsageFacts({
+          event,
+          threadId: thread.id,
+          projectId: thread.projectId,
+          turnId: toTurnId(event.turnId) ?? null,
+          facts: [fact],
+        });
+        return;
+      }
+
+      // Claude path: turn.completed carries the SDK's session-cumulative
+      // per-model usage map (exact cost included). Settle each model's delta
+      // as a final fact; stale completions are recorded but flagged.
+      if (event.type === "turn.completed") {
+        const byModel = claudeCumulativeByModel(event.payload.modelUsage);
+        if (!byModel || byModel.size === 0) {
+          return;
+        }
+        const providerSessionId = event.providerRefs?.providerSessionId ?? thread.id;
+        yield* seedUsageBaselines(providerSessionId);
+        const facts: Array<UsageFact> = [];
+        for (const [rawModel, cumulative] of byModel) {
+          const model = canonicalModelId(rawModel);
+          const key = usageBaselineKey(providerSessionId, model);
+          const baseline = usageBaselines.get(key) ?? ZERO_USAGE_COUNTERS;
+          const { delta, nextBaseline } = usageDelta(baseline, cumulative);
+          usageBaselines.set(key, nextBaseline);
+          if (isZeroUsage(delta)) {
+            continue;
+          }
+          facts.push({
+            factId: UsageFactId.make(`usage:${event.eventId}:${model}`),
+            kind: "final",
+            provider: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            providerSessionId,
+            model,
+            modelRaw: rawModel,
+            tokens: {
+              inputTokens: delta.inputTokens,
+              cachedInputTokens: delta.cachedInputTokens,
+              cacheCreationTokens: delta.cacheCreationTokens,
+              outputTokens: delta.outputTokens,
+              reasoningOutputTokens: delta.reasoningOutputTokens,
+            },
+            ...(delta.costMicroUsd > 0 ? { costMicroUsd: delta.costMicroUsd } : {}),
+            ...(options.staleCompletion ? { stale: true } : {}),
+            observedAt: event.createdAt,
+          });
+        }
+        if (facts.length === 0) {
+          return;
+        }
+        yield* dispatchUsageFacts({
+          event,
+          threadId: thread.id,
+          projectId: thread.projectId,
+          turnId: toTurnId(event.turnId) ?? null,
+          facts,
+        });
+      }
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("usage accounting failed for runtime event", {
+          eventId: event.eventId,
+          eventType: event.type,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
@@ -1359,6 +1562,13 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
           : null;
+
+      // Usage accounting runs for every usage-bearing event, including
+      // lifecycle-rejected completions (recorded with stale: true) — tokens
+      // were consumed regardless of what the turn state machine thinks.
+      yield* recordUsageForRuntimeEvent(event, thread, {
+        staleCompletion: event.type === "turn.completed" && !shouldApplyThreadLifecycle,
+      });
 
       if (
         event.type === "session.started" ||
@@ -1822,4 +2032,4 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(Layer.provide(ProjectionTurnRepositoryLive), Layer.provide(ProjectionUsageRepositoryLive));

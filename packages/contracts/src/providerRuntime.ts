@@ -46,6 +46,10 @@ const ProviderRefs = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyStringSchema),
   providerItemId: Schema.optional(ProviderItemId),
   providerRequestId: Schema.optional(ProviderRequestId),
+  /** Provider-native session/thread identity (Claude session_id, Codex thread
+   * id). Required to attribute cumulative usage counters when several
+   * provider sessions run concurrently under one T3 thread. */
+  providerSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRefs = typeof ProviderRefs.Type;
 
@@ -320,6 +324,14 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
+  /** Session-cumulative counters (monotonic within one provider-native
+   * session). Present only when the adapter can report them; usage accounting
+   * derives interval deltas from these, never from the context-window fields
+   * above. `totalInputTokens` includes cached reads, mirroring the provider. */
+  totalInputTokens: Schema.optional(NonNegativeInt),
+  totalCachedInputTokens: Schema.optional(NonNegativeInt),
+  totalOutputTokens: Schema.optional(NonNegativeInt),
+  totalReasoningOutputTokens: Schema.optional(NonNegativeInt),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 

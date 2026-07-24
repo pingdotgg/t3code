@@ -71,6 +71,8 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionUsageRepository } from "./persistence/Services/ProjectionUsage.ts";
+import { summarizeUsageFacts } from "./orchestration/usageSummary.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -302,6 +304,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
+  [WS_METHODS.usageGetSummary, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
@@ -405,6 +408,7 @@ const makeWsRpcLayer = (
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const projectionUsageRepository = yield* ProjectionUsageRepository;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -1532,6 +1536,38 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.usageGetSummary]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.usageGetSummary,
+            Effect.gen(function* () {
+              const facts = yield* projectionUsageRepository.listFacts({
+                ...(input.since !== undefined ? { sinceIso: input.since } : {}),
+                ...(input.until !== undefined ? { untilIso: input.until } : {}),
+              });
+              const earliestFactAt = yield* projectionUsageRepository.earliestObservedAt();
+              const projectIds = [
+                ...new Set(facts.flatMap((fact) => (fact.projectId ? [fact.projectId] : []))),
+              ];
+              const projectTitles = new Map<string, string | null>();
+              yield* Effect.forEach(
+                projectIds,
+                (projectId) =>
+                  projectionSnapshotQuery.getProjectShellById(projectId).pipe(
+                    Effect.map((shell) => {
+                      projectTitles.set(projectId, Option.isSome(shell) ? shell.value.title : null);
+                    }),
+                  ),
+                { concurrency: 4 },
+              );
+              return summarizeUsageFacts({
+                facts,
+                timeZone: input.timeZone,
+                earliestFactAt,
+                projectTitle: (projectId: string) => projectTitles.get(projectId) ?? null,
+              });
+            }).pipe(Effect.orDie),
+            { "rpc.aggregate": "usage" },
           ),
         [WS_METHODS.serverGetProcessDiagnostics]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetProcessDiagnostics, processDiagnostics.read, {

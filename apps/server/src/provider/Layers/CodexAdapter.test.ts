@@ -1136,6 +1136,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       NodeAssert.deepEqual(firstEvent.value.payload.usage, {
         usedTokens: 126,
         totalProcessedTokens: 11_839,
+        totalInputTokens: 11_833,
+        totalCachedInputTokens: 3456,
+        totalOutputTokens: 6,
+        totalReasoningOutputTokens: 0,
         maxTokens: 258_400,
         inputTokens: 120,
         cachedInputTokens: 0,
@@ -1148,6 +1152,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+      // The Codex-native thread id must ride providerRefs so usage accounting
+      // can separate concurrent provider sessions on one canonical thread.
+      NodeAssert.equal(firstEvent.value.providerRefs?.providerSessionId, "thread-1");
     }),
   );
 });

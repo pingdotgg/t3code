@@ -2802,9 +2802,7 @@ describe("ClaudeAdapterLive", () => {
       if (requested.value.type !== "request.opened") {
         return;
       }
-      assert.deepEqual(requested.value.providerRefs, {
-        providerItemId: ProviderItemId.make("tool-use-1"),
-      });
+      assert.equal(requested.value.providerRefs?.providerItemId, ProviderItemId.make("tool-use-1"));
       const runtimeRequestId = requested.value.requestId;
       assert.equal(typeof runtimeRequestId, "string");
       if (runtimeRequestId === undefined) {
@@ -2828,9 +2826,7 @@ describe("ClaudeAdapterLive", () => {
       }
       assert.equal(resolved.value.requestId, requested.value.requestId);
       assert.equal(resolved.value.payload.decision, "accept");
-      assert.deepEqual(resolved.value.providerRefs, {
-        providerItemId: ProviderItemId.make("tool-use-1"),
-      });
+      assert.equal(resolved.value.providerRefs?.providerItemId, ProviderItemId.make("tool-use-1"));
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
       assert.equal((permissionResult as PermissionResult).behavior, "allow");
@@ -3440,9 +3436,10 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
       assert.equal(proposedEvent.value.payload.planMarkdown, "# Ship it\n\n- one\n- two");
-      assert.deepEqual(proposedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.make("tool-exit-1"),
-      });
+      assert.equal(
+        proposedEvent.value.providerRefs?.providerItemId,
+        ProviderItemId.make("tool-exit-1"),
+      );
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
       assert.equal((permissionResult as PermissionResult).behavior, "deny");
@@ -3518,9 +3515,10 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
       assert.equal(proposedEvent.value.payload.planMarkdown, "# Final plan\n\n- capture it");
-      assert.deepEqual(proposedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.make("tool-exit-2"),
-      });
+      assert.equal(
+        proposedEvent.value.providerRefs?.providerItemId,
+        ProviderItemId.make("tool-exit-2"),
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -3612,9 +3610,10 @@ describe("ClaudeAdapterLive", () => {
       // Regression for #2388: `id` must equal the full question text so the
       // UI's draft-answer key matches what the SDK looks up downstream.
       assert.equal(requestedEvent.value.payload.questions[0]?.id, "Which framework?");
-      assert.deepEqual(requestedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.make("tool-ask-1"),
-      });
+      assert.equal(
+        requestedEvent.value.providerRefs?.providerItemId,
+        ProviderItemId.make("tool-ask-1"),
+      );
 
       // Respond with the user's answers.
       yield* adapter.respondToUserInput(session.threadId, ApprovalRequestId.make(requestId!), {
@@ -3634,9 +3633,10 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(resolvedEvent.value.payload.answers, {
         "Which framework?": "React",
       });
-      assert.deepEqual(resolvedEvent.value.providerRefs, {
-        providerItemId: ProviderItemId.make("tool-ask-1"),
-      });
+      assert.equal(
+        resolvedEvent.value.providerRefs?.providerItemId,
+        ProviderItemId.make("tool-ask-1"),
+      );
 
       // The canUseTool promise should resolve with the answers in SDK format.
       const permissionResult = yield* Effect.promise(() => permissionPromise);

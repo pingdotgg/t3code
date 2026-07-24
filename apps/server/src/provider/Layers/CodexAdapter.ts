@@ -168,9 +168,17 @@ function normalizeCodexTokenUsage(
   const cachedInputTokens = usage.last.cachedInputTokens;
   const outputTokens = usage.last.outputTokens;
   const reasoningOutputTokens = usage.last.reasoningOutputTokens;
+  const totalInputTokens = usage.total.inputTokens;
+  const totalCachedInputTokens = usage.total.cachedInputTokens;
+  const totalOutputTokens = usage.total.outputTokens;
+  const totalReasoningOutputTokens = usage.total.reasoningOutputTokens;
 
   return {
     usedTokens,
+    ...(totalInputTokens !== undefined ? { totalInputTokens } : {}),
+    ...(totalCachedInputTokens !== undefined ? { totalCachedInputTokens } : {}),
+    ...(totalOutputTokens !== undefined ? { totalOutputTokens } : {}),
+    ...(totalReasoningOutputTokens !== undefined ? { totalReasoningOutputTokens } : {}),
     ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
       ? { totalProcessedTokens }
       : {}),
@@ -741,10 +749,17 @@ function mapToRuntimeEvents(
     if (!normalizedUsage) {
       return [];
     }
+    const base = runtimeEventBase(event, canonicalThreadId);
+    // The Codex-native thread id disambiguates cumulative counters when
+    // several provider sessions (subagents) share one canonical T3 thread.
+    const nativeThreadId = payload?.threadId;
     return [
       {
         type: "thread.token-usage.updated",
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...base,
+        ...(nativeThreadId
+          ? { providerRefs: { ...base.providerRefs, providerSessionId: nativeThreadId } }
+          : {}),
         payload: {
           usage: normalizedUsage,
         },

@@ -1014,17 +1014,21 @@ function streamKindFromDeltaType(deltaType: string): ClaudeTextStreamKind {
 }
 
 function nativeProviderRefs(
-  _context: ClaudeSessionContext,
+  context: ClaudeSessionContext,
   options?: {
     readonly providerItemId?: string | undefined;
   },
 ): NonNullable<ProviderRuntimeEvent["providerRefs"]> {
+  // The Claude SDK session id is the provider-native identity that usage
+  // accounting keys cumulative counters on; carry it on every event.
+  const sessionRef = context.resumeSessionId ? { providerSessionId: context.resumeSessionId } : {};
   if (options?.providerItemId) {
     return {
+      ...sessionRef,
       providerItemId: ProviderItemId.make(options.providerItemId),
     };
   }
-  return {};
+  return sessionRef;
 }
 
 function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
