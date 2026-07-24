@@ -14,6 +14,7 @@ import {
   createStagePatchedDependencies,
   createBuildConfig,
   DESKTOP_ASAR_UNPACK,
+  DESKTOP_AFTER_PACK_HOOK_FILE,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
@@ -305,6 +306,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("unpacks the fff shared library for filesystem and FFI access", () => {
     assert.deepStrictEqual(DESKTOP_ASAR_UNPACK, ["node_modules/@ff-labs/fff-bin-*/**/*"]);
+    assert.equal(DESKTOP_AFTER_PACK_HOOK_FILE, "desktop-after-pack.ts");
   });
 
   it.effect("preserves both Linux icon resize failures with structural context", () => {
@@ -489,9 +491,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
         undefined,
         undefined,
+        "C:\\stage\\desktop-after-pack.ts",
       );
 
       const win = config.win as Record<string, unknown>;
+      assert.equal(config.afterPack, "C:\\stage\\desktop-after-pack.ts");
       assert.equal(win.icon, "icon.ico");
       assert.equal(win.signAndEditExecutable, true);
       assert.notProperty(win, "azureSignOptions");
