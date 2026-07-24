@@ -188,7 +188,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverPopup
         align="start"
         className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-        viewportClassName="rounded-lg !overflow-hidden p-0 [clip-path:inset(0_round_var(--radius-lg))]"
+        viewportClassName="rounded-lg !overflow-hidden p-0"
       >
         <ModelPickerContent
           activeInstanceId={activeInstanceId}

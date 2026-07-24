@@ -521,7 +521,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="dropdown-glass model-picker-surface relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg text-popover-foreground"
+        className="dropdown-glass model-picker-surface relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
