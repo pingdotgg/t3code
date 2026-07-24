@@ -2,16 +2,29 @@ import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
-import { isCommandPaletteOpen } from "../commandPaletteBus";
+import {
+  closeCommandPalette,
+  isCommandPaletteOpen,
+  openCommandPalette,
+} from "../commandPaletteBus";
 import { useClientSettings } from "../hooks/useSettings";
-import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
-import { selectProjectGroupingSettings } from "../logicalProject";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import {
+  buildSidebarProjectSnapshots,
+  resolveScopedNewThreadProjectRef,
+} from "../sidebarProjectGrouping";
+import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  resolveChatNewShortcutBehavior,
+  shouldHandleChatRouteShortcut,
+} from "../lib/chatRouteShortcuts";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -29,18 +42,56 @@ function ChatRouteGlobalShortcuts() {
     useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
+  const sidebarProjectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
+  const projectOrder = useUiStateStore((state) => state.projectOrder);
+  const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupCount = useMemo(
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
+      ),
+    [environments],
+  );
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects,
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
-        resolveEnvironmentLabel: () => null,
-      }).length,
-    [primaryEnvironmentId, projectGroupingSettings, projects],
+        resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+      }),
+    [
+      environmentLabelById,
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+      sidebarProjectSortOrder,
+    ],
+  );
+  const projectScopeKey = useSidebarProjectScopeStore((state) => state.projectScopeKey);
+  const scopedProjectGroup = useMemo(
+    () =>
+      projectScopeKey === null
+        ? null
+        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [projectGroups, projectScopeKey],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -67,7 +118,8 @@ function ChatRouteGlobalShortcuts() {
         },
       });
 
-      if (isCommandPaletteOpen()) {
+      const commandPaletteOpen = isCommandPaletteOpen();
+      if (!shouldHandleChatRouteShortcut({ command, commandPaletteOpen })) {
         return;
       }
 
@@ -95,9 +147,28 @@ function ChatRouteGlobalShortcuts() {
         // Sidebar v2 routes creation through the command palette whenever
         // there is a real choice to make; v1 (and single-project setups)
         // keep the immediate contextual create.
-        if (sidebarV2Enabled && projectGroupCount > 1) {
-          openCommandPalette({ open: "new-thread-in" });
+        const behavior = resolveChatNewShortcutBehavior({
+          sidebarV2Enabled,
+          projectCount: projectGroups.length,
+          commandPaletteOpen,
+        });
+        if (behavior === "open-project-picker") {
+          openCommandPalette({
+            open: "new-thread-in",
+            preferredProjectRef: resolveScopedNewThreadProjectRef({
+              scopedProjectGroup,
+              contextualProjectRef: resolveThreadActionProjectRef({
+                activeDraftThread,
+                activeThread: activeThread ?? undefined,
+                defaultProjectRef,
+                handleNewThread,
+              }),
+            }),
+          });
           return;
+        }
+        if (behavior === "dismiss-and-create") {
+          closeCommandPalette();
         }
         void startNewThreadFromContext({
           activeDraftThread,
@@ -164,7 +235,8 @@ function ChatRouteGlobalShortcuts() {
     keybindings,
     defaultProjectRef,
     previewOpen,
-    projectGroupCount,
+    projectGroups.length,
+    scopedProjectGroup,
     routeThreadRef,
     selectedThreadKeysSize,
     sidebarV2Enabled,

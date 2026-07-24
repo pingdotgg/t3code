@@ -77,15 +77,22 @@ import {
 } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  resolveScopedNewThreadProjectRef,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  closeCommandPalette,
+  isCommandPaletteOpen,
+  openCommandPalette,
+} from "../commandPaletteBus";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveChatNewShortcutBehavior } from "../lib/chatRouteShortcuts";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -1165,7 +1172,8 @@ export default function SidebarV2() {
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
+  const projectScopeKey = useSidebarProjectScopeStore((state) => state.projectScopeKey);
+  const setProjectScopeKey = useSidebarProjectScopeStore((state) => state.setProjectScopeKey);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -2183,9 +2191,16 @@ export default function SidebarV2() {
   // uses. The command palette already offers a "New thread in..." submenu
   // for multi-project setups.
   const handleNewThreadClick = useCallback(() => {
-    // One project: nothing to pick, create immediately.
-    if (projectGroups.length <= 1) {
+    const behavior = resolveChatNewShortcutBehavior({
+      sidebarV2Enabled: true,
+      projectCount: projectGroups.length,
+      commandPaletteOpen: isCommandPaletteOpen(),
+    });
+    if (behavior !== "open-project-picker") {
       if (isMobile) setOpenMobile(false);
+      if (behavior === "dismiss-and-create") {
+        closeCommandPalette();
+      }
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
         activeThread: newThreadContext.activeThread ?? undefined,
@@ -2195,8 +2210,20 @@ export default function SidebarV2() {
       return;
     }
     if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
+    const contextualProjectRef = resolveThreadActionProjectRef({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
+    openCommandPalette({
+      open: "new-thread-in",
+      preferredProjectRef: resolveScopedNewThreadProjectRef({
+        scopedProjectGroup,
+        contextualProjectRef,
+      }),
+    });
+  }, [isMobile, newThreadContext, projectGroups.length, scopedProjectGroup, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
@@ -2240,7 +2267,6 @@ export default function SidebarV2() {
                       type="button"
                       className="relative size-8 justify-center rounded-md border-0 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       onClick={handleNewThreadClick}
-                      disabled={projects.length === 0}
                       aria-label="New thread"
                     />
                   }

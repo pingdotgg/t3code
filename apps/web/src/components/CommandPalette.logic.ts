@@ -14,6 +14,7 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
+export const NEW_THREAD_PROJECT_VIEW_GROUP = "new-thread-projects";
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
@@ -66,6 +67,62 @@ export function enumerateCommandPaletteItems(
     const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
     return itemWithoutShortcut;
   });
+}
+
+export function buildNewThreadPickerGroups(input: {
+  projectItems: ReadonlyArray<CommandPaletteActionItem>;
+  addProjectItem: CommandPaletteActionItem;
+  areProjectsLoading: boolean;
+}): CommandPaletteGroup[] {
+  if (input.areProjectsLoading && input.projectItems.length === 0) return [];
+
+  const groups: CommandPaletteGroup[] = [];
+  if (input.projectItems.length > 0) {
+    groups.push({
+      value: NEW_THREAD_PROJECT_VIEW_GROUP,
+      label: "Projects",
+      items: input.projectItems,
+    });
+  }
+  groups.push({
+    value: "new-thread-actions",
+    label: "Actions",
+    items: [input.addProjectItem],
+  });
+  return groups;
+}
+
+export function resolveCommandPaletteEmptyStateMessage(input: {
+  readonly contextualMessage?: string;
+  readonly isNewThreadProjectPickerView: boolean;
+  readonly projectCount: number;
+  readonly allEnvironmentShellsBootstrapped: boolean;
+  readonly query: string;
+}): string | undefined {
+  if (input.contextualMessage) {
+    return input.contextualMessage;
+  }
+  if (!input.isNewThreadProjectPickerView || input.projectCount > 0) {
+    return undefined;
+  }
+  if (!input.allEnvironmentShellsBootstrapped) {
+    return "Loading projects…";
+  }
+  return input.query.trim().length === 0
+    ? "No projects yet. Add a project to start a thread."
+    : undefined;
+}
+
+export function shouldClearAddProjectEnvironmentOnPop(input: {
+  viewStackDepth: number;
+  currentGroupValue: string | undefined;
+  addProjectEnvironmentId: string | null;
+}): boolean {
+  return (
+    input.viewStackDepth <= 1 ||
+    (input.addProjectEnvironmentId !== null &&
+      input.currentGroupValue === `sources:${input.addProjectEnvironmentId}`)
+  );
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
@@ -229,6 +286,10 @@ function rankCommandPaletteItemMatch(
   return 0;
 }
 
+function isCommandPaletteActionGroup(group: CommandPaletteGroup): boolean {
+  return group.value === "actions" || group.value === "new-thread-actions";
+}
+
 export function filterCommandPaletteGroups(input: {
   activeGroups: ReadonlyArray<CommandPaletteGroup>;
   query: string;
@@ -242,14 +303,14 @@ export function filterCommandPaletteGroups(input: {
 
   if (normalizedQuery.length === 0) {
     if (isActionsFilter) {
-      return input.activeGroups.filter((group) => group.value === "actions");
+      return input.activeGroups.filter(isCommandPaletteActionGroup);
     }
     return [...input.activeGroups];
   }
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
-    baseGroups = baseGroups.filter((group) => group.value === "actions");
+    baseGroups = baseGroups.filter(isCommandPaletteActionGroup);
   } else if (!input.isInSubmenu) {
     baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
   }
