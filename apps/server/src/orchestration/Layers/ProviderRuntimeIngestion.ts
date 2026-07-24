@@ -746,6 +746,102 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // Open provider-reported tasks per thread. A turn that completes while any
+  // remain open parks the session on "idle" (sidebar "Waiting") instead of
+  // "ready" ("Done"): the agent stopped, but a task completion is expected to
+  // wake it, and flashing Done in between is a lie. Keyed by provider
+  // instance so a replaced session can neither inherit nor close a
+  // predecessor's tasks; closed ids are kept as tombstones so a late or
+  // replayed start/progress cannot resurrect a finished task. Plain mutable
+  // state is safe: ingestion is a single serial worker. Terminal session
+  // statuses sweep the entry.
+  const openTasksByThreadId = new Map<
+    ThreadId,
+    { instanceKey: string; taskIds: Set<string>; closedTaskIds: Set<string> }
+  >();
+
+  const taskInstanceKey = (event: ProviderRuntimeEvent) =>
+    event.providerInstanceId ?? event.provider;
+
+  const sessionInstanceKeyFor = (session: {
+    providerInstanceId?: string | undefined;
+    providerName: string | null;
+  }): string | null => session.providerInstanceId ?? session.providerName;
+
+  /**
+   * Returns true when this task is the instance's first open task. The
+   * projected session adjudicates cross-instance races: a delayed start from
+   * a replaced instance must neither seed a phantom set nor displace the
+   * current instance's tasks, while a current-instance start may reclaim an
+   * entry a dead instance leaked.
+   */
+  const trackTaskStarted = (
+    threadId: ThreadId,
+    event: ProviderRuntimeEvent,
+    taskId: string,
+    sessionInstanceKey: string | null,
+  ) => {
+    const instanceKey = taskInstanceKey(event);
+    if (sessionInstanceKey !== null && instanceKey !== sessionInstanceKey) {
+      return false;
+    }
+    const entry = openTasksByThreadId.get(threadId);
+    if (!entry || entry.instanceKey !== instanceKey) {
+      openTasksByThreadId.set(threadId, {
+        instanceKey,
+        taskIds: new Set([taskId]),
+        closedTaskIds: new Set(),
+      });
+      return true;
+    }
+    if (entry.closedTaskIds.has(taskId)) {
+      // task.progress for a finished task is a late duplicate and stays
+      // ignored. task.started is authoritative: providers reuse task ids
+      // when an agent is resumed, so an explicit start re-opens the task.
+      if (event.type !== "task.started") {
+        return false;
+      }
+      entry.closedTaskIds.delete(taskId);
+    }
+    const wasEmpty = entry.taskIds.size === 0;
+    entry.taskIds.add(taskId);
+    return wasEmpty;
+  };
+
+  /** Returns true when this completion closed the instance's last open task. */
+  const trackTaskCompleted = (threadId: ThreadId, event: ProviderRuntimeEvent, taskId: string) => {
+    const instanceKey = taskInstanceKey(event);
+    const entry = openTasksByThreadId.get(threadId);
+    if (!entry) {
+      // Completion outrunning its start: tombstone it anyway, or the late
+      // start would open a phantom task and park the thread on Waiting for
+      // a completion that already happened.
+      openTasksByThreadId.set(threadId, {
+        instanceKey,
+        taskIds: new Set(),
+        closedTaskIds: new Set([taskId]),
+      });
+      return false;
+    }
+    if (entry.instanceKey !== instanceKey) {
+      return false;
+    }
+    const removed = entry.taskIds.delete(taskId);
+    entry.closedTaskIds.add(taskId);
+    return removed && entry.taskIds.size === 0;
+  };
+
+  const hasOpenTasks = (threadId: ThreadId, event: ProviderRuntimeEvent) => {
+    const entry = openTasksByThreadId.get(threadId);
+    return (
+      entry !== undefined && entry.instanceKey === taskInstanceKey(event) && entry.taskIds.size > 0
+    );
+  };
+
+  const clearOpenTasks = (threadId: ThreadId) => {
+    openTasksByThreadId.delete(threadId);
+  };
+
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
@@ -1370,10 +1466,18 @@ const make = Effect.gen(function* () {
         event.type === "turn.completed"
       ) {
         const status = (() => {
+          // The agent stopping with provider-reported tasks still open is not
+          // "ready" (Done): a task completion is expected to wake it. Park on
+          // "idle" (Waiting) until real activity or session teardown moves it.
+          const restingStatus = hasOpenTasks(thread.id, event) ? "idle" : "ready";
           switch (event.type) {
             case "session.state.changed": {
               const runtimeStatus = orchestrationSessionStatusFromRuntimeState(event.payload.state);
-              return hasPendingTurnStart && runtimeStatus === "ready" ? "starting" : runtimeStatus;
+              return runtimeStatus === "ready"
+                ? hasPendingTurnStart
+                  ? "starting"
+                  : restingStatus
+                : runtimeStatus;
             }
             case "turn.started":
               return "running";
@@ -1382,12 +1486,16 @@ const make = Effect.gen(function* () {
             case "turn.completed":
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"
-                : "ready";
+                : restingStatus;
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
               // active or pending turn; preserve that lifecycle state.
-              return activeTurnId !== null ? "running" : hasPendingTurnStart ? "starting" : "ready";
+              return activeTurnId !== null
+                ? "running"
+                : hasPendingTurnStart
+                  ? "starting"
+                  : restingStatus;
           }
         })();
         const nextActiveTurnId =
@@ -1407,11 +1515,18 @@ const make = Effect.gen(function* () {
             : event.type === "turn.completed" &&
                 normalizeRuntimeTurnState(event.payload.state) === "failed"
               ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready"
+              : status === "ready" || status === "idle"
                 ? null
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
+          // A session leaving the resting/running loop can no longer be woken
+          // by its tasks; drop them so a stale set never parks a future
+          // session on Waiting. Gated like the session.set below: a rejected
+          // stale event must not erase the active turn's tasks.
+          if (status === "stopped" || status === "error" || status === "interrupted") {
+            clearOpenTasks(thread.id);
+          }
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
             yield* markSourceProposedPlanImplemented(
               acceptedTurnStartedSourcePlan.sourceThreadId,
@@ -1671,6 +1786,7 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "session.exited") {
+        clearOpenTasks(thread.id);
         yield* clearTurnStateForSession(thread.id);
       }
 
@@ -1682,6 +1798,7 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
+          clearOpenTasks(thread.id);
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "runtime-error-session-set"),
@@ -1754,9 +1871,67 @@ const make = Effect.gen(function* () {
         if (description) {
           yield* rememberTaskDescription(thread.id, event.payload.taskId, description);
         }
+        // task.progress tracks too: it re-opens a task the tracker lost
+        // (server restart, missed start event) so the thread still parks on
+        // Waiting instead of a false Done.
+        const firstOpenTask = trackTaskStarted(
+          thread.id,
+          event,
+          event.payload.taskId,
+          thread.session ? sessionInstanceKeyFor(thread.session) : null,
+        );
+        // A task can outlive its turn: when its start (or surviving progress)
+        // lands after the turn already settled the session on "ready", demote
+        // to "idle" now — the turn-completion path never saw the task.
+        if (
+          firstOpenTask &&
+          thread.session?.status === "ready" &&
+          thread.session.activeTurnId === null &&
+          sessionInstanceKeyFor(thread.session) === taskInstanceKey(event)
+        ) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: yield* providerCommandId(event, "open-task-session-idle"),
+            threadId: thread.id,
+            session: {
+              ...thread.session,
+              status: "idle",
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
       }
       let taskTitle: string | undefined;
       if (event.type === "task.completed") {
+        const closedLastTask = trackTaskCompleted(thread.id, event, event.payload.taskId);
+        // A completed/failed final task wakes the agent — its notification is
+        // the wake signal — so the thread goes Waiting → Working directly and
+        // flipping to ready here would flash the very Done this feature
+        // removes. A STOPPED final task is the opposite: someone killed it,
+        // no wake follows, and a live session would sit on Waiting forever.
+        // Only that case flips back to ready.
+        if (
+          closedLastTask &&
+          event.payload.status === "stopped" &&
+          thread.session?.status === "idle" &&
+          thread.session.activeTurnId === null &&
+          sessionInstanceKeyFor(thread.session) === taskInstanceKey(event)
+        ) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: yield* providerCommandId(event, "last-task-session-ready"),
+            threadId: thread.id,
+            session: {
+              ...thread.session,
+              status: "ready",
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
         taskTitle = yield* lookupTaskDescription(thread.id, event.payload.taskId);
         if (!taskTitle) {
           const threadDetail = yield* getLoadedThreadDetail();

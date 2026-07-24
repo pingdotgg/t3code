@@ -395,13 +395,16 @@ export function resolveThreadRowClassName(input: {
 }
 
 // ── Sidebar v2 status model ─────────────────────────────────────────
-// Five visual states, three colors: color is reserved for "act now"
+// Six visual states, three colors: color is reserved for "act now"
 // (approval), "in motion" (working), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
-// whether it finished, asked a question, or proposed a plan.
+// whether it finished, asked a question, or proposed a plan. Waiting
+// (session status "idle") is the agent stopped with background tasks still
+// open: not the user's turn yet, so it renders grey like working, not as a
+// false Done.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
-export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type SidebarV2Status = "approval" | "input" | "working" | "waiting" | "failed" | "ready";
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
@@ -417,6 +420,9 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   }
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
+  }
+  if (thread.session?.status === "idle") {
+    return "waiting";
   }
   if (thread.session?.status === "error") {
     return "failed";

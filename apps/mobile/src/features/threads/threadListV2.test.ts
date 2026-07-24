@@ -63,6 +63,24 @@ describe("resolveThreadListV2Status", () => {
       "ready",
     );
   });
+
+  it("resolves waiting for an idle session parked on background tasks", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      session: {
+        threadId: ThreadId.make("t"),
+        status: "idle",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("waiting");
+  });
 });
 
 describe("sortThreadsForListV2", () => {
