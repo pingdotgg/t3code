@@ -22,7 +22,8 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+j", "command": "terminal.toggle" },
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
-  { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
+  { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus && !rightPanelFocus" },
+  { "key": "mod+w", "command": "rightPanel.closeActiveSurface", "when": "rightPanelFocus" },
   { "key": "mod+shift+j", "command": "preview.toggle" },
   { "key": "mod+r", "command": "preview.refresh", "when": "previewFocus" },
   { "key": "mod+l", "command": "preview.focusUrl", "when": "previewFocus" },
@@ -56,7 +57,8 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.toggle`: open/close terminal drawer
 - `terminal.split`: split terminal (in focused terminal context by default)
 - `terminal.new`: create new terminal (in focused terminal context by default)
-- `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
+- `terminal.close`: close/kill the focused terminal (outside the right panel by default)
+- `rightPanel.closeActiveSurface`: close the active right-panel surface (in focused right-panel context by default)
 - `preview.toggle`: open/close the in-app browser preview panel (desktop app only)
 - `preview.refresh`: reload the active preview tab (in focused preview context by default)
 - `preview.focusUrl`: focus the URL input of the preview panel (in focused preview context by default)
@@ -94,6 +96,7 @@ Currently available context keys:
 - `terminalOpen`
 - `previewFocus`
 - `previewOpen`
+- `rightPanelFocus`
 
 Supported operators:
 

@@ -109,6 +109,30 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   );
 }
 
+const LEGACY_TERMINAL_CLOSE_DEFAULT: KeybindingRule = {
+  key: "mod+w",
+  command: "terminal.close",
+  when: "terminalFocus",
+};
+
+function migrateLegacyDefaultKeybindings(config: readonly KeybindingRule[]): {
+  readonly keybindings: KeybindingRule[];
+  readonly changed: boolean;
+} {
+  const terminalCloseDefault = DEFAULT_KEYBINDINGS.find(
+    (rule) => rule.command === "terminal.close",
+  );
+  if (!terminalCloseDefault) return { keybindings: [...config], changed: false };
+
+  let changed = false;
+  const keybindings = config.map((rule) => {
+    if (!isSameKeybindingRule(rule, LEGACY_TERMINAL_CLOSE_DEFAULT)) return rule;
+    changed = true;
+    return terminalCloseDefault;
+  });
+  return { keybindings, changed };
+}
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -493,7 +517,8 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const migratedConfig = migrateLegacyDefaultKeybindings(runtimeConfig.keybindings);
+      const customConfig = migratedConfig.keybindings;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -531,6 +556,9 @@ const make = Effect.gen(function* () {
         });
       }
       if (missingDefaults.length === 0) {
+        if (migratedConfig.changed) {
+          yield* writeConfigAtomically(customConfig);
+        }
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }

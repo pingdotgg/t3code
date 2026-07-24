@@ -5,6 +5,7 @@ import { ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { useRightPanelFocusScope } from "../rightPanelFocusScope";
 
 const MenuCreateHandle = MenuPrimitive.createHandle;
 
@@ -36,6 +37,7 @@ function MenuPopup({
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
 }) {
+  const inRightPanelFocusScope = useRightPanelFocusScope();
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -53,6 +55,7 @@ function MenuPopup({
             className,
           )}
           data-slot="menu-popup"
+          data-right-panel-control={inRightPanelFocusScope ? "" : undefined}
           {...props}
         >
           <div className="max-h-(--available-height) w-full overflow-y-auto p-1">{children}</div>
