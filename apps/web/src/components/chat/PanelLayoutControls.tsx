@@ -105,7 +105,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               side="bottom"
               sideOffset={0}
               positionerClassName="w-[min(var(--thread-details-panel-width),var(--anchor-width))] !transition-none"
-              className="w-full !overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [--viewport-inline-padding:0]"
+              className="w-full !overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [--viewport-inline-padding:0] [-webkit-backdrop-filter:none] [backdrop-filter:none]"
               viewportClassName="!overflow-visible p-2"
             >
               {threadPanelPopoverContent}
