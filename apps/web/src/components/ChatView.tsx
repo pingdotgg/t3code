@@ -3842,15 +3842,15 @@ function ChatViewContent(props: ChatViewProps) {
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
-  const [isUnsettling, setIsUnsettling] = useState(false);
-  // The pending flag belongs to the thread that was un-settled: navigating
-  // to another settled thread mid-flight must not show it as "Un-settling...".
-  useEffect(() => {
-    setIsUnsettling(false);
-  }, [activeThread?.id]);
+  // Keyed by thread, not a boolean: the pending state must follow the thread
+  // it belongs to across navigation, and a request resolving for thread A
+  // must never clear (or re-enable) thread B's button.
+  const [unsettlingThreadKey, setUnsettlingThreadKey] = useState<string | null>(null);
+  const isUnsettling = unsettlingThreadKey !== null && unsettlingThreadKey === activeThreadKey;
   const handleUnsettleActiveThread = useCallback(async () => {
     if (!activeThreadRef) return;
-    setIsUnsettling(true);
+    const threadKey = scopedThreadKey(activeThreadRef);
+    setUnsettlingThreadKey(threadKey);
     try {
       const result = await unsettleThreadMutation({
         environmentId: activeThreadRef.environmentId,
@@ -3867,7 +3867,7 @@ function ChatViewContent(props: ChatViewProps) {
         );
       }
     } finally {
-      setIsUnsettling(false);
+      setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsettleThreadMutation]);
   const [branchRepairAction, setBranchRepairAction] = useState<
