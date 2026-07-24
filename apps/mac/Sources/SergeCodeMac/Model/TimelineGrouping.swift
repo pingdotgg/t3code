@@ -130,12 +130,24 @@ func separatorTimeLabel(for date: Date, calendar: Calendar) -> String {
     formattedTimelineDate(date, calendar: calendar, style: .dateTime.hour().minute())
 }
 
+/// Threshold for mid-turn tool-burst collapse. Below this count, a trailing
+/// live run stays as individual rows so the user can watch work happen. At
+/// or above it, the finished prefix collapses to a `toolGroup` summary even
+/// while the turn is still running — long agent logs stay readable.
+public enum TimelineToolGrouping {
+    public static let liveAutoCollapseToolThreshold = 8
+}
+
 extension Array where Element == TimelineItem {
     /// Collapses each maximal run of consecutive tool-event/reasoning rows
-    /// into a `toolGroup` when the run is over: at least two tools, none
-    /// still running, and a later item already follows it (the agent has
-    /// responded and moved on). The trailing run of a live turn stays as
-    /// individual rows so the user can watch work happen.
+    /// into a `toolGroup` when either:
+    /// - the run is over: at least two tools, none still running, and a later
+    ///   item already follows it (the agent has responded and moved on), or
+    /// - the run is long enough mid-turn (`liveAutoCollapseToolThreshold` tools
+    ///   or more): the finished prefix collapses immediately so a tool-heavy
+    ///   turn does not bloat the transcript until the agent finishes speaking.
+    ///   Any still-running tool (and trailing reasoning) stays as individual
+    ///   rows after the summary so live progress remains visible.
     ///
     /// `threadIsSettled`: providers don't always close every tool's
     /// lifecycle, so once the thread has settled a row still marked running
@@ -149,38 +161,96 @@ extension Array where Element == TimelineItem {
         calendar: Calendar = .current,
         includeSeparators: Bool = true
     ) -> (items: [TimelineDisplayItem], ranges: [Range<Int>]) {
+        typealias RunEntry = (index: Int, item: TimelineItem)
         var result: [TimelineDisplayItem] = []
         var ranges: [Range<Int>] = []
-        var run: [(index: Int, item: TimelineItem)] = []
+        var run: [RunEntry] = []
 
-        func flush(somethingFollows: Bool) {
-            defer { run.removeAll() }
-            guard !run.isEmpty else { return }
-            let tools = run.compactMap { entry -> ToolCall? in
-                guard case .toolEvent(_, _, let detail, let kind, let status, _, _, _) = entry.item else {
-                    return nil
-                }
-                return ToolCall(detail: detail, kind: kind, status: status)
-            }
-            let allFinished = threadIsSettled || tools.allSatisfy { $0.status != .running }
-            guard somethingFollows, allFinished, tools.count >= 2 else {
-                result.append(contentsOf: run.map { .single($0.item) })
-                ranges.append(contentsOf: run.map { $0.index..<$0.index + 1 })
-                return
-            }
-            let sourceRange = run[0].index..<(run[run.count - 1].index + 1)
+        func appendSingles<C: Collection>(_ entries: C) where C.Element == RunEntry {
+            result.append(contentsOf: entries.map { .single($0.item) })
+            ranges.append(contentsOf: entries.map { $0.index..<$0.index + 1 })
+        }
+
+        func appendToolGroup<C: BidirectionalCollection>(_ entries: C, tools: [ToolCall])
+        where C.Element == RunEntry {
+            guard let first = entries.first, let last = entries.last else { return }
             result.append(
                 .toolGroup(
                     // Keyed to the first row: stable while lifecycle upserts
                     // rewrite members in place, so the disclosure state and
                     // row identity survive re-grouping.
-                    id: "toolgroup:\(run[0].item.id)",
-                    items: run.map { $0.item },
+                    id: "toolgroup:\(first.item.id)",
+                    items: entries.map(\.item),
                     summary: ToolGroupSummary(
                         toolCount: tools.count,
                         editedFileCount: Self.editedFileCount(of: tools),
                         failedCount: tools.count { $0.status == .failed })))
-            ranges.append(sourceRange)
+            ranges.append(first.index..<(last.index + 1))
+        }
+
+        func toolsIn<C: Collection>(_ entries: C) -> [ToolCall] where C.Element == RunEntry {
+            entries.compactMap { entry -> ToolCall? in
+                guard case .toolEvent(_, _, let detail, let kind, let status, _, _, _) = entry.item
+                else {
+                    return nil
+                }
+                return ToolCall(detail: detail, kind: kind, status: status)
+            }
+        }
+
+        /// Index where a live unfinished tail begins: trailing reasoning and
+        /// still-running tools stay expanded after a mid-turn group.
+        func liveUnfinishedTailStart(
+            in entries: [RunEntry],
+            treatRunningAsFinished: Bool
+        ) -> Int {
+            if treatRunningAsFinished { return entries.count }
+            var split = entries.count
+            while split > 0 {
+                switch entries[split - 1].item {
+                case .reasoning:
+                    split -= 1
+                case .toolEvent(_, _, _, _, let status, _, _, _) where status == .running:
+                    split -= 1
+                default:
+                    return split
+                }
+            }
+            return split
+        }
+
+        func flush(somethingFollows: Bool) {
+            defer { run.removeAll() }
+            guard !run.isEmpty else { return }
+            let tools = toolsIn(run)
+            let allFinished = threadIsSettled || tools.allSatisfy { $0.status != .running }
+            let closedCollapse = somethingFollows && allFinished && tools.count >= 2
+            let liveLongCollapse =
+                tools.count >= TimelineToolGrouping.liveAutoCollapseToolThreshold
+
+            guard closedCollapse || liveLongCollapse else {
+                appendSingles(run)
+                return
+            }
+
+            if closedCollapse || allFinished {
+                appendToolGroup(run, tools: tools)
+                return
+            }
+
+            // Mid-turn long burst with work still in flight: collapse the
+            // finished prefix, keep the running tool (and any trailing
+            // reasoning) visible so the user can still watch progress.
+            let split = liveUnfinishedTailStart(in: run, treatRunningAsFinished: threadIsSettled)
+            let head = run[..<split]
+            let tail = run[split...]
+            let headTools = toolsIn(head)
+            if headTools.count >= 2 {
+                appendToolGroup(head, tools: headTools)
+                appendSingles(tail)
+            } else {
+                appendSingles(run)
+            }
         }
 
         func separatorForItem(_ item: TimelineItem, previousAt: Date?) -> String? {
