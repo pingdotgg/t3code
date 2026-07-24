@@ -10,6 +10,7 @@ import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as SessionStore from "./SessionStore.ts";
 
 const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
@@ -31,11 +32,12 @@ const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfig.ServerConfig[
   );
 
 const makeCookieRequest = (
+  cookieName: string,
   sessionToken: string,
 ): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]>[0] =>
   ({
     cookies: {
-      t3_session: sessionToken,
+      [cookieName]: sessionToken,
     },
     headers: {},
   }) as unknown as Parameters<
@@ -78,6 +80,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("issues standard pairing credentials by default", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
 
       const pairingCredential = yield* serverAuth.issuePairingCredential();
       const exchanged = yield* serverAuth.createBrowserSession(
@@ -85,7 +88,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         requestMetadata,
       );
       const verified = yield* serverAuth.authenticateHttpRequest(
-        makeCookieRequest(exchanged.sessionToken),
+        makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
       );
 
       expect(verified.sessionId.length).toBeGreaterThan(0);
@@ -151,6 +154,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("issues startup pairing URLs that bootstrap administrative sessions", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
 
       const pairingUrl = yield* serverAuth.issueStartupPairingUrl("http://127.0.0.1:3773");
       const token = new URLSearchParams(new URL(pairingUrl).hash.slice(1)).get("token");
@@ -164,7 +168,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       const exchanged = yield* serverAuth.createBrowserSession(token ?? "", requestMetadata);
       const verified = yield* serverAuth.authenticateHttpRequest(
-        makeCookieRequest(exchanged.sessionToken),
+        makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
       );
 
       expect(verified.scopes).toEqual([
@@ -186,13 +190,14 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
 
         const administrativeExchange = yield* serverAuth.createBrowserSession(
           "desktop-bootstrap-token",
           requestMetadata,
         );
         const administrativeSession = yield* serverAuth.authenticateHttpRequest(
-          makeCookieRequest(administrativeExchange.sessionToken),
+          makeCookieRequest(sessions.cookieName, administrativeExchange.sessionToken),
         );
         const pairingCredential = yield* serverAuth.issuePairingCredential({
           label: "Julius iPhone",
@@ -209,7 +214,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
           },
         );
         const clientSession = yield* serverAuth.authenticateHttpRequest(
-          makeCookieRequest(clientExchange.sessionToken),
+          makeCookieRequest(sessions.cookieName, clientExchange.sessionToken),
         );
         const clientsBeforeRevoke = yield* serverAuth.listClientSessions(
           administrativeSession.sessionId,
