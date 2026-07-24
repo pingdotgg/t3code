@@ -162,10 +162,15 @@ function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
 
 // Badge showing which remote T3 Code environment a project lives on: a server
 // icon plus the environment label(s), matching SidebarV2's environment
-// treatment. Local (this-device) projects have no remote, so nothing is
-// rendered for them.
+// treatment. Only rendered for projects that live purely on a remote
+// environment — when a project is also present locally (this device), it needs
+// no "from" hint, so mixed and local-only projects render nothing.
 function renderProjectRemoteBadge(group: SidebarProjectSnapshot | undefined): ReactNode {
-  if (!group || group.remoteEnvironmentLabels.length === 0) {
+  if (
+    !group ||
+    group.environmentPresence !== "remote-only" ||
+    group.remoteEnvironmentLabels.length === 0
+  ) {
     return undefined;
   }
   const label = group.remoteEnvironmentLabels.join(", ");
