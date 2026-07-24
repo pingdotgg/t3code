@@ -1077,44 +1077,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     // `resumeCursor`, so the idle reaper and session routing stop treating them
     // as live while the next user turn can still resume the provider
     // conversation from where it left off.
-    const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
+    const bindings = yield* directory.listBindings();
     const staleBindings = bindings.filter((binding) => binding.status !== "stopped");
     if (staleBindings.length === 0) {
       return;
     }
-    yield* Effect.forEach(
-      staleBindings,
-      (binding) =>
-        Effect.flatMap(nowIso, (lastRuntimeEventAt) =>
-          directory.upsert({
+    const reconciled = yield* Effect.forEach(staleBindings, (binding) =>
+      Effect.flatMap(nowIso, (lastRuntimeEventAt) =>
+        directory.upsert({
+          threadId: binding.threadId,
+          provider: binding.provider,
+          ...(binding.providerInstanceId !== undefined
+            ? { providerInstanceId: binding.providerInstanceId }
+            : {}),
+          status: "stopped",
+          runtimePayload: {
+            activeTurnId: null,
+            lastRuntimeEvent: "provider.startupReconcile",
+            lastRuntimeEventAt,
+          },
+        }),
+      ).pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to reconcile stale provider session on boot", {
             threadId: binding.threadId,
             provider: binding.provider,
-            ...(binding.providerInstanceId !== undefined
-              ? { providerInstanceId: binding.providerInstanceId }
-              : {}),
-            status: "stopped",
-            runtimePayload: {
-              activeTurnId: null,
-              lastRuntimeEvent: "provider.startupReconcile",
-              lastRuntimeEventAt,
-            },
-          }),
-        ).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("failed to reconcile stale provider session on boot", {
-              threadId: binding.threadId,
-              provider: binding.provider,
-              errorTag: causeErrorTag(cause),
-            }),
-          ),
+            errorTag: causeErrorTag(cause),
+          }).pipe(Effect.as(false)),
         ),
-      { discard: true },
+      ),
     );
+    const reconciledCount = reconciled.filter(Boolean).length;
     yield* Effect.logInfo("provider.sessions.reconciled_on_boot", {
-      sessionCount: staleBindings.length,
+      sessionCount: reconciledCount,
+      failedSessionCount: staleBindings.length - reconciledCount,
     });
     yield* analytics.record("provider.sessions.reconciled_on_boot", {
-      sessionCount: staleBindings.length,
+      sessionCount: reconciledCount,
     });
   });
 

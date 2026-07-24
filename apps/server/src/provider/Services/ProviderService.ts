@@ -28,7 +28,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
-import type { ProviderServiceError } from "../Errors.ts";
+import type { ProviderServiceError, ProviderSessionDirectoryPersistenceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
@@ -91,7 +91,10 @@ export interface ProviderServiceShape {
    * user turn can still resume the provider conversation. Intended to run once
    * at boot, before reactors and the idle reaper start handling new work.
    */
-  readonly reconcileStaleSessionsOnBoot: () => Effect.Effect<void>;
+  readonly reconcileStaleSessionsOnBoot: () => Effect.Effect<
+    void,
+    ProviderSessionDirectoryPersistenceError
+  >;
 
   /**
    * List active provider sessions.

@@ -38,6 +38,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionDirectoryPersistenceError,
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
@@ -763,25 +764,84 @@ it.effect(
         ),
       );
 
-      yield* Effect.gen(function* () {
-        const providerService = yield* ProviderService.ProviderService;
-        yield* providerService.reconcileStaleSessionsOnBoot();
-      }).pipe(Effect.provide(providerLayer));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const providerServices = yield* Layer.build(providerLayer);
+          const providerService = yield* ProviderService.ProviderService.pipe(
+            Effect.provide(providerServices),
+          );
+          yield* providerService.reconcileStaleSessionsOnBoot();
 
-      const reconciled = yield* Effect.gen(function* () {
-        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-        return yield* repository.getByThreadId({ threadId });
-      }).pipe(Effect.provide(runtimeRepositoryLayer));
+          // Observe the row while ProviderService is still in scope. Its
+          // shutdown finalizer also settles live rows, so asserting after the
+          // layer closes would not prove that boot reconciliation ran.
+          const reconciled = yield* Effect.gen(function* () {
+            const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+            return yield* repository.getByThreadId({ threadId });
+          }).pipe(Effect.provide(runtimeRepositoryLayer));
 
-      assert.equal(Option.isSome(reconciled), true);
-      const row = Option.getOrThrow(reconciled);
-      // Status is settled, but the resume cursor survives so the next turn can
-      // resume the provider conversation.
-      assert.equal(row.status, "stopped");
-      assert.deepStrictEqual(row.resumeCursor, resumeCursor);
+          assert.equal(Option.isSome(reconciled), true);
+          const row = Option.getOrThrow(reconciled);
+          // Status is settled, but the resume cursor survives so the next turn
+          // can resume the provider conversation.
+          assert.equal(row.status, "stopped");
+          assert.deepStrictEqual(row.resumeCursor, resumeCursor);
+        }),
+      );
 
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive surfaces boot reconciliation directory read failures", () =>
+  Effect.gen(function* () {
+    const expected = new ProviderSessionDirectoryPersistenceError({
+      operation: "ProviderSessionDirectory.listBindings",
+      detail: "simulated list failure",
+      cause: "test",
+    });
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const failingDirectoryLayer = Layer.effect(
+      ProviderSessionDirectory.ProviderSessionDirectory,
+      Effect.map(ProviderSessionDirectory.ProviderSessionDirectory, (directory) =>
+        ProviderSessionDirectory.ProviderSessionDirectory.of({
+          ...directory,
+          listBindings: () => Effect.fail(expected),
+        }),
+      ),
+    ).pipe(Layer.provide(directoryLayer));
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(failingDirectoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    const error = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const providerServices = yield* Layer.build(providerLayer);
+        const providerService = yield* ProviderService.ProviderService.pipe(
+          Effect.provide(providerServices),
+        );
+        return yield* providerService.reconcileStaleSessionsOnBoot().pipe(Effect.flip);
+      }),
+    );
+
+    assert.strictEqual(error, expected);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
