@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
   buildKeybindingRows,
@@ -134,7 +135,7 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).not.toContain("customModeActive");
   });
 
-  it("builds command options from defaults and resolved project bindings", () => {
+  it("builds command options from all static commands and resolved project bindings", () => {
     const options = buildKeybindingCommandOptions([
       {
         command: "script.setup-db.run",
@@ -149,7 +150,12 @@ describe("KeybindingsSettings.logic", () => {
       },
     ] satisfies ResolvedKeybindingsConfig);
 
-    expect(options).toEqual(expect.arrayContaining(["chat.new", "script.setup-db.run"]));
+    expect(options).toEqual(
+      expect.arrayContaining(["chat.new", "thread.stop", "script.setup-db.run"]),
+    );
+    expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.stop")).toBe(
+      false,
+    );
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {
