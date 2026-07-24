@@ -70,6 +70,32 @@ export function enumerateCommandPaletteItems(
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
+export function getBrowseCreateFolderName(input: {
+  browseFilterQuery: string;
+  exactEntry: FilesystemBrowseEntry | null;
+  browseParentPath: string | null | undefined;
+  isBrowsePending: boolean;
+  relativePathNeedsActiveProject: boolean;
+}): string | null {
+  const folderName = input.browseFilterQuery.trim();
+  if (
+    folderName.length === 0 ||
+    input.exactEntry !== null ||
+    input.isBrowsePending ||
+    input.relativePathNeedsActiveProject ||
+    input.browseParentPath === null ||
+    input.browseParentPath === undefined ||
+    input.browseParentPath.length === 0
+  ) {
+    return null;
+  }
+  return folderName;
+}
+
+export function buildBrowseCreateFolderValue(folderName: string): string {
+  return `browse:create-folder:${folderName}`;
+}
+
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseFilterQuery: string;
@@ -302,8 +328,11 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
+  createFolderIcon?: ReactNode;
+  createFolderName?: string | null;
   browseUp: () => void;
   browseTo: (name: string) => void;
+  createFolder?: (folderName: string) => Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -331,6 +360,20 @@ export function buildBrowseGroups(input: {
       keepOpen: true,
       run: async () => {
         input.browseTo(entry.name);
+      },
+    });
+  }
+
+  if (input.createFolderName && input.createFolder) {
+    items.push({
+      kind: "action",
+      value: buildBrowseCreateFolderValue(input.createFolderName),
+      searchTerms: [input.browseQuery, input.createFolderName, "create folder"],
+      title: `Create folder "${input.createFolderName}"`,
+      icon: input.createFolderIcon ?? input.directoryIcon,
+      keepOpen: true,
+      run: async () => {
+        await input.createFolder!(input.createFolderName!);
       },
     });
   }

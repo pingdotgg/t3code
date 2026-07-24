@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildBrowseGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  getBrowseCreateFolderName,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -64,6 +66,61 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("getBrowseCreateFolderName", () => {
+  it("returns a folder name when the typed leaf does not match an existing entry", () => {
+    expect(
+      getBrowseCreateFolderName({
+        browseFilterQuery: "new-folder",
+        exactEntry: null,
+        browseParentPath: "/Users/luke/projects",
+        isBrowsePending: false,
+        relativePathNeedsActiveProject: false,
+      }),
+    ).toBe("new-folder");
+  });
+
+  it("returns null when an exact directory match already exists", () => {
+    expect(
+      getBrowseCreateFolderName({
+        browseFilterQuery: "projects",
+        exactEntry: { name: "projects", fullPath: "/Users/luke/projects" },
+        browseParentPath: "/Users/luke",
+        isBrowsePending: false,
+        relativePathNeedsActiveProject: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("buildBrowseGroups", () => {
+  it("adds a create-folder action when a new folder name is available", async () => {
+    const createFolder = vi.fn(async () => undefined);
+    const groups = buildBrowseGroups({
+      browseEntries: [],
+      browseQuery: "~/projects/new-folder",
+      canBrowseUp: false,
+      upIcon: null,
+      directoryIcon: null,
+      createFolderIcon: null,
+      createFolderName: "new-folder",
+      browseUp: () => undefined,
+      browseTo: () => undefined,
+      createFolder,
+    });
+
+    const createItem = groups[0]?.items.find(
+      (item) => item.value === "browse:create-folder:new-folder",
+    );
+    expect(createItem?.kind).toBe("action");
+    if (createItem?.kind !== "action") {
+      throw new Error("Expected create-folder browse action");
+    }
+    expect(createItem.title).toBe('Create folder "new-folder"');
+    await createItem.run();
+    expect(createFolder).toHaveBeenCalledWith("new-folder");
+  });
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {

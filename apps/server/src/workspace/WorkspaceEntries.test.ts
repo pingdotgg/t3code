@@ -391,4 +391,54 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
   });
+
+  describe("createDirectory", () => {
+    it.effect("creates a missing directory under an existing parent", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-dir-" });
+        const targetPath = path.join(cwd, "new-project");
+
+        const result = yield* workspaceEntries.createDirectory({
+          partialPath: targetPath,
+        });
+
+        expect(result).toEqual({ directoryPath: targetPath });
+        const stat = yield* fileSystem.stat(targetPath);
+        expect(stat.type).toBe("Directory");
+      }),
+    );
+
+    it.effect("returns the existing directory path when it already exists", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-existing-" });
+        yield* writeTextFile(cwd, "existing/index.ts", "export {};\n");
+        const existingPath = path.join(cwd, "existing");
+
+        const result = yield* workspaceEntries.createDirectory({
+          partialPath: existingPath,
+        });
+
+        expect(result).toEqual({ directoryPath: existingPath });
+      }),
+    );
+
+    it.effect("rejects relative paths without cwd", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+
+        const error = yield* workspaceEntries
+          .createDirectory({
+            partialPath: "./new-dir",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceEntriesCurrentProjectRequiredError");
+      }),
+    );
+  });
 });

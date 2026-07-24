@@ -12,6 +12,8 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchEntriesInput,
@@ -63,12 +65,85 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedErrorClass<
   }
 }
 
-export const WorkspaceEntriesBrowseError = Schema.Union([
+export class WorkspaceEntriesPathAlreadyExistsError extends Schema.TaggedErrorClass<WorkspaceEntriesPathAlreadyExistsError>()(
+  "WorkspaceEntriesPathAlreadyExistsError",
+  {
+    cwd: Schema.optional(Schema.String),
+    partialPath: Schema.String,
+    directoryPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    const cwd = this.cwd ? ` from '${this.cwd}'` : "";
+    return `Filesystem path '${this.directoryPath}' already exists while creating '${this.partialPath}'${cwd}.`;
+  }
+}
+
+export class WorkspaceEntriesPathNotDirectoryError extends Schema.TaggedErrorClass<WorkspaceEntriesPathNotDirectoryError>()(
+  "WorkspaceEntriesPathNotDirectoryError",
+  {
+    cwd: Schema.optional(Schema.String),
+    partialPath: Schema.String,
+    directoryPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    const cwd = this.cwd ? ` from '${this.cwd}'` : "";
+    return `Filesystem path '${this.directoryPath}' is not a directory while creating '${this.partialPath}'${cwd}.`;
+  }
+}
+
+export class WorkspaceEntriesParentNotFoundError extends Schema.TaggedErrorClass<WorkspaceEntriesParentNotFoundError>()(
+  "WorkspaceEntriesParentNotFoundError",
+  {
+    cwd: Schema.optional(Schema.String),
+    partialPath: Schema.String,
+    parentPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const cwd = this.cwd ? ` from '${this.cwd}'` : "";
+    return `Parent directory '${this.parentPath}' does not exist while creating '${this.partialPath}'${cwd}.`;
+  }
+}
+
+export class WorkspaceEntriesCreateDirectoryError extends Schema.TaggedErrorClass<WorkspaceEntriesCreateDirectoryError>()(
+  "WorkspaceEntriesCreateDirectoryError",
+  {
+    cwd: Schema.optional(Schema.String),
+    partialPath: Schema.String,
+    directoryPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const cwd = this.cwd ? ` from '${this.cwd}'` : "";
+    return `Failed to create directory '${this.directoryPath}' for '${this.partialPath}'${cwd}.`;
+  }
+}
+
+export const WorkspaceEntriesResolveTargetError = Schema.Union([
   WorkspaceEntriesWindowsPathUnsupportedError,
   WorkspaceEntriesCurrentProjectRequiredError,
+]);
+export type WorkspaceEntriesResolveTargetError = typeof WorkspaceEntriesResolveTargetError.Type;
+
+export const WorkspaceEntriesBrowseError = Schema.Union([
+  WorkspaceEntriesResolveTargetError,
   WorkspaceEntriesReadDirectoryError,
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
+
+export const WorkspaceEntriesCreateDirectoryErrorUnion = Schema.Union([
+  WorkspaceEntriesResolveTargetError,
+  WorkspaceEntriesPathAlreadyExistsError,
+  WorkspaceEntriesPathNotDirectoryError,
+  WorkspaceEntriesParentNotFoundError,
+  WorkspaceEntriesCreateDirectoryError,
+]);
+export type WorkspaceEntriesCreateDirectoryErrorUnion =
+  typeof WorkspaceEntriesCreateDirectoryErrorUnion.Type;
 
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
@@ -87,6 +162,9 @@ export class WorkspaceEntries extends Context.Service<
     readonly browse: (
       input: FilesystemBrowseInput,
     ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
+    readonly createDirectory: (
+      input: FilesystemCreateDirectoryInput,
+    ) => Effect.Effect<FilesystemCreateDirectoryResult, WorkspaceEntriesCreateDirectoryErrorUnion>;
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
@@ -110,7 +188,7 @@ function expandHomePath(input: string, path: Path.Path): string {
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
-): Effect.fn.Return<string, WorkspaceEntriesBrowseError> {
+): Effect.fn.Return<string, WorkspaceEntriesResolveTargetError> {
   const platform = yield* HostProcessPlatform;
   if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
     return yield* new WorkspaceEntriesWindowsPathUnsupportedError({
@@ -177,6 +255,86 @@ export const make = Effect.gen(function* () {
       );
     },
   );
+
+  const createDirectory: WorkspaceEntries["Service"]["createDirectory"] = Effect.fn(
+    "WorkspaceEntries.createDirectory",
+  )(function* (input) {
+    const resolvedDirectoryPath = yield* resolveBrowseTarget(input, path);
+    const existingStat = yield* Effect.tryPromise({
+      try: () => NodeFSP.stat(resolvedDirectoryPath),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.match({
+        onFailure: () => null,
+        onSuccess: (stat) => stat,
+      }),
+    );
+
+    if (existingStat) {
+      if (existingStat.isDirectory()) {
+        return { directoryPath: resolvedDirectoryPath } as const;
+      }
+      return yield* new WorkspaceEntriesPathNotDirectoryError({
+        cwd: input.cwd,
+        partialPath: input.partialPath,
+        directoryPath: resolvedDirectoryPath,
+      });
+    }
+
+    const parentPath = path.dirname(resolvedDirectoryPath);
+    const parentStat = yield* Effect.tryPromise({
+      try: () => NodeFSP.stat(parentPath),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          Effect.fail(
+            new WorkspaceEntriesParentNotFoundError({
+              cwd: input.cwd,
+              partialPath: input.partialPath,
+              parentPath,
+              cause,
+            }),
+          ),
+        onSuccess: Effect.succeed,
+      }),
+    );
+    if (!parentStat.isDirectory()) {
+      return yield* new WorkspaceEntriesPathNotDirectoryError({
+        cwd: input.cwd,
+        partialPath: input.partialPath,
+        directoryPath: parentPath,
+      });
+    }
+
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.mkdir(resolvedDirectoryPath),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catchIf(
+        (cause) => (cause as NodeJS.ErrnoException | undefined)?.code === "EEXIST",
+        () =>
+          Effect.fail(
+            new WorkspaceEntriesPathAlreadyExistsError({
+              cwd: input.cwd,
+              partialPath: input.partialPath,
+              directoryPath: resolvedDirectoryPath,
+            }),
+          ),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceEntriesCreateDirectoryError({
+            cwd: input.cwd,
+            partialPath: input.partialPath,
+            directoryPath: resolvedDirectoryPath,
+            cause,
+          }),
+      ),
+    );
+
+    return { directoryPath: resolvedDirectoryPath } as const;
+  });
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
@@ -251,7 +409,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search });
+  return WorkspaceEntries.of({ browse, createDirectory, list, refresh, search });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

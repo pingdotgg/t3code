@@ -49,6 +49,8 @@ import {
   OrchestrationReplayEventsError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  type FilesystemCreateDirectoryFailure,
+  FilesystemCreateDirectoryError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
@@ -205,6 +207,31 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
+function filesystemCreateDirectoryFailureContext(
+  error: WorkspaceEntries.WorkspaceEntriesCreateDirectoryErrorUnion,
+): {
+  readonly failure: FilesystemCreateDirectoryFailure;
+  readonly directoryPath?: string;
+  readonly platform?: string;
+} {
+  switch (error._tag) {
+    case "WorkspaceEntriesWindowsPathUnsupportedError":
+      return { failure: "windows_path_unsupported", platform: error.platform };
+    case "WorkspaceEntriesCurrentProjectRequiredError":
+      return { failure: "current_project_required" };
+    case "WorkspaceEntriesPathAlreadyExistsError":
+      return { failure: "path_already_exists", directoryPath: error.directoryPath };
+    case "WorkspaceEntriesPathNotDirectoryError":
+      return { failure: "path_not_directory", directoryPath: error.directoryPath };
+    case "WorkspaceEntriesParentNotFoundError":
+      return { failure: "parent_not_found", directoryPath: error.parentPath };
+    case "WorkspaceEntriesCreateDirectoryError":
+      return { failure: "create_directory_failed", directoryPath: error.directoryPath };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
 function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
@@ -318,6 +345,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.filesystemCreateDirectory, AuthOrchestrationOperateScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
@@ -1691,6 +1719,21 @@ const makeWsRpcLayer = (
                   new FilesystemBrowseError({
                     ...input,
                     ...filesystemBrowseFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemCreateDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemCreateDirectory,
+            workspaceEntries.createDirectory(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemCreateDirectoryError({
+                    ...input,
+                    ...filesystemCreateDirectoryFailureContext(cause),
                     cause,
                   }),
               ),

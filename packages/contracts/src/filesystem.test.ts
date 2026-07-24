@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { FilesystemBrowseError } from "./filesystem.ts";
+import { FilesystemBrowseError, FilesystemCreateDirectoryError } from "./filesystem.ts";
 
 describe("FilesystemBrowseError", () => {
   it("derives a stable message from browse context while retaining the cause", () => {
@@ -29,5 +29,24 @@ describe("FilesystemBrowseError", () => {
     expect(error.message).toBe("Legacy filesystem browse failure.");
     expect(error.partialPath).toBeUndefined();
     expect(error.failure).toBeUndefined();
+  });
+});
+
+describe("FilesystemCreateDirectoryError", () => {
+  it("derives a stable message from create-directory context while retaining the cause", () => {
+    const cause = new Error("sensitive filesystem detail");
+    const error = new FilesystemCreateDirectoryError({
+      cwd: "/workspace",
+      partialPath: "./src/new-dir",
+      failure: "create_directory_failed",
+      directoryPath: "/workspace/src/new-dir",
+      cause,
+    });
+
+    expect(error.message).toBe(
+      "Failed to create filesystem directory './src/new-dir' from '/workspace'.",
+    );
+    expect(error.message).not.toContain(cause.message);
+    expect(error.cause).toBe(cause);
   });
 });

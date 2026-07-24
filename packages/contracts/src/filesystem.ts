@@ -28,6 +28,58 @@ export const FilesystemBrowseFailure = Schema.Literals([
 ]);
 export type FilesystemBrowseFailure = typeof FilesystemBrowseFailure.Type;
 
+export const FilesystemCreateDirectoryInput = Schema.Struct({
+  partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+  cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+});
+export type FilesystemCreateDirectoryInput = typeof FilesystemCreateDirectoryInput.Type;
+
+export const FilesystemCreateDirectoryResult = Schema.Struct({
+  directoryPath: TrimmedNonEmptyString,
+});
+export type FilesystemCreateDirectoryResult = typeof FilesystemCreateDirectoryResult.Type;
+
+export const FilesystemCreateDirectoryFailure = Schema.Literals([
+  "windows_path_unsupported",
+  "current_project_required",
+  "path_already_exists",
+  "path_not_directory",
+  "parent_not_found",
+  "create_directory_failed",
+]);
+export type FilesystemCreateDirectoryFailure = typeof FilesystemCreateDirectoryFailure.Type;
+
+export class FilesystemCreateDirectoryError extends Schema.TaggedErrorClass<FilesystemCreateDirectoryError>()(
+  "FilesystemCreateDirectoryError",
+  {
+    partialPath: Schema.optional(TrimmedNonEmptyString),
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(FilesystemCreateDirectoryFailure),
+    directoryPath: Schema.optional(TrimmedNonEmptyString),
+    platform: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly partialPath: string;
+    readonly cwd?: string | undefined;
+    readonly failure: FilesystemCreateDirectoryFailure;
+    readonly directoryPath?: string;
+    readonly platform?: string;
+    readonly cause?: unknown;
+  }) {
+    const cwd = props.cwd === undefined ? "" : ` from '${props.cwd}'`;
+    super({
+      ...props,
+      message:
+        decodedFilesystemBrowseErrorMessage(props) ??
+        `Failed to create filesystem directory '${props.partialPath}'${cwd}.`,
+    } as any);
+  }
+}
+
 function decodedFilesystemBrowseErrorMessage(props: object): string | undefined {
   if (!("message" in props)) return undefined;
   return typeof props.message === "string" ? props.message : undefined;
