@@ -176,7 +176,8 @@ export function DraftHeroHeadline({
                     keyCode: event.nativeEvent.keyCode,
                   })
                 ) {
-                  event.preventDefault();
+                  // Keep the browser's default so Enter can commit the IME
+                  // text; stopping propagation only blocks Combobox selection.
                   event.stopPropagation();
                 }
               }}
