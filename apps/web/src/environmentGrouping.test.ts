@@ -318,6 +318,43 @@ describe("environment grouping", () => {
     expect(entries[1]?.group.displayName).toBe("separate");
   });
 
+  it("builds environment-scoped picker entries without falling back to another machine", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const primaryOnly = makeProject({
+      id: ProjectId.make("project-primary-only"),
+      title: "primary-only",
+      workspaceRoot: "/tmp/primary-only",
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [primaryOnly, primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: {
+        environmentId: primaryEnvironmentId,
+        projectId: primary.id,
+      },
+      targetEnvironmentId: remoteEnvironmentId,
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.group.projectKey).toBe(repositoryIdentity.canonicalKey);
+    expect(entries[0]?.targetProject).toMatchObject({
+      environmentId: remoteEnvironmentId,
+      id: remote.id,
+    });
+    expect(entries[0]?.isPreferred).toBe(false);
+  });
+
   it("keeps manual project order when building grouped sidebar entries", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

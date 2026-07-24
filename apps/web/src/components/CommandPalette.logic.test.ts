@@ -5,8 +5,26 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  resolveNewThreadOnIntent,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("resolveNewThreadOnIntent", () => {
+  it("distinguishes loading from a loaded-empty environment list", () => {
+    expect(
+      resolveNewThreadOnIntent({ isActive: false, isLoaded: false, environmentItemCount: 0 }),
+    ).toBe("ignore");
+    expect(
+      resolveNewThreadOnIntent({ isActive: true, isLoaded: false, environmentItemCount: 0 }),
+    ).toBe("defer");
+    expect(
+      resolveNewThreadOnIntent({ isActive: true, isLoaded: true, environmentItemCount: 0 }),
+    ).toBe("clear");
+    expect(
+      resolveNewThreadOnIntent({ isActive: true, isLoaded: true, environmentItemCount: 1 }),
+    ).toBe("open");
+  });
+});
 
 describe("enumerateCommandPaletteItems", () => {
   it("assigns positional jump shortcuts to the first nine displayed items", () => {
