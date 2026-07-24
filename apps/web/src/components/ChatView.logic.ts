@@ -224,6 +224,14 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+export function shouldShowComposerContextStrip(input: {
+  routeKind: "draft" | "server";
+  isGitRepo: boolean;
+  hasActiveProject: boolean;
+}): boolean {
+  return input.routeKind === "draft" && input.isGitRepo && input.hasActiveProject;
+}
+
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {

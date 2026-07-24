@@ -26,6 +26,7 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  shouldShowComposerContextStrip,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -105,6 +106,45 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         nextBranch: "feature/current",
       }),
     ).toBeNull();
+  });
+});
+
+describe("shouldShowComposerContextStrip", () => {
+  it("shows git context on a draft with an active project", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        routeKind: "draft",
+        isGitRepo: true,
+        hasActiveProject: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides git context after the draft becomes a thread", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        routeKind: "server",
+        isGitRepo: true,
+        hasActiveProject: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides git context without a git-backed project", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        routeKind: "draft",
+        isGitRepo: false,
+        hasActiveProject: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowComposerContextStrip({
+        routeKind: "draft",
+        isGitRepo: true,
+        hasActiveProject: false,
+      }),
+    ).toBe(false);
   });
 });
 describe("deriveComposerSendState", () => {
