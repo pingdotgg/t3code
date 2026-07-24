@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_WS_METHODS,
+  OrchestrationThreadNotFoundError,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
@@ -7,10 +8,12 @@ import {
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
@@ -25,6 +28,7 @@ import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
+import { EnvironmentShellMembership } from "./shellMembership.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
@@ -43,6 +47,14 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : "Could not synchronize the thread.";
 }
 
+const isOrchestrationThreadNotFoundError = Schema.is(OrchestrationThreadNotFoundError);
+
+function isMissingThreadFailure(cause: Cause.Cause<unknown>): boolean {
+  return cause.reasons.some(
+    (reason) => reason._tag === "Fail" && isOrchestrationThreadNotFoundError(reason.error),
+  );
+}
+
 function shouldPersistThread(thread: OrchestrationThread): boolean {
   const status = thread.session?.status;
   return status !== "starting" && status !== "running";
@@ -54,6 +66,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
   const snapshotLoader = yield* ThreadSnapshotLoader;
+  const shellMembership = yield* EnvironmentShellMembership;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
   const cached = yield* cache.loadThread(environmentId, threadId).pipe(
@@ -81,6 +94,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const awaitingCompletion = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
+  const deletedSignal = yield* Deferred.make<void>();
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
     snapshot: OrchestrationThreadDetailSnapshot,
@@ -177,6 +191,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         ),
       ),
     );
+    yield* Deferred.succeed(deletedSignal, undefined);
+  });
+
+  const handleStreamFailure = Effect.fn("EnvironmentThreadState.handleStreamFailure")(function* (
+    cause: Cause.Cause<unknown>,
+  ) {
+    if (isMissingThreadFailure(cause)) {
+      const membership = yield* shellMembership.getThreadMembership(environmentId, threadId);
+      if (membership === "absent") {
+        yield* setDeleted();
+        return;
+      }
+    }
+    yield* setStreamError(cause);
   });
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
@@ -291,11 +319,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        onExpectedFailure: setStreamError,
+        onExpectedFailure: handleStreamFailure,
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEach(applyItem)),
+    ).pipe(Stream.runForEach(applyItem), Effect.raceFirst(Deferred.await(deletedSignal))),
   );
 
   yield* Effect.addFinalizer(() =>
@@ -322,7 +350,11 @@ export function threadStateChanges(environmentId: EnvironmentIdType, threadId: T
 
 export function createEnvironmentThreadStateAtoms<R, E>(
   runtime: Atom.AtomRuntime<
-    EnvironmentRegistry | EnvironmentCacheStore | ThreadSnapshotLoader | R,
+    | EnvironmentRegistry
+    | EnvironmentCacheStore
+    | EnvironmentShellMembership
+    | ThreadSnapshotLoader
+    | R,
     E
   >,
 ) {
@@ -347,6 +379,7 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 export * from "./archivedThreads.ts";
 export * from "./checkpointDiff.ts";
 export * from "./threadSnapshotHttp.ts";
+export * from "./shellMembership.ts";
 export * from "./composerPathSearch.ts";
 export * from "./threadCommands.ts";
 export * from "./threadDetail.ts";

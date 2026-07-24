@@ -153,6 +153,12 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
   /**
+   * Check whether a non-deleted thread projection exists. Archived threads are
+   * included so lifecycle transitions cannot be mistaken for deletion.
+   */
+  readonly hasThreadById: (threadId: ThreadId) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /**
    * Read a single active thread detail snapshot by id.
    */
   readonly getThreadDetailById: (

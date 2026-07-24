@@ -563,6 +563,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+
+      assert.isTrue(yield* snapshotQuery.hasThreadById(ThreadId.make("thread-active")));
+      assert.isTrue(yield* snapshotQuery.hasThreadById(ThreadId.make("thread-archived")));
+      assert.isFalse(yield* snapshotQuery.hasThreadById(ThreadId.make("thread-missing")));
     }),
   );
 

@@ -25,7 +25,13 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
+import {
+  EnvironmentRpcRequestObserver,
+  request,
+  runStream,
+  subscribe,
+  subscribeDynamicWithContext,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -182,6 +188,48 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect("keeps dynamic subscription context bound to its originating session", () =>
+    Effect.gen(function* () {
+      const firstEvents = yield* Queue.unbounded<never>();
+      const secondEvents = yield* Queue.unbounded<never>();
+      const firstClient = {
+        [WS_METHODS.subscribeTerminalEvents]: () => Stream.fromQueue(firstEvents),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [WS_METHODS.subscribeTerminalEvents]: () => Stream.fromQueue(secondEvents),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      const observedContexts = yield* Queue.unbounded<number>();
+      const nextContext = yield* Ref.make(0);
+
+      const subscriptionFiber = yield* subscribeDynamicWithContext(
+        WS_METHODS.subscribeTerminalEvents,
+        () =>
+          Ref.updateAndGet(nextContext, (context) => context + 1).pipe(
+            Effect.map((context) => [{}, context] as const),
+          ),
+      ).pipe(
+        Stream.runForEach(([, context]) => Queue.offer(observedContexts, context)),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
+      for (let attempt = 0; attempt < 100 && (yield* Ref.get(nextContext)) < 1; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* Queue.offer(firstEvents, {} as never);
+      expect(yield* Queue.take(observedContexts)).toBe(1);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+      for (let attempt = 0; attempt < 100 && (yield* Ref.get(nextContext)) < 2; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* Queue.offer(secondEvents, {} as never);
+      expect(yield* Queue.take(observedContexts)).toBe(2);
+      yield* Fiber.interrupt(subscriptionFiber);
     }),
   );
 

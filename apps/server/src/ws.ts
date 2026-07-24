@@ -34,6 +34,7 @@ import {
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationThreadNotFoundError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
@@ -1390,6 +1391,23 @@ const makeWsRpcLayer = (
               // snapshot sequence) and the per-thread filter runs after reading,
               // so a global cap could otherwise omit this thread's events.
               if (input.afterSequence !== undefined) {
+                const threadExists = yield* projectionSnapshotQuery
+                  .hasThreadById(input.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to load thread ${input.threadId}`,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (!threadExists) {
+                  return yield* new OrchestrationThreadNotFoundError({
+                    threadId: input.threadId,
+                  });
+                }
+
                 const afterSequence = input.afterSequence;
                 const catchUpStream = orchestrationEngine
                   .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
@@ -1429,9 +1447,8 @@ const makeWsRpcLayer = (
                 );
 
               if (Option.isNone(snapshot)) {
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
+                return yield* new OrchestrationThreadNotFoundError({
+                  threadId: input.threadId,
                 });
               }
 
