@@ -1,0 +1,12 @@
+{
+  "name": "@t3tools/mobile-agent-live-update-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "android": {
+      "modules": [
+        "expo.modules.t3agentliveupdate.T3AgentLiveUpdateModule"
+      ]
+    }
+  }
+}
