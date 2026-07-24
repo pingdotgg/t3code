@@ -11,6 +11,9 @@ struct MotionProfile: Equatable, Sendable {
     let revealDuration = 0.19
     let structureDuration = 0.24
     let delightDuration = 0.40
+    /// One-shot effort-change burst: long enough to read as playful, short
+    /// enough that rapid switching never queues overlapping ripples.
+    let burstDuration = 0.60
 
     var changeDuration: Double { reduceMotion ? 0.12 : revealDuration }
     var usesMovement: Bool { !reduceMotion }
@@ -71,6 +74,13 @@ enum Motion {
         reduceMotion
             ? reducedChange
             : .spring(duration: profile.delightDuration, bounce: 0.18)
+    }
+
+    /// The one-shot colorful ripple behind a control when reasoning effort
+    /// changes. Call sites must additionally gate the burst view itself on
+    /// `profile.allowsDecorativeEffects`; this curve is its timing.
+    static var burst: Animation {
+        .easeOut(duration: reduceMotion ? profile.changeDuration : profile.burstDuration)
     }
 
     /// Asynchronous status tint, opacity, and meter changes.

@@ -13,6 +13,8 @@ struct MotionTests {
         #expect(profile.structureDuration == 0.24)
         #expect(profile.structureDuration <= 0.26)
         #expect(profile.delightDuration <= 0.42)
+        // Playful, but short enough that rapid switching never queues ripples.
+        #expect(profile.burstDuration <= 0.65)
     }
 
     @Test("reduced motion removes movement and decorative effects")
