@@ -750,10 +750,7 @@ function CommitTooltip({
   );
 }
 
-function activeFileTooltipAnchor() {
-  const trigger = document.querySelector<HTMLElement>(
-    "[data-file-change-tooltip-anchor][data-popup-open]",
-  );
+function fileTooltipAnchor(trigger: HTMLElement | null) {
   if (!trigger) return null;
   const panel = trigger.closest<HTMLElement>("[data-source-control-tooltip-boundary]");
   if (!panel) return trigger;
@@ -773,9 +770,15 @@ function activeFileTooltipAnchor() {
   };
 }
 
-function FilePathTooltip({ file }: { readonly file: VcsPanelFileChange }) {
+function FilePathTooltip({
+  file,
+  anchor,
+}: {
+  readonly file: VcsPanelFileChange;
+  readonly anchor: () => ReturnType<typeof fileTooltipAnchor>;
+}) {
   return (
-    <TooltipCardPopup anchor={activeFileTooltipAnchor} side="left" align="start">
+    <TooltipCardPopup anchor={anchor} side="left" align="start">
       <div className="max-w-80 space-y-1.5 px-2 py-1.5 text-left">
         <div className="break-all font-mono text-xs text-foreground">{file.path}</div>
         {file.originalPath && file.originalPath !== file.path ? (
@@ -784,6 +787,90 @@ function FilePathTooltip({ file }: { readonly file: VcsPanelFileChange }) {
         <StatLabels insertions={file.insertions} deletions={file.deletions} />
       </div>
     </TooltipCardPopup>
+  );
+}
+
+function FileChangeTooltipRow({
+  expanded,
+  file,
+  onFileContextMenu,
+  onFileToggle,
+  onOpenFile,
+  onOpenInVsCode,
+}: {
+  readonly expanded: boolean;
+  readonly file: VcsPanelFileChange;
+  readonly onFileContextMenu?:
+    | ((event: ReactMouseEvent<HTMLDivElement>, file: VcsPanelFileChange) => void)
+    | undefined;
+  readonly onFileToggle?: ((file: VcsPanelFileChange) => void) | undefined;
+  readonly onOpenFile?: ((file: VcsPanelFileChange) => void) | undefined;
+  readonly onOpenInVsCode?: ((file: VcsPanelFileChange) => void) | undefined;
+}) {
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const tooltipAnchor = useCallback(() => fileTooltipAnchor(triggerRef.current), []);
+
+  return (
+    <Tooltip preserveOnNestedTriggerHover>
+      <TooltipTrigger
+        render={
+          <div
+            ref={triggerRef}
+            role={onFileToggle ? "button" : undefined}
+            tabIndex={onFileToggle ? 0 : undefined}
+            data-file-change-tooltip-anchor
+            className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+            onClick={onFileToggle ? () => onFileToggle(file) : undefined}
+            onKeyDown={
+              onFileToggle
+                ? (event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    onFileToggle(file);
+                  }
+                : undefined
+            }
+            onContextMenu={
+              onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined
+            }
+          />
+        }
+      >
+        {onFileToggle ? (
+          expanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )
+        ) : null}
+        <span
+          className={cn(
+            "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+            fileStatusColor(file.status),
+          )}
+        >
+          {fileStatusLetter(file.status)}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{file.path}</span>
+        <StatLabels insertions={file.insertions} deletions={file.deletions} />
+        {onOpenFile || onOpenInVsCode ? (
+          <RowActions>
+            {onOpenFile ? (
+              <IconButton label="Open file" onClick={() => onOpenFile(file)}>
+                <FileText className="size-3.5" />
+              </IconButton>
+            ) : null}
+            {onOpenInVsCode ? (
+              <IconButton label="Open in VS Code" onClick={() => onOpenInVsCode(file)}>
+                <VisualStudioCode className="size-3.5" />
+              </IconButton>
+            ) : null}
+          </RowActions>
+        ) : null}
+      </TooltipTrigger>
+      <FilePathTooltip file={file} anchor={tooltipAnchor} />
+    </Tooltip>
   );
 }
 
@@ -1177,65 +1264,14 @@ function FileChangeList({
         const expanded = isFileExpanded?.(file) ?? false;
         return (
           <div key={fileKey} className="space-y-0.5">
-            <Tooltip preserveOnNestedTriggerHover>
-              <TooltipTrigger
-                render={
-                  <div
-                    role={onFileToggle ? "button" : undefined}
-                    tabIndex={onFileToggle ? 0 : undefined}
-                    data-file-change-tooltip-anchor
-                    className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-                    onClick={onFileToggle ? () => onFileToggle(file) : undefined}
-                    onKeyDown={
-                      onFileToggle
-                        ? (event) => {
-                            if (event.target !== event.currentTarget) return;
-                            if (event.key !== "Enter" && event.key !== " ") return;
-                            event.preventDefault();
-                            onFileToggle(file);
-                          }
-                        : undefined
-                    }
-                    onContextMenu={
-                      onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined
-                    }
-                  />
-                }
-              >
-                {onFileToggle ? (
-                  expanded ? (
-                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                  )
-                ) : null}
-                <span
-                  className={cn(
-                    "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-                    fileStatusColor(file.status),
-                  )}
-                >
-                  {fileStatusLetter(file.status)}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{file.path}</span>
-                <StatLabels insertions={file.insertions} deletions={file.deletions} />
-                {onOpenFile || onOpenInVsCode ? (
-                  <RowActions>
-                    {onOpenFile ? (
-                      <IconButton label="Open file" onClick={() => onOpenFile(file)}>
-                        <FileText className="size-3.5" />
-                      </IconButton>
-                    ) : null}
-                    {onOpenInVsCode ? (
-                      <IconButton label="Open in VS Code" onClick={() => onOpenInVsCode(file)}>
-                        <VisualStudioCode className="size-3.5" />
-                      </IconButton>
-                    ) : null}
-                  </RowActions>
-                ) : null}
-              </TooltipTrigger>
-              <FilePathTooltip file={file} />
-            </Tooltip>
+            <FileChangeTooltipRow
+              expanded={expanded}
+              file={file}
+              onFileContextMenu={onFileContextMenu}
+              onFileToggle={onFileToggle}
+              onOpenFile={onOpenFile}
+              onOpenInVsCode={onOpenInVsCode}
+            />
             {expanded && renderExpandedFile ? (
               <div className="ml-4 border-l border-border/60 pl-1">{renderExpandedFile(file)}</div>
             ) : null}
@@ -3132,6 +3168,7 @@ function SourceControlEnvironmentPanel({
   };
 
   const renderWorkingFile = (changeSet: WorkingTreeChangeSetView) => (file: PanelChangedFile) => {
+    const tooltipTriggerRef: { current: HTMLDivElement | null } = { current: null };
     const selected = changeSet.selectedPaths.has(file.path);
     const discardKey = `${changeSet.id}:file-discard:${file.path}`;
     const diffSource = {
@@ -3159,6 +3196,7 @@ function SourceControlEnvironmentPanel({
           <TooltipTrigger
             render={
               <div
+                ref={tooltipTriggerRef}
                 role="button"
                 tabIndex={0}
                 data-file-change-tooltip-anchor
@@ -3256,7 +3294,10 @@ function SourceControlEnvironmentPanel({
               </IconButton>
             </RowActions>
           </TooltipTrigger>
-          <FilePathTooltip file={file} />
+          <FilePathTooltip
+            file={file}
+            anchor={() => fileTooltipAnchor(tooltipTriggerRef.current)}
+          />
         </Tooltip>
         {diffExpanded ? (
           <div className="ml-4 border-l border-border/60 pl-1">
