@@ -17,7 +17,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
-const SAMPLE_INTERVAL_MS = 5_000;
+const SAMPLE_INTERVAL_MS = 15_000;
 const RETENTION_MS = 60 * 60_000;
 const MAX_RETAINED_SAMPLES = 20_000;
 
