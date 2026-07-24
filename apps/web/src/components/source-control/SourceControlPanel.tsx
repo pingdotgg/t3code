@@ -5318,13 +5318,6 @@ export function SourceControlPanel({
         const expanded = isFederatedSourceControlTargetExpanded(target, expandedEnvironmentIds);
         const environmentHeaderContents = (
           <>
-            {!target.active ? (
-              expanded ? (
-                <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-              )
-            ) : null}
             <EnvironmentIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate text-xs font-medium text-foreground">
               {target.label}
